@@ -22,5 +22,9 @@ npm-debug.log*
 .env.*
 !.env.example
 
+# Real business data (filed returns, order snapshots, agent state) - never commit
+data/
+state/
+
 # macOS
 .DS_Store
