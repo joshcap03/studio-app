@@ -36,14 +36,43 @@ cp .env.example .env    # then fill in the keys you have (see Credentials)
 `.env` is gitignored and holds secrets only; `.env.example` stays
 placeholder-pure (a test enforces this).
 
-### The one command each period
+### Opening the agent (no terminal needed)
+
+Install the double-click launcher once:
 
 ```bash
-npm --prefix agent start    # builds the page, serves http://127.0.0.1:8787
+npm --prefix agent run install-app   # writes two apps into ~/Applications
 ```
 
-Open the page, select your business, and send one message ("prepare my sales
-tax"). The run advances through ingest → compute → reconcile → packet on its
+After that, double-click **NY Sales Tax Agent.app**. It builds the page if
+needed, starts the server in the background on 127.0.0.1:8787 (loopback only;
+no terminal window), and opens the page in your browser. If the agent is
+already running, a second launch just opens the page. To quit, double-click
+**Stop NY Sales Tax Agent.app**; it stops only the server the launcher
+started. Launcher and server output go to `state/logs/launcher.log`.
+
+The terminal alternative is the same server in the foreground:
+
+```bash
+npm --prefix agent start    # builds the page, serves http://127.0.0.1:8787; Ctrl-C stops it
+```
+
+### The chat-first page
+
+The page opens on the chat, even on the very first visit with no business set
+up. A "Start here" explainer above the chat says what the agent does, that you
+file on NY Online Services yourself, and how to begin, with a **Set up your
+business** button.
+
+- **Before setup** you can already ask plain New York sales-tax questions in
+  the chat. Answers quote the saved official sources with links; a question
+  the sources do not settle is escalated honestly with a question for your
+  CPA. A filing request ("Prepare the quarterly ST-100.") tells you plainly
+  that no business is set up yet and points to setup; nothing is started.
+- **Setup** asks the four eligibility questions and the business details
+  (native browser address autofill works; New York is the default state) and
+  saves a profile under `state/<business-slug>/`.
+- **After setup**, send one message ("Prepare the quarterly ST-100."). The run advances through ingest → compute → reconcile → packet on its
 own, pausing at most once per five questions, each with a recommended answer
 and evidence. When the run ties out, the draft return and packet are on the
 page and on disk.
@@ -89,6 +118,7 @@ leaves nothing running):
 | `npm --prefix agent run experience:m1` | Fixture ingest → compute → reconcile → packet for both businesses, cent-exact backtest, expected-figures sign-off |
 | `npm --prefix agent run experience:m2` | Cold-start filing in ≤5 questions, saved rules prevent repeats, ten grounded Q&A answers with byte-matched citations |
 | `npm --prefix agent run experience:m3` | The proactive slice and final hygiene check: deadline status, honest no-source dry runs, the idempotent 7/3/1 tick ladder, one-way notifications with honest SMTP failure handling, server-start safety tick, idempotent launchd install, and the no-page/no-portal evidence stage |
+| `npm --prefix agent run experience:m4` | The chat-first interface: first visit with no business shows the explainer, a grounded pre-setup answer, an honest setup pointer for a filing request, setup, the filing started from the chat, the question batch, a tied-out draft and packet, and a recorded confirmation (transcript in `state/m4-experience/transcript.txt`) |
 
 The backtest harness runs the engine on period-matched fixtures against the
 figures extracted from the three real filed returns (the answer key), plus a
