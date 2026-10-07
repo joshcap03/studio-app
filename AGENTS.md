@@ -1,5 +1,14 @@
 # Repository guide
 
+This repository hosts two projects:
+
+- **NY Sales Tax Agent** (`agent/`) — the deterministic quarterly ST-100 filing agent
+  (engine, assistant page on 127.0.0.1:8787, proactive scheduler/notifications). See the
+  dedicated section below, `agent/README.md`, `DECISIONS.md`, `WALKTHROUGH.md`, and
+  `PROGRESS.md`.
+- **Studio prototype** (root `src/`) — the mobile-first React SPA described
+  next. The agent mission leaves it untouched.
+
 ## What this project is
 
 Studio: a mobile-first React SPA that tracks jewelry studio money — vendor
@@ -119,3 +128,51 @@ Missions validate features by driving the app like a user. Use this path:
   rewrite git history without explicit approval.
 - Keep changes scoped to the requested feature; do not reformat or restructure unrelated
   code.
+
+## NY Sales Tax Agent (`agent/`)
+
+The agent is a separate Node ≥ 22.18.0 / strict-TypeScript package. Run everything from
+the repository root with `npm --prefix agent …`; internals are documented in
+`agent/README.md`.
+
+### Commands
+
+- Verify before handoff, in order: `npm --prefix agent run typecheck`,
+  `npm --prefix agent run lint`, `npm --prefix agent test`,
+  `npm --prefix agent run backtest`, and the relevant
+  `npm --prefix agent run experience:m1|m2|m3`. `experience:m3` is the proactive slice and
+  the final hygiene check.
+- Local page: `npm --prefix agent start` → http://127.0.0.1:8787 (the only server; it
+  refuses any host other than 127.0.0.1). Headless: `status`, `dry-run`, `tick`,
+  `install-scheduler`, `backtest`, `verify`, `extract-expected`, `snapshot`, `profile`.
+
+### Hard boundaries (code-enforced and tested; keep them that way)
+
+- **NY Online Services is never touched.** No login, fill, submit, payment, or
+  confirmation retrieval; no portal credentials or portal automation anywhere in code,
+  config, or docs. The packet + Web File checklist is the human handoff.
+- **Shopify is read-only.** Only `read_*` scopes; no mutation or write operation may be
+  added. Missing credentials are shown as "Shopify not connected", never mocked as data.
+- **Secrets and PII stay out.** Secrets live only in the gitignored repo-root `.env`;
+  `.env.example` stays placeholder-pure. Customer PII and secret values never enter logs,
+  transcripts, commits, or fixtures — every log line passes the redaction layer, and
+  `data/`, `state/`, `.env` stay gitignored. The PDFs under `data/filed-returns/` are real
+  filings: read-only, never copied into commits.
+- **Ports.** The agent binds only 127.0.0.1:8787. Ports 5173/4173 belong to the prototype;
+  agent work must not start, stop, or reconfigure them.
+- **No business-specific constants** in engine, prompts, or tests; profiles carry business
+  specifics, and both businesses run the same harness.
+- **Numbers and quotes are never model-originated.** Arithmetic and tax rules live in
+  deterministic tested TypeScript keyed to the committed `tax-sources/` corpus; the LLM
+  classifies, asks, and explains only. Tests use the fake-model harness; live inference
+  belongs only to `npm --prefix agent run verify`.
+
+### Conventions
+
+- Server/CLI TypeScript runs on Node's native type stripping (no server build step;
+  relative imports use explicit `.ts` extensions). The React page is the only build
+  artifact (`agent/dist/web`).
+- The client payload types in `agent/src/web/ui/api.ts` are hand-maintained copies of the
+  server payload shapes in `agent/src/web/`; any payload change must update both sides.
+- State on disk, no database: gitignored `state/<business-slug>/` holds profiles,
+  checkpoints, rules, packets, proactive records, and logs.
