@@ -62,17 +62,28 @@ npm --prefix agent start    # builds the page, serves http://127.0.0.1:8787; Ctr
 The page opens on the chat, even on the very first visit with no business set
 up. A "Start here" explainer above the chat says what the agent does, that you
 file on NY Online Services yourself, and how to begin, with a **Set up your
-business** button.
+business** button. The composer is docked at the bottom of the scrolling
+message list: **Enter sends, Shift+Enter starts a new line**.
 
 - **Before setup** you can already ask plain New York sales-tax questions in
-  the chat. Answers quote the saved official sources with links; a question
-  the sources do not settle is escalated honestly with a question for your
-  CPA. A filing request ("Prepare the quarterly ST-100.") tells you plainly
-  that no business is set up yet and points to setup; nothing is started.
-- **Setup** asks the four eligibility questions and the business details
-  (native browser address autofill works; New York is the default state) and
-  saves a profile under `state/<business-slug>/`.
-- **After setup**, send one message ("Prepare the quarterly ST-100."). The run advances through ingest → compute → reconcile → packet on its
+  the chat. Answers are written conversationally over the saved official
+  sources — the rule, the exact quoted passages with links, and the
+  recommendation stay attached to the answer. A question the saved sources do
+  not settle gets a general answer clearly labeled "General guidance — not
+  from saved sources", plus a question for your CPA. A filing request
+  ("Prepare the quarterly ST-100.") tells you plainly that no business is set
+  up yet and points to setup; nothing is started.
+- **Setup** is a six-step wizard — Basics, Ship-from address, Pickup /
+  in-person locations, Eligibility, Notifications and source, Review — with a
+  progress line and per-step validation (native browser address autofill
+  works; New York is the default state). The Eligibility step asks the five
+  eligibility questions. Saving from the Review step writes the profile under
+  `state/<business-slug>/` and returns to the chat.
+- **After setup** the chat home stays calm: the chat dominates, one
+  **Prepare the quarterly ST-100** button is the primary action, and the run
+  bar, saved rules, confirmation, and run events stay collapsed behind their
+  headers until the state makes them relevant. Send that one message (or type
+  your own). The run advances through ingest → compute → reconcile → packet on its
 own, pausing at most once per five questions, each with a recommended answer
 and evidence. When the run ties out, the draft return and packet are on the
 page and on disk.
@@ -119,6 +130,7 @@ leaves nothing running):
 | `npm --prefix agent run experience:m2` | Cold-start filing in ≤5 questions, saved rules prevent repeats, ten grounded Q&A answers with byte-matched citations |
 | `npm --prefix agent run experience:m3` | The proactive slice and final hygiene check: deadline status, honest no-source dry runs, the idempotent 7/3/1 tick ladder, one-way notifications with honest SMTP failure handling, server-start safety tick, idempotent launchd install, and the no-page/no-portal evidence stage |
 | `npm --prefix agent run experience:m4` | The chat-first interface: first visit with no business shows the explainer, a grounded pre-setup answer, an honest setup pointer for a filing request, setup, the filing started from the chat, the question batch, a tied-out draft and packet, and a recorded confirmation (transcript in `state/m4-experience/transcript.txt`) |
+| `npm --prefix agent run experience:m6` | The calm guided UI: a fresh first visit through the explainer and the six-step setup wizard to the calm post-setup chat home, then a warm grounded answer and an out-of-corpus answer carrying the exact "General guidance — not from saved sources" label (fake model, scripted turns; transcript in `state/m6-experience/transcript.txt`) |
 
 The backtest harness runs the engine on period-matched fixtures against the
 figures extracted from the three real filed returns (the answer key), plus a

@@ -140,7 +140,10 @@ the repository root with `npm --prefix agent …`; internals are documented in
 - Verify before handoff, in order: `npm --prefix agent run typecheck`,
   `npm --prefix agent run lint`, `npm --prefix agent test`,
   `npm --prefix agent run backtest`, and the relevant
-  `npm --prefix agent run experience:m1|m2|m3|m4`. `experience:m4` is the chat-first interface slice; `experience:m3` is the proactive slice and
+  `npm --prefix agent run experience:m1|m2|m3|m4|m6`. `experience:m6` is the calm guided-UI slice
+  (first visit → wizard setup → calm chat home → warm grounded answer → the exact
+  "General guidance — not from saved sources" label; the m6 milestone gate runs it);
+  `experience:m4` is the chat-first interface slice; `experience:m3` is the proactive slice and
   the final hygiene check.
 - Local page: `npm --prefix agent start` → http://127.0.0.1:8787 (the only server; it
   refuses any host other than 127.0.0.1). Headless: `status`, `dry-run`, `tick`,
