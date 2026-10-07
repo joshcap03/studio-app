@@ -131,6 +131,14 @@ leaves nothing running):
 | `npm --prefix agent run experience:m3` | The proactive slice and final hygiene check: deadline status, honest no-source dry runs, the idempotent 7/3/1 tick ladder, one-way notifications with honest SMTP failure handling, server-start safety tick, idempotent launchd install, and the no-page/no-portal evidence stage |
 | `npm --prefix agent run experience:m4` | The chat-first interface: first visit with no business shows the explainer, a grounded pre-setup answer, an honest setup pointer for a filing request, setup, the filing started from the chat, the question batch, a tied-out draft and packet, and a recorded confirmation (transcript in `state/m4-experience/transcript.txt`) |
 | `npm --prefix agent run experience:m6` | The calm guided UI: a fresh first visit through the explainer and the six-step setup wizard to the calm post-setup chat home, then a warm grounded answer and an out-of-corpus answer carrying the exact "General guidance — not from saved sources" label (fake model, scripted turns; transcript in `state/m6-experience/transcript.txt`) |
+| `npm --prefix agent run experience:m7` | The conversational router: a first-visit "hello" gets a conversation and no run, before and after setup; an explicit "do my sales tax" the day after a quarter closes starts the run on that quarter and pauses on one batched ask; run mechanics stay out of the chat and in the collapsed Activity disclosure (fake model; transcript in `state/m7-experience/transcript.txt`) |
+
+The assistant is graded against Josh's golden behavior spec,
+`agent/golden/golden-conversations.json` (committed verbatim, sha256 pinned).
+`npm --prefix agent test` runs the deterministic golden grader over every
+case and variant; `npm --prefix agent run verify` adds a report-only live pass
+over the P0 cases. Unmet cases are reported as known gaps (see `PROGRESS.md`);
+prose voice is Josh's own evaluation, with no LLM judge.
 
 The backtest harness runs the engine on period-matched fixtures against the
 figures extracted from the three real filed returns (the answer key), plus a

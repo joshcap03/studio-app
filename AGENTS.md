@@ -140,7 +140,12 @@ the repository root with `npm --prefix agent …`; internals are documented in
 - Verify before handoff, in order: `npm --prefix agent run typecheck`,
   `npm --prefix agent run lint`, `npm --prefix agent test`,
   `npm --prefix agent run backtest`, and the relevant
-  `npm --prefix agent run experience:m1|m2|m3|m4|m6`. `experience:m6` is the calm guided-UI slice
+  `npm --prefix agent run experience:m1|m2|m3|m4|m6|m7`. `experience:m7` is the conversational
+  router slice ("hello" gets a conversation and no run; an explicit ask on the just-closed
+  quarter starts the run with one batched ask; run mechanics stay in the collapsed Activity; the
+  m7 milestone gate runs it). `npm --prefix agent test` includes the deterministic golden grader
+  against `agent/golden/golden-conversations.json` (committed verbatim; never special-case a
+  golden case); `verify` adds a report-only golden live pass over the P0 set. `experience:m6` is the calm guided-UI slice
   (first visit → wizard setup → calm chat home → warm grounded answer → the exact
   "General guidance — not from saved sources" label; the m6 milestone gate runs it);
   `experience:m4` is the chat-first interface slice; `experience:m3` is the proactive slice and
