@@ -182,5 +182,10 @@ the repository root with `npm --prefix agent …`; internals are documented in
   artifact (`agent/dist/web`).
 - The client payload types in `agent/src/web/ui/api.ts` are hand-maintained copies of the
   server payload shapes in `agent/src/web/`; any payload change must update both sides.
+- Chat is one general tool-using agent (`agent/src/core/`) over installed skills
+  (`agent/src/skills/<skill>/`: prompt section + deterministic tools), general tools,
+  and a memory seam (`agent/src/memory/`). New business capability goes in a new
+  skill folder, not in regex routing; the deterministic router in `src/web/runs.ts`
+  is only the no-model / model-failure fallback.
 - State on disk, no database: gitignored `state/<business-slug>/` holds profiles,
   checkpoints, rules, packets, proactive records, and logs.
