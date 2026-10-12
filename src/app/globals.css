@@ -1,0 +1,422 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------------------------------
+   Design tokens. Warm neutrals, one restrained accent (brass), semantic success/danger.
+   Components use these through Tailwind utilities (bg-surface, text-fg-2, border-line …).
+   ------------------------------------------------------------------------------------------ */
+
+:root {
+  --bg: #fbfaf8;
+  --sidebar: #f5f3ef;
+  --surface: #ffffff;
+  --subtle: #f2f0eb;
+  --hover: rgb(28 27 25 / 0.045);
+  --press: rgb(28 27 25 / 0.08);
+  --line: #e9e6e0;
+  --line-strong: #d9d5cc;
+  --fg: #1c1b19;
+  --fg-2: #58544d;
+  --fg-3: #8e8a82;
+  --fg-4: #b3afa7;
+  --accent: #8a6d43;
+  --accent-soft: rgb(138 109 67 / 0.12);
+  --success: #3d7a56;
+  --danger: #b0412f;
+  --danger-soft: rgb(176 65 47 / 0.08);
+  --ring: rgb(138 109 67 / 0.45);
+  --inverse: #1c1b19;
+  --on-inverse: #fbfaf8;
+  --shadow-composer: 0 1px 1px rgb(28 27 25 / 0.03), 0 2px 6px rgb(28 27 25 / 0.04), 0 12px 32px -12px rgb(28 27 25 / 0.08);
+  --shadow-pop: 0 1px 2px rgb(28 27 25 / 0.06), 0 8px 28px -6px rgb(28 27 25 / 0.16);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615;
+    --sidebar: #1b1b19;
+    --surface: #201f1d;
+    --subtle: #282724;
+    --hover: rgb(255 253 248 / 0.05);
+    --press: rgb(255 253 248 / 0.09);
+    --line: #2e2d2a;
+    --line-strong: #3d3b37;
+    --fg: #eceae5;
+    --fg-2: #b6b2aa;
+    --fg-3: #85817a;
+    --fg-4: #5f5c56;
+    --accent: #c9a978;
+    --accent-soft: rgb(201 169 120 / 0.14);
+    --success: #6fb08a;
+    --danger: #e0806f;
+    --danger-soft: rgb(224 128 111 / 0.1);
+    --ring: rgb(201 169 120 / 0.5);
+    --inverse: #eceae5;
+    --on-inverse: #161615;
+    --shadow-composer: 0 1px 1px rgb(0 0 0 / 0.2), 0 12px 32px -12px rgb(0 0 0 / 0.5);
+    --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 28px -6px rgb(0 0 0 / 0.55);
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-hover: var(--hover);
+  --color-press: var(--press);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-fg-4: var(--fg-4);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-inverse: var(--inverse);
+  --color-on-inverse: var(--on-inverse);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-newsreader), ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --shadow-composer: var(--shadow-composer);
+  --shadow-pop: var(--shadow-pop);
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+
+@layer base {
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+}
+
+/* Quiet scrollbars that appear only where scrolling happens. */
+.scroll-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scroll-quiet:hover {
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Motion                                                                                    */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 260ms var(--ease-out-soft) both;
+}
+.animate-fade-in {
+  animation: fade-in 200ms ease-out both;
+}
+.text-shimmer {
+  background: linear-gradient(90deg, var(--fg-3) 0%, var(--fg-3) 40%, var(--fg) 50%, var(--fg-3) 60%, var(--fg-3) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+.spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--fg-2);
+  animation: spin 0.8s linear infinite;
+}
+.breathe {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Assistant prose                                                                           */
+
+.prose-lj {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.prose-lj > :first-child {
+  margin-top: 0;
+}
+.prose-lj > :last-child {
+  margin-bottom: 0;
+}
+.prose-lj p {
+  margin: 0 0 0.85em;
+}
+.prose-lj h1,
+.prose-lj h2,
+.prose-lj h3,
+.prose-lj h4 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  margin: 1.6em 0 0.55em;
+}
+.prose-lj h1 {
+  font-size: 1.35em;
+}
+.prose-lj h2 {
+  font-size: 1.18em;
+}
+.prose-lj h3 {
+  font-size: 1.05em;
+}
+.prose-lj h4 {
+  font-size: 1em;
+}
+.prose-lj strong {
+  font-weight: 600;
+}
+.prose-lj a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color 150ms;
+}
+.prose-lj a:hover {
+  text-decoration-color: var(--fg-2);
+}
+.prose-lj ul,
+.prose-lj ol {
+  margin: 0 0 0.85em;
+  padding-left: 1.35em;
+}
+.prose-lj ul {
+  list-style: disc;
+}
+.prose-lj ol {
+  list-style: decimal;
+}
+.prose-lj li {
+  margin: 0.3em 0;
+  padding-left: 0.2em;
+}
+.prose-lj li::marker {
+  color: var(--fg-3);
+}
+.prose-lj ol > li::marker {
+  font-variant-numeric: tabular-nums;
+}
+.prose-lj li > p {
+  margin: 0;
+}
+.prose-lj blockquote {
+  margin: 0 0 0.85em;
+  padding-left: 1em;
+  border-left: 2px solid var(--line-strong);
+  color: var(--fg-2);
+}
+.prose-lj hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.6em 0;
+}
+.prose-lj :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.12em 0.36em;
+  border-radius: 5px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+}
+.prose-lj .table-wrap {
+  margin: 0.4em 0 1.1em;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.prose-lj table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.prose-lj th {
+  font-weight: 500;
+  color: var(--fg-2);
+  background: var(--subtle);
+  text-align: left;
+  white-space: nowrap;
+}
+.prose-lj th,
+.prose-lj td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.prose-lj tr:last-child td {
+  border-bottom: 0;
+}
+.prose-lj td[align="right"],
+.prose-lj th[align="right"] {
+  text-align: right;
+}
+
+/* Code blocks + syntax colors (highlight.js class names) */
+.prose-lj pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+.prose-lj pre code {
+  font-family: inherit;
+  background: none;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--fg-3);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-literal {
+  color: #8a4f7d;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: #4f7a43;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: #a35d2a;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+  color: #3c5f9a;
+}
+.hljs-type,
+.hljs-title.class_,
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: #7a6a2c;
+}
+.hljs-meta,
+.hljs-deletion {
+  color: var(--danger);
+}
+@media (prefers-color-scheme: dark) {
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-built_in,
+  .hljs-literal {
+    color: #d29bc3;
+  }
+  .hljs-string,
+  .hljs-regexp,
+  .hljs-addition {
+    color: #9cc48d;
+  }
+  .hljs-number,
+  .hljs-symbol,
+  .hljs-bullet {
+    color: #e2a06d;
+  }
+  .hljs-title,
+  .hljs-title.function_,
+  .hljs-section {
+    color: #8fb0e6;
+  }
+  .hljs-type,
+  .hljs-title.class_,
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-variable,
+  .hljs-template-variable {
+    color: #d9c27f;
+  }
+}
