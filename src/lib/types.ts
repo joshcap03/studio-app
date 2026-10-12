@@ -73,6 +73,46 @@ export interface AgentStatus {
   label: string;
 }
 
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  role: "owner" | "member";
+}
+
+export interface WorkspaceSettings {
+  name: string;
+  businessContext: string;
+  agentInstructions: string;
+}
+
+export interface Memory {
+  id: string;
+  content: string;
+  /** "workspace": shared business memory. "personal": visible only to its owner. */
+  scope: "workspace" | "personal";
+  createdAt: number;
+  mine: boolean;
+}
+
+export interface ToolkitConnection {
+  slug: string;
+  name: string;
+  description?: string;
+  status: "connected" | "pending" | "disconnected";
+  connectionId?: string;
+}
+
+export interface ConnectionsState {
+  configured: boolean;
+  toolkits: ToolkitConnection[];
+}
+
+export interface UsageSummary {
+  runsToday: number;
+  runsPerDayLimit: number;
+  runsPerMinuteLimit: number;
+}
+
 /** Events the application server streams to the browser (NDJSON, one per line). */
 export type StreamEvent =
   | {
@@ -89,3 +129,5 @@ export type StreamEvent =
 
 export const MAX_MESSAGE_LENGTH = 32_000;
 export const MAX_TITLE_LENGTH = 120;
+export const MAX_MEMORY_LENGTH = 2000;
+export const MAX_CONTEXT_LENGTH = 8000;

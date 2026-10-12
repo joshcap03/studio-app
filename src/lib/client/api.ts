@@ -41,7 +41,7 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
-  signOut: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
+  signOut: () => request<{ ok: true }>("/api/auth/signout", { method: "POST" }),
 };
 
 /**

@@ -1,14 +1,17 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { getAgentAdapter } from "@/lib/agent";
-import { authorize, jsonError } from "@/lib/auth/server";
+import { errorResponse, parseBody } from "@/lib/api";
+import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import { getConfig } from "@/lib/config";
-import { getStore } from "@/lib/db/store";
+import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_MESSAGE_LENGTH } from "@/lib/types";
+import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
 
 // Starts a turn and streams it back as NDJSON (one StreamEvent per line). Creating the
-// conversation on first send lets the browser create conversations optimistically.
+// conversation on first send lets the browser create conversations optimistically. The
+// workspace, user, and agent context all come from the session, never from the request.
 
 export const dynamic = "force-dynamic";
 
@@ -20,21 +23,32 @@ const body = z.discriminatedUnion("kind", [
 ]);
 
 export async function POST(request: NextRequest, { params }: Context) {
-  const auth = await authorize(request);
+  const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
+  const tenant = auth.value;
   const conversationId = z.uuid().safeParse((await params).id);
   if (!conversationId.success) return jsonError(404, "Conversation not found.");
-  const parsed = body.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return jsonError(400, "Messages must be between 1 and 32,000 characters.");
+  const input = await parseBody(request, body);
+  if (input instanceof NextResponse) return input;
 
   try {
-    const store = getStore();
-    store.ensureUser(auth.userId);
-    const stream = startTurn(
-      { store, adapter: getAgentAdapter(), idleTimeoutMs: getConfig().agent.idleTimeoutMs },
-      { userId: auth.userId, conversationId: conversationId.data, ...parsed.data },
+    const limit = await checkRunLimits(tenant);
+    if (limit) return jsonError(429, limit, "rate_limited");
+
+    const store = storeFor(tenant);
+    // A conversation id that exists for another tenant fails here: the insert collides with
+    // a row this tenant cannot see, and the database refuses it.
+    const stream = await startTurn(
+      {
+        store,
+        adapter: getAgentAdapter(),
+        context: await buildAgentContext(tenant),
+        idleTimeoutMs: getConfig().agent.idleTimeoutMs,
+      },
+      { conversationId: conversationId.data, ...input },
       request.signal,
     );
+    await recordRun(tenant);
     return new Response(stream, {
       headers: {
         "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -44,6 +58,7 @@ export async function POST(request: NextRequest, { params }: Context) {
     });
   } catch (error) {
     if (error instanceof TurnError) return jsonError(error.status, error.message);
-    throw error;
+    if (/duplicate key|violates/.test((error as Error)?.message ?? "")) return jsonError(404, "Conversation not found.");
+    return errorResponse(error);
   }
 }

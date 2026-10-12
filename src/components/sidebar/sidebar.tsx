@@ -1,18 +1,21 @@
 "use client";
 
 import { AlertDialog, DropdownMenu } from "radix-ui";
-import { LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, SquarePen, Trash2, X } from "lucide-react";
+import { Check, ChevronsUpDown, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, SquarePen, Trash2, X } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { IconButton } from "@/components/ui/icon-button";
 import { api } from "@/lib/client/api";
-import type { AgentStatus, ConversationSummary } from "@/lib/types";
+import type { AgentStatus, ConversationSummary, WorkspaceSummary } from "@/lib/types";
 
 interface Props {
   conversations: ConversationSummary[];
   activeId: string | null;
   running: ReadonlySet<string>;
   agent: AgentStatus;
+  workspace: WorkspaceSummary;
+  workspaces: WorkspaceSummary[];
+  email: string | null;
   mod: string;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -22,7 +25,7 @@ interface Props {
 }
 
 export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
-  { conversations, activeId, running, agent, mod, onSelect, onNew, onCollapse, onRename, onDelete },
+  { conversations, activeId, running, agent, workspace, workspaces, email, mod, onSelect, onNew, onCollapse, onRename, onDelete },
   searchRef,
 ) {
   const [query, setQuery] = useState("");
@@ -66,11 +69,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
 
   return (
     <div className="flex h-full w-[264px] flex-col">
-      <div className="flex h-14 shrink-0 items-center justify-between pr-2 pl-4">
-        <div className="flex items-center gap-2.5">
-          <BrandMark size={22} />
-          <span className="text-[14.5px] font-semibold tracking-[-0.01em]">Studio</span>
-        </div>
+      <div className="flex h-14 shrink-0 items-center justify-between gap-1 pr-2 pl-2">
+        <WorkspaceMenu workspace={workspace} workspaces={workspaces} email={email} />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
           <PanelLeftClose size={17} strokeWidth={1.75} />
         </IconButton>
@@ -153,14 +153,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">
           {agent.mode === "live" ? agent.label : "Mock agent · not connected"}
         </span>
-        <IconButton
-          label="Sign out"
-          side="top"
-          onClick={() => {
-            void api.signOut().finally(() => window.location.assign("/login"));
-          }}
-        >
-          <LogOut size={15} strokeWidth={1.75} />
+        <IconButton label="Settings" side="top" onClick={() => window.location.assign("/settings")}>
+          <Settings size={15} strokeWidth={1.75} />
         </IconButton>
       </div>
 
@@ -299,6 +293,62 @@ function ConversationItem({
 }
 
 const noop = () => () => {};
+
+const menuItem =
+  "flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover";
+
+function WorkspaceMenu({ workspace, workspaces, email }: { workspace: WorkspaceSummary; workspaces: WorkspaceSummary[]; email: string | null }) {
+  async function switchTo(id: string) {
+    if (id === workspace.id) return;
+    const res = await fetch("/api/workspaces/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceId: id }),
+    });
+    if (res.ok) window.location.assign("/");
+  }
+
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg pr-2 pl-2 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover">
+        <BrandMark size={22} />
+        <span className="min-w-0 truncate text-[14px] font-semibold tracking-[-0.01em]">{workspace.name}</span>
+        <ChevronsUpDown size={13} className="shrink-0 text-fg-3" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          sideOffset={4}
+          className="z-50 w-[248px] rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in"
+        >
+          {email ? <div className="truncate px-2.5 pt-1.5 pb-1 text-[12px] text-fg-3">{email}</div> : null}
+          {workspaces.map((w) => (
+            <DropdownMenu.Item key={w.id} onSelect={() => void switchTo(w.id)} className={menuItem}>
+              <span className="min-w-0 flex-1 truncate">{w.name}</span>
+              {w.id === workspace.id ? <Check size={14} className="text-fg-2" /> : null}
+            </DropdownMenu.Item>
+          ))}
+          <DropdownMenu.Item onSelect={() => window.location.assign("/onboarding?new=1")} className={`${menuItem} text-fg-2`}>
+            <Plus size={14} className="text-fg-3" />
+            New workspace
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="my-1 h-px bg-line" />
+          <DropdownMenu.Item onSelect={() => window.location.assign("/settings")} className={menuItem}>
+            <Settings size={14} className="text-fg-3" />
+            Settings
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => void api.signOut().finally(() => window.location.assign("/login"))}
+            className={menuItem}
+          >
+            <LogOut size={14} className="text-fg-3" />
+            Sign out
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
 
 function groupByRecency(items: ConversationSummary[]): { label: string; items: ConversationSummary[] }[] {
   const startOfToday = new Date();

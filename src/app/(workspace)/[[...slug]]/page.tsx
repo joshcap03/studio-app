@@ -1,10 +1,9 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { z } from "zod";
 import { Workspace, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
-import { getSession } from "@/lib/auth/server";
-import { withLiveStatus } from "@/lib/chat/turn";
-import { getStore } from "@/lib/db/store";
+import { storeFor } from "@/lib/chat/store-for";
+import { requirePageTenant } from "@/lib/tenant";
 
 // One page serves "/" (new conversation) and "/c/<id>". After the first load the browser
 // switches conversations in place, without a server round trip per navigation.
@@ -12,8 +11,7 @@ import { getStore } from "@/lib/db/store";
 export const dynamic = "force-dynamic";
 
 export default async function WorkspacePage({ params }: { params: Promise<{ slug?: string[] }> }) {
-  const session = await getSession();
-  if (!session) redirect("/login");
+  const tenant = await requirePageTenant();
 
   const { slug = [] } = await params;
   let conversationId: string | null = null;
@@ -23,17 +21,27 @@ export default async function WorkspacePage({ params }: { params: Promise<{ slug
     conversationId = id.data;
   }
 
-  const store = getStore();
-  store.ensureUser(session.userId);
-  const conversations = store.listConversations(session.userId);
+  const store = storeFor(tenant);
+  const [conversations, conversation] = await Promise.all([
+    store.listConversations(),
+    conversationId ? store.getConversation(conversationId) : null,
+  ]);
 
   let initialThread: InitialThread | null = null;
   if (conversationId) {
-    const conversation = store.getConversation(session.userId, conversationId);
     initialThread = conversation
-      ? { id: conversationId, status: "ready", messages: withLiveStatus(store.listMessages(conversationId), conversationId) }
+      ? { id: conversationId, status: "ready", messages: await store.listMessages(conversationId) }
       : { id: conversationId, status: "missing", messages: [] };
   }
 
-  return <Workspace initialConversations={conversations} initialThread={initialThread} agent={getAgentStatus()} />;
+  return (
+    <Workspace
+      initialConversations={conversations}
+      initialThread={initialThread}
+      agent={getAgentStatus()}
+      workspace={tenant.workspace}
+      workspaces={tenant.workspaces}
+      email={tenant.email}
+    />
+  );
 }

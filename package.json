@@ -12,9 +12,15 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "qa:serve": "APP_PASSWORD=qa-local-only-password SESSION_SECRET=qa-local-only-session-secret-0123456789 DATABASE_PATH=.data/qa.db AGENT_ADAPTER=mock next dev --hostname 127.0.0.1 --port 3100"
+    "qa:serve": "next dev --hostname 127.0.0.1 --port 3100",
+    "test:integration": "vitest run -c vitest.integration.config.ts",
+    "db:start": "supabase start -x studio,imgproxy,storage-api,edge-runtime,logflare,vector,realtime,supavisor,postgres-meta",
+    "db:reset": "supabase db reset"
   },
   "dependencies": {
+    "@composio/core": "^0.23.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
     "lucide-react": "^1.55.0",
     "next": "^16.4.0",
     "radix-ui": "^1.8.0",

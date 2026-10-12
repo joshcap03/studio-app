@@ -212,9 +212,16 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
     id: "mock",
     live: false,
     label: "Mock agent",
+    capabilities: {
+      streaming: options.streaming,
+      cancellation: "abort",
+      toolEvents: true,
+      artifacts: true,
+      runStatus: false,
+    },
     async *run(input: AgentRunInput): AsyncIterable<AgentEvent> {
       const { signal } = input;
-      yield { type: "thread", threadId: input.threadId ?? `mock-thread-${crypto.randomUUID()}` };
+      yield { type: "thread", threadId: input.threadId ?? `mock-${input.tenant.workspaceId}.${input.conversationId}` };
       await wait(350 * pace, signal);
 
       const steps = SCENARIOS.find((s) => s.match.test(input.message))?.steps ?? FALLBACK;

@@ -11,7 +11,7 @@ import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn } from "@/lib/client/api";
-import type { AgentStatus, ChatMessage, ConversationSummary, StreamEvent } from "@/lib/types";
+import type { AgentStatus, ChatMessage, ConversationSummary, StreamEvent, WorkspaceSummary } from "@/lib/types";
 
 type ThreadState =
   | { status: "loading"; messages: ChatMessage[] }
@@ -29,6 +29,9 @@ interface Props {
   initialConversations: ConversationSummary[];
   initialThread: InitialThread | null;
   agent: AgentStatus;
+  workspace: WorkspaceSummary;
+  workspaces: WorkspaceSummary[];
+  email: string | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -49,7 +52,7 @@ function provisionalTitle(text: string): string {
  * and in-flight runs. Runs live here rather than in the thread view, so a conversation keeps
  * streaming while the user reads or starts another one.
  */
-export function Workspace({ initialConversations, initialThread, agent }: Props) {
+export function Workspace({ initialConversations, initialThread, agent, workspace, workspaces, email }: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
@@ -177,8 +180,8 @@ export function Workspace({ initialConversations, initialThread, agent }: Props)
   );
 
   useEffect(() => {
-    document.title = activeTitle ? `${activeTitle} · Studio` : "Studio";
-  }, [activeTitle]);
+    document.title = activeTitle ? `${activeTitle} · Studio` : `${workspace.name} · Studio`;
+  }, [activeTitle, workspace.name]);
 
   // ---------------------------------------------------------------------------------------
   // Running turns
@@ -475,6 +478,9 @@ export function Workspace({ initialConversations, initialThread, agent }: Props)
             activeId={activeId}
             running={running}
             agent={agent}
+            workspace={workspace}
+            workspaces={workspaces}
+            email={email}
             mod={mod}
             onSelect={(id) => navigate(`/c/${id}`)}
             onNew={newChat}

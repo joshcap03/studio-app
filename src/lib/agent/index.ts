@@ -1,19 +1,25 @@
 import { getConfig } from "@/lib/config";
 import type { AgentStatus } from "@/lib/types";
-import { createHttpAgentAdapter } from "./http";
+import { createLangflowAdapter } from "./langflow";
 import { createMockAdapter } from "./mock";
 import type { AgentAdapter } from "./types";
 
+// Provider registry. Adding a provider (LangGraph, Deep Agents, …) means adding an adapter
+// file and one case here; nothing else in the app changes.
+
 let adapter: AgentAdapter | undefined;
 
-/** The configured agent adapter (AGENT_ADAPTER=mock | http). */
 export function getAgentAdapter(): AgentAdapter {
   if (adapter) return adapter;
   const { agent } = getConfig();
-  adapter =
-    agent.adapter === "http"
-      ? createHttpAgentAdapter({ apiUrl: agent.apiUrl, apiKey: agent.apiKey })
-      : createMockAdapter({ streaming: agent.mockStreaming });
+  switch (agent.provider) {
+    case "langflow":
+      adapter = createLangflowAdapter(agent.langflow!);
+      break;
+    case "mock":
+      adapter = createMockAdapter({ streaming: agent.mockStreaming });
+      break;
+  }
   return adapter;
 }
 

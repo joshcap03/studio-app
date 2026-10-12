@@ -1,11 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { authorize } from "@/lib/auth/server";
-import { getStore } from "@/lib/db/store";
+import { errorResponse, noStore } from "@/lib/api";
+import { storeFor } from "@/lib/chat/store-for";
+import { authorizeTenant } from "@/lib/tenant";
 
 export async function GET(request: NextRequest) {
-  const auth = await authorize(request);
+  const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
   const query = request.nextUrl.searchParams.get("q")?.slice(0, 200) ?? "";
-  const conversations = getStore().listConversations(auth.userId, query);
-  return NextResponse.json({ conversations }, { headers: { "Cache-Control": "no-store" } });
+  try {
+    return NextResponse.json({ conversations: await storeFor(auth.value).listConversations(query) }, noStore);
+  } catch (error) {
+    return errorResponse(error);
+  }
 }
