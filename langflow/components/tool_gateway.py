@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, propose_memory.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -61,6 +61,22 @@ ALIASES = {
     "spreadsheet": {"sheets", "composio", "workbooks"},
     "file": {"drive", "composio"}, "app": {"composio", "tools"},
 }
+
+
+def capabilities(registry):
+    """Plain names for what sits behind the gateway, so the agent knows what discover_tools can find."""
+    found = []
+    def has(test):
+        return any(test(name.lower(), words(name) | words((tool.description or "")[:400])) for name, tool in registry.items())
+    if has(lambda name, w: "exa" in w or {"web", "search"} <= w or "internet" in w):
+        found.append("web search")
+    if has(lambda name, w: name.startswith("composio_")):
+        found.append("the owner's connected apps")
+    if has(lambda name, w: "python" in w or "repl" in w):
+        found.append("running Python")
+    if has(lambda name, w: name == "load_skill"):
+        found.append("skills")
+    return found
 
 
 def original_schema(tool):
@@ -132,7 +148,7 @@ COMPOSIO_SLUG = re.compile(r"^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$")
 
 # Read-only tools: safe to retry, and they should answer within seconds.
 LOOKUP_TOOLS = {
-    "composio_search_tools", "composio_get_tool_schemas", "composio_manage_connections",
+    "composio_search_tools", "composio_get_tool_schemas", "composio_wait_for_connections",
     "composio_search_skills", "composio_use_skill", "load_skill",
     "search", "search_memory", "list_memories", "list_documents", "get_document", "get_profile",
 }
@@ -153,10 +169,10 @@ READ_WORDS = {
     "GET", "LIST", "FETCH", "SEARCH", "FIND", "READ", "QUERY", "RETRIEVE", "LOOKUP", "COUNT",
     "DOWNLOAD", "EXPORT", "VIEW", "DESCRIBE", "CHECK", "PREVIEW", "ANALYZE", "SUMMARIZE",
 }
-SLUG_IN_TEXT = re.compile(r"[\"']([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)[\"']")
 # Tools that act in the world without a Composio slug to read.
 ACTION_TOOLS = {"act"}
-# Tools that run code which can call app tools by slug.
+# Tools that run arbitrary code. Code can build tool slugs at runtime or call any API over
+# the network, so reading it can't prove it only reads: every run needs approval.
 CODE_TOOLS = {"composio_remote_workbench", "composio_remote_bash_tool"}
 
 
@@ -177,20 +193,12 @@ def needs_approval(name, arguments):
             return True
         return any(not isinstance(c, dict) or slug_changes_things(c.get("tool_slug")) for c in calls)
     if name in CODE_TOOLS:
-        return any(slug_changes_things(slug) for text in strings(arguments)
-                   for slug in SLUG_IN_TEXT.findall(text) if not slug.startswith("COMPOSIO_"))
+        return True
+    # Composio's own meta tools (connections, skills, feedback) change or send things unless
+    # listed as lookups; new ones fail closed.
+    if name.startswith("composio_") and name not in LOOKUP_TOOLS:
+        return True
     return False
-
-
-def strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for child in value.values():
-            yield from strings(child)
-    elif isinstance(value, (list, tuple)):
-        for child in value:
-            yield from strings(child)
 
 
 class ToolGatewayComponent(Component):
@@ -307,6 +315,9 @@ class ToolGatewayComponent(Component):
                 arguments = {}
             if not isinstance(arguments, dict):
                 return None, None, "Tool arguments must be a JSON object."
+            if name == "composio_multi_execute_tool":
+                # Required by Composio but irrelevant here; agents leave it out.
+                arguments = {"sync_response_to_workbench": False, **arguments}
             try:
                 model = getattr(tool, "args_schema", None)
                 if isinstance(model, type) and issubclass(model, BaseModel):
@@ -393,26 +404,32 @@ class ToolGatewayComponent(Component):
         async def discover_async(query: str) -> str:
             return discover(query)
 
-        def propose_memory(content: str, scope: str = "workspace") -> str:
-            # The app shows this to the owner, who decides whether to save it. Nothing is
-            # stored here; the structured result is what the app reads.
+        def remember(content: str, scope: str = "workspace") -> str:
+            # The app saves this to the caller's own memory (it knows whose; this flow doesn't)
+            # and shows it with an Undo. Nothing is stored here; the structured result is what
+            # the app reads.
             text = " ".join(str(content or "").split())[:500]
             if not text:
-                return "Nothing to propose: content is empty."
+                return "Nothing to remember: content is empty."
             return json.dumps({
                 "memory_proposal": {"content": text, "scope": "personal" if scope == "personal" else "workspace"},
-                "note": "Shown to the owner to confirm. Don't save it anywhere else or mention it again.",
+                "note": "Remembered. The owner sees it and can undo it; no need to mention it.",
             })
 
-        async def propose_memory_async(content: str, scope: str = "workspace") -> str:
-            return propose_memory(content, scope)
+        async def remember_async(content: str, scope: str = "workspace") -> str:
+            return remember(content, scope)
 
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, propose_memory"
+        available = capabilities(registry)
+        offers = f"Available behind it: {', '.join(available)}. " if available else ""
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
                 args_schema=DiscoverArgs,
-                description="Discover relevant tools. Returns exact names and compact argument schemas; query again if task changes.",
+                description=(f"Discover relevant tools. {offers}When the user asks you to look something up, search, "
+                             "research, or check something, use a tool rather than answering from memory. Returns exact "
+                             "names and compact argument schemas; query again if task changes. Call a returned tool "
+                             "through execute_tool or take_action, never by its name directly."),
             ),
             StructuredTool.from_function(
                 func=execute_sync, coroutine=execute_async, name="execute_tool",
@@ -430,10 +447,11 @@ class ToolGatewayComponent(Component):
                 metadata={"approval_actions": ["approve", "reject"]},
             ),
             StructuredTool.from_function(
-                func=propose_memory, coroutine=propose_memory_async, name="propose_memory",
+                func=remember, coroutine=remember_async, name="remember",
                 args_schema=MemoryArgs,
-                description=("Suggest a lasting fact for this workspace's memory (how the business works, standing "
-                             "preferences). The owner confirms before it's saved. Use sparingly: only facts that will "
-                             "matter in future conversations, never one-off results, links, or numbers that go stale."),
+                description=("Remember a lasting fact for future conversations: how the business works, people and "
+                             "suppliers, standing preferences, or a correction to something you remembered. Call it on "
+                             "your own whenever you learn one, without asking; the owner can undo it. Never one-off "
+                             "results, links, or numbers that go stale, and nothing already in what you remember."),
             ),
         ]

@@ -16,6 +16,7 @@ const tenant = (n: string): AgentTenantContext => ({
   workspaceName: `Tenant ${n}`,
   userId: crypto.randomUUID(),
   composioUserId: `lj_${n}`,
+  composioToolkits: {},
   businessContext: "",
   agentInstructions: "",
   memories: [],

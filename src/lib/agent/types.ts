@@ -12,11 +12,13 @@ export interface AgentTenantContext {
   userId: string;
   /** This member's private id for their connected apps (Composio user id). */
   composioUserId: string;
+  /** Apps offered for connection: toolkit slug → auth config id. Empty when none are configured. */
+  composioToolkits: Record<string, string>;
   /** Workspace-configured description of the business. */
   businessContext: string;
   /** Workspace-configured instructions for the agent. */
   agentInstructions: string;
-  /** Workspace memory plus this member's personal memory, newest first, size-capped. */
+  /** What memory recalls for this run: workspace and personal facts, most relevant first, size-capped. */
   memories: string[];
 }
 

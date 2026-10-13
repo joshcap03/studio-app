@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interpretCalls, type ToolCall } from "./index";
+import { interpretCalls, withoutRepeats, type ToolCall } from "./index";
 import { maskSecrets, safeUrl } from "./sanitize";
 
 // Fixtures are synthetic but shaped exactly like events captured from a live Langflow agent
@@ -387,6 +387,95 @@ describe("interpretCalls", () => {
       },
     ]);
     expect(step).toMatchObject({ app: "browser", action: "connect", preview: { type: "link", url: "https://connect.composio.dev/link/abc" } });
+  });
+
+  describe("composio_manage_connections", () => {
+    const linkOutput = toolMessage({ successful: true, data: { results: { gmail: { redirect_url: "https://connect.composio.dev/link/g1" } } } });
+    const statusOutput = toolMessage({ successful: true, data: { results: { gmail: { status: "active" } } } });
+
+    it("names the app from plain toolkit names, through take_action", () => {
+      const [running] = interpretCalls([
+        { name: "take_action", input: { tool_name: "composio_manage_connections", arguments: { toolkits: ["gmail"] } }, output: null, error: null },
+      ]);
+      expect(running).toMatchObject({ app: "gmail", action: "connect", status: "running", label: "Connecting Gmail" });
+
+      const [done] = interpretCalls([
+        { name: "take_action", input: { tool_name: "composio_manage_connections", arguments: { toolkits: ["gmail"] } }, output: "ok", error: null },
+        { name: "composio_manage_connections", input: { toolkits: ["gmail"] }, output: linkOutput, error: null },
+      ]);
+      expect(done).toMatchObject({ app: "gmail", status: "done", label: "Got a link to connect Gmail", preview: { type: "link", url: "https://connect.composio.dev/link/g1", title: "Connect Gmail" } });
+
+      const [failed] = interpretCalls([
+        { name: "take_action", input: { tool_name: "composio_manage_connections", arguments: { toolkits: ["gmail"] } }, output: "Tool composio_manage_connections failed: 503 Service Unavailable", error: null },
+      ]);
+      expect(failed).toMatchObject({ status: "failed", label: "Couldn't connect Gmail" });
+    });
+
+    it("names the app when called directly, with record or string toolkits", () => {
+      const [direct] = interpretCalls([{ name: "composio_manage_connections", input: { toolkits: ["gmail"] }, output: statusOutput, error: null }]);
+      expect(direct).toMatchObject({ app: "gmail", label: "Checked the Gmail connection" });
+      const [records] = interpretCalls([
+        { name: "composio_manage_connections", input: { toolkits: [{ name: "gmail" }, { name: "googlesheets" }] }, output: statusOutput, error: null },
+      ]);
+      expect(records.label).toBe("Checked the Gmail and Google Sheets connections");
+    });
+
+    it("reads naturally without toolkits", () => {
+      const [viaGateway] = interpretCalls([
+        { name: "take_action", input: { tool_name: "composio_manage_connections", arguments: {} }, output: null, error: null },
+      ]);
+      expect(viaGateway).toMatchObject({ app: "agent", label: "Checking your app connections" });
+      const [direct] = interpretCalls([{ name: "composio_manage_connections", input: {}, output: { error: "boom" }, error: "boom" }]);
+      expect(direct).toMatchObject({ status: "failed", label: "Couldn't check your app connections" });
+    });
+  });
+
+  it("never produces a label with a doubled word, for any state of a representative set of calls", () => {
+    const inputs: [string, Record<string, unknown>][] = [
+      ["composio_manage_connections", { toolkits: ["gmail"] }],
+      ["composio_manage_connections", { toolkits: [] }],
+      ["composio_manage_connections", {}],
+      ["composio_wait_for_connections", { toolkits: ["gmail"] }],
+      ["composio_wait_for_connections", {}],
+      ["composio_multi_execute_tool", { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", arguments: {} }, { tool_slug: "GOOGLESHEETS_BATCH_UPDATE", arguments: {} }] }],
+      ["composio_multi_execute_tool", {}],
+      ["GMAIL_SEND_EMAIL", { to: "a@example.test" }],
+      ["GMAIL_FETCH_EMAILS", {}],
+      ["GOOGLESHEETS_CREATE_GOOGLE_SHEET1", {}],
+      ["SHOPIFY_GET_ORDERS", {}],
+      ["UNKNOWNAPP_DO_THING", {}],
+      ["composio_remote_workbench", { code_to_execute: "print(1)" }],
+      ["search", { query: "x" }],
+      ["search_memory", {}],
+      ["add_memory", { content: "x" }],
+      ["navigate", { url: "https://example.com" }],
+      ["navigate", {}],
+      ["extract", {}],
+      ["calculator", { expression: "1+1" }],
+      ["load_skill", {}],
+      ["remember", {}],
+      ["discover_tools", {}],
+      ["some_custom_tool", {}],
+    ];
+    const outputs: [unknown, unknown][] = [[null, null], ["ok", null], [null, "Request failed with 500"]];
+    for (const [name, input] of inputs) {
+      for (const [output, error] of outputs) {
+        for (const calls of [
+          [{ name, input, output, error }],
+          [{ name: "take_action", input: { tool_name: name, arguments: input }, output, error }],
+          [{ name: "execute_tool", input: { tool_name: name, arguments: input }, output, error }],
+        ] as ToolCall[][]) {
+          for (const step of interpretCalls(calls)) {
+            expect(step.label, `${name} ${JSON.stringify(input)}`).not.toMatch(/\b([\p{L}']+)\s+\1\b/iu);
+          }
+        }
+      }
+    }
+  });
+
+  it("collapses a repeated word left by any template, but keeps quoted text", () => {
+    expect(withoutRepeats("Checking your your apps connection")).toBe("Checking your apps connection");
+    expect(withoutRepeats("Searching the web for “that that”")).toBe("Searching the web for “that that”");
   });
 });
 

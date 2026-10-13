@@ -10,6 +10,7 @@ const tenantA: AgentTenantContext = {
   workspaceName: "Alice Atelier",
   userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   composioUserId: "lj_alice",
+  composioToolkits: {},
   businessContext: "Handmade rings.",
   agentInstructions: "Be brief.",
   memories: ["Fiscal year starts in February"],
@@ -117,6 +118,7 @@ describe("Langflow request", () => {
   it("ignores a stored thread id when choosing the session (it can't be redirected)", () => {
     const body = JSON.parse(buildRequest(base, input(tenantA, { threadId: `${tenantB.workspaceId}.someone-else` })).init.body as string);
     expect(body.session_id.startsWith(tenantA.workspaceId)).toBe(true);
+    expect(body.session_id.split(".")[1]).toBe(tenantA.composioUserId);
   });
 
   it("fills the tweaks template with the caller's context", () => {
@@ -127,6 +129,16 @@ describe("Langflow request", () => {
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Fiscal year starts in February");
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Be brief.");
     expect(fillTemplate({ k: "{{unknown}}" }, {})).toEqual({ k: "{{unknown}}" });
+  });
+
+  it("gives the Member Apps node this member's id and the offered apps, nobody else's", () => {
+    const tweaks = { "MemberApps-studio": { member_id: "{{composio_user_id}}", toolkits: "{{composio_toolkits}}" } };
+    const tenant = { ...tenantA, composioToolkits: { gmail: "ac_gmail" } };
+    const body = JSON.parse(buildRequest({ ...base, tweaks }, input(tenant)).init.body as string);
+    expect(body.tweaks["MemberApps-studio"].member_id).toBe("lj_alice");
+    expect(JSON.parse(body.tweaks["MemberApps-studio"].toolkits)).toEqual({ gmail: "ac_gmail" });
+    const other = JSON.parse(buildRequest({ ...base, tweaks }, input(tenantB)).init.body as string);
+    expect(other.tweaks["MemberApps-studio"].member_id).toBe(tenantB.composioUserId);
   });
 
   it("puts uploaded files where the template says, and leaves the field out when there are none", () => {
@@ -535,10 +547,10 @@ describe("Langflow approvals", () => {
     expect(JSON.parse(stop!.init.body as string)).toEqual({ job_id: JOB });
   });
 
-  it("passes on memory suggestions only from structured propose_memory output", async () => {
+  it("passes on memory suggestions only from structured remember output", async () => {
     const propose = {
       type: "tool_use",
-      name: "propose_memory",
+      name: "remember",
       tool_input: { content: "Main supplier is Acme Textiles.", scope: "workspace" },
       output: { type: "tool", tool_call_id: "c1", content: JSON.stringify({ memory_proposal: { content: "Main supplier is Acme Textiles.", scope: "workspace" }, note: "x" }) },
       error: null,
@@ -548,6 +560,21 @@ describe("Langflow approvals", () => {
     expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Main supplier is Acme Textiles.", scope: "workspace" }]);
     const step = events.find((e) => e.type === "activity" && e.id === "msg-1:0");
     expect(step).toMatchObject({ hidden: true, app: "memory" });
+  });
+
+  it("passes on a memory suggestion that only arrives in the job's result message", async () => {
+    const propose = {
+      type: "tool_use",
+      name: "remember",
+      tool_input: { content: "Ships orders on Tuesdays.", scope: "workspace" },
+      output: { type: "tool", tool_call_id: "c1", content: JSON.stringify({ memory_proposal: { content: "Ships orders on Tuesdays.", scope: "workspace" } }) },
+      error: null,
+    };
+    const result = { outputs: [{ outputs: [{ results: { message: bot("Noted.", [propose]) } }] }] };
+    const { events } = await run(base, streamResponse([frame("add_message", bot("Noted.", [propose])), frame("end", { result })]));
+    expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Ships orders on Tuesdays.", scope: "workspace" }]);
+    const late = await run(base, streamResponse([frame("end", { result })]));
+    expect(late.events.filter((e) => e.type === "memory-proposal")).toHaveLength(1);
   });
 
   it("shows an approved action as the real step it ran, not as the gateway", async () => {

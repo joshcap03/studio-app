@@ -66,9 +66,13 @@ browser ── Supabase session cookie ──▶ Next.js app ── tenant conte
 - **Turn runner** (`src/lib/chat/turn.ts`). Persists the user message, builds the tenant's
   agent context, streams events to the browser, checkpoints partial output with a heartbeat,
   enforces an idle timeout, and records the final state however the run ends.
-- **Memory.** `memories` rows are scoped to a workspace (shared) or a member (personal).
-  Each run receives this workspace's memory plus the caller's personal memory, size-capped.
-  The agent can suggest a memory; it's saved only when the member confirms it on the reply.
+- **Memory.** Lives in Supermemory (`src/lib/memory.ts`), one namespace per workspace
+  (shared) and one per member of a workspace (personal), both derived from the session; the
+  agent and the browser never name one. Before each reply the app recalls the workspace's
+  and the member's profile plus memories matching the message, and sends them with the run.
+  When the agent calls `remember`, the app saves the fact at once and shows it under the
+  reply with Undo; if saving fails, it stays a suggestion the member can save. Members manage
+  memory in Settings. (The old `memories` table is no longer used.)
 - **Approvals.** When the agent wants to change something (send, create, update, delete),
   the run pauses and the reply shows what it will do. Nothing runs until the member approves;
   a decline is passed to the agent. One undecided request per conversation; new messages
@@ -105,28 +109,46 @@ exchange from the session's stored messages.
      `execute_tool` and routes them to `take_action`, which carries Langflow's tool-approval
      metadata, so the Agent pauses before it runs. Composio actions count as changes unless
      their slug only reads (GET, LIST, FETCH, SEARCH, …); unknown verbs ask. Browser `act`
-     always asks. Workbench code that calls a changing slug by name asks too. `take_action`
+     always asks. Workbench and bash code always asks, since code can build slugs or call any
+     API at runtime. Composio's own meta tools (connections, skills, feedback) ask unless
+     they're lookups (search, schemas, waiting for a connection). `take_action`
      refuses to run at all if the Agent has no approval checkpoint (nothing paused).
-     It also adds `propose_memory`, whose structured result becomes a memory suggestion.
+     It also adds `remember`, whose structured result the app saves to the caller's memory.
+     The installer removes any Supermemory MCP node from the flow: one connection would be
+     shared by every workspace, so memory goes through the app instead.
    - **Workspace Context** (`langflow/components/workspace_context.py`) holds the Agent's
      instructions and appends what the app sends per run.
-   - It prints the `LANGFLOW_TWEAKS` value to set, which fills the workspace context and
-     Chat Input files on every run.
+   - **Member Apps** (`langflow/components/composio_member.py`) replaces any shared Composio
+     MCP node. Per run it opens a Composio tool-router session for the calling member's id
+     only, limited to the apps in `COMPOSIO_TOOLKITS`, and returns no app tools without a
+     valid member id. It reads the Langflow global variable `COMPOSIO_API_KEY`, which must
+     be the Composio **project** key (`ak_…`) the app uses, not a consumer key (`ck_…`).
+     Connecting apps happens in Settings, not in chat.
+   - **Load Skill** gets its code from `langflow/components/load_skill.py` (no business names).
+   - A literal Exa key moves into the global variable `EXA_API_KEY`.
+   - **Python REPL nodes are removed**: they execute in the Langflow server process, next
+     to every tenant's keys. Keep them (`--keep-python`) only with `LANGFLOW_SANDBOX_BACKEND`
+     configured on the server. Members' code runs in their own Composio workbench.
+   - It prints the `LANGFLOW_TWEAKS` value to set, which fills the workspace context, Chat
+     Input files, and Member Apps on every run.
    Use `--copy "Name" --strip-apps` to make a test copy with no app connections.
 3. **Make the flow tenant-aware.** One shared flow serves every workspace, so it must take
    tenant-specific values from each request, never from hard-coded component settings:
-   - Every run sends `X-LANGFLOW-GLOBAL-VAR-COMPOSIO_USER_ID`, `…-WORKSPACE_ID`, and
-     `…-USER_ID`. In the flow, set the Composio component's user/entity id field to the
-     global variable `COMPOSIO_USER_ID` (create the variable in Langflow with any
-     placeholder value; the request value overrides it).
    - `LANGFLOW_TWEAKS` maps per-run values onto component fields. Placeholders:
-     `workspace_id`, `workspace_name`, `user_id`, `composio_user_id`, `business_context`,
+     `workspace_id`, `workspace_name`, `user_id`, `composio_user_id`, `composio_toolkits`
+     (JSON `{slug: auth config id}`), `business_context`,
      `agent_instructions`, `memories`, `system_context`, and `files` (a value of exactly
      `"{{files}}"` becomes the uploaded file paths; without it, attachments are off).
-     Header global variables aren't applied to background jobs by Langflow 1.12, so prefer
-     tweaks for anything the flow must read.
-4. Session ids are always `<workspace_id>.<conversation_id>`, so Langflow's chat memory
-   never mixes tenants. For defense in depth, also set `LANGFLOW_SERVING_END_USER_HEADER`
+     Runs also send `X-LANGFLOW-GLOBAL-VAR-*` headers, but Langflow 1.12 ignores them for
+     background jobs, so anything the flow must read goes through tweaks.
+   - Business specifics live in each workspace's settings and memory. The base prompt in
+     Workspace Context and the skills must not name a business.
+   - Only then set `AGENT_LIVE_WORKSPACES=*`. Until the flow is tenant-aware, keep it to the
+     workspace ids the flow was built for.
+4. Session ids are always `<workspace_id>.<member composio id>.<conversation_id>`, so
+   Langflow's chat memory never mixes tenants. The member id is there because Langflow
+   1.12 drops tweaks when a run resumes after an approval but keeps the session id;
+   Member Apps reads it then. For defense in depth, also set `LANGFLOW_SERVING_END_USER_HEADER`
    and `LANGFLOW_SERVING_TRUST_PROXY_HEADERS=true` on the Langflow server and the same header
    name in `LANGFLOW_END_USER_HEADER` here. (Rewind isn't claimed with an end-user header:
    it hasn't been verified against the scoped session ids.)
@@ -151,7 +173,9 @@ pause, decline, a stale decision, reading an attached file, and rewind.
 
 ## Connected apps (Composio)
 
-Set `COMPOSIO_API_KEY` (the same project your agent uses) and `COMPOSIO_TOOLKITS`. Each
+Set `COMPOSIO_API_KEY` (a Composio project key, the same one the flow's Member Apps node
+uses) and `COMPOSIO_TOOLKITS`, with one auth config per app (Composio dashboard → Auth
+Configs). Each
 workspace member gets a stable, opaque Composio user id (`workspace_members.composio_user_id`);
 connecting, listing, and disconnecting always use the caller's own id, and that same id is
 sent to the agent on every run. One person's connections are never visible to, or usable
@@ -172,15 +196,35 @@ by, anyone else.
   sessions, and each one's history contains only its own messages.
 - **Approvals, files, suggestions:** another tenant can't read, answer, or forge an approval,
   read or plant files in another member's Storage folder, claim another member's upload,
-  edit their messages, or save their memory suggestions; provider state never reaches the
+  edit their messages, or undo or save their memories; provider state never reaches the
   browser.
 
-## Deploying
+## Deploying (Vercel + Supabase Cloud)
 
-1. Create a Supabase project, run `supabase link` and `supabase db push`, and enable email
-   confirmation (the `/auth/confirm` route handles the link).
-2. Deploy the app (Vercel or any Node host). Set the env vars from `.env.example`.
-3. Point Langflow and Composio at production credentials. The agent stays one shared deployment.
+1. **Supabase.** Create a project, then `npx supabase link --project-ref <ref>` and
+   `npx supabase db push`. In the dashboard:
+   - Authentication → Sign In / Providers → Email: keep sign-ups on, turn **Confirm email** on.
+   - Authentication → URL Configuration: Site URL = the app's production URL (the email
+     links are built from it); add it under Redirect URLs too.
+   - Authentication → Emails → Templates: paste `supabase/templates/confirmation.html` into
+     "Confirm signup" and `recovery.html` into "Reset password". The defaults use a
+     redirect flow `/auth/confirm` doesn't accept.
+   - Authentication → Emails → SMTP: set up a real sender (Resend, Postmark, SES…). The
+     built-in sender only reaches your team's addresses and a few emails an hour.
+2. **Langflow.** Follow [`langflow/deploy/README.md`](langflow/deploy/README.md): deploy the
+   container (Railway or Render blueprint, managed Postgres, ≥1 GB RAM), create an API key,
+   copy the flow with `export_flow.py`, run `langflow/install.py` against it, and create the
+   global variables it reads. Only the app should call this server.
+3. **Vercel.** Import the repo. Set the env vars from `.env.example` for Production:
+   Supabase URL + anon key, `AGENT_PROVIDER=langflow`, the `LANGFLOW_*` values (tweaks
+   from the installer), `COMPOSIO_*`, `SUPERMEMORY_API_KEY`, `AGENT_LIVE_WORKSPACES=*`, and
+   **`LIMIT_RUNS_SERVICE_PER_DAY`** so open sign-ups can't run up the model bill. The chat
+   route asks for 300 s (`maxDuration`), the Hobby ceiling; raise it on Pro.
+4. **Composio.** Add the production URL to each auth config's allowed redirects; the connect
+   flow returns to `/settings`.
+5. **Smoke test.** Sign up with a fresh address, confirm, create a workspace, connect an
+   app, and ask the agent something that uses it. Then sign up a second account and
+   confirm it can't see the first one's apps.
 
 ## Limitations
 
@@ -188,8 +232,10 @@ by, anyone else.
   interrupted with Retry. Cancellation in Langflow is best effort.
 - One user per workspace in the UI. Invitations and roles beyond owner come next; the
   schema already supports them.
-- No file uploads yet: a shared Langflow API key would make uploaded files visible across
-  tenants inside Langflow, so uploads need per-tenant storage first.
-- Code execution happens inside the agent. The app passes workspace and member ids so
-  sandboxes can be keyed per tenant, but isolating them is the agent deployment's job.
-- The agent can read memory but can't write it yet: Langflow's API has no channel back to the app.
+- Attached files are copied to Langflow under random names with the app's one Langflow key.
+  Tenants can't name each other's files, but anyone holding that key could list them, so
+  the key must stay server-side.
+- Code runs in each member's Composio workbench. The shared flow has no in-process Python;
+  the installer removes it unless the Langflow server has a sandbox backend.
+- Shared, stateless tools (web search, the hosted browser) use one service account for
+  everyone. Browser actions still need the member's approval.

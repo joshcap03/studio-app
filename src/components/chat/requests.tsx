@@ -102,34 +102,50 @@ function ApprovalOutcome({ status }: { status: Approval["status"] }) {
 
 interface ProposalProps {
   proposal: MemoryProposal;
-  onDecide?: (decision: "save" | "dismiss") => void;
+  onDecide?: (decision: "save" | "dismiss" | "undo") => void;
 }
 
+const quiet = "inline-flex h-6 items-center rounded-md px-1.5 text-[12.5px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg";
+
+/**
+ * Something the agent remembered. Saved ones are a quiet line with Undo; one that couldn't be
+ * saved asks the member instead.
+ */
 export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
-  const pending = proposal.status === "pending";
+  const where = proposal.scope === "personal" ? "for you" : "for the workspace";
+  if (proposal.status !== "pending") {
+    const saved = proposal.status === "saved";
+    return (
+      <section aria-label={saved ? "Remembered" : "Not remembered"} className="mt-2 flex items-start gap-2 text-[13px] animate-fade-up">
+        {saved ? (
+          <BookmarkCheck size={14} className="mt-[3px] shrink-0 text-success" />
+        ) : (
+          <BookmarkPlus size={14} className="mt-[3px] shrink-0 text-fg-4" />
+        )}
+        <p className="min-w-0 flex-1 leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">
+          <span className="font-medium text-fg-2">{saved ? `Remembered ${where}` : "Not remembered"}</span>
+          <span className="mx-1.5 text-fg-4">·</span>
+          <span className={saved ? undefined : "line-through"}>{proposal.content}</span>
+        </p>
+        {onDecide ? (
+          <button type="button" onClick={() => onDecide(saved ? "undo" : "save")} className={`${quiet} -mt-0.5 shrink-0`}>
+            {saved ? "Undo" : "Remember"}
+          </button>
+        ) : null}
+      </section>
+    );
+  }
   return (
     <section
       aria-label="Suggested memory"
       className="mt-3 flex items-start gap-3 rounded-xl border border-line px-3.5 py-3 animate-fade-up"
     >
-      {proposal.status === "saved" ? (
-        <BookmarkCheck size={17} className="mt-0.5 shrink-0 text-success" />
-      ) : (
-        <BookmarkPlus size={17} className="mt-0.5 shrink-0 text-fg-3" />
-      )}
+      <BookmarkPlus size={17} className="mt-0.5 shrink-0 text-fg-3" />
       <div className="min-w-0 flex-1">
-        <p className="text-[12px] font-medium text-fg-3">
-          {proposal.status === "saved"
-            ? `Saved to ${proposal.scope === "personal" ? "your" : "workspace"} memory`
-            : proposal.status === "dismissed"
-              ? "Not saved"
-              : `Remember this${proposal.scope === "personal" ? " for you" : " for the workspace"}?`}
-        </p>
-        <p className={`mt-0.5 text-[14px] leading-[1.5] [overflow-wrap:anywhere] ${proposal.status === "dismissed" ? "text-fg-3 line-through" : "text-fg"}`}>
-          {proposal.content}
-        </p>
+        <p className="text-[12px] font-medium text-fg-3">Remember this {where}?</p>
+        <p className="mt-0.5 text-[14px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{proposal.content}</p>
       </div>
-      {pending && onDecide ? (
+      {onDecide ? (
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"

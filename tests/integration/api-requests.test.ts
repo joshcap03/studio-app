@@ -150,23 +150,31 @@ describe("edits and memory suggestions over the API", () => {
     expect(after.messages[1].content).toContain("629 variants");
   });
 
-  it("saves a suggested memory only when its owner confirms", async () => {
+  it("remembers what the agent picks up right away, and only its owner can undo it", async (ctx) => {
+    if ((await alice.json("/api/workspace/memories", "GET")).status === 503) ctx.skip(); // no SUPERMEMORY_API_KEY on the QA server
     const conv = crypto.randomUUID();
     const turn = await alice.turn(conv, { kind: "send", text: "non-streaming remember that Casting Co is net 30" });
-    const proposal = turn.events.find((e) => e.type === "memory-proposal")?.proposal as { id: string; content: string };
+    const events = turn.events.filter((e) => e.type === "memory-proposal");
+    const proposal = events.at(-1)?.proposal as { id: string; content: string; status: string; memoryId: string };
+    expect(proposal).toMatchObject({ status: "saved", memoryId: expect.stringMatching(/^workspace:/) });
     expect(proposal.content).toContain("net 30");
+    const list = async (who: Client) =>
+      ((await (await who.json("/api/workspace/memories", "GET")).json()) as { memories: { id: string; content: string }[] }).memories;
+    expect((await list(alice)).map((m) => m.id)).toContain(proposal.memoryId);
+    expect((await list(bob)).some((m) => m.content === proposal.content)).toBe(false);
 
-    const before = (await (await alice.json("/api/workspace/memories", "GET")).json()) as { memories: { content: string }[] };
-    expect(before.memories.some((m) => m.content === proposal.content)).toBe(false);
+    const decide = (who: Client, decision: string) => who.json(`/api/conversations/${conv}/proposals/${proposal.id}`, "POST", { decision });
+    expect((await decide(bob, "undo")).status).toBe(404);
+    expect((await bob.json(`/api/workspace/memories/${encodeURIComponent(proposal.memoryId)}`, "DELETE")).status).toBe(404);
+    expect((await decide(alice, "undo")).status).toBe(200);
+    expect((await decide(alice, "undo")).status).toBe(409);
+    expect((await list(alice)).map((m) => m.id)).not.toContain(proposal.memoryId);
 
-    expect((await bob.json(`/api/conversations/${conv}/proposals/${proposal.id}`, "POST", { decision: "save" })).status).toBe(404);
-    const saved = await alice.json(`/api/conversations/${conv}/proposals/${proposal.id}`, "POST", { decision: "save" });
-    expect(saved.status).toBe(200);
-    expect((await alice.json(`/api/conversations/${conv}/proposals/${proposal.id}`, "POST", { decision: "save" })).status).toBe(409);
-
-    const after = (await (await alice.json("/api/workspace/memories", "GET")).json()) as { memories: { content: string }[] };
-    expect(after.memories.filter((m) => m.content === proposal.content)).toHaveLength(1);
-    const bobs = (await (await bob.json("/api/workspace/memories", "GET")).json()) as { memories: { content: string }[] };
-    expect(bobs.memories.some((m) => m.content === proposal.content)).toBe(false);
+    // Changed their mind: save it again, then clean up.
+    const again = await decide(alice, "save");
+    expect(again.status).toBe(200);
+    const { proposal: resaved } = (await again.json()) as { proposal: { memoryId: string } };
+    expect((await alice.json(`/api/workspace/memories/${encodeURIComponent(resaved.memoryId)}`, "DELETE")).status).toBe(204);
   });
+
 });

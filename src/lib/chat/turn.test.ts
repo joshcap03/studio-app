@@ -15,6 +15,7 @@ function context(scope: { workspaceId: string; userId: string }): AgentTenantCon
     workspaceName: `Workspace ${scope.workspaceId}`,
     userId: scope.userId,
     composioUserId: `composio-${scope.userId}`,
+    composioToolkits: {},
     businessContext: `context for ${scope.workspaceId}`,
     agentInstructions: "",
     memories: [],
@@ -502,7 +503,34 @@ describe("edits, files, and memory suggestions", () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
-  it("keeps the agent's memory suggestions on the reply, pending, without saving them", async () => {
+  it("saves what the agent remembers right away, keeping its id so the member can undo it", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const saved: [string, string][] = [];
+    const adapter = scripted([
+      { type: "memory-proposal", content: "Ships orders on Tuesdays.", scope: "workspace" },
+      { type: "memory-proposal", content: "Prefers short replies.", scope: "personal" },
+      { type: "message", text: "Got it." },
+    ]);
+    const remember = async (content: string, scope: string) => {
+      if (scope === "personal") throw new Error("memory down");
+      saved.push([content, scope]);
+      return "workspace:doc1";
+    };
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, remember }, { conversationId: id, kind: "send", text: "x" }));
+    expect(saved).toEqual([["Ships orders on Tuesdays.", "workspace"]]);
+    const reply = (await store.listMessages(id))[1];
+    expect(reply.memoryProposals).toEqual([
+      { id: expect.any(String), content: "Ships orders on Tuesdays.", scope: "workspace", status: "saved", memoryId: "workspace:doc1" },
+      // Saving failed: it stays a suggestion the member can save.
+      { id: expect.any(String), content: "Prefers short replies.", scope: "personal", status: "pending" },
+    ]);
+    expect(events.filter((e) => e.type === "memory-proposal").map((e) => e.type === "memory-proposal" && e.proposal.status)).toEqual(["saved", "pending"]);
+    const end = events.find((e) => e.type === "end");
+    expect(end?.type === "end" && end.message.memoryProposals?.map((p) => p.status)).toEqual(["saved", "pending"]);
+  });
+
+  it("keeps the agent's memory suggestions on the reply, pending, when there's no memory to save to", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
     const adapter = scripted([

@@ -14,7 +14,7 @@ interface Props {
   onRetry: (messageId: string) => void;
   onEdit: (messageId: string, text: string) => void;
   onDecide: (approvalId: string, decision: "approve" | "reject") => void;
-  onProposal: (messageId: string, proposalId: string, decision: "save" | "dismiss") => void;
+  onProposal: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
   onOpenPanel?: (messageId: string) => void;
   /** Changes whenever the user sends, to pull the view back to the latest message. */
   sendCount: number;

@@ -121,7 +121,7 @@ interface AssistantProps {
   onOpenPanel?: (messageId: string) => void;
   /** Present while the latest reply waits on an approval and can be answered. */
   onDecide?: (approvalId: string, decision: "approve" | "reject") => void;
-  onProposal?: (messageId: string, proposalId: string, decision: "save" | "dismiss") => void;
+  onProposal?: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
 }
 
 export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal }: AssistantProps) {

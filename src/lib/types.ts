@@ -95,12 +95,17 @@ export interface Approval {
   decidedAt?: number;
 }
 
-/** A fact the agent suggested remembering. Saved only if the member confirms it. */
+/**
+ * A fact the agent chose to remember while replying. Normally saved right away ("saved",
+ * with the memory's id so the member can undo it); "pending" when saving failed and the
+ * member can save it themselves; "dismissed" once undone or declined.
+ */
 export interface MemoryProposal {
   id: string;
   content: string;
   scope: "workspace" | "personal";
   status: "pending" | "saved" | "dismissed";
+  memoryId?: string;
 }
 
 /** A file the member attached to a message. */

@@ -1,13 +1,23 @@
 """Installs the Studio components into a Langflow flow, in place, after backing it up.
 
-    python3 langflow/install.py <flow-id> [--copy "Name"] [--strip-apps]
+    python3 langflow/install.py <flow-id> [--copy "Name"] [--strip-apps] [--keep-python]
 
-Reads LANGFLOW_BASE_URL and LANGFLOW_API_KEY from the environment. Does three things:
+Reads LANGFLOW_BASE_URL and LANGFLOW_API_KEY from the environment. Does these things:
   1. Replaces the Tool Gateway's code with langflow/components/tool_gateway.py (adds the
-     approval-gated take_action and propose_memory).
+     approval-gated take_action and remember).
   2. Adds a Workspace Context node feeding the Agent's instructions, carrying the Agent's
      current prompt as its base, so the app's settings and confirmed memories reach the agent.
   3. Marks the per-run fields (workspace context, chat input files) as API-editable.
+  4. Removes Supermemory MCP nodes. One connection would be shared by every workspace; the
+     app keeps memory per workspace and member instead, and the agent saves via remember.
+  5. Replaces shared Composio MCP nodes (one account for everyone) with a Member Apps node
+     that opens a Composio session for the calling member only. It reads the Langflow
+     global variable COMPOSIO_API_KEY, which must be a Composio *project* key.
+  6. Installs Load Skill from langflow/components/load_skill.py if the flow has one.
+  7. Moves a literal Exa key into the Langflow global variable EXA_API_KEY.
+  8. Removes Python REPL nodes: they run code inside the Langflow server, next to every
+     tenant's keys. Pass --keep-python only if the server has LANGFLOW_SANDBOX_BACKEND set.
+     (Members' code runs in their own Composio workbench instead.)
 Then prints the LANGFLOW_TWEAKS value the app needs.
 
 --copy saves the result as a new flow instead of changing this one. --strip-apps (with
@@ -56,6 +66,84 @@ def main(argv):
         data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
         data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
 
+    def is_supermemory(n):
+        server = (n["data"].get("node", {}).get("template", {}).get("mcp_server") or {}).get("value") or {}
+        return isinstance(server, dict) and "supermemory" in json.dumps(server).lower()
+
+    drop = {n["data"]["id"] for n in data["nodes"] if is_supermemory(n)}
+    if drop:
+        print("removing shared Supermemory connection:", ", ".join(sorted(drop)))
+        data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
+        data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+
+    enc = lambda d: json.dumps(d, separators=(",", ":")).replace('"', "œ")
+
+    def connect(source_id, source_type, output, target_id, field, input_types, field_type):
+        source = {"dataType": source_type, "id": source_id, "name": output, "output_types": input_types}
+        target = {"fieldName": field, "id": target_id, "inputTypes": input_types, "type": field_type}
+        data["edges"].append({
+            "source": source_id,
+            "target": target_id,
+            "sourceHandle": enc(source),
+            "targetHandle": enc(target),
+            "data": {"sourceHandle": source, "targetHandle": target},
+            "id": f"xy-edge__{source_id}{enc(source)}-{target_id}{enc(target)}",
+            "selected": False,
+            "animated": False,
+            "className": "",
+        })
+
+    def mcp_url(n):
+        server = (n["data"].get("node", {}).get("template", {}).get("mcp_server") or {}).get("value") or {}
+        return json.dumps(server).lower() if isinstance(server, dict) else ""
+
+    gateway_id = gateway["data"]["id"]
+    shared = [n for n in data["nodes"] if n["data"].get("type") in ("MCPTools", "MCP") and "composio" in mcp_url(n)]
+    member_apps_id = None
+    if not strip and (shared or by_type("MemberApps")):
+        drop = {n["data"]["id"] for n in shared}
+        existing = by_type("MemberApps")
+        if existing:
+            drop.add(existing["data"]["id"])
+        if shared:
+            print("replacing shared Composio connection:", ", ".join(sorted(n["data"]["id"] for n in shared)))
+        anchor = (existing or shared[0])["position"]
+        data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
+        data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+        apps = call("POST", "/api/v1/custom_component", {"code": open(os.path.join(HERE, "components/composio_member.py")).read()})["data"]
+        apps["template"]["api_key"]["load_from_db"] = True
+        apps["template"]["api_key"]["value"] = "COMPOSIO_API_KEY"
+        for field in ("member_id", "toolkits"):
+            apps["template"][field]["api_editable"] = True
+        member_apps_id = "MemberApps-studio"
+        data["nodes"].append({
+            "id": member_apps_id,
+            "type": "genericNode",
+            "position": anchor,
+            "data": {"id": member_apps_id, "type": "MemberApps", "node": apps, "showNode": True},
+        })
+        connect(member_apps_id, "MemberApps", "tools", gateway_id, "tools", ["Tool"], "other")
+
+    if "--keep-python" not in argv:
+        drop = {n["data"]["id"] for n in data["nodes"] if n["data"].get("type") == "PythonREPLComponent"}
+        if drop:
+            print("removing in-process Python REPL:", ", ".join(sorted(drop)))
+            data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
+            data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+
+    load_skill = by_type("LoadSkill")
+    if load_skill:
+        load_skill["data"]["node"]["template"]["code"]["value"] = open(os.path.join(HERE, "components/load_skill.py")).read()
+
+    for n in data["nodes"]:
+        field = n["data"].get("node", {}).get("template", {}).get("exa_api_key")
+        if isinstance(field, dict) and field.get("value") and not field.get("load_from_db"):
+            names = {v["name"] for v in call("GET", "/api/v1/variables/")}
+            if "EXA_API_KEY" not in names:
+                call("POST", "/api/v1/variables/", {"name": "EXA_API_KEY", "value": field["value"], "type": "Credential", "default_fields": []})
+            field["value"], field["load_from_db"] = "EXA_API_KEY", True
+            print("moved the Exa key into the global variable EXA_API_KEY")
+
     gateway["data"]["node"]["template"]["code"]["value"] = open(os.path.join(HERE, "components/tool_gateway.py")).read()
     chat_input["data"]["node"]["template"]["files"]["api_editable"] = True
 
@@ -81,20 +169,7 @@ def main(argv):
     prompt_field["value"] = ""
     agent_id = agent["data"]["id"]
     data["edges"] = [e for e in data["edges"] if not (e["target"] == agent_id and e["data"]["targetHandle"]["fieldName"] == "system_prompt")]
-    source = {"dataType": "WorkspaceContext", "id": context_id, "name": "system_prompt", "output_types": ["Message"]}
-    target = {"fieldName": "system_prompt", "id": agent_id, "inputTypes": ["Message"], "type": "str"}
-    enc = lambda d: json.dumps(d, separators=(",", ":")).replace('"', "œ")
-    data["edges"].append({
-        "source": context_id,
-        "target": agent_id,
-        "sourceHandle": enc(source),
-        "targetHandle": enc(target),
-        "data": {"sourceHandle": source, "targetHandle": target},
-        "id": f"xy-edge__{context_id}{enc(source)}-{agent_id}{enc(target)}",
-        "selected": False,
-        "animated": False,
-        "className": "",
-    })
+    connect(context_id, "WorkspaceContext", "system_prompt", agent_id, "system_prompt", ["Message"], "str")
 
     if copy_name:
         result = call("POST", "/api/v1/flows/", {"name": copy_name, "data": data, "folder_id": flow.get("folder_id")})
@@ -104,6 +179,8 @@ def main(argv):
         print("updated flow", flow_id)
 
     tweaks = {context_id: {"workspace_context": "{{system_context}}"}, chat_input["data"]["id"]: {"files": "{{files}}"}}
+    if member_apps_id:
+        tweaks[member_apps_id] = {"member_id": "{{composio_user_id}}", "toolkits": "{{composio_toolkits}}"}
     print("\nSet in the app's environment:\nLANGFLOW_TWEAKS=" + json.dumps(tweaks, separators=(",", ":")))
 
 

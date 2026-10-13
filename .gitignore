@@ -35,3 +35,7 @@ langflow/backup-*.json
 
 # macOS
 .DS_Store
+
+# Vercel CLI link
+.vercel
+__pycache__/

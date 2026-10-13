@@ -57,15 +57,22 @@ export const TEMPLATE_VARIABLES = [
   "workspace_name",
   "user_id",
   "composio_user_id",
+  "composio_toolkits",
   "business_context",
   "agent_instructions",
   "memories",
   "system_context",
 ] as const;
 
-/** Langflow session id for a conversation: always namespaced by workspace. */
+/**
+ * Langflow session id for a conversation: `<workspace>.<member's Composio id>.<conversation>`.
+ * Namespaced by workspace so chat memory never mixes tenants. The member's Composio id is in
+ * it because the session id is the only per-run value Langflow 1.12 restores when a paused
+ * run resumes (tweaks are dropped), and the Member Apps node needs it then to rebuild that
+ * member's tools.
+ */
 export function langflowSessionId(tenant: AgentTenantContext, conversationId: string): string {
-  return `${tenant.workspaceId}.${conversationId}`;
+  return `${tenant.workspaceId}.${tenant.composioUserId}.${conversationId}`;
 }
 
 export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPLATE_VARIABLES)[number], string> {
@@ -74,7 +81,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
     `Business: ${tenant.workspaceName}`,
     tenant.businessContext.trim() && `About the business:\n${tenant.businessContext.trim()}`,
-    memories && `Things to remember (confirmed by the owner):\n${memories}`,
+    memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -83,6 +90,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     workspace_name: tenant.workspaceName,
     user_id: tenant.userId,
     composio_user_id: tenant.composioUserId,
+    composio_toolkits: JSON.stringify(tenant.composioToolkits),
     business_context: tenant.businessContext,
     agent_instructions: tenant.agentInstructions,
     memories,
@@ -282,7 +290,7 @@ export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
 
 /**
  * Memory suggestions come only from tool output that declares
- * `{ "memory_proposal": { "content", "scope" } }` (the Studio gateway's propose_memory).
+ * `{ "memory_proposal": { "content", "scope" } }` (the Studio gateway's remember tool).
  */
 export function toolMemoryProposals(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -731,7 +739,16 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               const final = resultMessage((data as { result?: unknown })?.result) ?? lastBot;
               const text = typeof final?.text === "string" ? withoutNotes(final.text, notes) : "";
               if (text && text !== shownText && !tokens) yield { type: "message", text };
-              if (final) yield* activityFor(final, lastBot?.id ?? final.id ?? "message");
+              if (final) {
+                yield* activityFor(final, lastBot?.id ?? final.id ?? "message");
+                // A suggestion made right before the end may only arrive in the result message.
+                for (const p of toolMemoryProposals(final)) {
+                  if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {
+                    seenProposals.add(p.content);
+                    yield p;
+                  }
+                }
+              }
               return;
             }
           }

@@ -7,7 +7,8 @@ import { ConnectionsList } from "./connections-list";
 
 interface Props {
   initialSettings: WorkspaceSettings;
-  initialMemories: Memory[];
+  /** null when memory isn't available (not set up, or couldn't be reached). */
+  initialMemories: Memory[] | null;
   usage: UsageSummary;
   canEdit: boolean;
   email: string | null;
@@ -20,7 +21,7 @@ export function SettingsView({ initialSettings, initialMemories, usage, canEdit,
   return (
     <div className="mt-10 space-y-14">
       <BusinessSection initial={initialSettings} canEdit={canEdit} />
-      <MemorySection initial={initialMemories} />
+      <MemorySection initial={initialMemories} isOwner={canEdit} />
       <Section title="Connected apps" description="Apps the agent can use on your behalf. Your connections are private to you.">
         <ConnectionsList returnTo="/settings" />
       </Section>
@@ -165,8 +166,8 @@ function BusinessSection({ initial, canEdit }: { initial: WorkspaceSettings; can
   );
 }
 
-function MemorySection({ initial }: { initial: Memory[] }) {
-  const [memories, setMemories] = useState(initial);
+function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner: boolean }) {
+  const [memories, setMemories] = useState(initial ?? []);
   const [content, setContent] = useState("");
   const [scope, setScope] = useState<Memory["scope"]>("workspace");
   const [error, setError] = useState<string | null>(null);
@@ -195,15 +196,24 @@ function MemorySection({ initial }: { initial: Memory[] }) {
   async function remove(id: string) {
     const previous = memories;
     setMemories((list) => list.filter((m) => m.id !== id));
-    const res = await fetch(`/api/workspace/memories/${id}`, { method: "DELETE" });
-    if (!res.ok) setMemories(previous);
+    setError(null);
+    const res = await fetch(`/api/workspace/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) {
+      setMemories(previous);
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      setError(body?.error ?? "Couldn't remove that. Try again.");
+    }
   }
 
   return (
     <Section
       title="Memory"
-      description="Facts the agent should always keep in mind. Workspace memory is shared with members; personal memory is only yours."
+      description="What the agent remembers. It picks things up as you talk, and you can add or remove them here. Workspace memory is shared with members; personal memory is only yours."
     >
+      {initial === null ? (
+        <p className="text-[13.5px] text-fg-3">Memory isn't available right now.</p>
+      ) : (
+        <>
       <form onSubmit={add} className="rounded-xl border border-line bg-surface p-2 shadow-composer transition-colors focus-within:border-line-strong">
         <label htmlFor="memory" className="sr-only">
           New memory
@@ -257,17 +267,21 @@ function MemorySection({ initial }: { initial: Memory[] }) {
               {m.scope === "personal" ? (
                 <span className="mt-0.5 shrink-0 rounded-full border border-line px-2 py-0.5 text-[11.5px] text-fg-3">Only me</span>
               ) : null}
-              <button
-                type="button"
-                onClick={() => remove(m.id)}
-                aria-label="Forget this"
-                className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-3 opacity-0 transition-opacity group-hover/memory:opacity-100 hover:bg-hover hover:text-danger focus-visible:opacity-100 max-md:opacity-100"
-              >
-                <Trash2 size={14} />
-              </button>
+              {m.mine || isOwner ? (
+                <button
+                  type="button"
+                  onClick={() => remove(m.id)}
+                  aria-label="Forget this"
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-3 opacity-0 transition-opacity group-hover/memory:opacity-100 hover:bg-hover hover:text-danger focus-visible:opacity-100 max-md:opacity-100"
+                >
+                  <Trash2 size={14} />
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
+      )}
+        </>
       )}
     </Section>
   );

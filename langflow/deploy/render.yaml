@@ -1,0 +1,33 @@
+# Render Blueprint: Langflow web service + managed Postgres.
+# In Render: New > Blueprint, pick this repo, set Blueprint Path to langflow/deploy/render.yaml.
+services:
+  - type: web
+    name: studio-langflow
+    runtime: docker
+    dockerfilePath: ./langflow/deploy/Dockerfile
+    dockerContext: ./langflow/deploy
+    plan: standard # 2 GB RAM; Langflow needs at least 1 GB. Disks need a paid plan.
+    healthCheckPath: /health
+    autoDeploy: false
+    disk:
+      name: langflow-config
+      mountPath: /app/data/langflow
+      sizeGB: 1
+    envVars:
+      - key: LANGFLOW_DATABASE_URL
+        fromDatabase:
+          name: studio-langflow-db
+          property: connectionString
+      - key: LANGFLOW_SECRET_KEY
+        generateValue: true # generated once, kept across deploys
+      - key: LANGFLOW_SUPERUSER
+        sync: false # prompted on first deploy
+      - key: LANGFLOW_SUPERUSER_PASSWORD
+        sync: false
+
+databases:
+  - name: studio-langflow-db
+    databaseName: langflow
+    user: langflow
+    plan: basic-256mb
+    ipAllowList: [] # internal connections only

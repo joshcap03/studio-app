@@ -145,7 +145,7 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
   const gatewayError = typeof result === "string" ? gatewayFailure(result) : undefined;
   const interpretation = interpret(call.name, input, result);
   if (typeof result === "string" && NEEDS_APPROVAL.test(result.trim())) {
-    return { index, label: interpretation.labels.running, status: "done", app: interpretation.app, action: interpretation.action, hidden: true };
+    return { index, label: withoutRepeats(interpretation.labels.running), status: "done", app: interpretation.app, action: interpretation.action, hidden: true };
   }
   const envelope = composioEnvelope(result);
   const errorText =
@@ -158,13 +158,14 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
 
   // The agent's own plain-language description of this step, when it gave one.
   const narration = typeof input.current_step === "string" ? narrate(input.current_step) : undefined;
-  const label =
+  const label = withoutRepeats(
     narration ??
     (status === "running"
       ? interpretation.labels.running
       : status === "failed"
         ? interpretation.labels.failed ?? `${interpretation.labels.running} didn't work`
-        : interpretation.labels.done);
+        : interpretation.labels.done),
+  );
 
   return {
     index,
@@ -242,9 +243,10 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
       };
     case "load_skill":
       return { labels: { running: "Checking a playbook", done: "Checked a playbook" }, app: "agent", action: "read", hidden: true };
+    case "remember":
     case "propose_memory":
-      // The suggestion itself is shown as its own card to confirm.
-      return { labels: { running: "Noting something to remember", done: "Suggested something to remember" }, app: "memory", action: "remember", hidden: true };
+      // What was remembered is shown on its own line under the reply, with an Undo.
+      return { labels: { running: "Noting something to remember", done: "Remembered something" }, app: "memory", action: "remember", hidden: true };
   }
   const words = humanize(name);
   return { labels: { running: `Using ${words}`, done: `Used ${words}` }, app: "agent", action: "other" };
@@ -325,20 +327,32 @@ function code(name: string, input: Record<string, unknown>, result: unknown): In
 }
 
 function connections(name: string, input: Record<string, unknown>, result: unknown): Interpretation {
-  const toolkits = Array.isArray(input.toolkits) ? input.toolkits.filter(isRecord) : [];
-  const toolkit = toolkits.map((t) => firstString(t, ["name", "toolkit", "slug"])).find(Boolean);
-  const app = toolkit ? appForToolkit(toolkit) : "agent";
-  const where = toolkit ? appName(app) : "your apps";
+  // Composio takes toolkits as plain names (["gmail"]) or as records ({ name: "gmail", … }).
+  const toolkits = (Array.isArray(input.toolkits) ? input.toolkits : [])
+    .map((t) => (typeof t === "string" ? t.trim() : isRecord(t) ? firstString(t, ["name", "toolkit", "slug"]) : undefined))
+    .filter((t): t is string => !!t);
+  const apps = [...new Set(toolkits.map((t) => appForToolkit(t)))];
+  const app: AppId = apps.length === 1 ? apps[0] : "agent";
+  const names = apps.map((a) => appName(a));
+  const where = names.length === 0 ? undefined : names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   const envelope = composioEnvelope(result);
   const link = findUrl(envelope?.data, /redirect|connect|auth|link/i);
   if (name === "composio_wait_for_connections") {
-    return { labels: { running: `Waiting for you to connect ${where}`, done: `${where} connected` }, app, action: "connect" };
+    return {
+      labels: where
+        ? { running: `Waiting for you to connect ${where}`, done: `${where} connected`, failed: `Couldn't confirm ${where} is connected` }
+        : { running: "Waiting for you to connect your apps", done: "Your apps are connected", failed: "Couldn't confirm your apps are connected" },
+      app,
+      action: "connect",
+    };
   }
   return {
-    labels: { running: `Checking your ${where} connection`, done: `Checked your ${where} connection` },
+    labels: where
+      ? { running: `Connecting ${where}`, done: link ? `Got a link to connect ${where}` : `Checked the ${where} connection${names.length > 1 ? "s" : ""}`, failed: `Couldn't connect ${where}` }
+      : { running: "Checking your app connections", done: link ? "Got a link to connect your apps" : "Checked your app connections", failed: "Couldn't check your app connections" },
     app,
     action: "connect",
-    preview: link ? { type: "link", url: link, title: `Connect ${where}` } : undefined,
+    preview: link ? { type: "link", url: link, title: where ? `Connect ${where}` : "Connect your apps" } : undefined,
   };
 }
 
@@ -722,6 +736,18 @@ export function humanReason(raw: string): string {
     return "Something went wrong on the app's side.";
   }
   return clip(reason, 200);
+}
+
+/**
+ * Collapses an accidentally repeated word ("Checking your your apps") left by a template
+ * filled with a phrase that already carries it. Applied to every label.
+ */
+export function withoutRepeats(label: string): string {
+  // Quoted text (a search query, a page title) is the user's or the source's own words: kept.
+  return label
+    .split(/(“[^”]*”)/)
+    .map((part) => (part.startsWith("“") ? part : part.replace(/\b([\p{L}']+)(\s+\1\b)+/giu, "$1")))
+    .join("");
 }
 
 /**

@@ -55,6 +55,11 @@ export interface TurnDeps {
   loadAttachment?: (attachment: StoredAttachment) => Promise<Blob>;
   /** Loads a skill from the caller's workspace, for retrying or editing a message sent with one. */
   loadSkill?: (id: string) => Promise<TurnSkill | null>;
+  /**
+   * Saves a fact the agent chose to remember, in the caller's own memory, and returns its
+   * id. Without it, suggestions wait for the member to save them.
+   */
+  remember?: (content: string, scope: MemoryProposal["scope"]) => Promise<string>;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -283,6 +288,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const artifacts: Artifact[] = [...assistant.artifacts];
       const approvals: Approval[] = [...(assistant.approvals ?? [])];
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
+      const remembering: Promise<void>[] = [];
       let status: MessageStatus = "complete";
       let error: string | null = null;
       let paused = false;
@@ -377,7 +383,25 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               if (!text || proposals.length >= MAX_PROPOSALS || proposals.some((p) => p.content === text)) break;
               const proposal: MemoryProposal = { id: crypto.randomUUID(), content: text, scope: event.scope, status: "pending" };
               proposals.push(proposal);
-              send({ type: "memory-proposal", proposal });
+              if (!deps.remember) {
+                send({ type: "memory-proposal", proposal });
+                break;
+              }
+              // Saved straight away (the member can undo it); the reply keeps streaming meanwhile.
+              // If saving fails, it stays a suggestion the member can save themselves.
+              remembering.push(
+                deps.remember(text, event.scope).then(
+                  (memoryId) => {
+                    const saved: MemoryProposal = { ...proposal, status: "saved", memoryId };
+                    proposals[proposals.findIndex((p) => p.id === proposal.id)] = saved;
+                    send({ type: "memory-proposal", proposal: saved });
+                  },
+                  (e) => {
+                    console.error("[turn] couldn't save a memory", e);
+                    send({ type: "memory-proposal", proposal });
+                  },
+                ),
+              );
               break;
             }
             case "approval": {
@@ -438,6 +462,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           activity[i] = { ...s, status: ok ? "done" : "failed", detail: s.detail ?? (decided!.status === "declined" ? "You declined this." : undefined), endedAt: at };
         });
       }
+      await Promise.all(remembering);
       await saving;
       let updated = summary;
       try {

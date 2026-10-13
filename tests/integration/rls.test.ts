@@ -139,6 +139,18 @@ describe("row level security", () => {
     expect(own.error).toBeNull();
   });
 
+  it("answers the service-wide cap with a yes/no, never other tenants' rows", async () => {
+    const run = await alice.client.from("usage_events").insert({ workspace_id: aliceWs, user_id: alice.userId, kind: "agent_run" });
+    expect(run.error).toBeNull();
+    // Bob can't see Alice's run, but it counts toward the service-wide cap.
+    const visible = await bob.client.from("usage_events").select("id").eq("workspace_id", aliceWs);
+    expect(visible.data).toEqual([]);
+    const atOne = await bob.client.rpc("service_runs_at_limit", { p_limit: 1 });
+    expect(atOne).toMatchObject({ error: null, data: true });
+    const roomy = await bob.client.rpc("service_runs_at_limit", { p_limit: 1_000_000 });
+    expect(roomy).toMatchObject({ error: null, data: false });
+  });
+
   it("limits how many workspaces one account can create", async () => {
     await createWorkspace(bob, "Second");
     await createWorkspace(bob, "Third");
@@ -153,6 +165,8 @@ describe("row level security", () => {
     expect(read.data ?? []).toEqual([]);
     const rpc = await anon.rpc("create_workspace", { p_name: "anon" });
     expect(rpc.error).not.toBeNull();
+    const cap = await anon.rpc("service_runs_at_limit", { p_limit: 1 });
+    expect(cap.error).not.toBeNull();
   });
 });
 

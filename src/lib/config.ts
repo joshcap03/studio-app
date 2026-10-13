@@ -44,9 +44,14 @@ const schema = z.object({
   COMPOSIO_API_KEY: z.string().optional(),
   COMPOSIO_TOOLKITS: jsonRecord,
 
+  SUPERMEMORY_API_KEY: z.string().optional(),
+  SUPERMEMORY_BASE_URL: z.url().default("https://api.supermemory.ai"),
+
   LIMIT_RUNS_PER_MINUTE: z.coerce.number().int().positive().default(10),
   LIMIT_RUNS_PER_WORKSPACE_PER_DAY: z.coerce.number().int().positive().default(200),
   LIMIT_CONCURRENT_RUNS: z.coerce.number().int().positive().default(2),
+  // Agent runs per day across every workspace. Unset means no service-wide cap.
+  LIMIT_RUNS_SERVICE_PER_DAY: z.coerce.number().int().positive().optional(),
 });
 
 const toolkitSchema = z.record(
@@ -79,7 +84,9 @@ export interface AppConfig {
     };
   };
   composio?: { apiKey: string; toolkits: ToolkitConfig[] };
-  limits: { runsPerMinute: number; runsPerWorkspacePerDay: number; concurrentRuns: number };
+  /** Long-term memory. Unset means the agent remembers nothing between conversations. */
+  supermemory?: { apiKey: string; baseUrl: string };
+  limits: { runsPerMinute: number; runsPerWorkspacePerDay: number; concurrentRuns: number; runsServicePerDay?: number };
 }
 
 let cached: AppConfig | undefined;
@@ -131,10 +138,12 @@ export function getConfig(): AppConfig {
       langflow,
     },
     composio,
+    supermemory: env.SUPERMEMORY_API_KEY ? { apiKey: env.SUPERMEMORY_API_KEY, baseUrl: env.SUPERMEMORY_BASE_URL } : undefined,
     limits: {
       runsPerMinute: env.LIMIT_RUNS_PER_MINUTE,
       runsPerWorkspacePerDay: env.LIMIT_RUNS_PER_WORKSPACE_PER_DAY,
       concurrentRuns: env.LIMIT_CONCURRENT_RUNS,
+      runsServicePerDay: env.LIMIT_RUNS_SERVICE_PER_DAY,
     },
   };
   return cached;

@@ -9,6 +9,7 @@ import { getConfig } from "@/lib/config";
 import { getSkill } from "@/lib/skills";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
+import { memoryEnabled, remember } from "@/lib/memory";
 import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
 
 // Starts a turn and streams it back as NDJSON (one StreamEvent per line). Creating the
@@ -16,6 +17,9 @@ import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
 // workspace, user, and agent context all come from the session, never from the request.
 
 export const dynamic = "force-dynamic";
+// The run streams inside this request. On Vercel this is the most the Hobby plan allows;
+// raise it (up to 800) on Pro. A run cut off here shows as interrupted, with a retry.
+export const maxDuration = 300;
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -67,7 +71,8 @@ export async function POST(request: NextRequest, { params }: Context) {
       {
         store,
         adapter: getAgentAdapter(),
-        context: await buildAgentContext(tenant),
+        context: await buildAgentContext(tenant, "text" in input ? input.text : undefined),
+        remember: memoryEnabled() ? async (content, scope) => (await remember(tenant, content, scope)).id : undefined,
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
         loadAttachment: (attachment) => readAttachment(tenant, attachment),
         loadSkill,

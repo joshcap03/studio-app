@@ -3,7 +3,7 @@
 import { ArrowRight } from "lucide-react";
 import { useState } from "react";
 
-type Mode = "signin" | "signup";
+type Mode = "signin" | "signup" | "forgot";
 
 const COPY: Record<Mode, { title: string; subtitle: string; submit: string; switchText: string; switchAction: string }> = {
   signin: {
@@ -20,7 +20,16 @@ const COPY: Record<Mode, { title: string; subtitle: string; submit: string; swit
     switchText: "Already have an account?",
     switchAction: "Sign in",
   },
+  forgot: {
+    title: "Reset your password",
+    subtitle: "We'll email you a link to choose a new one.",
+    submit: "Send reset link",
+    switchText: "Remembered it?",
+    switchAction: "Sign in",
+  },
 };
+
+const ENDPOINT: Record<Mode, string> = { signin: "/api/auth/signin", signup: "/api/auth/signup", forgot: "/api/auth/reset" };
 
 export function AuthForm({ destination, initialMode, notice }: { destination: string; initialMode: Mode; notice: string | null }) {
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -37,10 +46,10 @@ export function AuthForm({ destination, initialMode, notice }: { destination: st
     setPending(true);
     setError(null);
     try {
-      const res = await fetch(mode === "signin" ? "/api/auth/signin" : "/api/auth/signup", {
+      const res = await fetch(ENDPOINT[mode], {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(mode === "forgot" ? { email } : { email, password }),
       });
       const body = (await res.json().catch(() => null)) as { error?: string; confirmEmail?: boolean } | null;
       if (!res.ok) {
@@ -48,7 +57,7 @@ export function AuthForm({ destination, initialMode, notice }: { destination: st
         setPending(false);
         return;
       }
-      if (body?.confirmEmail) {
+      if (mode === "forgot" || body?.confirmEmail) {
         setCheckEmail(true);
         setPending(false);
         return;
@@ -65,7 +74,15 @@ export function AuthForm({ destination, initialMode, notice }: { destination: st
       <div className="mt-10 animate-fade-up">
         <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">Check your email</h1>
         <p className="mt-2 text-[14px] leading-relaxed text-fg-2">
-          We sent a confirmation link to <span className="font-medium text-fg">{email}</span>. Follow it to finish setting up.
+          {mode === "forgot" ? (
+            <>
+              If <span className="font-medium text-fg">{email}</span> has an account, we sent it a link to choose a new password.
+            </>
+          ) : (
+            <>
+              We sent a confirmation link to <span className="font-medium text-fg">{email}</span>. Follow it to finish setting up.
+            </>
+          )}
         </p>
       </div>
     );
@@ -96,22 +113,38 @@ export function AuthForm({ destination, initialMode, notice }: { destination: st
             placeholder="you@business.com"
           />
         </div>
-        <div>
-          <label htmlFor="password" className="text-[13px] font-medium text-fg-2">
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete={mode === "signin" ? "current-password" : "new-password"}
-            required
-            minLength={mode === "signup" ? 10 : undefined}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={`mt-1.5 ${field}`}
-            placeholder={mode === "signup" ? "At least 10 characters" : ""}
-          />
-        </div>
+        {mode !== "forgot" && (
+          <div>
+            <div className="flex items-baseline justify-between">
+              <label htmlFor="password" className="text-[13px] font-medium text-fg-2">
+                Password
+              </label>
+              {mode === "signin" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("forgot");
+                    setError(null);
+                  }}
+                  className="text-[12.5px] text-fg-3 underline-offset-4 hover:text-fg hover:underline"
+                >
+                  Forgot password?
+                </button>
+              )}
+            </div>
+            <input
+              id="password"
+              type="password"
+              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              required
+              minLength={mode === "signup" ? 10 : undefined}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={`mt-1.5 ${field}`}
+              placeholder={mode === "signup" ? "At least 10 characters" : ""}
+            />
+          </div>
+        )}
 
         <p role="alert" className="min-h-5 text-[13px] text-danger">
           {error}
@@ -119,7 +152,7 @@ export function AuthForm({ destination, initialMode, notice }: { destination: st
 
         <button
           type="submit"
-          disabled={!email || !password || pending}
+          disabled={!email || (mode !== "forgot" && !password) || pending}
           className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-inverse text-[14px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-30"
         >
           {pending ? <span className="spinner border-on-inverse/30 border-t-on-inverse" /> : copy.submit}

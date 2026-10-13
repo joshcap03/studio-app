@@ -42,7 +42,7 @@ export const api = {
     }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   stopRun: (id: string) => request<void>(`/api/conversations/${id}/stop`, { method: "POST" }),
-  decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss") =>
+  decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss" | "undo") =>
     request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {
       method: "POST",
       body: JSON.stringify({ decision }),

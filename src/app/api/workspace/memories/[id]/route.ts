@@ -1,16 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
 import { errorResponse } from "@/lib/api";
+import { forget, memoryEnabled, parseMemoryId } from "@/lib/memory";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
-import { deleteMemory } from "@/lib/workspace";
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
-  const id = z.uuid().safeParse((await params).id);
-  if (!id.success) return jsonError(404, "Memory not found.");
+  if (!memoryEnabled()) return jsonError(503, "Memory isn't set up for this app yet.");
+  const id = decodeURIComponent((await params).id);
+  if (!parseMemoryId(id)) return jsonError(404, "Memory not found.");
   try {
-    if (!(await deleteMemory(auth.value, id.data))) return jsonError(404, "Memory not found.");
+    if (!(await forget(auth.value, id))) return jsonError(404, "Memory not found.");
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return errorResponse(error);

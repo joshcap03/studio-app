@@ -32,7 +32,9 @@ raw/technical text.
 - `supabase/migrations/`: schema, RLS policies, RPCs. Append new migrations; never edit applied ones.
 - `src/lib/tenant.ts`: session → user → active workspace (membership-checked). The only source of identity.
 - `src/lib/db/store.ts`: conversation persistence, scoped to one workspace + user.
-- `src/lib/workspace.ts`: settings, memory, usage/limits, and the per-run agent context.
+- `src/lib/workspace.ts`: settings, usage/limits, and the per-run agent context.
+- `src/lib/memory.ts`: long-term memory in Supermemory, namespaced per workspace and per member
+  from the session. The flow must not have its own memory connection.
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
   composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
   sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to.
@@ -41,7 +43,8 @@ raw/technical text.
 - `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
-  Context) and `install.py`, which backs up a flow and installs them.
+  Context, Member Apps for per-member Composio tools, Load Skill) and `install.py`, which
+  backs up a flow and installs them.
 - `src/app/`: pages (`(workspace)`, `login`, `onboarding`, `settings`) and `api/` routes.
 - `src/components/`: `workspace/` (chat state owner), `chat/`, `sidebar/`, `settings/`, `ui/`.
 
@@ -55,6 +58,9 @@ raw/technical text.
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
 - Never hardcode a business into agent or app logic; per-workspace
   settings carry business specifics.
+- The flow is shared by every tenant: nothing in it may hold one tenant's connections or
+  memory (per-member values arrive through tweaks), and no tool may run code in the
+  Langflow server process.
 - Anything the agent does that changes a member's accounts must pause for their approval
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
   the member's behalf. Provider resume state stays server-side.
@@ -64,3 +70,13 @@ raw/technical text.
 - Navigation in the chat shell is client-side history with the path in `Workspace` state.
 - Design tokens live in `src/app/globals.css`; use the token utilities, not raw colors.
 - Don't add dependencies without need.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

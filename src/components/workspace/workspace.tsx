@@ -17,6 +17,7 @@ import type {
   Attachment,
   ChatMessage,
   ConversationSummary,
+  MemoryProposal,
   MessageSkill,
   StreamEvent,
   WorkspaceSkill,
@@ -285,7 +286,11 @@ export function Workspace({
             patchMessage(conversationId, assistantId, (m) => ({ ...m, approvals: [...(m.approvals ?? []), event.approval] }));
             break;
           case "memory-proposal":
-            patchMessage(conversationId, assistantId, (m) => ({ ...m, memoryProposals: [...(m.memoryProposals ?? []), event.proposal] }));
+            patchMessage(conversationId, assistantId, (m) => {
+              const list = m.memoryProposals ?? [];
+              const known = list.some((p) => p.id === event.proposal.id);
+              return { ...m, memoryProposals: known ? list.map((p) => (p.id === event.proposal.id ? event.proposal : p)) : [...list, event.proposal] };
+            });
             break;
           case "end":
             cancelAnimationFrame(frame);
@@ -436,21 +441,26 @@ export function Workspace({
     [activeId, patchMessages, runTurn, running],
   );
 
-  /** Saves or dismisses a memory the agent suggested. */
+  /** Undoes a memory the agent saved, or saves or dismisses one that wasn't saved. */
   const answerProposal = useCallback(
-    (messageId: string, proposalId: string, decision: "save" | "dismiss") => {
+    (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => {
       if (!activeId) return;
       const conversationId = activeId;
-      const setStatus = (status: "pending" | "saved" | "dismissed") =>
+      const previous = threadsRef.current[conversationId]?.messages.find((m) => m.id === messageId)?.memoryProposals?.find((p) => p.id === proposalId);
+      if (!previous) return;
+      const put = (proposal: MemoryProposal) =>
         patchMessage(conversationId, messageId, (m) => ({
           ...m,
-          memoryProposals: m.memoryProposals?.map((p) => (p.id === proposalId ? { ...p, status } : p)),
+          memoryProposals: m.memoryProposals?.map((p) => (p.id === proposalId ? proposal : p)),
         }));
-      setStatus(decision === "save" ? "saved" : "dismissed");
-      api.decideProposal(conversationId, proposalId, decision).catch((error: unknown) => {
-        setStatus("pending");
-        setNotice(error instanceof ApiError ? error.message : "Couldn't save that. Try again.");
-      });
+      put({ ...previous, status: decision === "save" ? "saved" : "dismissed" });
+      api
+        .decideProposal(conversationId, proposalId, decision)
+        .then(({ proposal }) => put(proposal))
+        .catch((error: unknown) => {
+          put(previous);
+          setNotice(error instanceof ApiError ? error.message : "Couldn't update memory. Try again.");
+        });
     },
     [activeId, patchMessage],
   );

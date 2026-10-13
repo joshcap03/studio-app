@@ -70,7 +70,7 @@ const SCENARIOS: Scenario[] = [
       { kind: "remember", content: "Casting Co invoices are due net 30." },
       {
         kind: "text",
-        text: "Got it. I suggested saving that to this workspace's memory so I'll know it next time. Confirm it below if it's right.",
+        text: "Got it. I'll remember that for next time.",
       },
     ],
   },

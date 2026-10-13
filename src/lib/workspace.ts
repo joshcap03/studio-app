@@ -1,10 +1,12 @@
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
+import { recall } from "@/lib/memory";
 import type { Tenant } from "@/lib/tenant";
-import type { Memory, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import type { UsageSummary, WorkspaceSettings } from "@/lib/types";
 
-// Workspace-level data: settings, memory, and usage. All reads and writes go through the
-// tenant's RLS-bound client and are filtered by the tenant's workspace id.
+// Workspace-level data: settings, usage, and the per-run agent context. All reads and writes
+// go through the tenant's RLS-bound client and are filtered by the tenant's workspace id.
+// Memory lives in Supermemory (src/lib/memory.ts).
 
 function check<T>(result: { data: T; error: { message: string; code?: string; hint?: string } | null }): T {
   if (result.error) throw Object.assign(new Error(result.error.message), { code: result.error.code, hint: result.error.hint });
@@ -46,63 +48,6 @@ export async function updateSettings(tenant: Tenant, patch: Partial<WorkspaceSet
   return getSettings(tenant);
 }
 
-interface MemoryRow {
-  id: string;
-  content: string;
-  user_id: string | null;
-  created_by: string;
-  created_at: string;
-}
-
-export async function listMemories(tenant: Tenant, limit = 200): Promise<Memory[]> {
-  const rows = check(
-    await tenant.db
-      .from("memories")
-      .select("id, content, user_id, created_by, created_at")
-      .eq("workspace_id", tenant.workspace.id)
-      .order("created_at", { ascending: false })
-      .limit(limit),
-  ) as MemoryRow[];
-  return rows.map((r) => ({
-    id: r.id,
-    content: r.content,
-    scope: r.user_id ? "personal" : "workspace",
-    createdAt: Date.parse(r.created_at),
-    mine: r.created_by === tenant.userId,
-  }));
-}
-
-export async function addMemory(tenant: Tenant, content: string, scope: Memory["scope"]): Promise<Memory> {
-  const { count, error } = await tenant.db
-    .from("memories")
-    .select("id", { count: "exact", head: true })
-    .eq("workspace_id", tenant.workspace.id);
-  if (error) throw new Error(error.message);
-  if ((count ?? 0) >= MAX_MEMORIES) {
-    throw Object.assign(new Error(`A workspace can hold up to ${MAX_MEMORIES} memories. Remove some first.`), { status: 409 });
-  }
-  const row = check(
-    await tenant.db
-      .from("memories")
-      .insert({
-        workspace_id: tenant.workspace.id,
-        content,
-        created_by: tenant.userId,
-        user_id: scope === "personal" ? tenant.userId : null,
-      })
-      .select("id, content, user_id, created_by, created_at")
-      .single(),
-  ) as MemoryRow;
-  return { id: row.id, content: row.content, scope, createdAt: Date.parse(row.created_at), mine: true };
-}
-
-export async function deleteMemory(tenant: Tenant, id: string): Promise<boolean> {
-  const rows = check(
-    await tenant.db.from("memories").delete().eq("id", id).eq("workspace_id", tenant.workspace.id).select("id"),
-  ) as { id: string }[];
-  return rows.length > 0;
-}
-
 export async function getUsage(tenant: Tenant): Promise<UsageSummary> {
   const { limits } = getConfig();
   const snapshot = await usageSnapshot(tenant);
@@ -140,6 +85,9 @@ export async function checkRunLimits(tenant: Tenant): Promise<string | null> {
   if (usage.workspaceToday >= limits.runsPerWorkspacePerDay) {
     return "This workspace has reached today's message limit. It resets at midnight UTC.";
   }
+  if (limits.runsServicePerDay && check(await tenant.db.rpc("service_runs_at_limit", { p_limit: limits.runsServicePerDay }))) {
+    return "Studio is at capacity for today. Try again tomorrow.";
+  }
   return null;
 }
 
@@ -147,30 +95,22 @@ export async function recordRun(tenant: Tenant): Promise<void> {
   check(await tenant.db.from("usage_events").insert({ workspace_id: tenant.workspace.id, user_id: tenant.userId, kind: "agent_run" }));
 }
 
-const MEMORY_BUDGET = 6000;
-const MAX_MEMORIES = 500;
-
 /**
  * Everything the agent may know about this tenant for one run. Built fresh per run from
  * the caller's own session, so it can only ever contain this workspace's settings, this
- * workspace's shared memory, and this member's personal memory and connection id.
+ * workspace's shared memory, and this member's personal memory and connection id. `query`
+ * (the member's message) pulls in memories that match it.
  */
-export async function buildAgentContext(tenant: Tenant): Promise<AgentTenantContext> {
-  const [settings, memories] = await Promise.all([getSettings(tenant), listMemories(tenant, 100)]);
-  const included: string[] = [];
-  let used = 0;
-  for (const m of memories) {
-    if (used + m.content.length > MEMORY_BUDGET) break;
-    included.push(m.content);
-    used += m.content.length;
-  }
+export async function buildAgentContext(tenant: Tenant, query?: string): Promise<AgentTenantContext> {
+  const [settings, memories] = await Promise.all([getSettings(tenant), recall(tenant, query)]);
   return {
     workspaceId: tenant.workspace.id,
     workspaceName: settings.name,
     userId: tenant.userId,
     composioUserId: tenant.composioUserId,
+    composioToolkits: Object.fromEntries((getConfig().composio?.toolkits ?? []).map((t) => [t.slug, t.authConfigId])),
     businessContext: settings.businessContext,
     agentInstructions: settings.agentInstructions,
-    memories: included,
+    memories,
   };
 }

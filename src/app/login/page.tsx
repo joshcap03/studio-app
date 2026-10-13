@@ -22,7 +22,13 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <AuthForm
           destination={destination}
           initialMode={mode === "signup" ? "signup" : "signin"}
-          notice={error === "confirm" ? "That confirmation link is invalid or expired. Sign in or create the account again." : null}
+          notice={
+            error === "confirm"
+              ? "That confirmation link is invalid or expired. Sign in or create the account again."
+              : error === "reset"
+                ? "That reset link is invalid or expired. Request a new one."
+                : null
+          }
         />
       </div>
     </main>

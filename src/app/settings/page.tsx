@@ -2,14 +2,21 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { SettingsView } from "@/components/settings/settings-view";
 import { requirePageTenant } from "@/lib/tenant";
-import { getSettings, getUsage, listMemories } from "@/lib/workspace";
+import { listMemories, memoryEnabled } from "@/lib/memory";
+import { getSettings, getUsage } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const tenant = await requirePageTenant();
-  const [settings, memories, usage] = await Promise.all([getSettings(tenant), listMemories(tenant), getUsage(tenant)]);
+  const memories = memoryEnabled()
+    ? listMemories(tenant).catch((error) => {
+        console.error("[settings] memory unavailable", error);
+        return null;
+      })
+    : Promise.resolve(null);
+  const [settings, initialMemories, usage] = await Promise.all([getSettings(tenant), memories, getUsage(tenant)]);
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
@@ -25,7 +32,7 @@ export default async function SettingsPage() {
         <p className="mt-1 text-[14px] text-fg-3">Workspace settings</p>
         <SettingsView
           initialSettings={settings}
-          initialMemories={memories}
+          initialMemories={initialMemories}
           usage={usage}
           canEdit={tenant.workspace.role === "owner"}
           email={tenant.email}

@@ -62,6 +62,18 @@ export function ConnectionsList({ returnTo }: { returnTo: "/onboarding" | "/sett
     );
   }
 
+  if (state && state.toolkits.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-line-strong px-4 py-5 text-[14px] text-fg-2">
+        <p className="font-medium text-fg">No apps connected yet.</p>
+        <p className="mt-1 text-fg-3">
+          Ask the agent to use an app (&quot;check my Gmail&quot;) and it will send you a link to connect it. Your connections stay
+          private to you.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
