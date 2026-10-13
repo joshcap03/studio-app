@@ -20,6 +20,25 @@ export interface AgentTenantContext {
   memories: string[];
 }
 
+/** A file the member attached to the message being answered. */
+export interface AgentAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  /** Loads the file (from the member's own storage, under their session). */
+  read(): Promise<Blob>;
+}
+
+/** Continue a run the provider paused for approval. */
+export interface AgentResume {
+  decision: "approve" | "reject";
+  /** Told to the agent along with a decline. */
+  note?: string;
+  /** The provider's own state from the `approval` event that paused the run. */
+  state: unknown;
+}
+
 export interface AgentRunInput {
   /** This app's conversation id. Adapters derive provider thread ids from it plus the tenant. */
   conversationId: string;
@@ -29,6 +48,10 @@ export interface AgentRunInput {
   /** Prior completed turns, oldest first, for providers that don't keep their own history. */
   history: { role: "user" | "assistant"; content: string }[];
   tenant: AgentTenantContext;
+  /** Files attached to `message`. Empty for providers without `attachments`. */
+  attachments: AgentAttachment[];
+  /** Set when this run continues a paused one instead of answering `message` afresh. */
+  resume?: AgentResume;
   /** Aborted when the user stops generation or disconnects. Adapters must honor it. */
   signal: AbortSignal;
 }
@@ -55,7 +78,14 @@ export type AgentEvent =
       hidden?: boolean;
     }
   /** A structured output the provider produced. */
-  | { type: "artifact"; artifact: Artifact };
+  | { type: "artifact"; artifact: Artifact }
+  /**
+   * The run paused before an action that needs the member's approval. The adapter ends the
+   * run after this event; the app stores `state` and passes it back in `resume`.
+   */
+  | { type: "approval"; summary: string; app?: string; details: [string, string][]; state: unknown }
+  /** The agent suggested a fact to remember. Nothing is saved unless the member confirms. */
+  | { type: "memory-proposal"; content: string; scope: "workspace" | "personal" };
 
 /** What a provider has been verified to support. The app adapts its behavior to these. */
 export interface AgentCapabilities {
@@ -70,6 +100,12 @@ export interface AgentCapabilities {
   artifacts: boolean;
   /** Runs can be polled for status after the fact (getRunStatus). */
   runStatus: boolean;
+  /** Runs can pause for approval and continue (approval events, `resume`). */
+  approvals: boolean;
+  /** The agent can read files attached to a message. */
+  attachments: boolean;
+  /** The provider's own conversation memory can be rolled back (rewind). */
+  rewind: boolean;
 }
 
 export interface AgentAdapter {
@@ -81,14 +117,25 @@ export interface AgentAdapter {
   run(input: AgentRunInput): AsyncIterable<AgentEvent>;
   /** Present only when capabilities.runStatus is true. */
   getRunStatus?(threadId: string): Promise<"running" | "complete" | "failed" | "unknown">;
+  /**
+   * Present only when capabilities.rewind is true. Drops the latest `turns` exchanges (a
+   * member message and everything after it) from the provider's own memory of the
+   * conversation, so a retried or edited message isn't answered with the old one in view.
+   */
+  rewind?(input: { tenant: AgentTenantContext; conversationId: string; threadId: string | null }, turns: number): Promise<void>;
+  /** Abandons a paused run whose approval will never be answered (best effort). */
+  discard?(state: unknown): Promise<void>;
 }
 
 /** A failure whose message is safe to show to the user. */
 export class AgentError extends Error {
   readonly retryable: boolean;
-  constructor(message: string, options: { retryable?: boolean; cause?: unknown } = {}) {
+  /** "expired": a paused run can no longer be continued. */
+  readonly code?: "expired";
+  constructor(message: string, options: { retryable?: boolean; cause?: unknown; code?: "expired" } = {}) {
     super(message, { cause: options.cause });
     this.name = "AgentError";
     this.retryable = options.retryable ?? true;
+    this.code = options.code;
   }
 }

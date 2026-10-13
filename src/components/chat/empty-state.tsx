@@ -2,6 +2,7 @@
 
 import { Boxes, Briefcase, Search, Sheet, type LucideIcon } from "lucide-react";
 import { forwardRef } from "react";
+import type { Attachment } from "@/lib/types";
 import { Composer, type ComposerHandle } from "./composer";
 
 interface Suggestion {
@@ -23,12 +24,13 @@ const SUGGESTIONS: Suggestion[] = [
 interface Props {
   draft: string;
   onDraftChange: (value: string) => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, attachments?: Attachment[]) => void;
+  allowFiles: boolean;
   footnote: React.ReactNode;
 }
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, footnote },
+  { draft, onDraftChange, onSubmit, allowFiles, footnote },
   composerRef,
 ) {
   function pick(s: Suggestion) {
@@ -56,6 +58,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
             running={false}
             placeholder="Ask anything, or describe a task"
             autoFocus
+            allowFiles={allowFiles}
           />
         </div>
         <ul className="mt-4 flex flex-wrap justify-center gap-1.5 animate-fade-up [animation-delay:120ms]" aria-label="Suggestions">

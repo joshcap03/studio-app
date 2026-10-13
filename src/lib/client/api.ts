@@ -1,4 +1,4 @@
-import type { ChatMessage, ConversationSummary, StreamEvent } from "@/lib/types";
+import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, StreamEvent } from "@/lib/types";
 
 // Browser-side calls to this application's own API. The browser never talks to the agent
 // backend directly and never holds credentials; the session cookie is httpOnly.
@@ -42,8 +42,33 @@ export const api = {
     }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   stopRun: (id: string) => request<void>(`/api/conversations/${id}/stop`, { method: "POST" }),
+  decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss") =>
+    request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    }),
+  deleteAttachment: (id: string) => request<void>(`/api/attachments/${id}`, { method: "DELETE" }),
   signOut: () => request<{ ok: true }>("/api/auth/signout", { method: "POST" }),
 };
+
+/** Uploads a file to attach to the next message. */
+export async function uploadAttachment(file: File, signal?: AbortSignal): Promise<Attachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/attachments", { method: "POST", body: form, signal });
+  if (res.status === 401) {
+    window.location.assign("/login");
+    throw new ApiError(401, "Signed out.");
+  }
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  return ((await res.json()) as { attachment: Attachment }).attachment;
+}
+
+export type TurnBody =
+  | { kind: "send"; text: string; attachmentIds?: string[] }
+  | { kind: "retry" }
+  | { kind: "edit"; messageId: string; text: string }
+  | { kind: "decide"; approvalId: string; decision: "approve" | "reject" };
 
 /**
  * Starts a turn and calls `onEvent` for each streamed event. Resolves when the stream ends.
@@ -51,7 +76,7 @@ export const api = {
  */
 export async function streamTurn(
   conversationId: string,
-  body: { kind: "send"; text: string } | { kind: "retry" },
+  body: TurnBody,
   onEvent: (event: StreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

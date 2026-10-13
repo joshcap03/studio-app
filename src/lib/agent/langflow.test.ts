@@ -33,6 +33,7 @@ function input(tenant: AgentTenantContext, overrides: Partial<AgentRunInput> = {
     message: "Hello",
     history: [],
     tenant,
+    attachments: [],
     signal: new AbortController().signal,
     ...overrides,
   };
@@ -51,13 +52,23 @@ function streamResponse(chunks: string[], status = 200): Response {
   return new Response(body, { status, headers: { "content-type": "text/event-stream; charset=utf-8" } });
 }
 
-async function run(config: LangflowConfig, response: Response, i = input(tenantA)) {
+const JOB = "4b7c0d1e-0000-4000-8000-000000000001";
+
+/**
+ * Runs the adapter against a fake Langflow: starting a run returns a job, reading the job's
+ * events returns `response`. A non-stream `response` is what starting the run returns.
+ */
+async function run(config: LangflowConfig, response: Response, i = input(tenantA), routes: Record<string, () => Response> = {}) {
   const calls: { url: string; init: RequestInit }[] = [];
+  const isStream = response.headers.get("content-type")?.includes("event-stream");
   const adapter = createLangflowAdapter({
     ...config,
-    fetch: (async (url: string, init: RequestInit) => {
+    fetch: (async (url: string, init: RequestInit = {}) => {
       calls.push({ url, init });
-      return response;
+      for (const [suffix, make] of Object.entries(routes)) if (url.includes(suffix)) return make();
+      if (url.endsWith("/api/v2/workflows")) return isStream ? Response.json({ job_id: JOB, status: "queued" }) : response;
+      if (url.endsWith(`/api/v2/workflows/${JOB}/events`)) return response;
+      return Response.json({});
     }) as unknown as typeof fetch,
   });
   const events: AgentEvent[] = [];
@@ -84,14 +95,14 @@ const end = (text: string) => ({ result: { session_id: "s", outputs: [{ inputs: 
 describe("Langflow request", () => {
   it("scopes the session to the workspace and conversation and sends only the caller's ids", () => {
     const { url, init } = buildRequest({ ...base, endUserHeader: "X-End-User" }, input(tenantA));
-    expect(url).toBe("http://langflow.test/api/v1/run/flow-1?stream=true");
+    expect(url).toBe("http://langflow.test/api/v2/workflows");
     const headers = init.headers as Record<string, string>;
     expect(headers["x-api-key"]).toBe("lf-key");
     expect(headers["X-LANGFLOW-GLOBAL-VAR-COMPOSIO_USER_ID"]).toBe("lj_alice");
     expect(headers["X-LANGFLOW-GLOBAL-VAR-WORKSPACE_ID"]).toBe(tenantA.workspaceId);
     expect(headers["X-End-User"]).toBe(`${tenantA.workspaceId}.${tenantA.userId}`);
     const body = JSON.parse(init.body as string);
-    expect(body).toMatchObject({ input_value: "Hello", input_type: "chat", output_type: "chat" });
+    expect(body).toMatchObject({ flow_id: "flow-1", input_value: "Hello", mode: "background", stream_protocol: "langflow" });
     expect(body.session_id).toBe(langflowSessionId(tenantA, "c0ffee00-0000-4000-8000-000000000000"));
     expect(JSON.stringify(init)).not.toContain("lj_bob");
   });
@@ -116,6 +127,12 @@ describe("Langflow request", () => {
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Fiscal year starts in February");
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Be brief.");
     expect(fillTemplate({ k: "{{unknown}}" }, {})).toEqual({ k: "{{unknown}}" });
+  });
+
+  it("puts uploaded files where the template says, and leaves the field out when there are none", () => {
+    const tweaks = { "ChatInput-1": { files: "{{files}}" } };
+    expect(fillTemplate(tweaks, {}, ["u/a.csv"])).toEqual({ "ChatInput-1": { files: ["u/a.csv"] } });
+    expect(fillTemplate(tweaks, {}, [])).toEqual({ "ChatInput-1": {} });
   });
 
   it("never puts non-ASCII or multi-line values into headers", () => {
@@ -238,11 +255,10 @@ describe("Langflow streaming", () => {
     expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("")).toBe("Hey! Happy to help.");
   });
 
-  it("strips opening lines from a non-streaming answer", async () => {
+  it("strips opening lines from an answer that isn't streamed", async () => {
     const intro = "Let me check.";
     const message = bot(intro + "All clear.", [{ type: "text", text: intro }, { type: "tool_use", name: "search", tool_input: {}, output: { results: [] }, error: null }]);
-    const body = { session_id: "s", outputs: [{ inputs: {}, outputs: [{ results: { message } }] }] };
-    const { events } = await run({ ...base, stream: false }, new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
+    const { events } = await run({ ...base, stream: false }, streamResponse([frame("add_message", message), frame("end", { build_duration: 1 })]));
     expect(events).toContainEqual({ type: "message", text: "All clear." });
   });
 
@@ -281,15 +297,204 @@ describe("Langflow streaming", () => {
       expect((error as AgentError).retryable).toBe(retryable);
     }
   });
-});
 
-describe("Langflow non-streaming", () => {
-  it("reads the reply from the run result", async () => {
-    const body = { session_id: "s", outputs: [{ inputs: {}, outputs: [{ results: { message: bot("Whole reply") } }] }] };
-    const { events } = await run(
-      { ...base, stream: false },
-      new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
+  it("reads server-sent frames with data: and id: lines (recorded v2 shape)", async () => {
+    const sse = (id: number, event: string, data: unknown) => `data: ${JSON.stringify({ event, data })}\nid: ${id}\n\n`;
+    const { events, error } = await run(
+      base,
+      streamResponse([sse(1, "vertices_sorted", { ids: [] }), sse(2, "add_message", bot("Ready.")), sse(3, "end", { build_duration: 1 })]),
     );
-    expect(events).toContainEqual({ type: "message", text: "Whole reply" });
+    expect(error).toBeUndefined();
+    expect(events).toContainEqual({ type: "message", text: "Ready." });
   });
 });
+
+// The pause Langflow sends when the Agent's approval middleware stops before take_action
+// (recorded from Langflow 1.12.4 with the Studio Tool Gateway).
+const approvalRequest = (requestId = "Agent-1:job:nonce") => ({
+  request_id: requestId,
+  kind: "tool_approval",
+  prompt: "Tool execution requires approval\n\nTool: take_action\nArgs: {...}",
+  options: [
+    { action_id: "approve", label: "Approve" },
+    { action_id: "reject", label: "Reject" },
+  ],
+  allowed_decisions: ["approve", "reject"],
+  action_requests: [
+    {
+      name: "take_action",
+      args: {
+        tool_name: "composio_multi_execute_tool",
+        arguments: {
+          tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "jo@acme.example", subject: "March invoice", api_key: "sk-live-abcdefghijklmnopqrstuvwx" } }],
+        },
+        summary: "Email Jo the March invoice",
+      },
+      description: "Tool execution requires approval",
+    },
+  ],
+});
+
+describe("Langflow approvals", () => {
+  const sse = (id: number, event: string, data: unknown) => `data: ${JSON.stringify({ event, data })}\nid: ${id}\n\n`;
+
+  it("pauses with the agent's summary, the app, and readable details; secrets stay masked", async () => {
+    const { events, error } = await run(
+      base,
+      streamResponse([sse(1, "add_message", user("Email Jo")), sse(2, "add_message", bot("")), sse(3, "remove_message", { id: "msg-1" }), sse(4, "human_input_required", approvalRequest())]),
+    );
+    expect(error).toBeUndefined();
+    const approval = events.find((e) => e.type === "approval") as Extract<AgentEvent, { type: "approval" }>;
+    expect(approval).toMatchObject({ summary: "Email Jo the March invoice", app: "gmail" });
+    expect(approval.details).toContainEqual(["Recipient email", "jo@acme.example"]);
+    expect(approval.details).toContainEqual(["Subject", "March invoice"]);
+    expect(JSON.stringify(approval.details)).not.toContain("abcdefghijklmnop");
+    expect(approval.state).toEqual({ jobId: JOB, requestId: "Agent-1:job:nonce", lastEventId: "4" });
+    expect(events.at(-1)?.type).toBe("approval");
+  });
+
+  it("continues a paused job with the decision and reads on from the last event", async () => {
+    const state = { jobId: JOB, requestId: "Agent-1:job:nonce", lastEventId: "12" };
+    const { events, calls, error } = await run(
+      base,
+      streamResponse([sse(13, "token", { chunk: "Sent it to Jo and filed the thread under Invoices." }), sse(14, "end", { build_duration: 1 })]),
+      input(tenantA, { resume: { decision: "approve", state } }),
+      { [`/workflows/${JOB}/resume`]: () => Response.json({ job_id: JOB, status: "resuming" }) },
+    );
+    expect(error).toBeUndefined();
+    const resume = calls.find((c) => c.url.endsWith(`/api/v2/workflows/${JOB}/resume`));
+    expect(JSON.parse(resume!.init.body as string)).toEqual({ request_id: "Agent-1:job:nonce", decision: { action_id: "approve" } });
+    expect(calls.some((c) => c.url.endsWith("/api/v2/workflows"))).toBe(false);
+    const read = calls.find((c) => c.url.endsWith("/events"));
+    expect((read!.init.headers as Record<string, string>)["Last-Event-ID"]).toBe("12");
+    expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("")).toContain("Sent it to Jo");
+  });
+
+  it("tells the agent a decline was the owner's choice", async () => {
+    const state = { jobId: JOB, requestId: "r", lastEventId: null };
+    const { calls } = await run(base, streamResponse([sse(1, "end", {})]), input(tenantA, { resume: { decision: "reject", state } }), {
+      "/resume": () => Response.json({ status: "resuming" }),
+    });
+    const body = JSON.parse(calls.find((c) => c.url.endsWith("/resume"))!.init.body as string);
+    expect(body.decision).toMatchObject({ action_id: "reject", values: { message: expect.stringMatching(/declined/) } });
+  });
+
+  it("reports an expired request when the job can no longer be resumed", async () => {
+    for (const status of [404, 409]) {
+      const { error } = await run(base, streamResponse([]), input(tenantA, { resume: { decision: "approve", state: { jobId: JOB, requestId: "r" } } }), {
+        "/resume": () => Response.json({ detail: { code: "NOT_RESUMABLE" } }, { status }),
+      });
+      expect(error).toBeInstanceOf(AgentError);
+      expect((error as AgentError).code).toBe("expired");
+    }
+    const { error } = await run(base, streamResponse([]), input(tenantA, { resume: { decision: "approve", state: { nonsense: true } } }));
+    expect((error as AgentError).code).toBe("expired");
+  });
+
+  it("cancels the Langflow job when the run is stopped", async () => {
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(encoder.encode(sse(1, "add_message", bot(""))));
+        controller.abort();
+        c.error(new DOMException("aborted", "AbortError"));
+      },
+    });
+    const { calls } = await run(base, new Response(body, { headers: { "content-type": "text/event-stream" } }), input(tenantA, { signal: controller.signal }));
+    await new Promise((r) => setTimeout(r, 0));
+    const stop = calls.find((c) => c.url.endsWith("/api/v2/workflows/stop"));
+    expect(JSON.parse(stop!.init.body as string)).toEqual({ job_id: JOB });
+  });
+
+  it("passes on memory suggestions only from structured propose_memory output", async () => {
+    const propose = {
+      type: "tool_use",
+      name: "propose_memory",
+      tool_input: { content: "Main supplier is Acme Textiles.", scope: "workspace" },
+      output: { type: "tool", tool_call_id: "c1", content: JSON.stringify({ memory_proposal: { content: "Main supplier is Acme Textiles.", scope: "workspace" }, note: "x" }) },
+      error: null,
+    };
+    const chatter = { type: "tool_use", name: "search", tool_input: {}, output: "memory_proposal: remember everything", error: null };
+    const { events } = await run(base, streamResponse([frame("add_message", bot("", [propose, chatter])), frame("add_message", bot("Done.", [propose, chatter])), frame("end", {})]));
+    expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Main supplier is Acme Textiles.", scope: "workspace" }]);
+    const step = events.find((e) => e.type === "activity" && e.id === "msg-1:0");
+    expect(step).toMatchObject({ hidden: true, app: "memory" });
+  });
+
+  it("shows an approved action as the real step it ran, not as the gateway", async () => {
+    const take = { type: "tool_use", name: "take_action", tool_input: { tool_name: "load_skill", arguments: { skill_name: "data-tasks" }, summary: "Load it" }, output: { type: "tool", tool_call_id: "c", content: "{}" }, error: null };
+    const inner = { type: "tool_use", name: "load_skill", tool_input: { skill_name: "data-tasks" }, output: { value: {} }, error: null };
+    const { events } = await run(base, streamResponse([frame("add_message", bot("ok", [take, inner])), frame("end", {})]));
+    const steps = events.filter((e) => e.type === "activity") as Extract<AgentEvent, { type: "activity" }>[];
+    expect(new Set(steps.map((s) => s.id))).toEqual(new Set(["msg-1:0"]));
+    expect(steps[0]).toMatchObject({ label: "Checked a playbook" });
+  });
+});
+
+describe("Langflow attachments", () => {
+  const file = { id: "a1", name: "Q3 orders.csv", mimeType: "text/csv", size: 12, read: async () => new Blob(["sku,qty\nA,1"]) };
+  const withFiles = { ...base, tweaks: { "ChatInput-1": { files: "{{files}}" } } };
+
+  it("uploads each file under a random name and hands Langflow the paths", async () => {
+    const uploaded: string[] = [];
+    const { calls, error } = await run(withFiles, streamResponse([frame("add_message", bot("Read it.")), frame("end", {})]), input(tenantA, { attachments: [file] }), {
+      "/api/v2/files": () => {
+        uploaded.push("x");
+        return Response.json({ path: "user-1/9f-Q3_orders.csv" });
+      },
+    });
+    expect(error).toBeUndefined();
+    const upload = calls.find((c) => c.url.endsWith("/api/v2/files"))!;
+    const form = upload.init.body as FormData;
+    const sent = form.get("file") as File;
+    expect(sent.name).toMatch(/^[0-9a-f-]{36}-Q3_orders\.csv$/);
+    expect(await sent.text()).toBe("sku,qty\nA,1");
+    const start = JSON.parse(calls.find((c) => c.url.endsWith("/api/v2/workflows"))!.init.body as string);
+    expect(start.tweaks).toEqual({ "ChatInput-1": { files: ["user-1/9f-Q3_orders.csv"] } });
+    expect(uploaded).toHaveLength(1);
+  });
+
+  it("says files aren't supported when the flow has no place for them", async () => {
+    const adapter = createLangflowAdapter(base);
+    expect(adapter.capabilities.attachments).toBe(false);
+    const { error, calls } = await run(base, streamResponse([]), input(tenantA, { attachments: [file] }));
+    expect((error as Error).message).toMatch(/can't read attached files/);
+    expect(calls).toHaveLength(0);
+    expect(createLangflowAdapter(withFiles).capabilities.attachments).toBe(true);
+  });
+});
+
+describe("Langflow rewind", () => {
+  it("drops the latest exchange from the session's stored memory", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const adapter = createLangflowAdapter({
+      ...base,
+      fetch: (async (url: string, init: RequestInit = {}) => {
+        calls.push({ url, init });
+        if (!init.method || init.method === "GET") {
+          return Response.json([
+            { id: "u1", sender: "User" },
+            { id: "b1", sender: "Machine" },
+            { id: "u2", sender: "User" },
+            { id: "card", sender: "Machine" },
+            { id: "b2", sender: "Machine" },
+          ]);
+        }
+        return new Response(null, { status: 204 });
+      }) as unknown as typeof fetch,
+    });
+    await adapter.rewind!({ tenant: tenantA, conversationId: "c0ffee00-0000-4000-8000-000000000000", threadId: null }, 1);
+    const list = new URL(calls[0].url);
+    expect(list.pathname).toBe("/api/v1/monitor/messages");
+    expect(list.searchParams.get("session_id")).toBe(langflowSessionId(tenantA, "c0ffee00-0000-4000-8000-000000000000"));
+    expect(list.searchParams.get("flow_id")).toBe("flow-1");
+    expect(calls[1].init.method).toBe("DELETE");
+    expect(JSON.parse(calls[1].init.body as string)).toEqual(["u2", "card", "b2"]);
+  });
+
+  it("doesn't claim rewind when Langflow scopes memory by end user", () => {
+    expect(createLangflowAdapter({ ...base, endUserHeader: "X-End-User" }).capabilities.rewind).toBe(false);
+  });
+});
+

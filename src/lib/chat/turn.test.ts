@@ -21,7 +21,16 @@ function context(scope: { workspaceId: string; userId: string }): AgentTenantCon
   };
 }
 
-const caps = { streaming: true, cancellation: "abort", toolEvents: true, artifacts: true, runStatus: false } as const;
+const caps = {
+  streaming: true,
+  cancellation: "abort",
+  toolEvents: true,
+  artifacts: true,
+  runStatus: false,
+  approvals: true,
+  attachments: true,
+  rewind: false,
+} as const;
 
 function scripted(events: AgentEvent[], fail?: AgentError, seen?: AgentRunInput[]): AgentAdapter {
   return {
@@ -225,11 +234,196 @@ describe("startTurn", () => {
   });
 });
 
+describe("approvals", () => {
+  const paused: AgentEvent[] = [
+    { type: "activity", id: "find", label: "Found the thread", status: "done", app: "gmail" },
+    { type: "approval", summary: "Send the reply to Jo", app: "gmail", details: [["To", "jo@acme.example"]], state: { jobId: "job-1", requestId: "r-1" } },
+  ];
+
+  /** An adapter that pauses on a fresh run and finishes (or fails) when resumed. */
+  function pausing(seen: AgentRunInput[], onResume: AgentEvent[] | AgentError = [{ type: "text-delta", text: "Sent it." }]): AgentAdapter {
+    return {
+      ...scripted([]),
+      discard: async () => {},
+      async *run(input) {
+        seen.push(input);
+        if (!input.resume) {
+          yield* paused;
+          return;
+        }
+        if (onResume instanceof AgentError) throw onResume;
+        yield* onResume;
+      },
+    };
+  }
+
+  async function pause(store = createMemoryStore(scopeA), seen: AgentRunInput[] = [], adapter = pausing(seen)) {
+    const id = crypto.randomUUID();
+    const deps = { store, adapter, context: context(scopeA), idleTimeoutMs: 1000 };
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "Email Jo" }));
+    const approval = events.find((e) => e.type === "approval");
+    if (approval?.type !== "approval") throw new Error("no approval");
+    return { id, deps, events, approval: approval.approval, store, seen };
+  }
+
+  it("pauses the reply until the member answers, keeping what the agent did so far", async () => {
+    const { id, events, approval, store } = await pause();
+    expect(approval).toMatchObject({ summary: "Send the reply to Jo", app: "gmail", status: "pending", details: [["To", "jo@acme.example"]] });
+    expect(JSON.stringify(events)).not.toContain("job-1"); // provider state never reaches the browser
+    const [, reply] = await store.listMessages(id);
+    expect(reply.status).toBe("awaiting");
+    expect(reply.activity.map((s) => s.label)).toEqual(["Found the thread"]);
+    expect(reply.approvals).toEqual([expect.objectContaining({ id: approval.id, status: "pending" })]);
+    expect(JSON.stringify(reply)).not.toContain("job-1");
+  });
+
+  it("continues the same reply with the member's decision and the provider's state", async () => {
+    const { id, deps, approval, store, seen } = await pause();
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" }));
+    expect(seen[1].resume).toEqual({ decision: "approve", state: { jobId: "job-1", requestId: "r-1" } });
+    const end = events.at(-1);
+    expect(end?.type === "end" && end.message).toMatchObject({ status: "complete", content: "Sent it." });
+    const messages = await store.listMessages(id);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({ status: "complete", content: "Sent it.", approvals: [expect.objectContaining({ status: "approved" })] });
+    expect(messages[1].activity.map((s) => s.label)).toEqual(["Found the thread"]);
+  });
+
+  it("answers each request once", async () => {
+    const { id, deps, approval } = await pause();
+    await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "reject" }));
+    await expect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("holds new messages until the request is answered", async () => {
+    const { id, deps } = await pause();
+    await expect(startTurn(deps, { conversationId: id, kind: "send", text: "hello?" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("marks a request expired when the provider can no longer continue it", async () => {
+    const seen: AgentRunInput[] = [];
+    const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), seen, pausing(seen, new AgentError("Expired.", { code: "expired" })));
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" }));
+    const end = events.at(-1);
+    expect(end?.type === "end" && end.message).toMatchObject({ status: "error", error: "Expired.", approvals: [expect.objectContaining({ status: "expired" })] });
+    expect((await store.listMessages(id))[1].approvals?.[0].status).toBe("expired");
+  });
+
+  it("abandons the paused run when the member retries instead", async () => {
+    const seen: AgentRunInput[] = [];
+    const discarded: unknown[] = [];
+    const adapter = { ...pausing(seen), discard: async (state: unknown) => void discarded.push(state) };
+    const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), seen, adapter);
+    await collect(startTurn(deps, { conversationId: id, kind: "retry" }));
+    expect(discarded).toEqual([{ jobId: "job-1", requestId: "r-1" }]);
+    expect(await store.getApproval(approval.id)).toBeNull(); // went with the replaced reply
+    await expect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("won't let another tenant answer a request", async () => {
+    const db = createMemoryDb();
+    const { id, approval } = await pause(createMemoryStore(scopeA, db));
+    const storeB = createMemoryStore(scopeB, db);
+    await expect(
+      startTurn({ store: storeB, adapter: pausing([]), context: context(scopeB), idleTimeoutMs: 1000 }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(await storeB.getApproval(approval.id)).toBeNull();
+  });
+});
+
+describe("edits, files, and memory suggestions", () => {
+  it("edits the latest message, replaces its reply, and rewinds the provider", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const rewound: number[] = [];
+    const seen: AgentRunInput[] = [];
+    const adapter: AgentAdapter = {
+      ...scripted([]),
+      capabilities: { ...caps, rewind: true },
+      rewind: async (_input, turns) => void rewound.push(turns),
+      async *run(input) {
+        seen.push(input);
+        yield { type: "message", text: `re: ${input.message}` };
+      },
+    };
+    const deps = { store, adapter, context: context(scopeA), idleTimeoutMs: 1000 };
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "first" }));
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "secnd" }));
+    const userId = (await store.listMessages(id))[2].id;
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "edit", messageId: userId, text: "second" }));
+    expect(events[0]).toMatchObject({ type: "start", userMessage: { id: userId, content: "second" } });
+    expect((await store.listMessages(id)).map((m) => m.content)).toEqual(["first", "re: first", "second", "re: second"]);
+    expect(rewound).toEqual([1]);
+    expect(seen.at(-1)).toMatchObject({ message: "second", history: [{ content: "first" }, { content: "re: first" }] });
+
+    const firstId = (await store.listMessages(id))[0].id;
+    await expect(startTurn(deps, { conversationId: id, kind: "edit", messageId: firstId, text: "nope" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("gives the agent the files sent with the message, and only those", async () => {
+    const db = createMemoryDb();
+    const store = createMemoryStore(scopeA, db);
+    const add = (id: string, owner = scopeA) =>
+      db.attachments.push({ id, name: `${id}.csv`, mimeType: "text/csv", size: 3, storagePath: `${owner.workspaceId}/${owner.userId}/${id}`, messageId: null, ...owner });
+    add("f1");
+    add("f2");
+    add("theirs", scopeB);
+    const seen: AgentRunInput[] = [];
+    const deps = {
+      store,
+      adapter: scripted([{ type: "message", text: "read" }], undefined, seen),
+      context: context(scopeA),
+      idleTimeoutMs: 1000,
+      loadAttachment: async (a: { storagePath: string }) => new Blob([a.storagePath]),
+    };
+    const id = crypto.randomUUID();
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "see file", attachmentIds: ["f1"] }));
+    expect(events[0]).toMatchObject({ type: "start", userMessage: { attachments: [{ id: "f1", name: "f1.csv" }] } });
+    expect(seen[0].attachments.map((a) => a.name)).toEqual(["f1.csv"]);
+    expect(await (await seen[0].attachments[0].read()).text()).toBe("ws-a/user-a/f1");
+    expect((await store.listMessages(id))[0].attachments).toEqual([{ id: "f1", name: "f1.csv", mimeType: "text/csv", size: 3 }]);
+
+    // Someone else's file, or one already sent, can't be attached; nothing is half-sent.
+    for (const ids of [["theirs"], ["f1"], ["f2", "missing"]]) {
+      await expect(startTurn(deps, { conversationId: id, kind: "send", text: "again", attachmentIds: ids })).rejects.toMatchObject({ status: 400 });
+    }
+    expect((await store.listMessages(id)).map((m) => m.content)).toEqual(["see file", "read"]);
+
+    // A new conversation whose first send fails leaves nothing behind.
+    const fresh = crypto.randomUUID();
+    await expect(startTurn(deps, { conversationId: fresh, kind: "send", text: "x", attachmentIds: ["theirs"] })).rejects.toMatchObject({ status: 400 });
+    expect(await store.getConversation(fresh)).toBeNull();
+  });
+
+  it("refuses files when the agent can't read them", async () => {
+    const store = createMemoryStore(scopeA);
+    const adapter = { ...scripted([]), capabilities: { ...caps, attachments: false } };
+    await expect(
+      startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: crypto.randomUUID(), kind: "send", text: "x", attachmentIds: ["f1"] }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("keeps the agent's memory suggestions on the reply, pending, without saving them", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const adapter = scripted([
+      { type: "memory-proposal", content: "  Fiscal year starts in   February ", scope: "workspace" },
+      { type: "memory-proposal", content: "Fiscal year starts in February", scope: "workspace" },
+      { type: "message", text: "Noted." },
+    ]);
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "fy?" }));
+    expect(events.filter((e) => e.type === "memory-proposal")).toHaveLength(1);
+    const reply = (await store.listMessages(id))[1];
+    expect(reply.memoryProposals).toEqual([{ id: expect.any(String), content: "Fiscal year starts in February", scope: "workspace", status: "pending" }]);
+  });
+});
+
 describe("mock adapter", () => {
   it("emits a single message in non-streaming mode", async () => {
     const adapter = createMockAdapter({ streaming: false, pace: 0 });
     const events: AgentEvent[] = [];
-    for await (const e of adapter.run({ conversationId: "c", threadId: null, message: "help", history: [], tenant: context(scopeA), signal: signal() })) events.push(e);
+    for await (const e of adapter.run({ conversationId: "c", threadId: null, message: "help", history: [], tenant: context(scopeA), attachments: [], signal: signal() }))
+      events.push(e);
     expect(events.filter((e) => e.type === "text-delta")).toHaveLength(0);
     expect(events.filter((e) => e.type === "message")).toHaveLength(1);
   });

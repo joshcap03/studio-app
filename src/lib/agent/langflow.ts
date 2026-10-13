@@ -1,20 +1,30 @@
+import { appForToolkit } from "@/lib/apps";
 import { interpretCalls, type ToolCall } from "./tools";
+import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Langflow adapter. Everything Langflow-specific lives in this file.
 //
-// Contract (verified against Langflow 1.12.5, its source and a live server):
-//   POST {base}/api/v1/run/{flow_id}[?stream=true]   header x-api-key
-//   body { input_value, input_type: "chat", output_type: "chat", session_id, tweaks? }
-//   non-streaming → { session_id, outputs: [{ outputs: [{ results: { message: { text, content_blocks }}}]}]}
-//   streaming     → text/event-stream body of JSON objects separated by blank lines:
-//                   { event: "add_message" | "token" | "end" | "error" | …, data }
-//                   token.data.chunk is incremental text (only when the flow's model streams);
-//                   add_message.data is a Message (sender "Machine" for the bot) whose
-//                   content_blocks hold tool calls as { type: "tool_use", name, tool_input,
-//                   output, error, duration }; end.data.result is the full run result;
-//                   error.data.error is a message.
-//   Cancellation: closing the connection cancels the run server-side (best effort).
+// Contract (verified against Langflow 1.12.4 and its source, against a live server):
+//   POST {base}/api/v2/workflows   header x-api-key
+//     body { flow_id, input_value, session_id, tweaks, mode: "background", stream_protocol: "langflow" }
+//     → { job_id, status: "queued" }
+//   GET  {base}/api/v2/workflows/{job_id}/events   [Last-Event-ID]
+//     text/event-stream; each frame is "data: <json>" plus an "id: <n>" line, frames separated
+//     by a blank line. JSON is { event, data } with the same events as the v1 stream:
+//     token.data.chunk (incremental text), add_message (a Message; sender "Machine" for the
+//     bot; content_blocks hold tool calls { type: "tool_use", name, tool_input, output, error }),
+//     remove_message (a partial bubble retracted), error.data.error, end. A run that pauses
+//     for approval sends human_input_required { request_id, kind: "tool_approval",
+//     action_requests: [{ name, args }] } and the stream closes with the job "suspended".
+//   POST {base}/api/v2/workflows/{job_id}/resume   { request_id, decision: { action_id, values } }
+//     → 404 unknown job, 409 not suspended/stale; then the job continues and its events are
+//     read again from the last event id.
+//   POST {base}/api/v2/workflows/stop  { job_id } cancels a running or suspended job.
+//   POST {base}/api/v2/files (multipart "file") → { path } usable in ChatInput.files.
+//   GET/DELETE {base}/api/v1/monitor/messages: the flow's stored chat memory per session.
+//   Approvals come from the Agent's tool-approval middleware: tools whose metadata carries
+//   approval_actions (the Studio Tool Gateway's take_action) pause before running.
 //   Per-request global variables: X-LANGFLOW-GLOBAL-VAR-{NAME} headers.
 //   Optional trusted end-user header (LANGFLOW_SERVING_END_USER_HEADER on the Langflow
 //   server) scopes Langflow's own chat memory to "<end_user>::<session_id>".
@@ -23,15 +33,21 @@ import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, typ
 // workspace and conversation (never from stored or client input), sends only the calling
 // member's ids, and the flow must read tenant-specific values (Composio user id, business
 // context) from the variables/tweaks below rather than from hard-coded component settings.
+// Uploaded files get random names, so one tenant's file can never be mistaken for another's.
 
 export interface LangflowConfig {
   baseUrl: string;
   apiKey: string;
   flowId: string;
+  /** Whether the flow's model streams tokens. */
   stream: boolean;
   /** Header name Langflow trusts for end-user identity, if enabled on the server. */
   endUserHeader?: string;
-  /** Tweaks template; "{{variable}}" placeholders are filled per run (see TEMPLATE_VARIABLES). */
+  /**
+   * Tweaks template; "{{variable}}" placeholders are filled per run (see TEMPLATE_VARIABLES).
+   * A value that is exactly "{{files}}" becomes the list of uploaded attachment paths, e.g.
+   * { "ChatInput-abc": { "files": "{{files}}" } }; without one, attachments are unsupported.
+   */
   tweaks?: unknown;
   fetch?: typeof fetch;
 }
@@ -58,7 +74,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
     `Business: ${tenant.workspaceName}`,
     tenant.businessContext.trim() && `About the business:\n${tenant.businessContext.trim()}`,
-    memories && `Things to remember:\n${memories}`,
+    memories && `Things to remember (confirmed by the owner):\n${memories}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -74,16 +90,33 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   };
 }
 
-/** Deep-copies a tweaks template, filling {{placeholders}} in string values. */
-export function fillTemplate(template: unknown, values: Record<string, string>): unknown {
+const FILES_PLACEHOLDER = /^\{\{\s*files\s*\}\}$/;
+
+/**
+ * Deep-copies a tweaks template, filling {{placeholders}} in string values. A value that is
+ * exactly "{{files}}" becomes `files` (a list), and is left out when there are none.
+ */
+export function fillTemplate(template: unknown, values: Record<string, string>, files: string[] = []): unknown {
   if (typeof template === "string") {
+    if (FILES_PLACEHOLDER.test(template)) return files;
     return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (match, key: string) => (key in values ? values[key] : match));
   }
-  if (Array.isArray(template)) return template.map((v) => fillTemplate(v, values));
+  if (Array.isArray(template)) return template.map((v) => fillTemplate(v, values, files));
   if (template && typeof template === "object") {
-    return Object.fromEntries(Object.entries(template).map(([k, v]) => [k, fillTemplate(v, values)]));
+    return Object.fromEntries(
+      Object.entries(template)
+        .filter(([, v]) => !(files.length === 0 && typeof v === "string" && FILES_PLACEHOLDER.test(v)))
+        .map(([k, v]) => [k, fillTemplate(v, values, files)]),
+    );
   }
   return template;
+}
+
+function templateHasFiles(template: unknown): boolean {
+  if (typeof template === "string") return FILES_PLACEHOLDER.test(template);
+  if (Array.isArray(template)) return template.some(templateHasFiles);
+  if (template && typeof template === "object") return Object.values(template).some(templateHasFiles);
+  return false;
 }
 
 /** Header values must be single-line ASCII; tenant ids always are, names may not be. */
@@ -91,35 +124,47 @@ function headerSafe(value: string): string | null {
   return /^[\x20-\x7e]{1,256}$/.test(value) ? value : null;
 }
 
-export function buildRequest(config: LangflowConfig, input: AgentRunInput): { url: string; init: RequestInit } {
-  const { tenant } = input;
+function endpoint(config: LangflowConfig, path: string): string {
+  return new URL(path, config.baseUrl.endsWith("/") ? config.baseUrl : `${config.baseUrl}/`).toString();
+}
+
+/** Credentials, plus the calling member's ids when the request runs the flow for them. */
+function headers(config: LangflowConfig, tenant?: AgentTenantContext): Record<string, string> {
+  const out: Record<string, string> = { "x-api-key": config.apiKey };
+  if (!tenant) return out;
   const values = templateValues(tenant);
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: config.stream ? "text/event-stream" : "application/json",
-    "x-api-key": config.apiKey,
-  };
   for (const [name, value] of [
     ["WORKSPACE_ID", values.workspace_id],
     ["USER_ID", values.user_id],
     ["COMPOSIO_USER_ID", values.composio_user_id],
   ] as const) {
     const safe = headerSafe(value);
-    if (safe) headers[`X-LANGFLOW-GLOBAL-VAR-${name}`] = safe;
+    if (safe) out[`X-LANGFLOW-GLOBAL-VAR-${name}`] = safe;
   }
-  if (config.endUserHeader) headers[config.endUserHeader] = `${tenant.workspaceId}.${tenant.userId}`;
+  if (config.endUserHeader) out[config.endUserHeader] = `${tenant.workspaceId}.${tenant.userId}`;
+  return out;
+}
 
+/** The request that starts a run as a background job. `files` are uploaded attachment paths. */
+export function buildRequest(config: LangflowConfig, input: AgentRunInput, files: string[] = []): { url: string; init: RequestInit } {
+  const { tenant } = input;
   const body: Record<string, unknown> = {
+    flow_id: config.flowId,
     input_value: input.message,
-    input_type: "chat",
-    output_type: "chat",
     session_id: langflowSessionId(tenant, input.conversationId),
+    mode: "background",
+    stream_protocol: "langflow",
   };
-  if (config.tweaks) body.tweaks = fillTemplate(config.tweaks, values);
-
-  const url = new URL(`api/v1/run/${encodeURIComponent(config.flowId)}`, config.baseUrl.endsWith("/") ? config.baseUrl : `${config.baseUrl}/`);
-  if (config.stream) url.searchParams.set("stream", "true");
-  return { url: url.toString(), init: { method: "POST", headers, body: JSON.stringify(body), signal: input.signal } };
+  if (config.tweaks) body.tweaks = fillTemplate(config.tweaks, templateValues(tenant), files);
+  return {
+    url: endpoint(config, "api/v2/workflows"),
+    init: {
+      method: "POST",
+      headers: { ...headers(config, tenant), "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+      signal: input.signal,
+    },
+  };
 }
 
 // ------------------------------------------------------------------------------------------
@@ -225,6 +270,73 @@ export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/**
+ * Memory suggestions come only from tool output that declares
+ * `{ "memory_proposal": { "content", "scope" } }` (the Studio gateway's propose_memory).
+ */
+export function toolMemoryProposals(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    const proposal = isRecord(result) && isRecord(result.memory_proposal) ? result.memory_proposal : undefined;
+    const content = typeof proposal?.content === "string" ? proposal.content.replace(/\s+/g, " ").trim() : "";
+    if (!content || events.some((e) => e.type === "memory-proposal" && e.content === content)) continue;
+    events.push({ type: "memory-proposal", content, scope: proposal?.scope === "personal" ? "personal" : "workspace" });
+  }
+  return events;
+}
+
+/** What the paused run needs to continue. Stored by the app, never shown to the browser. */
+interface PausedJob {
+  jobId: string;
+  requestId: string;
+  lastEventId: string | null;
+}
+
+function pausedJob(state: unknown): PausedJob | null {
+  if (!isRecord(state) || typeof state.jobId !== "string" || typeof state.requestId !== "string") return null;
+  return { jobId: state.jobId, requestId: state.requestId, lastEventId: typeof state.lastEventId === "string" ? state.lastEventId : null };
+}
+
+const APPROVAL_FIELD_MAX = 6;
+
+/**
+ * The approval card for a paused tool call: the agent's own summary, the app it acts in, and
+ * a few readable arguments. Built from the take_action call the run paused on.
+ */
+export function approvalFor(data: unknown): { summary: string; app?: string; details: [string, string][] } {
+  const request = isRecord(data) && Array.isArray(data.action_requests) && isRecord(data.action_requests[0]) ? data.action_requests[0] : {};
+  const args = isRecord(request.args) ? request.args : {};
+  let tool = typeof args.tool_name === "string" ? args.tool_name : typeof request.name === "string" ? request.name : "";
+  let fields: unknown = args.arguments;
+  if (typeof fields === "string") fields = maybeJson(fields);
+  // Composio actions arrive wrapped in the multi-execute tool; show the inner action.
+  if (tool === "composio_multi_execute_tool" && isRecord(fields) && Array.isArray(fields.tools) && isRecord(fields.tools[0])) {
+    const inner = fields.tools[0];
+    tool = typeof inner.tool_slug === "string" ? inner.tool_slug : tool;
+    fields = inner.arguments;
+  }
+  const app = /^[A-Z][A-Z0-9]*_/.test(tool) ? appForToolkit(tool) : tool === "act" ? "browser" : undefined;
+  const details: [string, string][] = [];
+  if (isRecord(fields)) {
+    for (const [key, value] of Object.entries(fields)) {
+      if (details.length >= APPROVAL_FIELD_MAX) break;
+      if (value == null || value === "" || /^(current_step|thought)$/.test(key)) continue;
+      const text = typeof value === "string" ? value : JSON.stringify(value);
+      details.push([clip(humanizeKey(key), 40), clip(text, 300)]);
+    }
+  }
+  const fallback = typeof data === "object" && isRecord(data) && typeof data.prompt === "string" ? data.prompt.split("\n")[0] : "";
+  const summary = clip(typeof args.summary === "string" && args.summary.trim() ? args.summary : fallback || "The agent wants to make a change", 500);
+  return { summary, app, details };
+}
+
+function humanizeKey(key: string): string {
+  const words = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** Model-provider failures in plain words; anything else keeps a short excerpt. */
 export function friendlyError(detail: string): string {
   if (/\b402\b|credit|in_flight_budget|insufficient_quota|billing/i.test(detail)) {
@@ -277,20 +389,28 @@ function errorFor(status: number): AgentError {
   return new AgentError("The agent service had a problem. Try again in a moment.");
 }
 
-/** Splits a Langflow event stream into parsed events (blank-line framed JSON). */
-export async function* parseEventStream(body: ReadableStream<Uint8Array>): AsyncGenerator<{ event: string; data: unknown }> {
+/**
+ * Splits a server-sent event stream into parsed events. Frames are separated by a blank
+ * line; "data:" lines carry the JSON and an "id:" line its position for Last-Event-ID.
+ * Unprefixed lines are read as data too.
+ */
+export async function* parseEventStream(body: ReadableStream<Uint8Array>): AsyncGenerator<{ event: string; data: unknown; id?: string }> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   const parse = (chunk: string) => {
-    const json = chunk
-      .split("\n")
-      .map((line) => line.replace(/^data:\s?/, ""))
-      .join("\n")
-      .trim();
+    let id: string | undefined;
+    const data: string[] = [];
+    for (const line of chunk.split("\n")) {
+      if (line.startsWith("id:")) id = line.slice(3).trim();
+      else if (/^(event|retry):/.test(line) || line.startsWith(":")) continue;
+      else data.push(line.replace(/^data:\s?/, ""));
+    }
+    const json = data.join("\n").trim();
     if (!json) return null;
     try {
-      return JSON.parse(json) as { event: string; data: unknown };
+      const parsed = JSON.parse(json) as { event: string; data: unknown };
+      return id === undefined ? parsed : { ...parsed, id };
     } catch {
       return null;
     }
@@ -299,7 +419,7 @@ export async function* parseEventStream(body: ReadableStream<Uint8Array>): Async
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
       let split: number;
       while ((split = buffer.indexOf("\n\n")) >= 0) {
         const event = parse(buffer.slice(0, split));
@@ -315,137 +435,274 @@ export async function* parseEventStream(body: ReadableStream<Uint8Array>): Async
   }
 }
 
+const EXPIRED = "This request expired before it was answered, so nothing was done. Ask again to retry.";
+
+/** Times the event stream may drop and be re-read from the last event before giving up. */
+const RECONNECTS = 2;
+
 export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
   const doFetch = config.fetch ?? fetch;
+  const acceptsFiles = templateHasFiles(config.tweaks);
+
+  async function post(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+    return doFetch(endpoint(config, path), {
+      method: "POST",
+      headers: { ...headers(config), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  async function stopJob(jobId: string): Promise<void> {
+    await post("api/v2/workflows/stop", { job_id: jobId }).catch(() => undefined);
+  }
+
+  /** Uploads attachments under random names and returns their Langflow paths. */
+  async function upload(input: AgentRunInput): Promise<string[]> {
+    const paths: string[] = [];
+    for (const file of input.attachments) {
+      const form = new FormData();
+      const name = `${crypto.randomUUID()}-${file.name.replace(/[^\w.-]+/g, "_").slice(-120)}`;
+      form.append("file", new Blob([await file.read()], { type: file.mimeType }), name);
+      let response: Response;
+      try {
+        response = await doFetch(endpoint(config, "api/v2/files"), { method: "POST", headers: headers(config), body: form, signal: input.signal });
+      } catch (error) {
+        if (input.signal.aborted) throw error;
+        throw new AgentError("Couldn't send your files to the agent.", { cause: error });
+      }
+      const result = (await response.json().catch(() => null)) as { path?: unknown } | null;
+      if (!response.ok || typeof result?.path !== "string") throw new AgentError(`The agent couldn't take “${file.name}”. Try a different file.`);
+      paths.push(result.path);
+    }
+    return paths;
+  }
+
   return {
     id: "langflow",
     label: "Agent connected",
     live: true,
     capabilities: {
       streaming: config.stream,
-      cancellation: "disconnect",
+      cancellation: "abort",
       toolEvents: true,
       artifacts: true,
       runStatus: false,
+      approvals: true,
+      attachments: acceptsFiles,
+      // With an end-user header Langflow stores memory under a scoped session id; rewinding
+      // that hasn't been verified, so it isn't claimed.
+      rewind: !config.endUserHeader,
     },
 
     async *run(input: AgentRunInput): AsyncIterable<AgentEvent> {
-      const { url, init } = buildRequest(config, input);
       const sessionId = langflowSessionId(input.tenant, input.conversationId);
       yield { type: "thread", threadId: sessionId };
 
-      let response: Response;
-      try {
-        response = await doFetch(url, init);
-      } catch (error) {
-        if (input.signal.aborted) throw error;
-        throw new AgentError("Couldn't reach the agent service.", { cause: error });
-      }
-      if (!response.ok) throw errorFor(response.status);
-
-      if (!config.stream || !response.body || !response.headers.get("content-type")?.includes("event-stream")) {
-        const result = (await response.json().catch(() => null)) as { session_id?: string } | null;
-        if (!result) throw new AgentError("The agent service returned an unreadable response.");
-        const message = resultMessage(result);
-        const notes = message ? leadingNotes(message) : [];
-        for (const note of notes) yield { type: "note", text: note };
-        if (message) {
-          yield* toolActivity(message, message.id ?? "result");
-          yield* toolArtifacts(message);
+      let jobId: string;
+      let lastEventId: string | null = null;
+      if (input.resume) {
+        const paused = pausedJob(input.resume.state);
+        if (!paused) throw new AgentError(EXPIRED, { retryable: false, code: "expired" });
+        const decision =
+          input.resume.decision === "approve"
+            ? { action_id: "approve" }
+            : { action_id: "reject", values: { message: input.resume.note || "The owner declined this action. Don't retry it." } };
+        let response: Response;
+        try {
+          response = await post(`api/v2/workflows/${encodeURIComponent(paused.jobId)}/resume`, { request_id: paused.requestId, decision }, input.signal);
+        } catch (error) {
+          if (input.signal.aborted) throw error;
+          throw new AgentError("Couldn't reach the agent service.", { cause: error });
         }
-        const text = typeof message?.text === "string" ? withoutNotes(message.text, notes) : "";
-        if (text) yield { type: "message", text };
-        return;
+        if (response.status === 404 || response.status === 409 || response.status === 422) {
+          throw new AgentError(EXPIRED, { retryable: false, code: "expired" });
+        }
+        if (!response.ok) throw errorFor(response.status);
+        jobId = paused.jobId;
+        lastEventId = paused.lastEventId;
+      } else {
+        if (input.attachments.length > 0 && !acceptsFiles) {
+          throw new AgentError("This agent can't read attached files yet.", { retryable: false });
+        }
+        const files = await upload(input);
+        const { url, init } = buildRequest(config, input, files);
+        let response: Response;
+        try {
+          response = await doFetch(url, init);
+        } catch (error) {
+          if (input.signal.aborted) throw error;
+          throw new AgentError("Couldn't reach the agent service.", { cause: error });
+        }
+        if (!response.ok) throw errorFor(response.status);
+        const job = (await response.json().catch(() => null)) as { job_id?: unknown } | null;
+        if (typeof job?.job_id !== "string") throw new AgentError("The agent service returned an unreadable response.");
+        jobId = job.job_id;
       }
 
-      // Short text the agent writes right before calling a tool is an opening line ("Let me
-      // look through your emails"), not part of the answer. Langflow streams it as tokens and
-      // then concatenates it onto the final text, so short text is held back until we know:
-      // a tool call next means it was a note; otherwise it is released as the answer.
-      let tokens = false;
-      let shownText = "";
-      let pending = "";
-      let releasing = false;
-      let toolCount = 0;
-      const notes: string[] = [];
-      let lastBot: LangflowMessage | undefined;
-      const seenArtifacts = new Set<string>();
+      // Stop means stop: cancel the job on the Langflow side, not just stop reading it.
+      const onAbort = () => void stopJob(jobId);
+      if (input.signal.aborted) onAbort();
+      else input.signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        // Short text the agent writes right before calling a tool is an opening line ("Let me
+        // look through your emails"), not part of the answer. Langflow streams it as tokens
+        // and then concatenates it onto the final text, so short text is held back until we
+        // know: a tool call next means it was a note; otherwise it is released as the answer.
+        let tokens = false;
+        let shownText = "";
+        let pending = "";
+        let releasing = false;
+        let toolCount = 0;
+        const notes: string[] = [];
+        let lastBot: LangflowMessage | undefined;
+        const seenArtifacts = new Set<string>();
+        const seenProposals = new Set<string>();
 
-      for await (const { event, data } of parseEventStream(response.body)) {
-        if (event === "token") {
-          const chunk = (data as { chunk?: unknown })?.chunk;
-          if (typeof chunk === "string" && chunk) {
-            tokens = true;
-            if (releasing) {
-              shownText += chunk;
-              yield { type: "text-delta", text: chunk };
-            } else {
-              pending += chunk;
-              if (pending.length > NOTE_MAX || pending.includes("\n\n")) {
-                releasing = true;
+        for (let attempt = 0; attempt <= RECONNECTS; attempt++) {
+          let response: Response;
+          try {
+            response = await doFetch(endpoint(config, `api/v2/workflows/${encodeURIComponent(jobId)}/events`), {
+              headers: { ...headers(config), Accept: "text/event-stream", ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}) },
+              signal: input.signal,
+            });
+          } catch (error) {
+            if (input.signal.aborted) throw error;
+            if (attempt < RECONNECTS) continue;
+            throw new AgentError("Lost the connection to the agent service.", { cause: error });
+          }
+          if (!response.ok || !response.body) throw errorFor(response.status);
+
+          for await (const { event, data, id } of parseEventStream(response.body)) {
+            if (id) lastEventId = id;
+            if (event === "token") {
+              const chunk = (data as { chunk?: unknown })?.chunk;
+              if (typeof chunk === "string" && chunk) {
+                tokens = true;
+                if (releasing) {
+                  shownText += chunk;
+                  yield { type: "text-delta", text: chunk };
+                } else {
+                  pending += chunk;
+                  if (pending.length > NOTE_MAX || pending.includes("\n\n")) {
+                    releasing = true;
+                    shownText += pending;
+                    yield { type: "text-delta", text: pending };
+                    pending = "";
+                  }
+                }
+              }
+            } else if (event === "add_message") {
+              const message = data as LangflowMessage;
+              if (!isBot(message)) continue;
+              lastBot = message;
+              const calls = toolUses(message).length;
+              if (calls > toolCount) {
+                toolCount = calls;
+                if (pending.trim()) {
+                  notes.push(pending.trim());
+                  yield { type: "note", text: pending.trim() };
+                }
+                pending = "";
+                releasing = false;
+              }
+              if (!tokens) {
+                for (const note of leadingNotes(message)) {
+                  if (!notes.includes(note)) {
+                    notes.push(note);
+                    yield { type: "note", text: note };
+                  }
+                }
+              }
+              yield* toolActivity(message, message.id ?? "message");
+              for (const a of toolArtifacts(message)) {
+                const key = JSON.stringify(a);
+                if (!seenArtifacts.has(key)) {
+                  seenArtifacts.add(key);
+                  yield a;
+                }
+              }
+              for (const p of toolMemoryProposals(message)) {
+                if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {
+                  seenProposals.add(p.content);
+                  yield p;
+                }
+              }
+              const answer = typeof message.text === "string" ? withoutNotes(message.text, notes) : "";
+              if (!tokens && answer && answer !== shownText) {
+                shownText = answer;
+                yield { type: "message", text: answer };
+              }
+            } else if (event === "human_input_required") {
+              const request = isRecord(data) ? data : {};
+              if (request.kind !== "tool_approval" || typeof request.request_id !== "string") {
+                void stopJob(jobId);
+                throw new AgentError("The agent asked for a kind of input this app can't show yet.", { retryable: false });
+              }
+              if (pending.trim()) {
+                notes.push(pending.trim());
+                yield { type: "note", text: pending.trim() };
+                pending = "";
+              }
+              const state: PausedJob = { jobId, requestId: request.request_id, lastEventId };
+              yield { type: "approval", ...approvalFor(request), state };
+              return;
+            } else if (event === "error") {
+              const detail = (data as { error?: unknown })?.error;
+              throw new AgentError(typeof detail === "string" && detail ? friendlyError(detail) : "The agent ran into a problem.");
+            } else if (event === "end") {
+              if (pending) {
                 shownText += pending;
                 yield { type: "text-delta", text: pending };
                 pending = "";
               }
+              const final = resultMessage((data as { result?: unknown })?.result) ?? lastBot;
+              const text = typeof final?.text === "string" ? withoutNotes(final.text, notes) : "";
+              if (text && text !== shownText && !tokens) yield { type: "message", text };
+              if (final) yield* toolActivity(final, lastBot?.id ?? final.id ?? "message");
+              return;
             }
           }
-        } else if (event === "add_message") {
-          const message = data as LangflowMessage;
-          if (!isBot(message)) continue;
-          lastBot = message;
-          const calls = toolUses(message).length;
-          if (calls > toolCount) {
-            toolCount = calls;
-            if (pending.trim()) {
-              notes.push(pending.trim());
-              yield { type: "note", text: pending.trim() };
-            }
-            pending = "";
-            releasing = false;
-          }
-          if (!tokens) {
-            for (const note of leadingNotes(message)) {
-              if (!notes.includes(note)) {
-                notes.push(note);
-                yield { type: "note", text: note };
-              }
-            }
-          }
-          yield* toolActivity(message, message.id ?? "message");
-          for (const a of toolArtifacts(message)) {
-            const key = JSON.stringify(a);
-            if (!seenArtifacts.has(key)) {
-              seenArtifacts.add(key);
-              yield a;
-            }
-          }
-          const answer = typeof message.text === "string" ? withoutNotes(message.text, notes) : "";
-          if (!tokens && answer && answer !== shownText) {
-            shownText = answer;
-            yield { type: "message", text: answer };
-          }
-        } else if (event === "error") {
-          const detail = (data as { error?: unknown })?.error;
-          throw new AgentError(typeof detail === "string" && detail ? friendlyError(detail) : "The agent ran into a problem.");
-        } else if (event === "end") {
-          if (pending) {
-            shownText += pending;
-            yield { type: "text-delta", text: pending };
-            pending = "";
-          }
-          const final = resultMessage((data as { result?: unknown })?.result) ?? lastBot;
-          const text = typeof final?.text === "string" ? withoutNotes(final.text, notes) : "";
-          if (text && text !== shownText && !tokens) yield { type: "message", text };
-          if (final) yield* toolActivity(final, lastBot?.id ?? final.id ?? "message");
-          return;
+          if (input.signal.aborted) return;
+          // The stream closed without an end: read on from the last event.
         }
+        if (pending) {
+          shownText += pending;
+          yield { type: "text-delta", text: pending };
+        }
+        if (!shownText) throw new AgentError("The agent stopped before finishing.");
+      } finally {
+        input.signal.removeEventListener("abort", onAbort);
       }
-      if (pending && !input.signal.aborted) {
-        shownText += pending;
-        yield { type: "text-delta", text: pending };
-      }
-      // The stream closed without an end event.
-      if (!input.signal.aborted && !shownText) throw new AgentError("The agent stopped before finishing.");
+    },
+
+    async rewind({ tenant, conversationId }, turns) {
+      if (turns < 1) return;
+      const url = new URL(endpoint(config, "api/v1/monitor/messages"));
+      url.searchParams.set("flow_id", config.flowId);
+      url.searchParams.set("session_id", langflowSessionId(tenant, conversationId));
+      url.searchParams.set("order", "ASC");
+      url.searchParams.set("limit", "1000");
+      const response = await doFetch(url.toString(), { headers: headers(config) });
+      if (!response.ok) throw errorFor(response.status);
+      const messages = ((await response.json().catch(() => [])) as { id?: unknown; sender?: unknown }[]).filter(
+        (m): m is { id: string; sender?: unknown } => typeof m?.id === "string",
+      );
+      const users = messages.flatMap((m, i) => (m.sender === "User" ? [i] : []));
+      if (users.length === 0) return;
+      const from = users[Math.max(0, users.length - turns)];
+      const ids = messages.slice(from).map((m) => m.id);
+      const removed = await doFetch(endpoint(config, "api/v1/monitor/messages"), {
+        method: "DELETE",
+        headers: { ...headers(config), "Content-Type": "application/json" },
+        body: JSON.stringify(ids),
+      });
+      if (!removed.ok) throw errorFor(removed.status);
+    },
+
+    async discard(state) {
+      const paused = pausedJob(state);
+      if (paused) await stopJob(paused.jobId);
     },
   };
 }

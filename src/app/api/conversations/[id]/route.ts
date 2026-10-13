@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { getAgentAdapter } from "@/lib/agent";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
+import { removeAttachmentFiles } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_TITLE_LENGTH } from "@/lib/types";
@@ -51,7 +53,12 @@ export async function DELETE(request: NextRequest, { params }: Context) {
   const parsedId = id.safeParse((await params).id);
   if (!parsedId.success) return jsonError(404, "Conversation not found.");
   try {
-    if (!(await storeFor(auth.value).deleteConversation(parsedId.data))) return jsonError(404, "Conversation not found.");
+    const store = storeFor(auth.value);
+    const [paths, pending] = await Promise.all([store.attachmentPaths(parsedId.data), store.pendingApproval(parsedId.data)]);
+    if (!(await store.deleteConversation(parsedId.data))) return jsonError(404, "Conversation not found.");
+    await removeAttachmentFiles(auth.value, paths);
+    const adapter = getAgentAdapter();
+    if (pending && pending.provider === adapter.id) await adapter.discard?.(pending.providerState).catch(() => undefined);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return errorResponse(error);

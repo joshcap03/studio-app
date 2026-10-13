@@ -11,8 +11,8 @@ import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
-import { ApiError, api, streamTurn } from "@/lib/client/api";
-import type { AgentStatus, ChatMessage, ConversationSummary, StreamEvent, WorkspaceSummary } from "@/lib/types";
+import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
+import type { AgentStatus, Attachment, ChatMessage, ConversationSummary, StreamEvent, WorkspaceSummary } from "@/lib/types";
 
 type ThreadState =
   | { status: "loading"; messages: ChatMessage[] }
@@ -81,7 +81,11 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
 
   const controllers = useRef(new Map<string, AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
-  const unsent = useRef(new Map<string, string>());
+  const unsent = useRef(new Map<string, { text: string; attachments: Attachment[] }>());
+  /** Files sent with each pending reply, keyed by its placeholder id. */
+  const sentFiles = useRef(new Map<string, Attachment[]>());
+  /** A short explanation when the server turned an action down. */
+  const [notice, setNotice] = useState<string | null>(null);
   const drafts = useRef(new Map<string, string>());
   const composer = useRef<ComposerHandle>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -194,11 +198,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   // Running turns
 
   const runTurn = useCallback(
-    async (
-      conversationId: string,
-      body: { kind: "send"; text: string } | { kind: "retry" },
-      placeholderIds: { user?: string; assistant: string },
-    ) => {
+    async (conversationId: string, body: TurnBody, placeholderIds: { user?: string; assistant: string }) => {
       const controller = new AbortController();
       controllers.current.set(conversationId, controller);
       setRunState(conversationId, true);
@@ -255,6 +255,12 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
           case "artifact":
             patchMessage(conversationId, assistantId, (m) => ({ ...m, artifacts: [...m.artifacts, event.artifact] }));
             break;
+          case "approval":
+            patchMessage(conversationId, assistantId, (m) => ({ ...m, approvals: [...(m.approvals ?? []), event.approval] }));
+            break;
+          case "memory-proposal":
+            patchMessage(conversationId, assistantId, (m) => ({ ...m, memoryProposals: [...(m.memoryProposals ?? []), event.proposal] }));
+            break;
           case "end":
             cancelAnimationFrame(frame);
             buffered = "";
@@ -270,7 +276,16 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
         cancelAnimationFrame(frame);
         flush();
         const aborted = controller.signal.aborted;
-        if (!started && body.kind === "send") unsent.current.set(assistantId, body.text);
+        if (!started && (body.kind === "decide" || body.kind === "edit") && error instanceof ApiError) {
+          // The server refused (e.g. already answered elsewhere): show its state, not a guess.
+          await api
+            .getConversation(conversationId)
+            .then(({ messages }) => setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages } })))
+            .catch(() => undefined);
+          setNotice(error.message);
+          return;
+        }
+        if (!started && body.kind === "send") unsent.current.set(assistantId, { text: body.text, attachments: sentFiles.current.get(assistantId) ?? [] });
         patchMessage(conversationId, assistantId, (m) =>
           m.status !== "streaming"
             ? m
@@ -294,10 +309,10 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   );
 
   const sendTo = useCallback(
-    (conversationId: string, text: string, isNew: boolean) => {
+    (conversationId: string, text: string, isNew: boolean, attachments: Attachment[] = []) => {
       const now = Date.now();
       const base = { conversationId, activity: [], artifacts: [], createdAt: now };
-      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete" };
+      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete", attachments };
       const assistant: ChatMessage = {
         ...base,
         id: `pending-assistant-${now}`,
@@ -319,40 +334,113 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
       });
       if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
-      void runTurn(conversationId, { kind: "send", text }, { user: user.id, assistant: assistant.id });
+      setNotice(null);
+      sentFiles.current.set(assistant.id, attachments);
+      const attachmentIds = attachments.map((a) => a.id);
+      void runTurn(
+        conversationId,
+        { kind: "send", text, ...(attachmentIds.length ? { attachmentIds } : {}) },
+        { user: user.id, assistant: assistant.id },
+      );
     },
     [navigate, runTurn],
   );
 
   const send = useCallback(
-    (text: string) => {
+    (text: string, attachments: Attachment[] = []) => {
       if (activeId) {
         if (running.has(activeId)) return;
         drafts.current.delete(activeId);
-        sendTo(activeId, text, false);
+        sendTo(activeId, text, false, attachments);
       } else {
         drafts.current.delete("new");
-        sendTo(crypto.randomUUID(), text, true);
+        sendTo(crypto.randomUUID(), text, true, attachments);
       }
     },
     [activeId, running, sendTo],
+  );
+
+  /** Answers the agent's pending request and continues the same reply. */
+  const decide = useCallback(
+    (approvalId: string, decision: "approve" | "reject") => {
+      if (!activeId || running.has(activeId)) return;
+      const conversationId = activeId;
+      const reply = threadsRef.current[conversationId]?.messages.find((m) => m.approvals?.some((a) => a.id === approvalId));
+      if (!reply) return;
+      setNotice(null);
+      patchMessage(conversationId, reply.id, (m) => ({
+        ...m,
+        status: "streaming",
+        approvals: m.approvals?.map((a) => (a.id === approvalId ? { ...a, status: decision === "approve" ? "approved" : "declined" } : a)),
+      }));
+      void runTurn(conversationId, { kind: "decide", approvalId, decision }, { assistant: reply.id });
+    },
+    [activeId, patchMessage, runTurn, running],
+  );
+
+  /** Replaces the latest message and answers it again. */
+  const edit = useCallback(
+    (messageId: string, text: string) => {
+      if (!activeId || running.has(activeId)) return;
+      const conversationId = activeId;
+      const now = Date.now();
+      const assistant: ChatMessage = {
+        id: `pending-assistant-${now}`,
+        conversationId,
+        role: "assistant",
+        content: "",
+        status: "streaming",
+        activity: [],
+        artifacts: [],
+        createdAt: now,
+      };
+      setNotice(null);
+      patchMessages(conversationId, (messages) => {
+        const index = messages.findIndex((m) => m.id === messageId);
+        if (index < 0) return messages;
+        return [...messages.slice(0, index), { ...messages[index], content: text }, assistant];
+      });
+      setSendCount((n) => n + 1);
+      void runTurn(conversationId, { kind: "edit", messageId, text }, { user: messageId, assistant: assistant.id });
+    },
+    [activeId, patchMessages, runTurn, running],
+  );
+
+  /** Saves or dismisses a memory the agent suggested. */
+  const answerProposal = useCallback(
+    (messageId: string, proposalId: string, decision: "save" | "dismiss") => {
+      if (!activeId) return;
+      const conversationId = activeId;
+      const setStatus = (status: "pending" | "saved" | "dismissed") =>
+        patchMessage(conversationId, messageId, (m) => ({
+          ...m,
+          memoryProposals: m.memoryProposals?.map((p) => (p.id === proposalId ? { ...p, status } : p)),
+        }));
+      setStatus(decision === "save" ? "saved" : "dismissed");
+      api.decideProposal(conversationId, proposalId, decision).catch((error: unknown) => {
+        setStatus("pending");
+        setNotice(error instanceof ApiError ? error.message : "Couldn't save that. Try again.");
+      });
+    },
+    [activeId, patchMessage],
   );
 
   const retry = useCallback(
     (messageId: string) => {
       if (!activeId || running.has(activeId)) return;
       const conversationId = activeId;
-      const unsentText = unsent.current.get(messageId);
-      if (unsentText !== undefined) {
+      const unsentSend = unsent.current.get(messageId);
+      if (unsentSend !== undefined) {
         // The original send never reached the server: drop both placeholders and resend.
         unsent.current.delete(messageId);
         patchMessages(conversationId, (messages) => {
           const index = messages.findIndex((m) => m.id === messageId);
           return index > 0 ? messages.slice(0, index - 1) : messages.filter((m) => m.id !== messageId);
         });
-        sendTo(conversationId, unsentText, false);
+        sendTo(conversationId, unsentSend.text, false, unsentSend.attachments);
         return;
       }
+      setNotice(null);
       const now = Date.now();
       const assistant: ChatMessage = {
         id: `pending-assistant-${now}`,
@@ -522,6 +610,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   // ---------------------------------------------------------------------------------------
 
   const isRunning = activeId ? running.has(activeId) : false;
+  const awaiting = activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "awaiting";
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
   const draftKey = activeId ?? "new";
 
@@ -615,6 +704,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
               draft={drafts.current.get("new") ?? ""}
               onDraftChange={(v) => drafts.current.set("new", v)}
               onSubmit={send}
+              allowFiles={agent.attachments}
               footnote={footnote}
             />
           ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
@@ -623,11 +713,20 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
             <Thread
               key={activeId}
               messages={activeThread.messages}
+              running={isRunning}
               onRetry={retry}
+              onEdit={edit}
+              onDecide={decide}
+              onProposal={answerProposal}
               onOpenPanel={openPanel}
               sendCount={sendCount}
               footer={
                 <div className="mx-auto w-full max-w-[46rem] px-3 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
+                  {notice ? (
+                    <p role="status" className="mb-2 px-1 text-center text-[13px] text-danger">
+                      {notice}
+                    </p>
+                  ) : null}
                   <Composer
                     key={draftKey}
                     ref={composer}
@@ -638,6 +737,8 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
                     running={isRunning}
                     placeholder="Reply…"
                     autoFocus={desktop}
+                    allowFiles={agent.attachments}
+                    blocked={awaiting ? "Approve or decline the agent's request above to continue" : undefined}
                   />
                   {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
                 </div>

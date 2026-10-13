@@ -37,7 +37,8 @@ export function agentEnabledFor(workspaceId: string): boolean {
 /** What the browser is told about the backend. Never includes URLs or credentials. */
 export function getAgentStatus(workspaceId: string): AgentStatus {
   const a = getAgentAdapter();
-  if (!a.live) return { mode: "mock", label: a.label };
-  if (!agentEnabledFor(workspaceId)) return { mode: "unavailable", label: "Agent not enabled for this workspace" };
-  return { mode: "live", label: a.label };
+  const attachments = a.capabilities.attachments;
+  if (!a.live) return { mode: "mock", label: a.label, attachments };
+  if (!agentEnabledFor(workspaceId)) return { mode: "unavailable", label: "Agent not enabled for this workspace", attachments: false };
+  return { mode: "live", label: a.label, attachments };
 }

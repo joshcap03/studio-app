@@ -28,7 +28,9 @@ type Step =
   | { kind: "note"; text: string; ms?: number }
   | { kind: "artifact"; artifact: Artifact }
   | { kind: "text"; text: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "approval"; summary: string; app: string; details: [string, string][] }
+  | { kind: "remember"; content: string };
 
 interface Scenario {
   match: RegExp;
@@ -36,6 +38,42 @@ interface Scenario {
 }
 
 const SCENARIOS: Scenario[] = [
+  {
+    match: /\b(send|email|reply)\b/i,
+    steps: [
+      {
+        kind: "activity",
+        id: "thread",
+        running: "Finding the vendor thread in Gmail",
+        done: "Found the vendor thread in Gmail",
+        ms: 900,
+        app: "gmail",
+        action: "search",
+        preview: { type: "items", items: [{ primary: "Invoice #4471", secondary: "Casting Co" }] },
+      },
+      { kind: "activity", id: "draft", running: "Writing the reply", done: "Wrote the reply", ms: 900, app: "agent", action: "other" },
+      {
+        kind: "approval",
+        summary: "Send a reply to Casting Co asking them to refund the duplicate $1,240 payment",
+        app: "gmail",
+        details: [
+          ["To", "billing@casting.example"],
+          ["Subject", "Re: Invoice #4471"],
+          ["Body", "Hi, it looks like invoice #4471 was paid twice. Could you refund the second $1,240 payment? Thanks!"],
+        ],
+      },
+    ],
+  },
+  {
+    match: /\bremember\b/i,
+    steps: [
+      { kind: "remember", content: "Casting Co invoices are due net 30." },
+      {
+        kind: "text",
+        text: "Got it. I suggested saving that to this workspace's memory so I'll know it next time. Confirm it below if it's right.",
+      },
+    ],
+  },
   {
     match: /simulate (a )?failure/i,
     steps: [
@@ -295,9 +333,47 @@ Try one of these to see how the workspace handles real work:
 - *Create a spreadsheet of orders by month* — an artifact
 - *Research a competitor* — sources and links
 - *Run a long reconciliation* — a longer multi-step task
-- *Simulate a failure* — error handling and retry`,
+- *Email Casting Co about the duplicate payment* — an action that waits for your approval
+- *Remember that Casting Co invoices are net 30* — a memory to confirm
+- *Simulate a failure* — error handling and retry
+
+You can also attach a file with the paperclip.`,
   },
 ];
+
+const AFTER_APPROVAL: Step[] = [
+  { kind: "activity", id: "send", running: "Sending the reply in Gmail", done: "Sent the reply in Gmail", ms: 900, app: "gmail", action: "write" },
+  { kind: "text", text: "Sent (mock — nothing actually left your account). I'll watch for Casting Co's answer." },
+];
+
+const AFTER_DECLINE: Step[] = [{ kind: "text", text: "Okay, I didn't send anything. Want me to change the wording instead?" }];
+
+const ATTACHMENTS_ONLY: Step[] = [
+  { kind: "text", text: "This is a **mock response**: I listed the files you attached, but the real agent isn't connected to read them." },
+];
+
+/** A labeled step listing the attached files, with the first lines of text files. */
+async function readAttachments(input: AgentRunInput): Promise<Step[]> {
+  const items = await Promise.all(
+    input.attachments.map(async (file) => {
+      const textual = /^text\/|json|xml|yaml/.test(file.mimeType);
+      const firstLine = textual ? (await (await file.read()).text()).split("\n")[0].slice(0, 120) : undefined;
+      return { primary: file.name, secondary: firstLine ?? `${Math.max(1, Math.round(file.size / 1024))} KB` };
+    }),
+  );
+  return [
+    {
+      kind: "activity",
+      id: "files",
+      running: `Opening ${input.attachments.length === 1 ? "your file" : `${input.attachments.length} files`}`,
+      done: `Opened ${input.attachments.length === 1 ? "your file" : `${input.attachments.length} files`}`,
+      ms: 700,
+      app: "agent",
+      action: "read",
+      preview: { type: "items", items },
+    },
+  ];
+}
 
 export function createMockAdapter(options: MockOptions): AgentAdapter {
   const pace = options.pace ?? 1;
@@ -311,13 +387,22 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
       toolEvents: true,
       artifacts: true,
       runStatus: false,
+      approvals: true,
+      attachments: true,
+      rewind: false,
     },
     async *run(input: AgentRunInput): AsyncIterable<AgentEvent> {
       const { signal } = input;
       yield { type: "thread", threadId: input.threadId ?? `mock-${input.tenant.workspaceId}.${input.conversationId}` };
       await wait(350 * pace, signal);
 
-      const steps = SCENARIOS.find((s) => s.match.test(input.message))?.steps ?? FALLBACK;
+      let steps: Step[];
+      if (input.resume) {
+        steps = input.resume.decision === "approve" ? AFTER_APPROVAL : AFTER_DECLINE;
+      } else {
+        steps = SCENARIOS.find((s) => s.match.test(input.message))?.steps ?? FALLBACK;
+        if (input.attachments.length > 0) steps = [...(await readAttachments(input)), ...(steps === FALLBACK ? ATTACHMENTS_ONLY : steps)];
+      }
       const streaming = options.streaming && !/non-?streaming/i.test(input.message);
 
       for (const step of steps) {
@@ -337,6 +422,11 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
           yield { type: "artifact", artifact: step.artifact };
         } else if (step.kind === "error") {
           throw new AgentError(step.message);
+        } else if (step.kind === "approval") {
+          yield { type: "approval", summary: step.summary, app: step.app, details: step.details, state: { mock: true } };
+          return;
+        } else if (step.kind === "remember") {
+          yield { type: "memory-proposal", content: step.content, scope: "workspace" };
         } else if (!streaming) {
           await wait(600 * pace, signal);
           yield { type: "message", text: step.text };

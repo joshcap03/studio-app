@@ -85,7 +85,8 @@ export function interpretCalls(calls: ToolCall[]): InterpretedStep[] {
   const pending: { index: number; target: string; args: Record<string, unknown>; wrapper: ToolCall }[] = [];
 
   calls.forEach((call, index) => {
-    if (call.name === "execute_tool" && isRecord(call.input) && typeof call.input.tool_name === "string") {
+    // take_action is the same gateway call for actions that needed the owner's approval.
+    if (GATEWAY_TOOLS.has(call.name) && isRecord(call.input) && typeof call.input.tool_name === "string") {
       const args = isRecord(call.input.arguments) ? call.input.arguments : {};
       pending.push({ index, target: call.input.tool_name, args, wrapper: call });
       merged.set(index, { name: call.input.tool_name, input: args, output: call.output, error: call.error });
@@ -125,7 +126,7 @@ function stableJson(value: unknown): string {
 }
 
 /** The gateway's own tools, which a person should never see named. */
-const GATEWAY_TOOLS = new Set(["execute_tool", "discover_tools"]);
+const GATEWAY_TOOLS = new Set(["execute_tool", "take_action", "discover_tools"]);
 
 function invokes(target: string, next: ToolCall): boolean {
   if (next.name === target) return true;
@@ -143,6 +144,9 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
   // Tool gateways report failures as text results ("Tool X failed: …", "Tool X timed out …").
   const gatewayError = typeof result === "string" ? gatewayFailure(result) : undefined;
   const interpretation = interpret(call.name, input, result);
+  if (typeof result === "string" && NEEDS_APPROVAL.test(result.trim())) {
+    return { index, label: interpretation.labels.running, status: "done", app: interpretation.app, action: interpretation.action, hidden: true };
+  }
   const envelope = composioEnvelope(result);
   const errorText =
     (errorMessage(call.error) ? humanReason(errorMessage(call.error)!) : undefined) ??
@@ -238,6 +242,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
       };
     case "load_skill":
       return { labels: { running: "Checking a playbook", done: "Checked a playbook" }, app: "agent", action: "read", hidden: true };
+    case "propose_memory":
+      // The suggestion itself is shown as its own card to confirm.
+      return { labels: { running: "Noting something to remember", done: "Suggested something to remember" }, app: "memory", action: "remember", hidden: true };
   }
   const words = humanize(name);
   return { labels: { running: `Using ${words}`, done: `Used ${words}` }, app: "agent", action: "other" };
@@ -686,8 +693,12 @@ export function gatewayFailure(text: string): string | undefined {
   if (unknown && GATEWAY_TOOLS.has(unknown[1])) return "Called its tool runner the wrong way.";
   if (unknown) return `Asked for a tool called “${humanize(unknown[1])}”, which doesn't exist here.`;
   if (/^(Invalid arguments for|Tool arguments must be)/.test(value)) return "Sent the tool the wrong details.";
+  if (/^Approvals aren't available in this run/.test(value)) return "Couldn't ask for your approval here, so nothing was changed.";
   return undefined;
 }
+
+/** The gateway turned a change away until it goes through approval; the next call asks. */
+const NEEDS_APPROVAL = /^"?This changes something in the owner's accounts, so it needs their approval\./;
 
 /** Common technical failure reasons in plain words; anything else passes through, trimmed. */
 export function humanReason(raw: string): string {

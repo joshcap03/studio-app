@@ -2,11 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { agentEnabledFor, getAgentAdapter } from "@/lib/agent";
 import { errorResponse, parseBody } from "@/lib/api";
+import { readAttachment } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import { getConfig } from "@/lib/config";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
-import { MAX_MESSAGE_LENGTH } from "@/lib/types";
+import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
 import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
 
 // Starts a turn and streams it back as NDJSON (one StreamEvent per line). Creating the
@@ -17,9 +18,12 @@ export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ id: string }> };
 
+const text = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 const body = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("send"), text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH) }),
+  z.object({ kind: z.literal("send"), text, attachmentIds: z.array(z.uuid()).max(MAX_ATTACHMENTS).optional() }),
   z.object({ kind: z.literal("retry") }),
+  z.object({ kind: z.literal("edit"), messageId: z.uuid(), text }),
+  z.object({ kind: z.literal("decide"), approvalId: z.uuid(), decision: z.enum(["approve", "reject"]) }),
 ]);
 
 export async function POST(request: NextRequest, { params }: Context) {
@@ -48,6 +52,7 @@ export async function POST(request: NextRequest, { params }: Context) {
         adapter: getAgentAdapter(),
         context: await buildAgentContext(tenant),
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
+        loadAttachment: (attachment) => readAttachment(tenant, attachment),
       },
       { conversationId: conversationId.data, ...input },
     );

@@ -30,5 +30,8 @@ npm-debug.log*
 data/
 state/
 
+# Langflow flow backups written by langflow/install.py (may hold component settings)
+langflow/backup-*.json
+
 # macOS
 .DS_Store

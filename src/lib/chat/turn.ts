@@ -1,12 +1,15 @@
 import { z } from "zod";
-import { AgentError, type AgentAdapter, type AgentTenantContext } from "@/lib/agent/types";
-import { STALE_STREAM_MS, type Store } from "@/lib/db/store";
+import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, type AgentTenantContext } from "@/lib/agent/types";
+import { STALE_STREAM_MS, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
 import {
   ARTIFACT_KINDS,
+  MAX_MEMORY_LENGTH,
   type ActivityStep,
+  type Approval,
   type Artifact,
   type ChatMessage,
   type ConversationSummary,
+  type MemoryProposal,
   type MessageStatus,
   type StreamEvent,
 } from "@/lib/types";
@@ -14,7 +17,8 @@ import {
 // Runs one conversational turn for one tenant: persists the user's message, drives the
 // agent adapter with the tenant's context, streams normalized events to the browser, and
 // persists the assistant's final state however the run ends (finished, failed, timed out,
-// or stopped). The store is already scoped to the caller's workspace and user.
+// stopped, or paused for an approval). A decision on an approval continues the same reply.
+// The store is already scoped to the caller's workspace and user.
 
 export class TurnError extends Error {
   constructor(
@@ -25,13 +29,22 @@ export class TurnError extends Error {
   }
 }
 
-export type TurnRequest = { conversationId: string } & ({ kind: "send"; text: string } | { kind: "retry" });
+export type TurnRequest = { conversationId: string } & (
+  | { kind: "send"; text: string; attachmentIds?: string[] }
+  | { kind: "retry" }
+  /** Replace the latest member message and answer it again. */
+  | { kind: "edit"; messageId: string; text: string }
+  /** Answer the conversation's pending approval and let the agent continue. */
+  | { kind: "decide"; approvalId: string; decision: "approve" | "reject" }
+);
 
 export interface TurnDeps {
   store: Store;
   adapter: AgentAdapter;
   context: AgentTenantContext;
   idleTimeoutMs: number;
+  /** Loads an attachment's bytes for the agent (under the caller's session). */
+  loadAttachment?: (attachment: StoredAttachment) => Promise<Blob>;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -68,6 +81,8 @@ export function sanitizeArtifact(value: unknown): Artifact | null {
   return parsed.success ? parsed.data : null;
 }
 
+const MAX_PROPOSALS = 5;
+
 /**
  * Stops a run in progress. Runs are not tied to the browser connection: closing or reloading
  * the page leaves the agent working (its progress keeps being saved); only this stops it.
@@ -92,9 +107,36 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   if (existing.at(-1)?.status === "streaming") {
     throw new TurnError(409, "The agent is still working in this conversation.");
   }
+  const pending = conversation ? await store.pendingApproval(conversationId) : null;
 
   let userMessage: ChatMessage | null = null;
-  let prompt: string;
+  let prompt = "";
+  /** The member message being answered, whose files the agent gets. */
+  let promptMessageId: string | null = null;
+  let resume: AgentResume | undefined;
+  /** For a decision: the reply that paused, which this run continues. */
+  let continued: ChatMessage | null = null;
+  let decided: StoredApproval | null = null;
+
+  if (request.kind === "decide") {
+    if (!conversation) throw new TurnError(404, "Conversation not found.");
+    if (!pending || pending.id !== request.approvalId) throw new TurnError(409, "This request was already answered.");
+    continued = existing.find((m) => m.id === pending.messageId) ?? null;
+    if (!continued || existing.at(-1)?.id !== continued.id) throw new TurnError(409, "This request was already answered.");
+    if (pending.provider !== adapter.id) {
+      await store.settleApproval(pending.id, "pending", "expired");
+      throw new TurnError(409, "This request can't be answered anymore. Ask the agent again.");
+    }
+    const to = request.decision === "approve" ? "approved" : "declined";
+    if (!(await store.settleApproval(pending.id, "pending", to))) throw new TurnError(409, "This request was already answered.");
+    decided = { ...pending, status: to, decidedAt: Date.now() };
+    resume = { decision: request.decision, state: pending.providerState };
+  } else if (pending) {
+    // A new message waits for the pending decision; retrying or editing abandons it.
+    if (request.kind === "send") throw new TurnError(409, "Approve or decline the agent's request first.");
+    await store.settleApproval(pending.id, "pending", "expired");
+    await adapter.discard?.(pending.providerState).catch(() => undefined);
+  }
 
   if (request.kind === "retry") {
     if (!conversation) throw new TurnError(404, "Conversation not found.");
@@ -107,7 +149,23 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     const lastUser = existing.findLast((m) => m.role === "user");
     if (!lastUser) throw new TurnError(400, "There is no message to retry.");
     prompt = lastUser.content;
-  } else {
+    promptMessageId = lastUser.id;
+    await rewind(deps, conversation.agentProvider === adapter.id ? conversation.agentThreadId : null, conversationId);
+  } else if (request.kind === "edit") {
+    if (!conversation) throw new TurnError(404, "Conversation not found.");
+    const lastUser = existing.findLast((m) => m.role === "user");
+    if (!lastUser || lastUser.id !== request.messageId) throw new TurnError(409, "Only your latest message can be edited.");
+    await store.updateMessage(lastUser.id, { content: request.text });
+    await store.deleteMessagesAfter(conversationId, lastUser.id);
+    userMessage = { ...lastUser, content: request.text };
+    existing = [...existing.slice(0, existing.indexOf(lastUser)), userMessage];
+    prompt = request.text;
+    promptMessageId = lastUser.id;
+    await rewind(deps, conversation.agentProvider === adapter.id ? conversation.agentThreadId : null, conversationId);
+  } else if (request.kind === "send") {
+    const ids = [...new Set(request.attachmentIds ?? [])];
+    if (ids.length > 0 && !adapter.capabilities.attachments) throw new TurnError(400, "This agent can't read attached files yet.");
+    const created = !conversation;
     if (!conversation) {
       conversation = await store.createConversation({ id: conversationId, title: titleFromMessage(request.text) });
     }
@@ -120,8 +178,25 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       activity: [],
       artifacts: [],
     });
+    if (ids.length > 0) {
+      if (!(await store.claimAttachments(ids, userMessage.id))) {
+        if (created) await store.deleteConversation(conversationId);
+        else await store.deleteMessage(userMessage.id);
+        throw new TurnError(400, "Some files couldn't be attached. Remove them and attach them again.");
+      }
+      userMessage = { ...userMessage, attachments: (await store.listAttachments(userMessage.id)).map(publicAttachment) };
+    }
     existing = [...existing, userMessage];
     prompt = request.text;
+    promptMessageId = userMessage.id;
+  }
+  if (!conversation) throw new TurnError(404, "Conversation not found.");
+
+  const attachments: AgentAttachment[] = [];
+  if (promptMessageId && !resume) {
+    const stored = await store.listAttachments(promptMessageId);
+    if (stored.length > 0 && !deps.loadAttachment) throw new TurnError(400, "Attached files can't be read right now.");
+    for (const a of stored) attachments.push({ id: a.id, name: a.name, mimeType: a.mimeType, size: a.size, read: () => deps.loadAttachment!(a) });
   }
 
   // Prior completed turns, excluding the message being answered now.
@@ -131,15 +206,26 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     .filter((m) => m.status === "complete" && m.content.trim())
     .map((m) => ({ role: m.role, content: m.content }));
 
-  const assistant = await store.insertMessage({
-    id: crypto.randomUUID(),
-    conversationId,
-    role: "assistant",
-    content: "",
-    status: "streaming",
-    activity: [],
-    artifacts: [],
-  });
+  let assistant: ChatMessage;
+  if (continued) {
+    await store.updateMessage(continued.id, { status: "streaming", error: null });
+    assistant = {
+      ...continued,
+      status: "streaming",
+      error: null,
+      approvals: (continued.approvals ?? []).map((a) => (a.id === decided!.id ? publicApproval(decided!) : a)),
+    };
+  } else {
+    assistant = await store.insertMessage({
+      id: crypto.randomUUID(),
+      conversationId,
+      role: "assistant",
+      content: "",
+      status: "streaming",
+      activity: [],
+      artifacts: [],
+    });
+  }
 
   const controller = new AbortController();
   activeRuns.set(runKey, controller);
@@ -166,17 +252,20 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         }
       };
 
-      let content = "";
-      const activity: ActivityStep[] = [];
-      const artifacts: Artifact[] = [];
+      let content = assistant.content;
+      const activity: ActivityStep[] = [...assistant.activity];
+      const artifacts: Artifact[] = [...assistant.artifacts];
+      const approvals: Approval[] = [...(assistant.approvals ?? [])];
+      const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       let status: MessageStatus = "complete";
       let error: string | null = null;
+      let paused = false;
       let lastCheckpoint = Date.now();
       let saving: Promise<void> = Promise.resolve();
       const checkpoint = () => {
         lastCheckpoint = Date.now();
         saving = saving
-          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts }))
+          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals }))
           .catch((e) => console.error("[turn] checkpoint failed", e));
       };
       const heartbeat = setInterval(() => {
@@ -186,7 +275,16 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       send({ type: "start", conversation: summary, userMessage, assistantMessage: assistant });
 
       try {
-        const events = adapter.run({ conversationId, threadId, message: prompt, history, tenant: context, signal: controller.signal });
+        const events = adapter.run({
+          conversationId,
+          threadId,
+          message: prompt,
+          history,
+          tenant: context,
+          attachments,
+          resume,
+          signal: controller.signal,
+        });
         for await (const event of withIdleTimeout(events, deps.idleTimeoutMs, controller.signal)) {
           switch (event.type) {
             case "thread":
@@ -248,10 +346,36 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               }
               break;
             }
+            case "memory-proposal": {
+              const text = event.content.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_LENGTH);
+              if (!text || proposals.length >= MAX_PROPOSALS || proposals.some((p) => p.content === text)) break;
+              const proposal: MemoryProposal = { id: crypto.randomUUID(), content: text, scope: event.scope, status: "pending" };
+              proposals.push(proposal);
+              send({ type: "memory-proposal", proposal });
+              break;
+            }
+            case "approval": {
+              const stored = await store.createApproval({
+                conversationId,
+                messageId: assistant.id,
+                summary: event.summary.slice(0, 500) || "The agent wants to make a change",
+                app: event.app?.slice(0, 40),
+                details: event.details.slice(0, 8).map(([k, v]) => [k.slice(0, 40), v.slice(0, 300)]),
+                provider: adapter.id,
+                providerState: event.state,
+              });
+              const approval = publicApproval(stored);
+              approvals.push(approval);
+              paused = true;
+              send({ type: "approval", approval });
+              break;
+            }
           }
           if (Date.now() - lastCheckpoint > (deps.checkpointMs ?? 2000)) checkpoint();
         }
-        if (!content.trim() && artifacts.length === 0) {
+        if (paused) {
+          status = "awaiting";
+        } else if (!content.trim() && artifacts.length === 0 && proposals.length === 0) {
           status = "error";
           error = "The agent finished without a response.";
         }
@@ -259,6 +383,11 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         if (e instanceof AgentError) {
           status = "error";
           error = e.message;
+          if (e.code === "expired" && decided) {
+            await store.settleApproval(decided.id, decided.status, "expired").catch(() => undefined);
+            const index = approvals.findIndex((a) => a.id === decided!.id);
+            if (index >= 0) approvals[index] = { ...approvals[index], status: "expired" };
+          }
         } else if (controller.signal.aborted) {
           status = "stopped";
         } else {
@@ -275,14 +404,14 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await saving;
       let updated = summary;
       try {
-        await store.updateMessage(assistant.id, { content, status, activity, artifacts, error });
+        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, error });
         updated = await store.touchConversation(conversationId);
       } catch (e) {
         console.error("[turn] failed to save final state", e);
       }
       send({
         type: "end",
-        message: { ...assistant, content, status, activity, artifacts, error },
+        message: { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, error },
         conversation: updated,
       });
       if (open) {
@@ -299,6 +428,25 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       open = false;
     },
   });
+}
+
+/** Drops the latest exchange from the provider's own memory before it is answered again. */
+async function rewind(deps: TurnDeps, threadId: string | null, conversationId: string): Promise<void> {
+  if (!deps.adapter.capabilities.rewind || !deps.adapter.rewind) return;
+  try {
+    await deps.adapter.rewind({ tenant: deps.context, conversationId, threadId }, 1);
+  } catch (e) {
+    // The reply is still answered; the agent may just see the earlier attempt too.
+    console.error("[turn] rewind failed", e);
+  }
+}
+
+function publicApproval(a: StoredApproval | Approval): Approval {
+  return { id: a.id, summary: a.summary, app: a.app, details: a.details, status: a.status, createdAt: a.createdAt, decidedAt: a.decidedAt };
+}
+
+function publicAttachment(a: StoredAttachment) {
+  return { id: a.id, name: a.name, mimeType: a.mimeType, size: a.size };
 }
 
 function sameStep(a: ActivityStep, b: ActivityStep): boolean {

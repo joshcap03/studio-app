@@ -36,6 +36,9 @@ raw/technical text.
 - `src/lib/agent/`: provider-neutral interface (`types.ts`), `langflow.ts`, `mock.ts`, registry `index.ts`.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
 - `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id.
+- `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
+- `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
+  Context) and `install.py`, which backs up a flow and installs them.
 - `src/app/`: pages (`(workspace)`, `login`, `onboarding`, `settings`) and `api/` routes.
 - `src/components/`: `workspace/` (chat state owner), `chat/`, `sidebar/`, `settings/`, `ui/`.
 
@@ -49,6 +52,9 @@ raw/technical text.
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
 - Never hardcode a business into agent or app logic; per-workspace
   settings carry business specifics.
+- Anything the agent does that changes a member's accounts must pause for their approval
+  (`take_action` in the gateway). Don't add tools that write without it, and never approve on
+  the member's behalf. Provider resume state stays server-side.
 - Render only what the backend reports: no invented activity, statuses, or artifacts, and no
   artifact parsing from free text. Mock output stays clearly labeled.
 - Secrets stay server-side in `src/lib/config.ts`; only `NEXT_PUBLIC_SUPABASE_*` reach the browser.

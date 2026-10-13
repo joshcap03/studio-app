@@ -9,8 +9,9 @@ export type MessageRole = "user" | "assistant";
  * - `stopped`     the user stopped generation; content is partial
  * - `error`       the agent failed; `error` holds a user-safe explanation
  * - `interrupted` a run was cut off (server restart, closed tab) before it finished
+ * - `awaiting`    the agent paused until the member approves or declines an action
  */
-export type MessageStatus = "streaming" | "complete" | "stopped" | "error" | "interrupted";
+export type MessageStatus = "streaming" | "complete" | "stopped" | "error" | "interrupted" | "awaiting";
 
 export type ActivityStatus = "running" | "done" | "failed";
 
@@ -77,6 +78,39 @@ export interface Artifact {
   url?: string;
 }
 
+/**
+ * An action the agent asked permission for, as reported by the agent backend. It runs only
+ * if the member approves it.
+ */
+export interface Approval {
+  id: string;
+  /** The agent's one-sentence description of what it will do. */
+  summary: string;
+  /** The app it would act in (see src/lib/apps.ts). */
+  app?: string;
+  /** Key arguments, e.g. [["To", "jo@acme.com"], ["Subject", "March invoice"]]. */
+  details: [string, string][];
+  status: "pending" | "approved" | "declined" | "expired";
+  createdAt: number;
+  decidedAt?: number;
+}
+
+/** A fact the agent suggested remembering. Saved only if the member confirms it. */
+export interface MemoryProposal {
+  id: string;
+  content: string;
+  scope: "workspace" | "personal";
+  status: "pending" | "saved" | "dismissed";
+}
+
+/** A file the member attached to a message. */
+export interface Attachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -85,6 +119,10 @@ export interface ChatMessage {
   status: MessageStatus;
   activity: ActivityStep[];
   artifacts: Artifact[];
+  /** Approvals the agent asked for while writing this reply, oldest first. */
+  approvals?: Approval[];
+  memoryProposals?: MemoryProposal[];
+  attachments?: Attachment[];
   error?: string | null;
   createdAt: number;
 }
@@ -100,6 +138,8 @@ export interface AgentStatus {
   /** "unavailable": a live agent is configured but not enabled for this workspace. */
   mode: "mock" | "live" | "unavailable";
   label: string;
+  /** Whether the agent can read files attached to a message. */
+  attachments: boolean;
 }
 
 export interface WorkspaceSummary {
@@ -154,9 +194,30 @@ export type StreamEvent =
   | { type: "text-replace"; text: string }
   | { type: "activity"; step: ActivityStep }
   | { type: "artifact"; artifact: Artifact }
+  | { type: "approval"; approval: Approval }
+  | { type: "memory-proposal"; proposal: MemoryProposal }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
 export const MAX_MESSAGE_LENGTH = 32_000;
 export const MAX_TITLE_LENGTH = 120;
 export const MAX_MEMORY_LENGTH = 2000;
 export const MAX_CONTEXT_LENGTH = 8000;
+
+/** Files a message can carry. The agent reads text and documents; images go to vision models. */
+export const MAX_ATTACHMENTS = 5;
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const ATTACHMENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  csv: "text/csv",
+  txt: "text/plain",
+  md: "text/markdown",
+  json: "application/json",
+  xml: "application/xml",
+  html: "text/html",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+};

@@ -9,7 +9,12 @@ const STICK_THRESHOLD = 64;
 
 interface Props {
   messages: ChatMessage[];
+  /** Whether the agent is working in this conversation. */
+  running: boolean;
   onRetry: (messageId: string) => void;
+  onEdit: (messageId: string, text: string) => void;
+  onDecide: (approvalId: string, decision: "approve" | "reject") => void;
+  onProposal: (messageId: string, proposalId: string, decision: "save" | "dismiss") => void;
   onOpenPanel?: (messageId: string) => void;
   /** Changes whenever the user sends, to pull the view back to the latest message. */
   sendCount: number;
@@ -20,7 +25,8 @@ interface Props {
  * The scrolling message list. Follows new output while the reader is at the bottom, and
  * leaves the scroll position alone once they scroll up to read earlier messages.
  */
-export function Thread({ messages, onRetry, onOpenPanel, sendCount, footer }: Props) {
+export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onOpenPanel, sendCount, footer }: Props) {
+  const lastUserId = messages.findLast((m) => m.role === "user")?.id;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -72,9 +78,16 @@ export function Thread({ messages, onRetry, onOpenPanel, sendCount, footer }: Pr
             return (
               <div key={message.id} className={spacing}>
                 {message.role === "user" ? (
-                  <UserMessage message={message} />
+                  <UserMessage message={message} onEdit={!running && message.id === lastUserId && !message.id.startsWith("pending-") ? onEdit : undefined} />
                 ) : (
-                  <AssistantMessage message={message} isLast={index === messages.length - 1} onRetry={onRetry} onOpenPanel={onOpenPanel} />
+                  <AssistantMessage
+                    message={message}
+                    isLast={index === messages.length - 1}
+                    onRetry={onRetry}
+                    onOpenPanel={onOpenPanel}
+                    onDecide={!running && index === messages.length - 1 ? onDecide : undefined}
+                    onProposal={onProposal}
+                  />
                 )}
               </div>
             );
