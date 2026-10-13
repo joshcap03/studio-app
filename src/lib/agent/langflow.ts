@@ -186,19 +186,29 @@ interface LangflowMessage {
   sender_name?: string;
   text?: unknown;
   session_id?: string;
-  content_blocks?: { title?: string; contents?: unknown[] }[] | null;
+  content_blocks?: { type?: string; title?: string; contents?: unknown[] }[] | null;
 }
 
-function toolUses(message: LangflowMessage): LangflowToolUse[] {
-  const out: LangflowToolUse[] = [];
+/**
+ * The text and tool-call entries of a bot message, in order. Langflow sends two shapes: a
+ * "Agent Steps" block holding them in `contents` (v1 streams, and a background job's final
+ * message), and, while a background job runs, the entries themselves as the blocks.
+ */
+function leaves(message: LangflowMessage): { type?: string; text?: unknown }[] {
+  const out: { type?: string; text?: unknown }[] = [];
   for (const block of message.content_blocks ?? []) {
-    for (const content of block?.contents ?? []) {
-      if (content && typeof content === "object" && (content as { type?: string }).type === "tool_use") {
-        out.push(content as LangflowToolUse);
-      }
+    if (!block || typeof block !== "object") continue;
+    if (block.contents?.length) {
+      for (const c of block.contents) if (c && typeof c === "object") out.push(c as never);
+    } else if (block.type === "tool_use" || block.type === "text") {
+      out.push(block as never);
     }
   }
   return out;
+}
+
+function toolUses(message: LangflowMessage): LangflowToolUse[] {
+  return leaves(message).filter((l): l is LangflowToolUse => l.type === "tool_use");
 }
 
 function short(value: unknown, max = 160): string | undefined {
@@ -353,10 +363,9 @@ const NOTE_MAX = 280;
 
 /** Text blocks that come before a tool call in a bot message: the agent's opening lines. */
 export function leadingNotes(message: LangflowMessage): string[] {
-  const leaves: { type?: string; text?: unknown }[] = [];
-  for (const block of message.content_blocks ?? []) for (const c of block?.contents ?? []) if (c && typeof c === "object") leaves.push(c as never);
-  const lastTool = leaves.map((l) => l.type).lastIndexOf("tool_use");
-  return leaves
+  const all = leaves(message);
+  const lastTool = all.map((l) => l.type).lastIndexOf("tool_use");
+  return all
     .slice(0, Math.max(0, lastTool))
     .filter((l) => l.type === "text" && typeof l.text === "string" && l.text.trim())
     .map((l) => (l.text as string).trim());

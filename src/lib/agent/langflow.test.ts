@@ -298,6 +298,44 @@ describe("Langflow streaming", () => {
     }
   });
 
+  it("reads steps and opening lines while a background job runs (recorded flat-block shape)", async () => {
+    // Mid-run, Langflow 1.12.4 background jobs send the entries themselves as content blocks;
+    // only the final message nests them in an "Agent Steps" block.
+    const intro = "Let me find where your gold inventory is tracked.";
+    const answer = "You have **16 gold pieces in stock**.";
+    const discover = { type: "tool_use", name: "discover_tools", tool_input: { query: "inventory" }, output: { content: "[]" }, error: null };
+    const read = {
+      type: "tool_use",
+      name: "execute_tool",
+      tool_input: { tool_name: "search", arguments: { query: "gold inventory" } },
+      output: null,
+      error: null,
+    };
+    const flat = (text: string, blocks: unknown[]) => ({ ...bot(text), content_blocks: blocks });
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("add_message", flat("", [])),
+        frame("token", { chunk: intro }),
+        frame("add_message", flat(intro, [{ type: "text", text: intro }])),
+        frame("add_message", flat(intro, [{ type: "text", text: intro }, discover, read])),
+        frame("token", { chunk: answer }),
+        frame("add_message", bot(intro + answer, [{ type: "text", text: intro }, discover, { ...read, output: { content: "ok" } }, { type: "text", text: answer }])),
+        frame("end", {}),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note")).toEqual([{ type: "note", text: intro }]);
+    const text = events
+      .filter((e): e is Extract<AgentEvent, { type: "text-delta" }> => e.type === "text-delta")
+      .map((e) => e.text)
+      .join("");
+    expect(text).toBe(answer);
+    // The step shows while it runs, then updates in place.
+    const steps = events.filter((e) => e.type === "activity" && !e.hidden) as Extract<AgentEvent, { type: "activity" }>[];
+    expect(steps[0]).toMatchObject({ id: "msg-1:1", status: "running" });
+    expect(steps.at(-1)).toMatchObject({ id: "msg-1:1", status: "done" });
+  });
+
   it("reads server-sent frames with data: and id: lines (recorded v2 shape)", async () => {
     const sse = (id: number, event: string, data: unknown) => `data: ${JSON.stringify({ event, data })}\nid: ${id}\n\n`;
     const { events, error } = await run(
