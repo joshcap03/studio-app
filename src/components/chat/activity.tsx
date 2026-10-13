@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { appName } from "@/lib/apps";
 import type { ActivityStep } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
+import { findingFor } from "./findings";
 import { StepPreview } from "./step-preview";
 
 // Execution activity reported by the agent backend, shown as the agent's visible work:
@@ -33,8 +34,15 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
     // it's deciding what to do next.
     // Hidden plumbing steps still drive the status line, so a slow one is never invisible.
     const current = [...steps].reverse().find((s) => s.status === "running" && s.action !== "note");
+    // Between steps: the agent's latest line, or, if a step finished after it, what that
+    // step found. Both come from the run itself; nothing here is made up.
     const note = [...visible].reverse().find((s) => s.action === "note");
-    const status = current?.label ?? note?.label ?? "Thinking it through";
+    const found = [...visible]
+      .reverse()
+      .map((s) => ({ step: s, finding: findingFor(s) }))
+      .find((f) => f.finding && f.finding.tone === "normal");
+    const foundIsNewer = found && (!note || (found.step.endedAt ?? 0) > note.startedAt);
+    const status = current?.label ?? (foundIsNewer ? found.finding!.text : note?.label) ?? "Thinking it through";
     const listed = work;
     const hiddenCount = Math.max(0, listed.length - VISIBLE_WHILE_RUNNING);
     return (
