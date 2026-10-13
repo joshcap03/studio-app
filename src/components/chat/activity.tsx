@@ -6,6 +6,7 @@ import { appName } from "@/lib/apps";
 import type { ActivityStep } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
 import { findingFor } from "./findings";
+import { WorkAnimation } from "./work-animation";
 import { StepPreview } from "./step-preview";
 
 // Execution activity reported by the agent backend, shown as the agent's visible work:
@@ -51,6 +52,7 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
           since={steps[0]?.startedAt}
           stepSince={current?.startedAt}
           app={current?.app === "agent" ? undefined : current?.app}
+          action={current?.action}
           status={status}
           onOpenPanel={onOpenPanel}
         />
@@ -141,12 +143,14 @@ function WorkingHeader({
   since,
   stepSince,
   app,
+  action,
   status,
   onOpenPanel,
 }: {
   since?: number;
   stepSince?: number;
   app?: string;
+  action?: ActivityStep["action"];
   status: string;
   onOpenPanel?: () => void;
 }) {
@@ -160,11 +164,7 @@ function WorkingHeader({
   const slow = stepSeconds >= SLOW_STEP_SECONDS;
   return (
     <div className="flex h-6 items-center gap-2.5 text-[13.5px]">
-      {app ? (
-        <AppGlyph app={app} size={16} className="breathe" />
-      ) : (
-        <span className="breathe size-1.5 rounded-full bg-accent" aria-hidden="true" />
-      )}
+      <WorkAnimation action={app ? action : undefined} app={app} />
       <span key={status} className="text-shimmer min-w-0 truncate font-medium animate-fade-in">
         {status}
       </span>
