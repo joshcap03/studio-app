@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowUpRight, ChevronRight, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/types";
 import { formatSeconds } from "./activity";
 import { AppGlyph } from "./app-glyph";
@@ -9,12 +9,38 @@ import { findingFor, findingForArtifact, type Finding } from "./findings";
 import { StepPreview } from "./step-preview";
 
 /**
- * What the agent found, one line per discovery: the emails it saw, the sources it read,
- * what it remembered, what it made. The chat timeline already says what the agent is
- * doing; this panel never repeats it. Click a line for the full receipt. Desktop only.
+ * Everything the agent has found and made in this conversation, one line per discovery,
+ * grouped under the question that led to it. The chat says what the agent is doing; this
+ * panel is the conversation's record of what it saw. Click a line for the receipt.
+ * Desktop only.
  */
-export function WorkPanel({ message, onClose }: { message: ChatMessage | null; onClose: () => void }) {
-  const findings = message ? collectFindings(message) : [];
+export function WorkPanel({
+  messages,
+  focusId,
+  onClose,
+}: {
+  messages: ChatMessage[];
+  /** Reply to bring into view (from its "show what it found" button). */
+  focusId: string | null;
+  onClose: () => void;
+}) {
+  const groups = groupFindings(messages);
+  const running = messages.find((m) => m.role === "assistant" && m.status === "streaming");
+  const count = groups.reduce((n, g) => n + g.findings.length, 0);
+  const scroller = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+
+  // Follow new findings while the reader is at the bottom; jump to a requested reply.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (focusId) {
+      el.querySelector(`[data-reply="${focusId}"]`)?.scrollIntoView({ block: "start" });
+      stick.current = false;
+    } else if (stick.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [count, focusId]);
 
   return (
     <aside
@@ -23,7 +49,7 @@ export function WorkPanel({ message, onClose }: { message: ChatMessage | null; o
     >
       <header className="flex h-14 shrink-0 items-center gap-2 pr-2 pl-5">
         <h2 className="text-[14px] font-semibold tracking-[-0.01em]">Found</h2>
-        <Status message={message} />
+        {running ? <Elapsed since={running.activity[0]?.startedAt} /> : count > 0 ? <span className="text-[12.5px] text-fg-3">{count}</span> : null}
         <button
           type="button"
           onClick={onClose}
@@ -34,26 +60,61 @@ export function WorkPanel({ message, onClose }: { message: ChatMessage | null; o
         </button>
       </header>
 
-      <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-3 pb-8">
-        {findings.length === 0 ? (
+      <div
+        ref={scroller}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        }}
+        className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-3 pb-8"
+      >
+        {groups.length === 0 ? (
           <p className="mt-2 px-2 text-[13.5px] leading-relaxed text-fg-3">
-            {message?.status === "streaming" ? "What it finds will show up here." : "Nothing to show for this reply."}
+            {running ? "What it finds will show up here." : "Nothing found in this conversation yet."}
           </p>
         ) : (
-          <ol className="space-y-0.5">
-            {findings.map((finding) => (
-              <FindingRow key={finding.id} finding={finding} />
-            ))}
-          </ol>
+          groups.map((group) => (
+            <section key={group.replyId} data-reply={group.replyId} className="mb-5 scroll-mt-2 last:mb-0">
+              <h3 className="truncate px-2 pt-1 pb-1.5 text-[12px] text-fg-3" title={group.question}>
+                {group.question}
+              </h3>
+              <ol className="space-y-0.5">
+                {group.findings.map((finding) => (
+                  <FindingRow key={finding.id} finding={finding} />
+                ))}
+              </ol>
+            </section>
+          ))
         )}
       </div>
     </aside>
   );
 }
 
+interface Group {
+  replyId: string;
+  question: string;
+  findings: Finding[];
+}
+
+/** Findings for one reply: what its steps found, then the files it made. */
 export function collectFindings(message: ChatMessage): Finding[] {
   const fromSteps = message.activity.filter((s) => !s.hidden).flatMap((s) => findingFor(s) ?? []);
   return [...fromSteps, ...message.artifacts.map(findingForArtifact)];
+}
+
+function groupFindings(messages: ChatMessage[]): Group[] {
+  const groups: Group[] = [];
+  let question = "";
+  for (const m of messages) {
+    if (m.role === "user") {
+      question = m.content.replace(/\s+/g, " ").trim();
+      continue;
+    }
+    const findings = collectFindings(m).map((f) => ({ ...f, id: `${m.id}:${f.id}` }));
+    if (findings.length > 0) groups.push({ replyId: m.id, question: question || "Earlier", findings });
+  }
+  return groups;
 }
 
 function FindingRow({ finding }: { finding: Finding }) {
@@ -92,7 +153,7 @@ function FindingRow({ finding }: { finding: Finding }) {
         {preview ? <ChevronRight size={13} className={`mt-1 shrink-0 text-fg-4 transition-transform ${open ? "rotate-90" : ""}`} /> : null}
       </button>
       {open && preview ? (
-        <div className="mt-1 mb-3 ml-[38px] mr-2 animate-fade-in">
+        <div className="mt-1 mb-3 mr-2 ml-[38px] animate-fade-in">
           <StepPreview preview={preview} size="panel" />
         </div>
       ) : null}
@@ -100,16 +161,12 @@ function FindingRow({ finding }: { finding: Finding }) {
   );
 }
 
-function Status({ message }: { message: ChatMessage | null }) {
-  const running = message?.status === "streaming";
-  const since = message?.activity[0]?.startedAt;
+function Elapsed({ since }: { since?: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!running) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [running]);
-  if (!running) return null;
+  }, []);
   return (
     <span className="flex items-center gap-1.5 text-[12.5px] text-fg-3">
       <span className="breathe size-1.5 rounded-full bg-accent" aria-hidden="true" />

@@ -234,7 +234,7 @@ function composioTool(slug: string, input: Record<string, unknown>, result: unkn
     labels: verb.labels,
     app,
     action: verb.action,
-    preview: previewFor(slug, app, input, data) ?? readablePreview(data),
+    preview: withQuery(previewFor(slug, app, input, data) ?? readablePreview(data), input),
     artifacts: [artifactFor(slug, app, data)].filter((a): a is Artifact => !!a),
   };
 }
@@ -524,6 +524,13 @@ function textPreview(text: string): StepPreview {
   return { type: "text", text: clip(text, 1200) };
 }
 
+/** Attaches what the tool was asked (its query) to list and text receipts. */
+function withQuery(preview: StepPreview | undefined, input: Record<string, unknown>): StepPreview | undefined {
+  const query = firstString(input, ["query", "q", "search", "keyword", "question", "search_query"]);
+  if (!preview || !query || (preview.type !== "text" && preview.type !== "items")) return preview;
+  return { ...preview, query: clip(query, 80) };
+}
+
 /** Keys under which apps commonly return lists of records. */
 const LIST_KEYS = [
   "items", "results", "records", "rows", "orders", "products", "events", "files", "notes", "meetings",
@@ -643,7 +650,8 @@ export function gatewayFailure(text: string): string | undefined {
   if (failed) return humanReason(errorMessage(failed[1]) ?? failed[1]);
   const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(value);
   if (timedOut) return `The service didn't respond within ${timedOut[1]} seconds.`;
-  if (/^Unknown tool/.test(value)) return "Tried a tool that isn't reachable that way.";
+  const unknown = /^Unknown tool '([^']+)'/.exec(value);
+  if (unknown) return `Asked for a tool called “${humanize(unknown[1])}”, which doesn't exist here.`;
   if (/^(Invalid arguments for|Tool arguments must be)/.test(value)) return "Sent the tool the wrong details.";
   return undefined;
 }

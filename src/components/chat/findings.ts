@@ -40,7 +40,8 @@ export function findingFor(step: ActivityStep): Finding | null {
       if (step.app === "memory") {
         return { ...base, text: n === 1 && first ? `Remembered: ${first}` : `Remembered ${n} ${plural(n, "thing")}${first ? `, like “${first}”` : ""}` };
       }
-      return { ...base, text: `Found ${n} ${plural(n, "item")}${first ? `: ${first}${n > 1 ? "…" : ""}` : ""}` };
+      const about = p.query ? ` for “${p.query}”` : "";
+      return { ...base, text: `Found ${n} ${plural(n, "item")}${about} in ${appName(step.app)}${first ? `: ${first}${n > 1 ? "…" : ""}` : ""}` };
     }
     case "table": {
       const n = p.total ?? p.rows.length;
@@ -53,9 +54,9 @@ export function findingFor(step: ActivityStep): Finding | null {
       if (step.app === "memory") {
         return { ...base, text: step.label.startsWith("Noted") ? `Noted: “${short(p.text)}”` : `Remembered: ${short(p.text)}` };
       }
-      // Free-form answers from apps can be long or sensitive: say where it came from, and
-      // keep the text one click away.
-      return { ...base, text: `Got results from ${appName(step.app)}` };
+      // Free-form answers from apps: what was asked, and the answer's first real sentence.
+      // The full text stays one click away.
+      return { ...base, text: answerLine(appName(step.app), p.query, p.text) };
     case "link":
       return { ...base, text: step.action === "connect" ? `${p.title ?? "A connection"} needs your OK` : `Opened ${p.title ?? "a page"}` };
   }
@@ -69,6 +70,24 @@ export function findingForArtifact(artifact: Artifact): Finding {
     artifact,
     app: artifact.kind === "spreadsheet" ? "sheets" : artifact.kind === "document" ? "docs" : undefined,
   };
+}
+
+/** "Granola · “Franzi” — 9 meetings mention Franzi…" */
+export function answerLine(app: string, query: string | undefined, text: string): string {
+  const lead = firstRealSentence(text);
+  const asked = query ? ` · “${query.length > 40 ? `${query.slice(0, 39).trimEnd()}…` : query}”` : "";
+  return lead ? `${app}${asked} — ${lead}` : `${app}${asked}: answer ready`;
+}
+
+/** The first sentence that says something, skipping preambles like "I'll review…". */
+export function firstRealSentence(text: string): string {
+  const plain = text
+    .replace(/[*_`#>]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const sentences = plain.match(/[^.!?]+[.!?]?/g) ?? [];
+  const real = sentences.map((s) => s.trim()).find((s) => s.length > 12 && !/^(i['’]ll|i will|let me|i['’]m going to|sure|okay|ok|here(['’]s| is)|got it)\b/i.test(s));
+  return real ? short(real) : "";
 }
 
 function plural(n: number, word: string): string {

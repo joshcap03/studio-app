@@ -22,7 +22,7 @@ export type StepAction = "search" | "read" | "write" | "run" | "remember" | "bro
  */
 export type StepPreview =
   | { type: "sources"; items: { title: string; url: string; domain: string }[]; total?: number }
-  | { type: "items"; items: { primary: string; secondary?: string; url?: string }[]; total?: number }
+  | { type: "items"; items: { primary: string; secondary?: string; url?: string }[]; total?: number; query?: string }
   | { type: "table"; columns: string[]; rows: string[][]; total?: number; title?: string }
   | {
       type: "code";
@@ -32,7 +32,8 @@ export type StepPreview =
       /** Progress the code reported with explicit "STEP …" lines, in order. */
       steps?: string[];
     }
-  | { type: "text"; text: string }
+  /** query: what the tool was asked, when it was a search or question. */
+  | { type: "text"; text: string; query?: string }
   | { type: "link"; url: string; title?: string };
 
 /** One observable step of agent execution, as reported by the agent backend. */

@@ -43,7 +43,15 @@ describe("findings", () => {
       text: "Hit a snag: The app isn't connected or needs to be re-authorized.",
       tone: "problem",
     });
-    expect(findingFor(step({ app: "granola", preview: { type: "text", text: "Long private meeting summary…" } }))?.text).toBe("Got results from Granola");
+    expect(
+      findingFor(
+        step({
+          app: "granola",
+          preview: { type: "text", query: "Franzi", text: "I’ll review recent meetings involving Franzi. **9 meetings** between Jul 23 and Oct 8 mention Franzi." },
+        }),
+      )?.text,
+    ).toBe("Granola · “Franzi” — 9 meetings between Jul 23 and Oct 8 mention Franzi.");
+    expect(findingFor(step({ app: "granola", preview: { type: "text", text: "Let me check." } }))?.text).toBe("Granola: answer ready");
   });
 
   it("has nothing to say for steps without a receipt or still running", () => {

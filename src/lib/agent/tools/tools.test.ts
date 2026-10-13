@@ -106,6 +106,7 @@ describe("interpretCalls", () => {
         { primary: "Invoice #12", secondary: "Casting Co <billing@casting.example>", url: "https://mail.google.com/mail/u/0/#inbox/1" },
         { primary: "Re: order", secondary: "Stone Supplier", url: undefined },
       ],
+      query: "invoice",
     });
   });
 
@@ -273,8 +274,8 @@ describe("interpretCalls", () => {
       [0, "failed", "granola"],
       [2, "done", "granola"],
     ]);
-    expect(steps[0].detail).toBe("Tried a tool that isn't reachable that way.");
-    expect(steps[1].preview).toEqual({ type: "text", text: "Found 9 meetings…" });
+    expect(steps[0].detail).toBe("Asked for a tool called “granola mcp query granola meetings”, which doesn't exist here.");
+    expect(steps[1].preview).toEqual({ type: "text", text: "Found 9 meetings…", query: "Franzi" });
   });
 
   it("puts common technical failures in plain words", () => {

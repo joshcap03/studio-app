@@ -74,8 +74,9 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   const [sendCount, setSendCount] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  /** Message shown in the work panel; "latest" follows the newest reply. null = closed. */
-  const [panel, setPanel] = useState<string | null>(null);
+  /** Whether the "Found" panel is open, and which reply to bring into view in it. */
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelFocus, setPanelFocus] = useState<string | null>(null);
   const panelAuto = useRef(true);
 
   const controllers = useRef(new Map<string, AbortController>());
@@ -453,15 +454,13 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   const latestReply = activeThread?.status === "ready" ? activeThread.messages.findLast((m) => m.role === "assistant") : undefined;
   const latestHasFindings = latestReply?.status === "streaming" && collectFindings(latestReply).length > 0;
   useEffect(() => {
-    if (latestHasFindings && panelAuto.current) setPanel((current) => current ?? "latest");
+    if (latestHasFindings && panelAuto.current) setPanelOpen(true);
   }, [latestHasFindings]);
 
-  // Switching to a conversation that isn't working closes the panel.
-  const runningRef = useRef(running);
-  runningRef.current = running;
+  // The panel covers the whole conversation and stays open across conversations; switching
+  // only clears any "jump to this reply" request.
   useEffect(() => {
-    if (activeId && runningRef.current.has(activeId)) return;
-    setPanel(null);
+    setPanelFocus(null);
   }, [activeId]);
 
   const openPanel = useCallback((messageId: string) => {
@@ -471,7 +470,8 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
     } catch {
       // ignore
     }
-    setPanel(messageId);
+    setPanelOpen(true);
+    setPanelFocus(messageId);
   }, []);
 
   const closePanel = useCallback(() => {
@@ -481,7 +481,8 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
     } catch {
       // ignore
     }
-    setPanel(null);
+    setPanelOpen(false);
+    setPanelFocus(null);
   }, []);
 
   // ---------------------------------------------------------------------------------------
@@ -649,13 +650,10 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
           )}
         </main>
 
-        {panel && activeId && activeThread?.status === "ready" ? (
+        {panelOpen && activeId && activeThread?.status === "ready" ? (
           <WorkPanel
-            message={
-              panel === "latest"
-                ? (activeThread.messages.findLast((m) => m.role === "assistant") ?? null)
-                : (activeThread.messages.find((m) => m.id === panel) ?? null)
-            }
+            messages={activeThread.messages}
+            focusId={panelFocus}
             onClose={closePanel}
           />
         ) : null}
