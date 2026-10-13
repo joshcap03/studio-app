@@ -6,6 +6,7 @@ import { readAttachment } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import { getConfig } from "@/lib/config";
+import { getSkill } from "@/lib/skills";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
 import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
@@ -20,7 +21,16 @@ type Context = { params: Promise<{ id: string }> };
 
 const text = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 const body = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("send"), text, attachmentIds: z.array(z.uuid()).max(MAX_ATTACHMENTS).optional() }),
+  z
+    .object({
+      kind: z.literal("send"),
+      text: z.string().trim().max(MAX_MESSAGE_LENGTH),
+      // A skill from the caller's workspace. Only its id comes from the request; the
+      // instructions are loaded from the workspace below.
+      skillId: z.uuid().optional(),
+      attachmentIds: z.array(z.uuid()).max(MAX_ATTACHMENTS).optional(),
+    })
+    .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
   z.object({ kind: z.literal("retry") }),
   z.object({ kind: z.literal("edit"), messageId: z.uuid(), text }),
   z.object({ kind: z.literal("decide"), approvalId: z.uuid(), decision: z.enum(["approve", "reject"]) }),
@@ -43,6 +53,13 @@ export async function POST(request: NextRequest, { params }: Context) {
     const limit = await checkRunLimits(tenant);
     if (limit) return jsonError(429, limit, "rate_limited");
 
+    const loadSkill = (id: string) => getSkill(tenant, id);
+    let skill = undefined;
+    if (input.kind === "send" && input.skillId) {
+      skill = (await loadSkill(input.skillId)) ?? undefined;
+      if (!skill) return jsonError(404, "Skill not found.");
+    }
+
     const store = storeFor(tenant);
     // A conversation id that exists for another tenant fails here: the insert collides with
     // a row this tenant cannot see, and the database refuses it.
@@ -53,8 +70,11 @@ export async function POST(request: NextRequest, { params }: Context) {
         context: await buildAgentContext(tenant),
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
         loadAttachment: (attachment) => readAttachment(tenant, attachment),
+        loadSkill,
       },
-      { conversationId: conversationId.data, ...input },
+      input.kind === "send"
+        ? { conversationId: conversationId.data, kind: "send", text: input.text, skill, attachmentIds: input.attachmentIds }
+        : { conversationId: conversationId.data, ...input },
     );
     await recordRun(tenant);
     return new Response(stream, {

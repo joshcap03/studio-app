@@ -124,6 +124,8 @@ export interface ChatMessage {
   memoryProposals?: MemoryProposal[];
   attachments?: Attachment[];
   error?: string | null;
+  /** User messages only: the skill attached to it, if any. */
+  skill?: MessageSkill | null;
   createdAt: number;
 }
 
@@ -221,3 +223,27 @@ export const ATTACHMENT_TYPES: Record<string, string> = {
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
 };
+/**
+ * A named set of instructions for a task, added to a workspace from the library or written
+ * by the owner. It reaches the agent only on a message it is attached to.
+ */
+export interface WorkspaceSkill {
+  id: string;
+  /** The library entry it was added from, if any. */
+  catalogId: string | null;
+  name: string;
+  description: string;
+  instructions: string;
+  createdAt: number;
+}
+
+/** The skill a user message was sent with. */
+export interface MessageSkill {
+  id: string;
+  name: string;
+}
+
+export const MAX_SKILL_NAME_LENGTH = 80;
+export const MAX_SKILL_DESCRIPTION_LENGTH = 200;
+export const MAX_SKILL_INSTRUCTIONS_LENGTH = 4000;
+export const MAX_SKILLS = 50;

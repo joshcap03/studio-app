@@ -33,6 +33,9 @@ raw/technical text.
 - `src/lib/tenant.ts`: session → user → active workspace (membership-checked). The only source of identity.
 - `src/lib/db/store.ts`: conversation persistence, scoped to one workspace + user.
 - `src/lib/workspace.ts`: settings, memory, usage/limits, and the per-run agent context.
+- `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
+  composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
+  sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to.
 - `src/lib/agent/`: provider-neutral interface (`types.ts`), `langflow.ts`, `mock.ts`, registry `index.ts`.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
 - `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id.

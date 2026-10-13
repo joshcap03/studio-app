@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Workspace, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
 import { storeFor } from "@/lib/chat/store-for";
+import { listSkills } from "@/lib/skills";
 import { requirePageTenant } from "@/lib/tenant";
 
 // One page serves "/" (new conversation) and "/c/<id>". After the first load the browser
@@ -10,7 +11,13 @@ import { requirePageTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 
-export default async function WorkspacePage({ params }: { params: Promise<{ slug?: string[] }> }) {
+export default async function WorkspacePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug?: string[] }>;
+  searchParams: Promise<{ skill?: string | string[] }>;
+}) {
   const tenant = await requirePageTenant();
 
   const { slug = [] } = await params;
@@ -22,10 +29,13 @@ export default async function WorkspacePage({ params }: { params: Promise<{ slug
   }
 
   const store = storeFor(tenant);
-  const [conversations, conversation] = await Promise.all([
+  const [conversations, conversation, skills] = await Promise.all([
     store.listConversations(),
     conversationId ? store.getConversation(conversationId) : null,
+    listSkills(tenant),
   ]);
+  const requested = (await searchParams).skill;
+  const initialSkillId = skills.find((s) => s.id === requested)?.id ?? null;
 
   let initialThread: InitialThread | null = null;
   if (conversationId) {
@@ -42,6 +52,8 @@ export default async function WorkspacePage({ params }: { params: Promise<{ slug
       workspace={tenant.workspace}
       workspaces={tenant.workspaces}
       email={tenant.email}
+      skills={skills}
+      initialSkillId={initialSkillId}
     />
   );
 }

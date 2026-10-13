@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Check, Copy, Pencil, RotateCcw } from "lucide-react";
+import { AlertCircle, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
@@ -28,18 +28,26 @@ export const UserMessage = memo(function UserMessage({ message, onEdit }: UserPr
   return (
     <div className="group/user flex flex-col items-end gap-1.5 animate-fade-up">
       {attachments.length > 0 ? <AttachmentList attachments={attachments} /> : null}
-      <div className="flex w-full items-center justify-end gap-1">
-        {onEdit ? (
-          <div className="opacity-0 transition-opacity duration-200 group-hover/user:opacity-100 focus-within:opacity-100 max-md:opacity-100">
-            <IconButton label="Edit message" side="bottom" onClick={() => setEditing(true)} className="size-7">
-              <Pencil size={13} />
-            </IconButton>
+      {message.skill ? (
+        <span className="inline-flex h-7 max-w-[min(85%,36rem)] items-center gap-1.5 rounded-full bg-accent-soft px-2.5 text-[13px] font-medium text-accent">
+          <Sparkles size={13} className="shrink-0" />
+          <span className="truncate">{message.skill.name}</span>
+        </span>
+      ) : null}
+      {message.content ? (
+        <div className="flex w-full items-center justify-end gap-1">
+          {onEdit ? (
+            <div className="opacity-0 transition-opacity duration-200 group-hover/user:opacity-100 focus-within:opacity-100 max-md:opacity-100">
+              <IconButton label="Edit message" side="bottom" onClick={() => setEditing(true)} className="size-7">
+                <Pencil size={13} />
+              </IconButton>
+            </div>
+          ) : null}
+          <div className="max-w-[min(85%,36rem)] rounded-[18px] bg-subtle px-4 py-2.5 text-[15px] leading-[1.6] whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">
+            {message.content}
           </div>
-        ) : null}
-        <div className="max-w-[min(85%,36rem)] rounded-[18px] bg-subtle px-4 py-2.5 text-[15px] leading-[1.6] whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">
-          {message.content}
         </div>
-      </div>
+      ) : null}
     </div>
   );
 });

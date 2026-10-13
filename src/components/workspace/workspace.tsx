@@ -12,7 +12,20 @@ import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
-import type { AgentStatus, Attachment, ChatMessage, ConversationSummary, StreamEvent, WorkspaceSummary } from "@/lib/types";
+import type {
+  AgentStatus,
+  Attachment,
+  ChatMessage,
+  ConversationSummary,
+  MessageSkill,
+  StreamEvent,
+  WorkspaceSkill,
+  WorkspaceSummary,
+} from "@/lib/types";
+
+/** What a message is sent with besides its text. */
+type SendExtras = { skill: MessageSkill | null; attachments: Attachment[] };
+const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
 type ThreadState =
   | { status: "loading"; messages: ChatMessage[] }
@@ -33,6 +46,10 @@ interface Props {
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
   email: string | null;
+  /** The workspace's skills, offered in the composer ("/") and on the new-chat screen. */
+  skills: WorkspaceSkill[];
+  /** A skill to attach on load (from "Use" on the skills page). */
+  initialSkillId: string | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -54,7 +71,16 @@ function provisionalTitle(text: string): string {
  * and in-flight runs. Runs live here rather than in the thread view, so a conversation keeps
  * streaming while the user reads or starts another one.
  */
-export function Workspace({ initialConversations, initialThread, agent, workspace, workspaces, email }: Props) {
+export function Workspace({
+  initialConversations,
+  initialThread,
+  agent,
+  workspace,
+  workspaces,
+  email,
+  skills,
+  initialSkillId,
+}: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
@@ -81,9 +107,9 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
 
   const controllers = useRef(new Map<string, AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
-  const unsent = useRef(new Map<string, { text: string; attachments: Attachment[] }>());
-  /** Files sent with each pending reply, keyed by its placeholder id. */
-  const sentFiles = useRef(new Map<string, Attachment[]>());
+  const unsent = useRef(new Map<string, { text: string; extras: SendExtras }>());
+  /** What each pending reply's message was sent with, keyed by its placeholder id. */
+  const sentExtras = useRef(new Map<string, SendExtras>());
   /** A short explanation when the server turned an action down. */
   const [notice, setNotice] = useState<string | null>(null);
   const drafts = useRef(new Map<string, string>());
@@ -285,7 +311,9 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
           setNotice(error.message);
           return;
         }
-        if (!started && body.kind === "send") unsent.current.set(assistantId, { text: body.text, attachments: sentFiles.current.get(assistantId) ?? [] });
+        if (!started && body.kind === "send") {
+          unsent.current.set(assistantId, { text: body.text, extras: sentExtras.current.get(assistantId) ?? { skill: null, attachments: [] } });
+        }
         patchMessage(conversationId, assistantId, (m) =>
           m.status !== "streaming"
             ? m
@@ -305,14 +333,15 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
         setRunState(conversationId, false);
       }
     },
-    [patchMessage, patchMessages, setRunState, upsertConversation],
+    [patchMessage, patchMessages, setRunState, skills, upsertConversation],
   );
 
   const sendTo = useCallback(
-    (conversationId: string, text: string, isNew: boolean, attachments: Attachment[] = []) => {
+    (conversationId: string, text: string, isNew: boolean, extras: SendExtras = NO_EXTRAS) => {
+      const { skill, attachments } = extras;
       const now = Date.now();
       const base = { conversationId, activity: [], artifacts: [], createdAt: now };
-      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete", attachments };
+      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete", skill, attachments };
       const assistant: ChatMessage = {
         ...base,
         id: `pending-assistant-${now}`,
@@ -329,17 +358,17 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
         const existing = list.find((c) => c.id === conversationId);
         const summary = existing
           ? { ...existing, updatedAt: now }
-          : { id: conversationId, title: provisionalTitle(text), createdAt: now, updatedAt: now };
+          : { id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), createdAt: now, updatedAt: now };
         return [summary, ...list.filter((c) => c.id !== conversationId)];
       });
       if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
       setNotice(null);
-      sentFiles.current.set(assistant.id, attachments);
+      sentExtras.current.set(assistant.id, extras);
       const attachmentIds = attachments.map((a) => a.id);
       void runTurn(
         conversationId,
-        { kind: "send", text, ...(attachmentIds.length ? { attachmentIds } : {}) },
+        { kind: "send", text, skillId: skill?.id, ...(attachmentIds.length ? { attachmentIds } : {}) },
         { user: user.id, assistant: assistant.id },
       );
     },
@@ -347,14 +376,15 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   );
 
   const send = useCallback(
-    (text: string, attachments: Attachment[] = []) => {
+    (text: string, extras: Partial<SendExtras> = {}) => {
+      const full: SendExtras = { skill: extras.skill ?? null, attachments: extras.attachments ?? [] };
       if (activeId) {
         if (running.has(activeId)) return;
         drafts.current.delete(activeId);
-        sendTo(activeId, text, false, attachments);
+        sendTo(activeId, text, false, full);
       } else {
         drafts.current.delete("new");
-        sendTo(crypto.randomUUID(), text, true, attachments);
+        sendTo(crypto.randomUUID(), text, true, full);
       }
     },
     [activeId, running, sendTo],
@@ -437,7 +467,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
           const index = messages.findIndex((m) => m.id === messageId);
           return index > 0 ? messages.slice(0, index - 1) : messages.filter((m) => m.id !== messageId);
         });
-        sendTo(conversationId, unsentSend.text, false, unsentSend.attachments);
+        sendTo(conversationId, unsentSend.text, false, unsentSend.extras);
         return;
       }
       setNotice(null);
@@ -704,6 +734,9 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
               draft={drafts.current.get("new") ?? ""}
               onDraftChange={(v) => drafts.current.set("new", v)}
               onSubmit={send}
+              skills={skills}
+              initialSkillId={initialSkillId}
+              canManageSkills={workspace.role === "owner"}
               allowFiles={agent.attachments}
               footnote={footnote}
             />
@@ -734,6 +767,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
                     onDraftChange={(v) => drafts.current.set(draftKey, v)}
                     onSubmit={send}
                     onStop={stop}
+                    skills={skills}
                     running={isRunning}
                     placeholder="Reply…"
                     autoFocus={desktop}

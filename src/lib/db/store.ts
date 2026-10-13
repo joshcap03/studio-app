@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   ConversationSummary,
   MemoryProposal,
+  MessageSkill,
   MessageStatus,
 } from "@/lib/types";
 
@@ -98,6 +99,7 @@ interface MessageRow {
   artifacts: Artifact[];
   memory_proposals: MemoryProposal[] | null;
   error: string | null;
+  skill: MessageSkill | null;
   created_at: string;
   updated_at: string;
   approvals?: ApprovalRow[] | null;
@@ -130,7 +132,7 @@ const CONVERSATION_COLUMNS = "id, title, agent_provider, agent_thread_id, create
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
-  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, error, created_at, updated_at, " +
+  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, error, skill, created_at, updated_at, " +
   "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS = "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at";
@@ -184,6 +186,7 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   memoryProposals: r.memory_proposals ?? [],
   attachments: (r.attachments ?? []).map(toAttachment),
   error: r.error,
+  skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
   createdAt: Date.parse(r.created_at),
 });
 
@@ -344,6 +347,7 @@ export function createStore(db: Db, scope: Scope): Store {
             artifacts: m.artifacts,
             memory_proposals: m.memoryProposals ?? [],
             error: m.error ?? null,
+            skill: m.skill ? { id: m.skill.id, name: m.skill.name } : null,
           })
           .select(MESSAGE_COLUMNS)
           .single(),

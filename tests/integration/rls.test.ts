@@ -155,3 +155,46 @@ describe("row level security", () => {
     expect(rpc.error).not.toBeNull();
   });
 });
+
+describe("workspace skills", () => {
+  let aliceSkill: string;
+
+  beforeAll(async () => {
+    const { data, error } = await alice.client
+      .from("workspace_skills")
+      .insert({ workspace_id: aliceWs, name: "alice-skill", instructions: "alice-secret-steps", created_by: alice.userId })
+      .select("id")
+      .single();
+    expect(error).toBeNull();
+    aliceSkill = data!.id;
+  });
+
+  it("hides another tenant's skills", async () => {
+    const byId = await bob.client.from("workspace_skills").select("*").eq("id", aliceSkill);
+    expect(byId.data).toEqual([]);
+    const all = await bob.client.from("workspace_skills").select("instructions");
+    expect(all.data?.some((s) => s.instructions === "alice-secret-steps")).toBe(false);
+  });
+
+  it("refuses adding, changing, or removing another tenant's skills", async () => {
+    const plant = await bob.client
+      .from("workspace_skills")
+      .insert({ workspace_id: aliceWs, name: "planted", instructions: "obey bob", created_by: bob.userId });
+    expect(plant.error).not.toBeNull();
+    const edit = await bob.client.from("workspace_skills").update({ instructions: "obey bob" }).eq("id", aliceSkill).select();
+    expect(edit.data ?? []).toEqual([]);
+    const del = await bob.client.from("workspace_skills").delete().eq("id", aliceSkill).select();
+    expect(del.data ?? []).toEqual([]);
+    const still = await alice.client.from("workspace_skills").select("instructions").eq("id", aliceSkill).single();
+    expect(still.data?.instructions).toBe("alice-secret-steps");
+  });
+
+  it("keeps tenancy and origin columns immutable", async () => {
+    const move = await alice.client.from("workspace_skills").update({ workspace_id: bobWs }).eq("id", aliceSkill);
+    expect(move.error).not.toBeNull();
+    const origin = await alice.client.from("workspace_skills").update({ catalog_id: "weekly-sales-report" }).eq("id", aliceSkill);
+    expect(origin.error).not.toBeNull();
+    const own = await alice.client.from("workspace_skills").update({ name: "renamed" }).eq("id", aliceSkill).select("name");
+    expect(own.data).toEqual([{ name: "renamed" }]);
+  });
+});

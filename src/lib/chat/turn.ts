@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, type AgentTenantContext } from "@/lib/agent/types";
 import { STALE_STREAM_MS, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
+import { renderSkillMessage } from "@/lib/skills/render";
 import {
   ARTIFACT_KINDS,
   MAX_MEMORY_LENGTH,
@@ -29,10 +30,17 @@ export class TurnError extends Error {
   }
 }
 
+/** A workspace skill attached to a message, loaded by the server from the caller's workspace. */
+export interface TurnSkill {
+  id: string;
+  name: string;
+  instructions: string;
+}
+
 export type TurnRequest = { conversationId: string } & (
-  | { kind: "send"; text: string; attachmentIds?: string[] }
+  | { kind: "send"; text: string; skill?: TurnSkill; attachmentIds?: string[] }
   | { kind: "retry" }
-  /** Replace the latest member message and answer it again. */
+  /** Replace the latest member message and answer it again (keeping its skill and files). */
   | { kind: "edit"; messageId: string; text: string }
   /** Answer the conversation's pending approval and let the agent continue. */
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject" }
@@ -45,6 +53,8 @@ export interface TurnDeps {
   idleTimeoutMs: number;
   /** Loads an attachment's bytes for the agent (under the caller's session). */
   loadAttachment?: (attachment: StoredAttachment) => Promise<Blob>;
+  /** Loads a skill from the caller's workspace, for retrying or editing a message sent with one. */
+  loadSkill?: (id: string) => Promise<TurnSkill | null>;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -131,43 +141,58 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     if (!(await store.settleApproval(pending.id, "pending", to))) throw new TurnError(409, "This request was already answered.");
     decided = { ...pending, status: to, decidedAt: Date.now() };
     resume = { decision: request.decision, state: pending.providerState };
-  } else if (pending) {
-    // A new message waits for the pending decision; retrying or editing abandons it.
-    if (request.kind === "send") throw new TurnError(409, "Approve or decline the agent's request first.");
+  } else if (pending && request.kind === "send") {
+    // A new message waits for the pending decision.
+    throw new TurnError(409, "Approve or decline the agent's request first.");
+  }
+
+  /** Retrying or editing abandons a pending decision, once the request is known to be valid. */
+  const abandonPending = async () => {
+    if (!pending || request.kind === "decide") return;
     await store.settleApproval(pending.id, "pending", "expired");
     await adapter.discard?.(pending.providerState).catch(() => undefined);
-  }
+  };
+  /** A message sent with a skill is answered with the skill's current instructions. */
+  const withSkill = async (message: ChatMessage, text: string) => {
+    if (!message.skill) return text;
+    const skill = await deps.loadSkill?.(message.skill.id);
+    if (!skill) throw new TurnError(409, `The skill "${message.skill.name}" was removed from this workspace.`);
+    return renderSkillMessage(skill, text);
+  };
 
   if (request.kind === "retry") {
     if (!conversation) throw new TurnError(404, "Conversation not found.");
+    const lastUser = existing.findLast((m) => m.role === "user");
+    if (!lastUser) throw new TurnError(400, "There is no message to retry.");
+    prompt = await withSkill(lastUser, lastUser.content);
+    promptMessageId = lastUser.id;
+    await abandonPending();
     const last = existing.at(-1);
     // Retry replaces the latest reply, whether it failed or finished.
     if (last?.role === "assistant") {
       await store.deleteMessage(last.id);
       existing = existing.slice(0, -1);
     }
-    const lastUser = existing.findLast((m) => m.role === "user");
-    if (!lastUser) throw new TurnError(400, "There is no message to retry.");
-    prompt = lastUser.content;
-    promptMessageId = lastUser.id;
     await rewind(deps, conversation.agentProvider === adapter.id ? conversation.agentThreadId : null, conversationId);
   } else if (request.kind === "edit") {
     if (!conversation) throw new TurnError(404, "Conversation not found.");
     const lastUser = existing.findLast((m) => m.role === "user");
     if (!lastUser || lastUser.id !== request.messageId) throw new TurnError(409, "Only your latest message can be edited.");
+    prompt = await withSkill(lastUser, request.text);
+    promptMessageId = lastUser.id;
+    await abandonPending();
     await store.updateMessage(lastUser.id, { content: request.text });
     await store.deleteMessagesAfter(conversationId, lastUser.id);
     userMessage = { ...lastUser, content: request.text };
     existing = [...existing.slice(0, existing.indexOf(lastUser)), userMessage];
-    prompt = request.text;
-    promptMessageId = lastUser.id;
     await rewind(deps, conversation.agentProvider === adapter.id ? conversation.agentThreadId : null, conversationId);
   } else if (request.kind === "send") {
     const ids = [...new Set(request.attachmentIds ?? [])];
     if (ids.length > 0 && !adapter.capabilities.attachments) throw new TurnError(400, "This agent can't read attached files yet.");
     const created = !conversation;
     if (!conversation) {
-      conversation = await store.createConversation({ id: conversationId, title: titleFromMessage(request.text) });
+      const title = titleFromMessage(request.skill ? [request.skill.name, request.text.trim()].filter(Boolean).join(" — ") : request.text);
+      conversation = await store.createConversation({ id: conversationId, title });
     }
     userMessage = await store.insertMessage({
       id: crypto.randomUUID(),
@@ -177,6 +202,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       status: "complete",
       activity: [],
       artifacts: [],
+      skill: request.skill ? { id: request.skill.id, name: request.skill.name } : null,
     });
     if (ids.length > 0) {
       if (!(await store.claimAttachments(ids, userMessage.id))) {
@@ -187,7 +213,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       userMessage = { ...userMessage, attachments: (await store.listAttachments(userMessage.id)).map(publicAttachment) };
     }
     existing = [...existing, userMessage];
-    prompt = request.text;
+    prompt = request.skill ? renderSkillMessage(request.skill, request.text) : request.text;
     promptMessageId = userMessage.id;
   }
   if (!conversation) throw new TurnError(404, "Conversation not found.");

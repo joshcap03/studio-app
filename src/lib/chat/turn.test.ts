@@ -111,6 +111,62 @@ describe("startTurn", () => {
     });
   });
 
+  it("sends a skill's instructions with the message, but stores only the user's words", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const seen: AgentRunInput[] = [];
+    const skill = { id: "skill-1", name: "Weekly sales report", instructions: "1. Pull orders." };
+    const deps = {
+      store,
+      adapter: scripted([{ type: "message", text: "Done" }], undefined, seen),
+      context: context(scopeA),
+      idleTimeoutMs: 1000,
+      loadSkill: async () => skill,
+    };
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "", skill }));
+    expect(seen[0].message).toContain("1. Pull orders.");
+    const [user] = await store.listMessages(id);
+    expect(user).toMatchObject({ content: "", skill: { id: "skill-1", name: "Weekly sales report" } });
+    expect(await store.getConversation(id)).toMatchObject({ title: "Weekly sales report" });
+
+    // Retry uses the skill's current instructions.
+    skill.instructions = "1. Pull orders, edited.";
+    await collect(startTurn(deps, { conversationId: id, kind: "retry" }));
+    expect(seen[1].message).toContain("1. Pull orders, edited.");
+  });
+
+  it("refuses to retry a message whose skill was removed, keeping the reply", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const skill = { id: "skill-1", name: "Gone", instructions: "x" };
+    const base = { store, adapter: scripted([{ type: "message", text: "Done" }]), context: context(scopeA), idleTimeoutMs: 1000 };
+    await collect(startTurn(base, { conversationId: id, kind: "send", text: "hi", skill }));
+    await expect(startTurn({ ...base, loadSkill: async () => null }, { conversationId: id, kind: "retry" })).rejects.toThrow(
+      'The skill "Gone" was removed',
+    );
+    expect((await store.listMessages(id)).map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("keeps a message's skill when it's edited", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const seen: AgentRunInput[] = [];
+    const skill = { id: "skill-1", name: "Weekly sales report", instructions: "1. Pull orders." };
+    const deps = {
+      store,
+      adapter: scripted([{ type: "message", text: "Done" }], undefined, seen),
+      context: context(scopeA),
+      idleTimeoutMs: 1000,
+      loadSkill: async () => skill,
+    };
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "for March", skill }));
+    const userId = (await store.listMessages(id))[0].id;
+    await collect(startTurn(deps, { conversationId: id, kind: "edit", messageId: userId, text: "for April" }));
+    expect(seen[1].message).toContain("1. Pull orders.");
+    expect(seen[1].message).toContain("for April");
+    expect((await store.listMessages(id))[0]).toMatchObject({ content: "for April", skill: { id: "skill-1" } });
+  });
+
   it("does not reuse a thread id recorded by a different provider", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
