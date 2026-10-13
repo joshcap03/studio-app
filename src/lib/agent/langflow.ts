@@ -225,6 +225,17 @@ export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Model-provider failures in plain words; anything else keeps a short excerpt. */
+export function friendlyError(detail: string): string {
+  if (/\b402\b|credit|in_flight_budget|insufficient_quota|billing/i.test(detail)) {
+    return "The AI model account is out of credit or at its limit. Add credits with your model provider (e.g. OpenRouter), then retry.";
+  }
+  if (/\b429\b|rate.?limit|too many requests/i.test(detail)) return "The AI model is busy or rate-limited. Try again in a minute.";
+  if (/\b(401|403)\b|invalid api key|unauthorized/i.test(detail)) return "The AI model rejected the agent's credentials. Check the model API key in Langflow.";
+  if (/context length|maximum context|too many tokens/i.test(detail)) return "The conversation got too long for the model. Start a new chat and try again.";
+  return `The agent ran into a problem: ${short(detail, 300)}`;
+}
+
 /** Longest text treated as a possible opening line before it is released as the answer. */
 const NOTE_MAX = 280;
 
@@ -415,9 +426,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
           }
         } else if (event === "error") {
           const detail = (data as { error?: unknown })?.error;
-          throw new AgentError(
-            typeof detail === "string" && detail ? `The agent ran into a problem: ${short(detail, 300)}` : "The agent ran into a problem.",
-          );
+          throw new AgentError(typeof detail === "string" && detail ? friendlyError(detail) : "The agent ran into a problem.");
         } else if (event === "end") {
           if (pending) {
             shownText += pending;

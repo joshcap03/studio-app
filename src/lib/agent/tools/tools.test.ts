@@ -223,6 +223,35 @@ describe("interpretCalls", () => {
     expect(failed).toMatchObject({ status: "failed", app: "gmail", detail: "Rate limited" });
   });
 
+  it("finds readable results from apps it has no special handling for, across multi-tool calls", () => {
+    const [step] = interpretCalls([
+      {
+        name: "composio_multi_execute_tool",
+        input: { tools: [{ tool_slug: "GRANOLA_LIST_MEETINGS", arguments: {} }, { tool_slug: "GMAIL_FETCH_EMAILS", arguments: {} }], current_step: "Checking notes and emails with Franzi" },
+        output: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                successful: true,
+                data: {
+                  results: [
+                    { tool_slug: "GRANOLA_LIST_MEETINGS", response: { successful: true, data: { notes: [{ title: "Weekly sync with Franzi", summary: "Agreed on the launch date." }] } } },
+                    { tool_slug: "GMAIL_FETCH_EMAILS", response: { successful: true, data: { messages: [{ subject: "Re: launch", sender: "Franzi" }] } } },
+                  ],
+                },
+              }),
+            },
+          ],
+          isError: false,
+        },
+        error: null,
+      },
+    ]);
+    expect(step).toMatchObject({ label: "Checking notes and emails with Franzi", app: "granola" });
+    expect(step.preview).toEqual({ type: "items", items: [{ primary: "Weekly sync with Franzi", secondary: "Agreed on the launch date." }] });
+  });
+
   it("treats an MCP isError result as a failure", () => {
     const [step] = interpretCalls([
       { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: { content: [{ type: "text", text: "Sandbox crashed" }], isError: true }, error: null },

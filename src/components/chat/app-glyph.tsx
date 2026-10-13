@@ -41,6 +41,7 @@ const GLYPHS: Record<string, { icon: LucideIcon; tint: string }> = {
   quickbooks: { icon: Receipt, tint: "text-[#2f7a4c] bg-[#2f7a4c]/10" },
   stripe: { icon: CreditCard, tint: "text-[#5b4fc4] bg-[#5b4fc4]/10" },
   instagram: { icon: Camera, tint: "text-[#b03a7a] bg-[#b03a7a]/10" },
+  granola: { icon: NotebookText, tint: "text-[#4f7a3a] bg-[#4f7a3a]/10" },
   web: { icon: Globe, tint: "text-[#3a64a8] bg-[#3a64a8]/10" },
   browser: { icon: Compass, tint: "text-[#3a7a8a] bg-[#3a7a8a]/10" },
   memory: { icon: BookMarked, tint: "text-accent bg-accent-soft" },

@@ -264,6 +264,11 @@ describe("Langflow streaming", () => {
     expect((error as Error).message).toContain("Model quota exceeded");
   });
 
+  it("explains model-provider failures in plain words", async () => {
+    const { error } = await run(base, streamResponse([frame("error", { error: "APIStatusError: Error code: 402 - in_flight_budget_exhausted" })]));
+    expect((error as Error).message).toMatch(/out of credit/);
+  });
+
   it("maps HTTP failures to safe, specific errors", async () => {
     for (const [status, pattern, retryable] of [
       [403, /credentials/, false],

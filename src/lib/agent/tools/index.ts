@@ -230,7 +230,7 @@ function composioTool(slug: string, input: Record<string, unknown>, result: unkn
     labels: verb.labels,
     app,
     action: verb.action,
-    preview: previewFor(slug, app, input, data),
+    preview: previewFor(slug, app, input, data) ?? readablePreview(data),
     artifacts: [artifactFor(slug, app, data)].filter((a): a is Artifact => !!a),
   };
 }
@@ -246,6 +246,19 @@ function multiExecute(input: Record<string, unknown>, result: unknown): Interpre
   const response = results.find((r) => r.tool_slug === first.tool_slug) ?? results[0];
   const inner = response && isRecord(response.response) ? response.response : undefined;
   const interpretation = composioTool(first.tool_slug, isRecord(first.arguments) ? first.arguments : {}, inner);
+  // With several tools, show the first one that returned something readable.
+  if (!interpretation.preview) {
+    for (const tool of tools.slice(1)) {
+      if (typeof tool.tool_slug !== "string") continue;
+      const r = results.find((x) => x.tool_slug === tool.tool_slug);
+      const other = composioTool(tool.tool_slug, isRecord(tool.arguments) ? tool.arguments : {}, r && isRecord(r.response) ? r.response : undefined);
+      if (other.preview) {
+        interpretation.preview = other.preview;
+        interpretation.app = other.app;
+        break;
+      }
+    }
+  }
   if (inner && inner.successful === false) interpretation.innerError = errorMessage(inner.error) ?? "The tool reported a failure.";
   if (tools.length > 1) {
     const apps = [...new Set(tools.map((t) => (typeof t.tool_slug === "string" ? appName(appForToolkit(t.tool_slug)) : null)).filter(Boolean))];
@@ -439,11 +452,11 @@ function previewFor(slug: string, app: AppId, input: Record<string, unknown>, da
   }
 
   // Generic lists of records (orders, products, events, files…).
-  const list = findArray(data, ["items", "results", "records", "rows", "orders", "products", "events", "files", "data"]);
+  const list = findArray(data, LIST_KEYS);
   if (list && list.length > 0 && list.every(isRecord)) {
     const items = (list as Record<string, unknown>[]).map((r) => ({
       primary: clip(firstString(r, ["title", "name", "subject", "summary", "id"]) ?? "Item", 120),
-      secondary: clip(firstString(r, ["status", "email", "created_at", "date", "updated_at"]) ?? "", 80) || undefined,
+      secondary: clip(firstString(r, ["summary", "snippet", "description", "status", "email", "date", "created_at", "updated_at"]) ?? "", 160) || undefined,
       url: safeUrl(r.url ?? r.webViewLink ?? r.htmlLink),
     }));
     const { items: shown, total } = capList(items, MAX_ITEMS);
@@ -507,6 +520,12 @@ function textPreview(text: string): StepPreview {
   return { type: "text", text: clip(text, 1200) };
 }
 
+/** Keys under which apps commonly return lists of records. */
+const LIST_KEYS = [
+  "items", "results", "records", "rows", "orders", "products", "events", "files", "notes", "meetings",
+  "documents", "memories", "threads", "contacts", "customers", "entries", "facts", "static", "dynamic", "data",
+];
+
 const TITLE_KEYS = ["title", "name", "subject", "label", "key"];
 const BODY_KEYS = ["summary", "content", "memory", "text", "description", "value", "snippet"];
 
@@ -522,7 +541,7 @@ export function readablePreview(result: unknown): StepPreview | undefined {
     if (!text || /^[[{]/.test(text)) return undefined; // unparseable JSON-ish text: omit
     return textPreview(text);
   }
-  const list = Array.isArray(value) ? value : findArray(value, ["documents", "memories", "results", "items", "facts", "static", "dynamic", "data"]);
+  const list = Array.isArray(value) ? value : findArray(value, LIST_KEYS);
   if (list && list.length > 0) {
     const items = list.flatMap((entry) => {
       if (typeof entry === "string") return entry.trim() && !/^[[{]/.test(entry.trim()) ? [{ primary: clip(entry, 160) }] : [];
