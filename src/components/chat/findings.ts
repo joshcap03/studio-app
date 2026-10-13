@@ -16,7 +16,22 @@ export interface Finding {
 
 const EMAIL_APPS = new Set(["gmail", "outlook"]);
 
-export function findingFor(step: ActivityStep): Finding | null {
+/**
+ * Findings for one reply, in order. A free-form app answer is summarized by the line the
+ * agent wrote right after it ("Found 9 meetings."), since raw answers make poor headlines.
+ */
+export function findingsForReply(steps: ActivityStep[], artifacts: Artifact[]): Finding[] {
+  const out: Finding[] = [];
+  steps.forEach((step, i) => {
+    if (step.hidden || step.action === "note") return;
+    const after = steps.slice(i + 1).find((s) => !s.hidden && (s.action === "note" || s.status !== "running"));
+    const finding = findingFor(step, after?.action === "note" ? after.label : undefined);
+    if (finding) out.push(finding);
+  });
+  return [...out, ...artifacts.map(findingForArtifact)];
+}
+
+export function findingFor(step: ActivityStep, agentSaid?: string): Finding | null {
   if (step.status === "failed") {
     return { id: step.id, app: step.app, text: step.detail ? `Hit a snag: ${step.detail}` : step.label, tone: "problem", step };
   }
@@ -40,7 +55,7 @@ export function findingFor(step: ActivityStep): Finding | null {
       if (step.app === "memory") {
         return { ...base, text: n === 1 && first ? `Remembered: ${first}` : `Remembered ${n} ${plural(n, "thing")}${first ? `, like “${first}”` : ""}` };
       }
-      const about = p.query ? ` for “${p.query}”` : "";
+      const about = p.query && p.query.length <= 40 ? ` for “${p.query}”` : "";
       return { ...base, text: `Found ${n} ${plural(n, "item")}${about} in ${appName(step.app)}${first ? `: ${first}${n > 1 ? "…" : ""}` : ""}` };
     }
     case "table": {
@@ -54,9 +69,10 @@ export function findingFor(step: ActivityStep): Finding | null {
       if (step.app === "memory") {
         return { ...base, text: step.label.startsWith("Noted") ? `Noted: “${short(p.text)}”` : `Remembered: ${short(p.text)}` };
       }
-      // Free-form answers from apps: what was asked, and the answer's first real sentence.
-      // The full text stays one click away.
-      return { ...base, text: answerLine(appName(step.app), p.query, p.text) };
+      // Free-form answers from apps: say it in the agent's words when it summarized the
+      // result, otherwise just where it looked. Raw answer text is never the headline; it
+      // stays one click away.
+      return { ...base, text: summaryFromAgent(agentSaid) ?? lookedThrough(appName(step.app), p.query) };
     case "link":
       return { ...base, text: step.action === "connect" ? `${p.title ?? "A connection"} needs your OK` : `Opened ${p.title ?? "a page"}` };
   }
@@ -72,22 +88,28 @@ export function findingForArtifact(artifact: Artifact): Finding {
   };
 }
 
-/** "Granola · “Franzi” — 9 meetings mention Franzi…" */
-export function answerLine(app: string, query: string | undefined, text: string): string {
-  const lead = firstRealSentence(text);
-  const asked = query ? ` · “${query.length > 40 ? `${query.slice(0, 39).trimEnd()}…` : query}”` : "";
-  return lead ? `${app}${asked} — ${lead}` : `${app}${asked}: answer ready`;
+/** The informative part of the agent's line ("Found 9 meetings. Let me…" → "Found 9 meetings."). */
+export function summaryFromAgent(line: string | undefined): string | undefined {
+  if (!line) return undefined;
+  const sentences = clean(line).match(/[^.!?]+[.!?]?/g) ?? [];
+  const real = sentences.map((s) => s.trim()).find((s) => s.length > 3 && !/^(let me|i['’]ll|i will|i['’]m going to|next|now)\b/i.test(s));
+  if (!real) return undefined;
+  // Keep what was found; drop the plan that follows ("…, so I'll widen the search").
+  const found = real.replace(/[,;:–—-]?\s*(so|and|then)\s+(i['’]ll|i will|let me|i['’]m going to)\b.*$/i, "").trim();
+  return short(/[.!?]$/.test(found) ? found : `${found}.`);
 }
 
-/** The first sentence that says something, skipping preambles like "I'll review…". */
-export function firstRealSentence(text: string): string {
-  const plain = text
+function lookedThrough(app: string, query: string | undefined): string {
+  return query && query.length <= 30 ? `Looked through ${app} for “${query}”` : `Looked through ${app}`;
+}
+
+/** Strips markup and stray symbols so a finding reads like a sentence. */
+function clean(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, " ")
     .replace(/[*_`#>]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  const sentences = plain.match(/[^.!?]+[.!?]?/g) ?? [];
-  const real = sentences.map((s) => s.trim()).find((s) => s.length > 12 && !/^(i['’]ll|i will|let me|i['’]m going to|sure|okay|ok|here(['’]s| is)|got it)\b/i.test(s));
-  return real ? short(real) : "";
 }
 
 function plural(n: number, word: string): string {
@@ -95,6 +117,6 @@ function plural(n: number, word: string): string {
 }
 
 function short(text: string): string {
-  const line = text.replace(/\s+/g, " ").trim();
+  const line = clean(text);
   return line.length > 90 ? `${line.slice(0, 89).trimEnd()}…` : line;
 }

@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/types";
 import { formatSeconds } from "./activity";
 import { AppGlyph } from "./app-glyph";
-import { findingFor, findingForArtifact, type Finding } from "./findings";
+import { findingsForReply, type Finding } from "./findings";
 import { StepPreview } from "./step-preview";
 
 /**
@@ -99,8 +99,7 @@ interface Group {
 
 /** Findings for one reply: what its steps found, then the files it made. */
 export function collectFindings(message: ChatMessage): Finding[] {
-  const fromSteps = message.activity.filter((s) => !s.hidden).flatMap((s) => findingFor(s) ?? []);
-  return [...fromSteps, ...message.artifacts.map(findingForArtifact)];
+  return findingsForReply(message.activity, message.artifacts);
 }
 
 function groupFindings(messages: ChatMessage[]): Group[] {

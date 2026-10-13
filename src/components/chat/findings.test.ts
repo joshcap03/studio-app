@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep } from "@/lib/types";
-import { findingFor, findingForArtifact } from "./findings";
+import { findingFor, findingForArtifact, findingsForReply, summaryFromAgent } from "./findings";
 
 const step = (overrides: Partial<ActivityStep>): ActivityStep => ({
   id: "s",
@@ -43,21 +43,31 @@ describe("findings", () => {
       text: "Hit a snag: The app isn't connected or needs to be re-authorized.",
       tone: "problem",
     });
-    expect(
-      findingFor(
-        step({
-          app: "granola",
-          preview: { type: "text", query: "Franzi", text: "I’ll review recent meetings involving Franzi. **9 meetings** between Jul 23 and Oct 8 mention Franzi." },
-        }),
-      )?.text,
-    ).toBe("Granola · “Franzi” — 9 meetings between Jul 23 and Oct 8 mention Franzi.");
-    expect(findingFor(step({ app: "granola", preview: { type: "text", text: "Let me check." } }))?.text).toBe("Granola: answer ready");
+    expect(findingFor(step({ app: "granola", preview: { type: "text", query: "Franzi", text: '<requestedrange timerange="custom"> raw' } }))?.text).toBe(
+      "Looked through Granola for “Franzi”",
+    );
+    expect(findingFor(step({ app: "granola", preview: { type: "text", query: "List all of my job interviews with dates and outcomes", text: "x" } }))?.text).toBe(
+      "Looked through Granola",
+    );
   });
 
   it("has nothing to say for steps without a receipt or still running", () => {
     expect(findingFor(step({ preview: undefined }))).toBeNull();
     expect(findingFor(step({ status: "running", preview: { type: "text", text: "x" } }))).toBeNull();
     expect(findingFor(step({ preview: { type: "code", language: "python", code: "x" } }))).toBeNull();
+  });
+
+  it("headlines a free-form answer with the agent's own line about it", () => {
+    const steps: ActivityStep[] = [
+      step({ id: "a", app: "granola", preview: { type: "text", text: "The content below is meeting notes…" } }),
+      step({ id: "n", app: "agent", action: "note", label: "Found 9 meetings about interviews. Let me see what they cover." }),
+      step({ id: "b", app: "granola", preview: { type: "text", text: "<requestedrange …>" } }),
+    ];
+    expect(findingsForReply(steps, []).map((f) => f.text)).toEqual(["Found 9 meetings about interviews.", "Looked through Granola"]);
+    expect(summaryFromAgent("Let me check the transcripts next.")).toBeUndefined();
+    expect(summaryFromAgent("The Oct 1–12 results don't include Aaru, so I'll widen the search to all dates.")).toBe(
+      "The Oct 1–12 results don't include Aaru.",
+    );
   });
 
   it("lists files the agent made", () => {
