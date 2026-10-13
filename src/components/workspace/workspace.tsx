@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Composer, type ComposerHandle } from "@/components/chat/composer";
 import { EmptyState } from "@/components/chat/empty-state";
 import { Thread } from "@/components/chat/thread";
-import { WorkPanel } from "@/components/chat/work-panel";
+import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
@@ -318,7 +318,6 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
       });
       if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
-      if (panelAuto.current) setPanel("latest");
       void runTurn(conversationId, { kind: "send", text }, { user: user.id, assistant: assistant.id });
     },
     [navigate, runTurn],
@@ -366,7 +365,6 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
       };
       patchMessages(conversationId, (messages) => [...messages.filter((m) => m.id !== messageId), assistant]);
       setSendCount((n) => n + 1);
-      if (panelAuto.current) setPanel("latest");
       void runTurn(conversationId, { kind: "retry" }, { assistant: assistant.id });
     },
     [activeId, patchMessages, runTurn, running, sendTo],
@@ -413,6 +411,13 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
     },
     [activeId, conversations, navigate],
   );
+
+  // The panel opens on its own once a running reply has found something worth showing.
+  const latestReply = activeThread?.status === "ready" ? activeThread.messages.findLast((m) => m.role === "assistant") : undefined;
+  const latestHasFindings = latestReply?.status === "streaming" && collectFindings(latestReply).length > 0;
+  useEffect(() => {
+    if (latestHasFindings && panelAuto.current) setPanel((current) => current ?? "latest");
+  }, [latestHasFindings]);
 
   // Switching to a conversation that isn't working closes the panel.
   const runningRef = useRef(running);

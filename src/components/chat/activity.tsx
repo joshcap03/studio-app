@@ -83,8 +83,8 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
           <button
             type="button"
             onClick={onOpenPanel}
-            aria-label="Open work view"
-            title="Open work view"
+            aria-label="Show what it found"
+            title="Show what it found"
             className="hidden size-7 items-center justify-center rounded-md text-fg-4 transition-colors hover:bg-hover hover:text-fg-2 min-[1180px]:inline-flex"
           >
             <PanelRightOpen size={14} />
@@ -127,8 +127,8 @@ function WorkingHeader({ since, current, onOpenPanel }: { since?: number; curren
         <button
           type="button"
           onClick={onOpenPanel}
-          aria-label="Open work view"
-          title="Open work view"
+          aria-label="Show what it found"
+          title="Show what it found"
           className="ml-auto hidden size-6 items-center justify-center rounded-md text-fg-4 hover:bg-hover hover:text-fg-2 min-[1180px]:inline-flex"
         >
           <PanelRightOpen size={13} />
