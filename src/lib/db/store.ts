@@ -1,5 +1,5 @@
 import type { Db } from "@/lib/supabase/server";
-import type { ActivityStep, Artifact, ChatMessage, ConversationSummary, MessageStatus } from "@/lib/types";
+import type { ActivityStep, Artifact, ChatMessage, ConversationSummary, MessageSkill, MessageStatus } from "@/lib/types";
 
 // The conversation persistence boundary, scoped to one tenant (workspace + user). Every
 // query carries both ids explicitly, and Row Level Security enforces the same scope in the
@@ -56,12 +56,13 @@ interface MessageRow {
   activity: ActivityStep[];
   artifacts: Artifact[];
   error: string | null;
+  skill: MessageSkill | null;
   created_at: string;
   updated_at: string;
 }
 
 const CONVERSATION_COLUMNS = "id, title, agent_provider, agent_thread_id, created_at, updated_at";
-const MESSAGE_COLUMNS = "id, conversation_id, role, content, status, activity, artifacts, error, created_at, updated_at";
+const MESSAGE_COLUMNS = "id, conversation_id, role, content, status, activity, artifacts, error, skill, created_at, updated_at";
 
 const toSummary = (r: ConversationRow): ConversationSummary => ({
   id: r.id,
@@ -88,6 +89,7 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   activity: r.activity ?? [],
   artifacts: r.artifacts ?? [],
   error: r.error,
+  skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
   createdAt: Date.parse(r.created_at),
 });
 
@@ -245,6 +247,7 @@ export function createStore(db: Db, scope: Scope): Store {
             activity: m.activity,
             artifacts: m.artifacts,
             error: m.error ?? null,
+            skill: m.skill ? { id: m.skill.id, name: m.skill.name } : null,
           })
           .select(MESSAGE_COLUMNS)
           .single(),

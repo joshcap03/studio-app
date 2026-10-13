@@ -11,8 +11,16 @@ import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
-import { ApiError, api, streamTurn } from "@/lib/client/api";
-import type { AgentStatus, ChatMessage, ConversationSummary, StreamEvent, WorkspaceSummary } from "@/lib/types";
+import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
+import type {
+  AgentStatus,
+  ChatMessage,
+  ConversationSummary,
+  MessageSkill,
+  StreamEvent,
+  WorkspaceSkill,
+  WorkspaceSummary,
+} from "@/lib/types";
 
 type ThreadState =
   | { status: "loading"; messages: ChatMessage[] }
@@ -33,6 +41,10 @@ interface Props {
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
   email: string | null;
+  /** The workspace's skills, offered in the composer ("/") and on the new-chat screen. */
+  skills: WorkspaceSkill[];
+  /** A skill to attach on load (from "Use" on the skills page). */
+  initialSkillId: string | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -54,7 +66,16 @@ function provisionalTitle(text: string): string {
  * and in-flight runs. Runs live here rather than in the thread view, so a conversation keeps
  * streaming while the user reads or starts another one.
  */
-export function Workspace({ initialConversations, initialThread, agent, workspace, workspaces, email }: Props) {
+export function Workspace({
+  initialConversations,
+  initialThread,
+  agent,
+  workspace,
+  workspaces,
+  email,
+  skills,
+  initialSkillId,
+}: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
@@ -81,7 +102,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
 
   const controllers = useRef(new Map<string, AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
-  const unsent = useRef(new Map<string, string>());
+  const unsent = useRef(new Map<string, { text: string; skill: MessageSkill | null }>());
   const drafts = useRef(new Map<string, string>());
   const composer = useRef<ComposerHandle>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -196,7 +217,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   const runTurn = useCallback(
     async (
       conversationId: string,
-      body: { kind: "send"; text: string } | { kind: "retry" },
+      body: TurnBody,
       placeholderIds: { user?: string; assistant: string },
     ) => {
       const controller = new AbortController();
@@ -270,7 +291,10 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
         cancelAnimationFrame(frame);
         flush();
         const aborted = controller.signal.aborted;
-        if (!started && body.kind === "send") unsent.current.set(assistantId, body.text);
+        if (!started && body.kind === "send") {
+          const skill = body.skillId ? (skills.find((s) => s.id === body.skillId) ?? null) : null;
+          unsent.current.set(assistantId, { text: body.text, skill: skill && { id: skill.id, name: skill.name } });
+        }
         patchMessage(conversationId, assistantId, (m) =>
           m.status !== "streaming"
             ? m
@@ -290,14 +314,14 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
         setRunState(conversationId, false);
       }
     },
-    [patchMessage, patchMessages, setRunState, upsertConversation],
+    [patchMessage, patchMessages, setRunState, skills, upsertConversation],
   );
 
   const sendTo = useCallback(
-    (conversationId: string, text: string, isNew: boolean) => {
+    (conversationId: string, text: string, skill: MessageSkill | null, isNew: boolean) => {
       const now = Date.now();
       const base = { conversationId, activity: [], artifacts: [], createdAt: now };
-      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete" };
+      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete", skill };
       const assistant: ChatMessage = {
         ...base,
         id: `pending-assistant-${now}`,
@@ -314,25 +338,25 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
         const existing = list.find((c) => c.id === conversationId);
         const summary = existing
           ? { ...existing, updatedAt: now }
-          : { id: conversationId, title: provisionalTitle(text), createdAt: now, updatedAt: now };
+          : { id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), createdAt: now, updatedAt: now };
         return [summary, ...list.filter((c) => c.id !== conversationId)];
       });
       if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
-      void runTurn(conversationId, { kind: "send", text }, { user: user.id, assistant: assistant.id });
+      void runTurn(conversationId, { kind: "send", text, skillId: skill?.id }, { user: user.id, assistant: assistant.id });
     },
     [navigate, runTurn],
   );
 
   const send = useCallback(
-    (text: string) => {
+    (text: string, skill: MessageSkill | null = null) => {
       if (activeId) {
         if (running.has(activeId)) return;
         drafts.current.delete(activeId);
-        sendTo(activeId, text, false);
+        sendTo(activeId, text, skill, false);
       } else {
         drafts.current.delete("new");
-        sendTo(crypto.randomUUID(), text, true);
+        sendTo(crypto.randomUUID(), text, skill, true);
       }
     },
     [activeId, running, sendTo],
@@ -342,15 +366,15 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
     (messageId: string) => {
       if (!activeId || running.has(activeId)) return;
       const conversationId = activeId;
-      const unsentText = unsent.current.get(messageId);
-      if (unsentText !== undefined) {
+      const unsentSend = unsent.current.get(messageId);
+      if (unsentSend !== undefined) {
         // The original send never reached the server: drop both placeholders and resend.
         unsent.current.delete(messageId);
         patchMessages(conversationId, (messages) => {
           const index = messages.findIndex((m) => m.id === messageId);
           return index > 0 ? messages.slice(0, index - 1) : messages.filter((m) => m.id !== messageId);
         });
-        sendTo(conversationId, unsentText, false);
+        sendTo(conversationId, unsentSend.text, unsentSend.skill, false);
         return;
       }
       const now = Date.now();
@@ -615,6 +639,9 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
               draft={drafts.current.get("new") ?? ""}
               onDraftChange={(v) => drafts.current.set("new", v)}
               onSubmit={send}
+              skills={skills}
+              initialSkillId={initialSkillId}
+              canManageSkills={workspace.role === "owner"}
               footnote={footnote}
             />
           ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
@@ -635,6 +662,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
                     onDraftChange={(v) => drafts.current.set(draftKey, v)}
                     onSubmit={send}
                     onStop={stop}
+                    skills={skills}
                     running={isRunning}
                     placeholder="Reply…"
                     autoFocus={desktop}

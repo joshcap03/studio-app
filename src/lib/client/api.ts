@@ -49,9 +49,11 @@ export const api = {
  * Starts a turn and calls `onEvent` for each streamed event. Resolves when the stream ends.
  * Rejects with AbortError when `signal` aborts and with ApiError on HTTP failures.
  */
+export type TurnBody = { kind: "send"; text: string; skillId?: string } | { kind: "retry" };
+
 export async function streamTurn(
   conversationId: string,
-  body: { kind: "send"; text: string } | { kind: "retry" },
+  body: TurnBody,
   onEvent: (event: StreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

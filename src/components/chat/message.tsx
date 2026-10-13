@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Check, Copy, RotateCcw } from "lucide-react";
+import { AlertCircle, Check, Copy, RotateCcw, Sparkles } from "lucide-react";
 import { memo } from "react";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
@@ -12,8 +12,18 @@ import { Markdown } from "./markdown";
 export const UserMessage = memo(function UserMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end animate-fade-up">
-      <div className="max-w-[min(85%,36rem)] rounded-[18px] bg-subtle px-4 py-2.5 text-[15px] leading-[1.6] whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">
-        {message.content}
+      <div className="flex max-w-[min(85%,36rem)] flex-col items-end gap-1.5">
+        {message.skill ? (
+          <span className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-accent-soft px-2.5 text-[13px] font-medium text-accent">
+            <Sparkles size={13} className="shrink-0" />
+            <span className="truncate">{message.skill.name}</span>
+          </span>
+        ) : null}
+        {message.content ? (
+          <div className="rounded-[18px] bg-subtle px-4 py-2.5 text-[15px] leading-[1.6] whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">
+            {message.content}
+          </div>
+        ) : null}
       </div>
     </div>
   );

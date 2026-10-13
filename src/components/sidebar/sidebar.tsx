@@ -1,7 +1,22 @@
 "use client";
 
 import { AlertDialog, DropdownMenu } from "radix-ui";
-import { Check, ChevronsUpDown, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, SquarePen, Trash2, X } from "lucide-react";
+import {
+  Check,
+  ChevronsUpDown,
+  LibraryBig,
+  LogOut,
+  MoreHorizontal,
+  PanelLeftClose,
+  Pencil,
+  Plus,
+  Search,
+  Settings,
+  SquarePen,
+  Trash2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { IconButton } from "@/components/ui/icon-button";
@@ -137,6 +152,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
                     onSelect={onSelect}
                     onRename={onRename}
                     onDelete={() => setPendingDelete(c)}
+                    canSaveSkill={workspace.role === "owner"}
                   />
                 ))}
               </ul>
@@ -153,6 +169,9 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">
           {agent.mode === "mock" ? "Mock agent · not connected" : agent.label}
         </span>
+        <IconButton label="Skills" side="top" onClick={() => window.location.assign("/skills")}>
+          <LibraryBig size={15} strokeWidth={1.75} />
+        </IconButton>
         <IconButton label="Settings" side="top" onClick={() => window.location.assign("/settings")}>
           <Settings size={15} strokeWidth={1.75} />
         </IconButton>
@@ -192,6 +211,7 @@ function ConversationItem({
   onSelect,
   onRename,
   onDelete,
+  canSaveSkill,
 }: {
   conversation: ConversationSummary;
   active: boolean;
@@ -199,6 +219,7 @@ function ConversationItem({
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: () => void;
+  canSaveSkill: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -278,6 +299,15 @@ function ConversationItem({
               <Pencil size={14} className="text-fg-3" />
               Rename
             </DropdownMenu.Item>
+            {canSaveSkill ? (
+              <DropdownMenu.Item
+                onSelect={() => window.location.assign(`/skills?from=${conversation.id}`)}
+                className="flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover"
+              >
+                <Sparkles size={14} className="text-fg-3" />
+                Save as skill
+              </DropdownMenu.Item>
+            ) : null}
             <DropdownMenu.Item
               onSelect={onDelete}
               className="flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-danger outline-none data-[highlighted]:bg-danger-soft"

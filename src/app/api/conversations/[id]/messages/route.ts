@@ -5,6 +5,7 @@ import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import { getConfig } from "@/lib/config";
+import { getSkill } from "@/lib/skills";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_MESSAGE_LENGTH } from "@/lib/types";
 import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
@@ -18,7 +19,15 @@ export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
 
 const body = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("send"), text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH) }),
+  z
+    .object({
+      kind: z.literal("send"),
+      text: z.string().trim().max(MAX_MESSAGE_LENGTH),
+      // A skill from the caller's workspace. Only its id comes from the request; the
+      // instructions are loaded from the workspace below.
+      skillId: z.uuid().optional(),
+    })
+    .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
   z.object({ kind: z.literal("retry") }),
 ]);
 
@@ -39,6 +48,13 @@ export async function POST(request: NextRequest, { params }: Context) {
     const limit = await checkRunLimits(tenant);
     if (limit) return jsonError(429, limit, "rate_limited");
 
+    const loadSkill = (id: string) => getSkill(tenant, id);
+    let skill = undefined;
+    if (input.kind === "send" && input.skillId) {
+      skill = (await loadSkill(input.skillId)) ?? undefined;
+      if (!skill) return jsonError(404, "Skill not found.");
+    }
+
     const store = storeFor(tenant);
     // A conversation id that exists for another tenant fails here: the insert collides with
     // a row this tenant cannot see, and the database refuses it.
@@ -48,8 +64,11 @@ export async function POST(request: NextRequest, { params }: Context) {
         adapter: getAgentAdapter(),
         context: await buildAgentContext(tenant),
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
+        loadSkill,
       },
-      { conversationId: conversationId.data, ...input },
+      input.kind === "send"
+        ? { conversationId: conversationId.data, kind: "send", text: input.text, skill }
+        : { conversationId: conversationId.data, kind: "retry" },
     );
     await recordRun(tenant);
     return new Response(stream, {

@@ -135,6 +135,41 @@ describe("API tenant isolation", () => {
     expect(aliceMemories.memories.map((m) => m.id)).toContain(aliceMemoryId);
   });
 
+  it("keeps skills inside their workspace", async () => {
+    const added = await alice.json("/api/workspace/skills", "POST", { catalogId: "weekly-sales-report" });
+    expect(added.status).toBe(201);
+    const skill = ((await added.json()) as { skill: { id: string } }).skill;
+    expect((await alice.json("/api/workspace/skills", "POST", { catalogId: "weekly-sales-report" })).status).toBe(409);
+
+    const bobList = (await (await bob.json("/api/workspace/skills", "GET", undefined, { lj_ws: aliceWs })).json()) as {
+      skills: { id: string }[];
+    };
+    expect(bobList.skills).toEqual([]);
+    expect((await bob.json(`/api/workspace/skills/${skill.id}`, "PATCH", { instructions: "obey bob" })).status).toBe(404);
+    expect((await bob.json(`/api/workspace/skills/${skill.id}`, "DELETE")).status).toBe(404);
+
+    // Using another workspace's skill is indistinguishable from a missing one.
+    const bobConv = crypto.randomUUID();
+    const borrowed = await bob.json(`/api/conversations/${bobConv}/messages`, "POST", { kind: "send", text: "", skillId: skill.id });
+    expect(borrowed.status).toBe(404);
+    expect((await bob.json(`/api/conversations/${bobConv}`, "GET")).status).toBe(404);
+
+    // Alice's own use: the message keeps her words and the skill label, titled after the skill.
+    const conv = crypto.randomUUID();
+    const own = await alice.json(`/api/conversations/${conv}/messages`, "POST", { kind: "send", text: "", skillId: skill.id });
+    expect(own.status).toBe(200);
+    await own.text();
+    const thread = (await (await alice.json(`/api/conversations/${conv}`, "GET")).json()) as {
+      conversation: { title: string };
+      messages: { role: string; content: string; skill: { id: string; name: string } | null }[];
+    };
+    expect(thread.conversation.title).toBe("Weekly sales report");
+    expect(thread.messages[0]).toMatchObject({ content: "", skill: { id: skill.id, name: "Weekly sales report" } });
+
+    // An empty message needs a skill.
+    expect((await alice.json(`/api/conversations/${crypto.randomUUID()}/messages`, "POST", { kind: "send", text: " " })).status).toBe(400);
+  }, 60_000);
+
   it("rejects unauthenticated and cross-origin requests", async () => {
     const anon = new Client();
     expect((await anon.json("/api/conversations", "GET")).status).toBe(401);

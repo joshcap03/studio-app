@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentError, type AgentAdapter, type AgentTenantContext } from "@/lib/agent/types";
 import { STALE_STREAM_MS, type Store } from "@/lib/db/store";
+import { renderSkillMessage } from "@/lib/skills/render";
 import {
   ARTIFACT_KINDS,
   type ActivityStep,
@@ -25,13 +26,22 @@ export class TurnError extends Error {
   }
 }
 
-export type TurnRequest = { conversationId: string } & ({ kind: "send"; text: string } | { kind: "retry" });
+/** A workspace skill attached to a message, loaded by the server from the caller's workspace. */
+export interface TurnSkill {
+  id: string;
+  name: string;
+  instructions: string;
+}
+
+export type TurnRequest = { conversationId: string } & ({ kind: "send"; text: string; skill?: TurnSkill } | { kind: "retry" });
 
 export interface TurnDeps {
   store: Store;
   adapter: AgentAdapter;
   context: AgentTenantContext;
   idleTimeoutMs: number;
+  /** Loads a skill from the caller's workspace, for retrying a message sent with one. */
+  loadSkill?: (id: string) => Promise<TurnSkill | null>;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -98,18 +108,25 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
 
   if (request.kind === "retry") {
     if (!conversation) throw new TurnError(404, "Conversation not found.");
+    const lastUser = existing.findLast((m) => m.role === "user");
+    if (!lastUser) throw new TurnError(400, "There is no message to retry.");
+    prompt = lastUser.content;
+    // A message sent with a skill is retried with the skill's current instructions.
+    if (lastUser.skill) {
+      const skill = await deps.loadSkill?.(lastUser.skill.id);
+      if (!skill) throw new TurnError(409, `The skill "${lastUser.skill.name}" was removed from this workspace.`);
+      prompt = renderSkillMessage(skill, lastUser.content);
+    }
     const last = existing.at(-1);
     // Retry replaces the latest reply, whether it failed or finished.
     if (last?.role === "assistant") {
       await store.deleteMessage(last.id);
       existing = existing.slice(0, -1);
     }
-    const lastUser = existing.findLast((m) => m.role === "user");
-    if (!lastUser) throw new TurnError(400, "There is no message to retry.");
-    prompt = lastUser.content;
   } else {
     if (!conversation) {
-      conversation = await store.createConversation({ id: conversationId, title: titleFromMessage(request.text) });
+      const title = titleFromMessage(request.skill ? [request.skill.name, request.text.trim()].filter(Boolean).join(" — ") : request.text);
+      conversation = await store.createConversation({ id: conversationId, title });
     }
     userMessage = await store.insertMessage({
       id: crypto.randomUUID(),
@@ -119,9 +136,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       status: "complete",
       activity: [],
       artifacts: [],
+      skill: request.skill ? { id: request.skill.id, name: request.skill.name } : null,
     });
     existing = [...existing, userMessage];
-    prompt = request.text;
+    prompt = request.skill ? renderSkillMessage(request.skill, request.text) : request.text;
   }
 
   // Prior completed turns, excluding the message being answered now.
