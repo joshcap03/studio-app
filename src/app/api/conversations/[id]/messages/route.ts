@@ -50,7 +50,6 @@ export async function POST(request: NextRequest, { params }: Context) {
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
       },
       { conversationId: conversationId.data, ...input },
-      request.signal,
     );
     await recordRun(tenant);
     return new Response(stream, {

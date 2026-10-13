@@ -40,6 +40,8 @@ export type AgentEvent =
   | { type: "text-delta"; text: string }
   /** The full assistant text at once. Replaces any prior text. */
   | { type: "message"; text: string }
+  /** A short line the agent says about what it's about to do (not part of the answer). */
+  | { type: "note"; text: string }
   /** A step started, changed, or finished. Re-emit the same id to update it. */
   | {
       type: "activity";

@@ -4,7 +4,7 @@ import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, typ
 import { readNdjson } from "@/lib/client/api";
 import { createMemoryDb, createMemoryStore } from "@/test/memory-store";
 import type { StreamEvent } from "@/lib/types";
-import { sanitizeArtifact, startTurn, titleFromMessage, TurnError } from "./turn";
+import { sanitizeArtifact, startTurn, stopRun, titleFromMessage, TurnError } from "./turn";
 
 const scopeA = { workspaceId: "ws-a", userId: "user-a" };
 const scopeB = { workspaceId: "ws-b", userId: "user-b" };
@@ -58,7 +58,7 @@ describe("startTurn", () => {
       { type: "artifact", artifact: { id: "x", kind: "spreadsheet", title: "Sheet", url: "https://example.com/s" } },
     ]);
     const events = await collect(
-      startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "Hi" }, signal()),
+      startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "Hi" }),
     );
     expect(events[0].type).toBe("start");
     const end = events.at(-1);
@@ -88,8 +88,8 @@ describe("startTurn", () => {
       },
     };
     const deps = { store, adapter, context: context(scopeA), idleTimeoutMs: 1000 };
-    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "one" }, signal()));
-    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "two" }, signal()));
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "one" }));
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "two" }));
 
     expect(seen[0]).toMatchObject({ conversationId: id, threadId: null, history: [] });
     expect(seen[0].tenant).toEqual(context(scopeA));
@@ -111,9 +111,7 @@ describe("startTurn", () => {
     await collect(
       startTurn(
         { store, adapter: scripted([{ type: "message", text: "ok" }], undefined, seen), context: context(scopeA), idleTimeoutMs: 1000 },
-        { conversationId: id, kind: "send", text: "hi" },
-        signal(),
-      ),
+        { conversationId: id, kind: "send", text: "hi" }),
     );
     expect(seen[0].threadId).toBeNull();
   });
@@ -123,13 +121,13 @@ describe("startTurn", () => {
     const id = crypto.randomUUID();
     const failing = scripted([{ type: "text-delta", text: "partial" }], new AgentError("Shopify timed out."));
     const events = await collect(
-      startTurn({ store, adapter: failing, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "go" }, signal()),
+      startTurn({ store, adapter: failing, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "go" }),
     );
     const end = events.at(-1);
     expect(end?.type === "end" && end.message).toMatchObject({ status: "error", error: "Shopify timed out." });
 
     const ok = scripted([{ type: "message", text: "worked" }]);
-    await collect(startTurn({ store, adapter: ok, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "retry" }, signal()));
+    await collect(startTurn({ store, adapter: ok, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "retry" }));
     expect((await store.listMessages(id)).map((m) => [m.role, m.content, m.status])).toEqual([
       ["user", "go", "complete"],
       ["assistant", "worked", "complete"],
@@ -140,8 +138,8 @@ describe("startTurn", () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
     const deps = (text: string) => ({ store, adapter: scripted([{ type: "message", text }]), context: context(scopeA), idleTimeoutMs: 1000 });
-    await collect(startTurn(deps("first answer"), { conversationId: id, kind: "send", text: "question" }, signal()));
-    await collect(startTurn(deps("second answer"), { conversationId: id, kind: "retry" }, signal()));
+    await collect(startTurn(deps("first answer"), { conversationId: id, kind: "send", text: "question" }));
+    await collect(startTurn(deps("second answer"), { conversationId: id, kind: "retry" }));
     expect((await store.listMessages(id)).map((m) => m.content)).toEqual(["question", "second answer"]);
   });
 
@@ -155,41 +153,55 @@ describe("startTurn", () => {
       },
     };
     const events = await collect(
-      startTurn({ store, adapter: hanging, context: context(scopeA), idleTimeoutMs: 30 }, { conversationId: crypto.randomUUID(), kind: "send", text: "go" }, signal()),
+      startTurn({ store, adapter: hanging, context: context(scopeA), idleTimeoutMs: 30 }, { conversationId: crypto.randomUUID(), kind: "send", text: "go" }),
     );
     const end = events.at(-1);
     expect(end?.type === "end" && end.message.error).toMatch(/stopped responding/);
   });
 
-  it("marks a run stopped when the request is aborted and keeps partial text", async () => {
+  it("stops only when asked, keeping partial text", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
-    const controller = new AbortController();
     const stream = await startTurn(
       { store, adapter: createMockAdapter({ streaming: true, pace: 1 }), context: context(scopeA), idleTimeoutMs: 5000, checkpointMs: 0 },
       { conversationId: id, kind: "send", text: "help with operations" },
-      controller.signal,
     );
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let seen = "";
     while (!seen.includes('"type":"text"')) seen += decoder.decode((await reader.read()).value);
-    controller.abort();
-    await reader.cancel();
-    await new Promise((r) => setTimeout(r, 50));
+    expect(stopRun(scopeA.workspaceId, id)).toBe(true);
+    while (!(await reader.read()).done) {
+      // drain until the run closes the stream
+    }
     const assistant = (await store.listMessages(id))[1];
     expect(assistant.status).toBe("stopped");
     expect(assistant.content.length).toBeGreaterThan(0);
   });
 
+  it("keeps working after the browser disconnects, and saves the full reply", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const stream = await startTurn(
+      { store, adapter: createMockAdapter({ streaming: true, pace: 0.2 }), context: context(scopeA), idleTimeoutMs: 5000 },
+      { conversationId: id, kind: "send", text: "help with operations" },
+    );
+    const reader = stream.getReader();
+    await reader.read();
+    await reader.cancel(); // tab closed
+    for (let i = 0; i < 100 && (await store.listMessages(id))[1]?.status === "streaming"; i++) await new Promise((r) => setTimeout(r, 50));
+    const assistant = (await store.listMessages(id))[1];
+    expect(assistant.status).toBe("complete");
+    expect(assistant.content).toContain("Happy to help");
+  });
+
   it("refuses a second concurrent run in the same conversation", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
-    const controller = new AbortController();
     const deps = { store, adapter: createMockAdapter({ streaming: true }), context: context(scopeA), idleTimeoutMs: 5000 };
-    const stream = await startTurn(deps, { conversationId: id, kind: "send", text: "hello" }, controller.signal);
-    await expect(startTurn(deps, { conversationId: id, kind: "send", text: "again" }, signal())).rejects.toBeInstanceOf(TurnError);
-    controller.abort();
+    const stream = await startTurn(deps, { conversationId: id, kind: "send", text: "hello" });
+    await expect(startTurn(deps, { conversationId: id, kind: "send", text: "again" })).rejects.toBeInstanceOf(TurnError);
+    stopRun(scopeA.workspaceId, id);
     await stream.cancel();
   });
 
@@ -199,13 +211,13 @@ describe("startTurn", () => {
     const storeB = createMemoryStore(scopeB, db);
     const id = crypto.randomUUID();
     await collect(
-      startTurn({ store: storeA, adapter: scripted([{ type: "message", text: "secret" }]), context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "mine" }, signal()),
+      startTurn({ store: storeA, adapter: scripted([{ type: "message", text: "secret" }]), context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "mine" }),
     );
     await expect(
-      startTurn({ store: storeB, adapter: scripted([]), context: context(scopeB), idleTimeoutMs: 1000 }, { conversationId: id, kind: "retry" }, signal()),
+      startTurn({ store: storeB, adapter: scripted([]), context: context(scopeB), idleTimeoutMs: 1000 }, { conversationId: id, kind: "retry" }),
     ).rejects.toMatchObject({ status: 404 });
     await expect(
-      startTurn({ store: storeB, adapter: scripted([]), context: context(scopeB), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "x" }, signal()),
+      startTurn({ store: storeB, adapter: scripted([]), context: context(scopeB), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "x" }),
     ).rejects.toThrow();
     expect(await storeB.listMessages(id)).toEqual([]);
     expect(await storeB.listConversations()).toEqual([]);

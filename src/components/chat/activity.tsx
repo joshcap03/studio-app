@@ -23,18 +23,33 @@ interface Props {
 export function ActivityLog({ steps, running, onOpenPanel }: Props) {
   const [open, setOpen] = useState(false);
   const visible = steps.filter((s) => !s.hidden);
+  // The agent's own short lines ("Let me look through your emails") narrate the work; they
+  // are not steps.
+  const work = visible.filter((s) => s.action !== "note");
+  const toolSteps = steps.filter((s) => s.action !== "note");
 
   if (running) {
-    // The step in progress; between steps the agent is deciding what to do next.
-    const current = [...visible].reverse().find((s) => s.status === "running");
-    const hiddenCount = Math.max(0, visible.length - VISIBLE_WHILE_RUNNING);
+    // One status line: the step in progress, else what the agent said it's doing, else
+    // it's deciding what to do next.
+    // Hidden plumbing steps still drive the status line, so a slow one is never invisible.
+    const current = [...steps].reverse().find((s) => s.status === "running" && s.action !== "note");
+    const note = [...visible].reverse().find((s) => s.action === "note");
+    const status = current?.label ?? note?.label ?? "Thinking it through";
+    const listed = work;
+    const hiddenCount = Math.max(0, listed.length - VISIBLE_WHILE_RUNNING);
     return (
       <div className="mb-4 animate-fade-in" aria-live="polite">
-        <WorkingHeader since={steps[0]?.startedAt} current={current} onOpenPanel={onOpenPanel} />
-        {visible.length > 0 && (
+        <WorkingHeader
+          since={steps[0]?.startedAt}
+          stepSince={current?.startedAt}
+          app={current?.app === "agent" ? undefined : current?.app}
+          status={status}
+          onOpenPanel={onOpenPanel}
+        />
+        {listed.length > 0 && (
           <ol className="mt-2 space-y-0.5 border-l border-line pl-3">
             {hiddenCount > 0 && <li className="py-1 pl-1 text-[12.5px] text-fg-3">{hiddenCount} earlier steps</li>}
-            {visible.slice(hiddenCount).map((step) => (
+            {listed.slice(hiddenCount).map((step) => (
               <StepRow key={step.id} step={step} finished={false} />
             ))}
           </ol>
@@ -43,10 +58,10 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
     );
   }
 
-  if (steps.length === 0) return null;
-  const failed = visible.filter((s) => s.status === "failed").length;
-  const cut = visible.filter((s) => s.status === "running").length;
-  const apps = [...new Set(visible.map((s) => s.app).filter((a): a is string => !!a && a !== "agent"))];
+  if (toolSteps.length === 0) return null;
+  const failed = work.filter((s) => s.status === "failed").length;
+  const cut = work.filter((s) => s.status === "running").length;
+  const apps = [...new Set(work.map((s) => s.app).filter((a): a is string => !!a && a !== "agent"))];
   const duration = elapsed(steps);
 
   return (
@@ -73,13 +88,13 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
           )}
           <span className="truncate">
             {apps.length > 0 ? `Used ${listApps(apps)} · ` : ""}
-            {steps.length} {steps.length === 1 ? "step" : "steps"}
+            {toolSteps.length} {toolSteps.length === 1 ? "step" : "steps"}
             {failed > 0 ? ` · ${failed} failed` : cut > 0 ? " · stopped" : ""}
             {duration ? ` · ${duration}` : ""}
           </span>
           <ChevronRight size={13} className={`shrink-0 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
         </button>
-        {onOpenPanel && visible.length > 0 ? (
+        {onOpenPanel && work.length > 0 ? (
           <button
             type="button"
             onClick={onOpenPanel}
@@ -93,10 +108,18 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
       </div>
       {open && (
         <ol className="mt-1.5 mb-1 ml-[5px] space-y-0.5 border-l border-line pl-3 animate-fade-in">
-          {visible.length === 0 ? (
+          {work.length === 0 ? (
             <li className="py-1 pl-1 text-[12.5px] text-fg-3">Only internal steps (finding tools)</li>
           ) : (
-            visible.map((step) => <StepRow key={step.id} step={step} finished />)
+            visible.map((step) =>
+              step.action === "note" ? (
+                <li key={step.id} className="py-1 pl-1 text-[13px] leading-5 text-fg-3">
+                  {step.label}
+                </li>
+              ) : (
+                <StepRow key={step.id} step={step} finished />
+              ),
+            )
           )}
         </ol>
       )}
@@ -104,25 +127,44 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
   );
 }
 
-function WorkingHeader({ since, current, onOpenPanel }: { since?: number; current?: ActivityStep; onOpenPanel?: () => void }) {
+const SLOW_STEP_SECONDS = 30;
+
+function WorkingHeader({
+  since,
+  stepSince,
+  app,
+  status,
+  onOpenPanel,
+}: {
+  since?: number;
+  stepSince?: number;
+  app?: string;
+  status: string;
+  onOpenPanel?: () => void;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
   const seconds = since ? Math.max(0, Math.floor((now - since) / 1000)) : 0;
+  const stepSeconds = stepSince ? Math.max(0, Math.floor((now - stepSince) / 1000)) : 0;
+  const slow = stepSeconds >= SLOW_STEP_SECONDS;
   return (
     <div className="flex h-6 items-center gap-2.5 text-[13.5px]">
-      {current?.app ? (
-        <AppGlyph app={current.app} size={16} className="breathe" />
+      {app ? (
+        <AppGlyph app={app} size={16} className="breathe" />
       ) : (
         <span className="breathe size-1.5 rounded-full bg-accent" aria-hidden="true" />
       )}
-      <span className="text-shimmer font-medium">Working</span>
-      <span key={current?.id ?? "thinking"} className="min-w-0 truncate text-fg-3 animate-fade-in">
-        {current ? current.label : "Thinking it through"}
+      <span key={status} className="text-shimmer min-w-0 truncate font-medium animate-fade-in">
+        {status}
       </span>
-      {seconds >= 3 && <span className="shrink-0 text-fg-4 tabular-nums">{formatSeconds(seconds)}</span>}
+      {slow ? (
+        <span className="shrink-0 text-[12.5px] text-fg-3 tabular-nums">· this step is taking a while · {formatSeconds(stepSeconds)}</span>
+      ) : seconds >= 3 ? (
+        <span className="shrink-0 text-fg-4 tabular-nums">{formatSeconds(seconds)}</span>
+      ) : null}
       {onOpenPanel ? (
         <button
           type="button"

@@ -25,6 +25,7 @@ type Step =
       action?: StepAction;
       preview?: StepPreview;
     }
+  | { kind: "note"; text: string; ms?: number }
   | { kind: "artifact"; artifact: Artifact }
   | { kind: "text"; text: string }
   | { kind: "error"; message: string };
@@ -156,6 +157,7 @@ Want me to put the reorder list in a spreadsheet, or draft a note to your castin
   {
     match: /competitor|research/i,
     steps: [
+      { kind: "note", text: "Let me see what other fine-jewelry brands charge for huggies.", ms: 900 },
       {
         kind: "activity",
         id: "search",
@@ -201,6 +203,7 @@ Sources: [example.com/brand-a](https://example.com/brand-a), [example.com/brand-
   {
     match: /long|slow/i,
     steps: [
+      { kind: "note", text: "I'll go through last quarter's vendor emails and match them to payments.", ms: 900 },
       {
         kind: "activity",
         id: "s1",
@@ -327,6 +330,9 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
           } else {
             yield { ...base, label: step.done, status: "done", detail: step.detail, preview: step.preview };
           }
+        } else if (step.kind === "note") {
+          await wait((step.ms ?? 600) * pace, signal);
+          yield { type: "note", text: step.text };
         } else if (step.kind === "artifact") {
           yield { type: "artifact", artifact: step.artifact };
         } else if (step.kind === "error") {

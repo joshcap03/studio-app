@@ -41,6 +41,7 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
+  stopRun: (id: string) => request<void>(`/api/conversations/${id}/stop`, { method: "POST" }),
   signOut: () => request<{ ok: true }>("/api/auth/signout", { method: "POST" }),
 };
 

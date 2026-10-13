@@ -28,7 +28,7 @@ const schema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20),
 
   AGENT_PROVIDER: z.enum(["mock", "langflow"]).default("mock"),
-  AGENT_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  AGENT_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   MOCK_STREAMING: bool(true),
 
   LANGFLOW_BASE_URL: z.url().optional(),

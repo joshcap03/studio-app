@@ -68,7 +68,18 @@ export function sanitizeArtifact(value: unknown): Artifact | null {
   return parsed.success ? parsed.data : null;
 }
 
-export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSignal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+/**
+ * Stops a run in progress. Runs are not tied to the browser connection: closing or reloading
+ * the page leaves the agent working (its progress keeps being saved); only this stops it.
+ */
+export function stopRun(workspaceId: string, conversationId: string): boolean {
+  const controller = activeRuns.get(`${workspaceId}:${conversationId}`);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
+export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<ReadableStream<Uint8Array>> {
   const { store, adapter, context } = deps;
   const { conversationId } = request;
   const runKey = `${store.scope.workspaceId}:${conversationId}`;
@@ -132,8 +143,6 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSig
 
   const controller = new AbortController();
   activeRuns.set(runKey, controller);
-  if (requestSignal.aborted) controller.abort();
-  else requestSignal.addEventListener("abort", () => controller.abort(), { once: true });
 
   const threadId = conversation.agentProvider === adapter.id ? conversation.agentThreadId : null;
   const summary: ConversationSummary = {
@@ -143,10 +152,11 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSig
     updatedAt: conversation.updatedAt,
   };
   const encoder = new TextEncoder();
+  // Whether the browser is still listening. The run continues either way.
+  let open = true;
 
   return new ReadableStream<Uint8Array>({
     async start(stream) {
-      let open = true;
       const send = (event: StreamEvent) => {
         if (!open) return;
         try {
@@ -192,6 +202,21 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSig
               content = event.text;
               send({ type: "text-replace", text: event.text });
               break;
+            case "note": {
+              const at = Date.now();
+              const step: ActivityStep = {
+                id: `note:${activity.filter((s) => s.action === "note").length}`,
+                label: event.text.slice(0, 300),
+                status: "done",
+                app: "agent",
+                action: "note",
+                startedAt: at,
+                endedAt: at,
+              };
+              activity.push(step);
+              send({ type: "activity", step });
+              break;
+            }
             case "activity": {
               const at = Date.now();
               const index = activity.findIndex((s) => s.id === event.id);
@@ -269,7 +294,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSig
       }
     },
     cancel() {
-      controller.abort();
+      // The browser went away (closed tab, reload, navigation). Keep working; the reply is
+      // saved as it progresses and the browser picks it up when it comes back.
+      open = false;
     },
   });
 }

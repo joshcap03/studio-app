@@ -225,6 +225,30 @@ export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Longest text treated as a possible opening line before it is released as the answer. */
+const NOTE_MAX = 280;
+
+/** Text blocks that come before a tool call in a bot message: the agent's opening lines. */
+export function leadingNotes(message: LangflowMessage): string[] {
+  const leaves: { type?: string; text?: unknown }[] = [];
+  for (const block of message.content_blocks ?? []) for (const c of block?.contents ?? []) if (c && typeof c === "object") leaves.push(c as never);
+  const lastTool = leaves.map((l) => l.type).lastIndexOf("tool_use");
+  return leaves
+    .slice(0, Math.max(0, lastTool))
+    .filter((l) => l.type === "text" && typeof l.text === "string" && l.text.trim())
+    .map((l) => (l.text as string).trim());
+}
+
+/** Langflow prefixes the final text with any opening lines; strip them from the answer. */
+export function withoutNotes(text: string, notes: string[]): string {
+  let rest = text;
+  for (const note of notes) {
+    const trimmed = rest.trimStart();
+    if (trimmed.startsWith(note)) rest = trimmed.slice(note.length);
+  }
+  return rest.trimStart();
+}
+
 function isBot(message: LangflowMessage): boolean {
   return message.sender === "Machine";
 }
@@ -312,17 +336,27 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         const result = (await response.json().catch(() => null)) as { session_id?: string } | null;
         if (!result) throw new AgentError("The agent service returned an unreadable response.");
         const message = resultMessage(result);
+        const notes = message ? leadingNotes(message) : [];
+        for (const note of notes) yield { type: "note", text: note };
         if (message) {
           yield* toolActivity(message, message.id ?? "result");
           yield* toolArtifacts(message);
         }
-        const text = typeof message?.text === "string" ? message.text : "";
+        const text = typeof message?.text === "string" ? withoutNotes(message.text, notes) : "";
         if (text) yield { type: "message", text };
         return;
       }
 
+      // Short text the agent writes right before calling a tool is an opening line ("Let me
+      // look through your emails"), not part of the answer. Langflow streams it as tokens and
+      // then concatenates it onto the final text, so short text is held back until we know:
+      // a tool call next means it was a note; otherwise it is released as the answer.
       let tokens = false;
       let shownText = "";
+      let pending = "";
+      let releasing = false;
+      let toolCount = 0;
+      const notes: string[] = [];
       let lastBot: LangflowMessage | undefined;
       const seenArtifacts = new Set<string>();
 
@@ -331,13 +365,41 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
           const chunk = (data as { chunk?: unknown })?.chunk;
           if (typeof chunk === "string" && chunk) {
             tokens = true;
-            shownText += chunk;
-            yield { type: "text-delta", text: chunk };
+            if (releasing) {
+              shownText += chunk;
+              yield { type: "text-delta", text: chunk };
+            } else {
+              pending += chunk;
+              if (pending.length > NOTE_MAX || pending.includes("\n\n")) {
+                releasing = true;
+                shownText += pending;
+                yield { type: "text-delta", text: pending };
+                pending = "";
+              }
+            }
           }
         } else if (event === "add_message") {
           const message = data as LangflowMessage;
           if (!isBot(message)) continue;
           lastBot = message;
+          const calls = toolUses(message).length;
+          if (calls > toolCount) {
+            toolCount = calls;
+            if (pending.trim()) {
+              notes.push(pending.trim());
+              yield { type: "note", text: pending.trim() };
+            }
+            pending = "";
+            releasing = false;
+          }
+          if (!tokens) {
+            for (const note of leadingNotes(message)) {
+              if (!notes.includes(note)) {
+                notes.push(note);
+                yield { type: "note", text: note };
+              }
+            }
+          }
           yield* toolActivity(message, message.id ?? "message");
           for (const a of toolArtifacts(message)) {
             const key = JSON.stringify(a);
@@ -346,9 +408,10 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               yield a;
             }
           }
-          if (!tokens && typeof message.text === "string" && message.text && message.text !== shownText) {
-            shownText = message.text;
-            yield { type: "message", text: message.text };
+          const answer = typeof message.text === "string" ? withoutNotes(message.text, notes) : "";
+          if (!tokens && answer && answer !== shownText) {
+            shownText = answer;
+            yield { type: "message", text: answer };
           }
         } else if (event === "error") {
           const detail = (data as { error?: unknown })?.error;
@@ -356,12 +419,21 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
             typeof detail === "string" && detail ? `The agent ran into a problem: ${short(detail, 300)}` : "The agent ran into a problem.",
           );
         } else if (event === "end") {
+          if (pending) {
+            shownText += pending;
+            yield { type: "text-delta", text: pending };
+            pending = "";
+          }
           const final = resultMessage((data as { result?: unknown })?.result) ?? lastBot;
-          const text = typeof final?.text === "string" ? final.text : "";
+          const text = typeof final?.text === "string" ? withoutNotes(final.text, notes) : "";
           if (text && text !== shownText && !tokens) yield { type: "message", text };
           if (final) yield* toolActivity(final, lastBot?.id ?? final.id ?? "message");
           return;
         }
+      }
+      if (pending && !input.signal.aborted) {
+        shownText += pending;
+        yield { type: "text-delta", text: pending };
       }
       // The stream closed without an end event.
       if (!input.signal.aborted && !shownText) throw new AgentError("The agent stopped before finishing.");

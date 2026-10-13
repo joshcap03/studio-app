@@ -138,7 +138,8 @@ describe("Langflow streaming", () => {
     );
     expect(error).toBeUndefined();
     expect(events[0]).toEqual({ type: "thread", threadId: langflowSessionId(tenantA, "c0ffee00-0000-4000-8000-000000000000") });
-    expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text)).toEqual(["Hi ", "there"]);
+    // Short text is held until it's clear it isn't an opening line, then released whole.
+    expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("")).toBe("Hi there");
     expect(events.some((e) => e.type === "message")).toBe(false);
   });
 
@@ -194,6 +195,55 @@ describe("Langflow streaming", () => {
       preview: { type: "sources", items: [{ title: "Acme Casting", url: "https://acme.example/", domain: "acme.example" }] },
     });
     expect(steps.find((e) => e.id === "msg-1:0")).toMatchObject({ hidden: true });
+  });
+
+  it("treats a line before a tool call as a note, and keeps it out of the answer (recorded shape)", async () => {
+    const intro = "I'll look up the hours for this week.";
+    const answer = "It's **closed only on Wednesday** this week.";
+    const search = { type: "tool_use", name: "search", tool_input: { query: "museum hours" }, output: { results: [{ url: "https://museum.example/", title: "Hours" }] }, error: null };
+    const textLeaf = (text: string) => ({ type: "text", text });
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("add_message", user("hours?")),
+        frame("add_message", bot("")),
+        frame("token", { chunk: "I'll look up the " }),
+        frame("token", { chunk: "hours for this week." }),
+        frame("add_message", bot(intro)),
+        frame("add_message", bot(intro, [textLeaf(intro), search])),
+        frame("token", { chunk: "It's **closed only on Wednesday** " }),
+        frame("token", { chunk: "this week." }),
+        frame("add_message", bot(intro + answer, [textLeaf(intro), search, textLeaf(answer), textLeaf(intro + answer)])),
+        frame("end", end(intro + answer)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note")).toEqual([{ type: "note", text: intro }]);
+    const text = events
+      .filter((e): e is Extract<AgentEvent, { type: "text-delta" }> => e.type === "text-delta")
+      .map((e) => e.text)
+      .join("");
+    expect(text).toBe(answer);
+    expect(events.some((e) => e.type === "message")).toBe(false);
+  });
+
+  it("streams long answers token by token", async () => {
+    const long = "word ".repeat(80);
+    const { events } = await run(base, streamResponse([frame("token", { chunk: long }), frame("token", { chunk: "more" }), frame("end", end(long + "more"))]));
+    expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text)).toEqual([long, "more"]);
+  });
+
+  it("releases short text as the answer when no tool follows", async () => {
+    const { events } = await run(base, streamResponse([frame("token", { chunk: "Hey! " }), frame("token", { chunk: "Happy to help." }), frame("end", end("Hey! Happy to help."))]));
+    expect(events.filter((e) => e.type === "note")).toEqual([]);
+    expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("")).toBe("Hey! Happy to help.");
+  });
+
+  it("strips opening lines from a non-streaming answer", async () => {
+    const intro = "Let me check.";
+    const message = bot(intro + "All clear.", [{ type: "text", text: intro }, { type: "tool_use", name: "search", tool_input: {}, output: { results: [] }, error: null }]);
+    const body = { session_id: "s", outputs: [{ inputs: {}, outputs: [{ results: { message } }] }] };
+    const { events } = await run({ ...base, stream: false }, new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
+    expect(events).toContainEqual({ type: "message", text: "All clear." });
   });
 
   it("reports a failed tool call", async () => {

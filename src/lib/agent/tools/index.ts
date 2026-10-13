@@ -121,11 +121,14 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
   const result = call.output == null ? undefined : unwrapResult(call.output);
   // MCP results flag failures with isError rather than an error field.
   const mcpError = isRecord(call.output) && call.output.isError === true ? stringResult(call.output) || "The tool reported an error." : undefined;
+  // Tool gateways report failures as text results ("Tool X failed: …", "Tool X timed out …").
+  const gatewayError = typeof result === "string" ? gatewayFailure(result) : undefined;
   const interpretation = interpret(call.name, input, result);
   const envelope = composioEnvelope(result);
   const errorText =
     errorMessage(call.error) ??
     (mcpError ? errorMessage(mcpError) : undefined) ??
+    gatewayError ??
     (envelope && !envelope.successful ? errorMessage(envelope.error) ?? "The tool reported a failure." : undefined) ??
     interpretation.innerError;
   const status: ActivityStatus = errorText ? "failed" : call.output == null ? "running" : "done";
@@ -148,7 +151,8 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
     app: interpretation.app,
     action: interpretation.action,
     preview: status === "running" && interpretation.preview?.type !== "code" ? undefined : interpretation.preview,
-    hidden: interpretation.hidden,
+    // Plumbing is hidden only while it works; a failure is always shown.
+    hidden: interpretation.hidden && status !== "failed" ? true : undefined,
     artifacts: status === "done" ? interpretation.artifacts : undefined,
   };
 }
@@ -158,7 +162,7 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
 
 function interpret(name: string, input: Record<string, unknown>, result: unknown): Interpretation {
   if (PLUMBING.has(name)) {
-    return { labels: { running: "Finding the right tool", done: "Found the right tool" }, app: "agent", action: "other", hidden: true };
+    return { labels: { running: "Looking for the right tool", done: "Found the right tool" }, app: "agent", action: "other", hidden: true };
   }
   if (COMPOSIO_SLUG.test(name)) return composioTool(name, input, result);
   if (isKnownToolkit(name)) return composioTool(name.toUpperCase(), input, result);
@@ -607,6 +611,16 @@ function humanize(name: string): string {
       .trim()
       .toLowerCase() || "a tool"
   );
+}
+
+/** A gateway's plain-text failure report, reduced to the reason a person needs. */
+export function gatewayFailure(text: string): string | undefined {
+  const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(text.trim());
+  if (failed) return errorMessage(failed[1]) ?? failed[1];
+  const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(text.trim());
+  if (timedOut) return `The service didn't respond within ${timedOut[1]} seconds.`;
+  if (/^(Unknown tool|Invalid arguments for|Tool arguments must be)/.test(text.trim())) return clip(text, 200);
+  return undefined;
 }
 
 /**

@@ -213,6 +213,16 @@ describe("interpretCalls", () => {
     expect(step.preview).toBeUndefined();
   });
 
+  it("treats tool-gateway failure and timeout reports as failures with a readable reason", () => {
+    const [timedOut, failed] = interpretCalls([
+      gateway("composio_search_tools", { queries: [] }, { type: "tool", tool_call_id: "t", content: "Tool composio_search_tools timed out after 45s (tried twice). The service didn't respond; try another approach or tell the user." }),
+      gateway("GMAIL_FETCH_EMAILS", {}, { type: "tool", tool_call_id: "u", content: "Tool GMAIL_FETCH_EMAILS failed: RuntimeError: Rate limited. Do not blindly retry writes." }),
+    ]);
+    expect(timedOut).toMatchObject({ status: "failed", detail: "The service didn't respond within 45 seconds.", label: "Looking for the right tool didn't work" });
+    expect(timedOut.hidden).toBeUndefined();
+    expect(failed).toMatchObject({ status: "failed", app: "gmail", detail: "Rate limited" });
+  });
+
   it("treats an MCP isError result as a failure", () => {
     const [step] = interpretCalls([
       { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: { content: [{ type: "text", text: "Sandbox crashed" }], isError: true }, error: null },

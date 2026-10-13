@@ -14,7 +14,7 @@ export type MessageStatus = "streaming" | "complete" | "stopped" | "error" | "in
 
 export type ActivityStatus = "running" | "done" | "failed";
 
-export type StepAction = "search" | "read" | "write" | "run" | "remember" | "browse" | "connect" | "other";
+export type StepAction = "search" | "read" | "write" | "run" | "remember" | "browse" | "connect" | "note" | "other";
 
 /**
  * What a step actually did, built from the tool call's real input and output. Size-capped

@@ -370,9 +370,46 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
     [activeId, patchMessages, runTurn, running, sendTo],
   );
 
+  // Stopping is a request to the server: closing the tab doesn't stop the agent, Stop does.
   const stop = useCallback(() => {
-    if (activeId) controllers.current.get(activeId)?.abort();
+    if (!activeId) return;
+    const id = activeId;
+    api.stopRun(id).catch(() => controllers.current.get(id)?.abort());
   }, [activeId]);
+
+  // Follow a run this tab didn't start (e.g. after a reload) until it finishes.
+  const followingRemote = activeThread?.status === "ready" && activeThread.messages.some((m) => m.status === "streaming") && !controllers.current.has(activeId ?? "");
+  useEffect(() => {
+    if (!activeId || !followingRemote) return;
+    const id = activeId;
+    let cancelled = false;
+    setRunState(id, true);
+    const tick = async () => {
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (cancelled || controllers.current.has(id)) return;
+        try {
+          const { messages, conversation } = await api.getConversation(id);
+          if (cancelled) return;
+          setThreads((all) => ({ ...all, [id]: { status: "ready", messages } }));
+          if (!messages.some((m) => m.status === "streaming")) {
+            upsertConversation(conversation);
+            return;
+          }
+        } catch {
+          // keep trying while the conversation is open
+        }
+      }
+    };
+    void tick().finally(() => {
+      // A cancelled follower leaves the flag to whichever effect replaced it.
+      if (!cancelled && !controllers.current.has(id)) setRunState(id, false);
+    });
+    return () => {
+      cancelled = true;
+      if (!controllers.current.has(id)) setRunState(id, false);
+    };
+  }, [activeId, followingRemote, setRunState, upsertConversation]);
 
   // ---------------------------------------------------------------------------------------
   // Conversation management
