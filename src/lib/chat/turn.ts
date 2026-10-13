@@ -427,6 +427,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         activeRuns.delete(runKey);
       }
 
+      // A step from before the pause that the continued run never reported again can't still be
+      // running once the run is over: it worked if the approved run finished, otherwise it didn't.
+      if (decided && !paused) {
+        const carried = new Set(assistant.activity.map((s) => s.id));
+        const at = Date.now();
+        activity.forEach((s, i) => {
+          if (!carried.has(s.id) || s.status !== "running") return;
+          const ok = decided!.status === "approved" && status === "complete";
+          activity[i] = { ...s, status: ok ? "done" : "failed", detail: s.detail ?? (decided!.status === "declined" ? "You declined this." : undefined), endedAt: at };
+        });
+      }
       await saving;
       let updated = summary;
       try {

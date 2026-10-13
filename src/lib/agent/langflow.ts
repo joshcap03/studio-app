@@ -297,16 +297,60 @@ export function toolMemoryProposals(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** The step of the tool call a run paused on, so the resumed call settles it. */
+interface PausedStep {
+  /** The step's id (`<message key>:<call index>`). */
+  id: string;
+  /** The key of the bot message that held the call. */
+  messageKey: string;
+  /** The tool the call ran: a gateway call's target (see callTarget). */
+  tool: string;
+}
+
 /** What the paused run needs to continue. Stored by the app, never shown to the browser. */
 interface PausedJob {
   jobId: string;
   requestId: string;
   lastEventId: string | null;
+  step?: PausedStep;
 }
 
 function pausedJob(state: unknown): PausedJob | null {
   if (!isRecord(state) || typeof state.jobId !== "string" || typeof state.requestId !== "string") return null;
-  return { jobId: state.jobId, requestId: state.requestId, lastEventId: typeof state.lastEventId === "string" ? state.lastEventId : null };
+  const step = isRecord(state.step) ? state.step : undefined;
+  return {
+    jobId: state.jobId,
+    requestId: state.requestId,
+    lastEventId: typeof state.lastEventId === "string" ? state.lastEventId : null,
+    step:
+      typeof step?.id === "string" && typeof step.messageKey === "string" && typeof step.tool === "string"
+        ? { id: step.id, messageKey: step.messageKey, tool: step.tool }
+        : undefined,
+  };
+}
+
+/**
+ * The tool a call ran. Gateway calls name their target in `tool_name`, and Langflow may report
+ * the same paused call under different gateway names (execute_tool while it streams,
+ * take_action once resumed), so calls are matched by target.
+ */
+function callTarget(name: unknown, input: unknown): string {
+  return isRecord(input) && typeof input.tool_name === "string" ? input.tool_name : typeof name === "string" ? name : "tool";
+}
+
+/**
+ * The step of the call a run paused on: the latest call in the last bot message, to the tool
+ * the approval request names, that hasn't run yet. Langflow doesn't always report the call
+ * before pausing; then there is no step to settle.
+ */
+function pausedStep(message: LangflowMessage | undefined, request: Record<string, unknown>): PausedStep | undefined {
+  const action = Array.isArray(request.action_requests) && isRecord(request.action_requests[0]) ? request.action_requests[0] : {};
+  if (!message || typeof action.name !== "string") return undefined;
+  const tool = callTarget(action.name, action.args);
+  const index = toolUses(message).findLastIndex((t) => callTarget(t.name, t.tool_input ?? t.input) === tool && t.output == null && !t.error);
+  if (index < 0) return undefined;
+  const messageKey = message.id ?? "message";
+  return { id: `${messageKey}:${index}`, messageKey, tool };
 }
 
 const APPROVAL_FIELD_MAX = 6;
@@ -510,6 +554,8 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
 
       let jobId: string;
       let lastEventId: string | null = null;
+      /** The step the run paused on, still running until the resumed call settles it. */
+      let carried: PausedStep | undefined;
       if (input.resume) {
         const paused = pausedJob(input.resume.state);
         if (!paused) throw new AgentError(EXPIRED, { retryable: false, code: "expired" });
@@ -530,6 +576,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         if (!response.ok) throw errorFor(response.status);
         jobId = paused.jobId;
         lastEventId = paused.lastEventId;
+        carried = paused.step;
       } else {
         if (input.attachments.length > 0 && !acceptsFiles) {
           throw new AgentError("This agent can't read attached files yet.", { retryable: false });
@@ -567,6 +614,19 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         let lastBot: LangflowMessage | undefined;
         const seenArtifacts = new Set<string>();
         const seenProposals = new Set<string>();
+        // A resumed run reports the approved (or declined) call again, in a new bot message.
+        // That call keeps the paused step's id, so it settles the step instead of adding one.
+        let carriedFrom: string | undefined;
+        const activityFor = (message: LangflowMessage, messageKey: string): AgentEvent[] => {
+          const events = toolActivity(message, messageKey);
+          if (!carried || messageKey === carried.messageKey) return events;
+          if (carriedFrom === undefined) {
+            const index = toolUses(message).findIndex((t) => callTarget(t.name, t.tool_input ?? t.input) === carried!.tool);
+            if (index < 0) return events;
+            carriedFrom = `${messageKey}:${index}`;
+          }
+          return events.map((e) => (e.type === "activity" && e.id === carriedFrom ? { ...e, id: carried!.id } : e));
+        };
 
         for (let attempt = 0; attempt <= RECONNECTS; attempt++) {
           let response: Response;
@@ -623,7 +683,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   }
                 }
               }
-              yield* toolActivity(message, message.id ?? "message");
+              yield* activityFor(message, message.id ?? "message");
               for (const a of toolArtifacts(message)) {
                 const key = JSON.stringify(a);
                 if (!seenArtifacts.has(key)) {
@@ -653,7 +713,10 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                 yield { type: "note", text: pending.trim() };
                 pending = "";
               }
-              const state: PausedJob = { jobId, requestId: request.request_id, lastEventId };
+              // A run paused again before reporting the carried call keeps pointing at it.
+              let step = pausedStep(lastBot, request) ?? (carriedFrom === undefined ? carried : undefined);
+              if (step && step.id === carriedFrom) step = carried;
+              const state: PausedJob = { jobId, requestId: request.request_id, lastEventId, step };
               yield { type: "approval", ...approvalFor(request), state };
               return;
             } else if (event === "error") {
@@ -668,7 +731,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               const final = resultMessage((data as { result?: unknown })?.result) ?? lastBot;
               const text = typeof final?.text === "string" ? withoutNotes(final.text, notes) : "";
               if (text && text !== shownText && !tokens) yield { type: "message", text };
-              if (final) yield* toolActivity(final, lastBot?.id ?? final.id ?? "message");
+              if (final) yield* activityFor(final, lastBot?.id ?? final.id ?? "message");
               return;
             }
           }

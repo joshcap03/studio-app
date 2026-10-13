@@ -408,6 +408,96 @@ describe("Langflow approvals", () => {
     expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("")).toContain("Sent it to Jo");
   });
 
+  describe("the step a run paused on", () => {
+    // Recorded shape: the paused message holds hidden discovery calls, then take_action with no
+    // output. The resumed job reports the approved call again in a new bot message.
+    const discover = { type: "tool_use", name: "discover_tools", tool_input: { query: "gmail" }, output: { content: "[]" }, error: null };
+    const connect = { tool_name: "composio_manage_connections", arguments: { toolkits: ["gmail"] }, summary: "Connect Gmail" };
+    const pausedCall = { type: "tool_use", name: "take_action", tool_input: connect, output: null, error: null };
+    // While it streams, Langflow reports the paused call under the other gateway name.
+    const streamedCall = { ...pausedCall, name: "execute_tool" };
+    const link = { type: "tool", tool_call_id: "c", content: JSON.stringify({ successful: true, data: { results: { gmail: { redirect_url: "https://connect.composio.dev/link/g1" } } } }) };
+    const approvedCall = { ...pausedCall, output: "ok" };
+    const innerCall = { type: "tool_use", name: "composio_manage_connections", tool_input: { toolkits: ["gmail"] }, output: link, error: null };
+    const connectRequest = { ...approvalRequest(), action_requests: [{ name: "take_action", args: connect }] };
+    const steps = (events: AgentEvent[]) => events.filter((e): e is Extract<AgentEvent, { type: "activity" }> => e.type === "activity");
+
+    it("remembers which step the run paused on", async () => {
+      const { events } = await run(
+        base,
+        streamResponse([sse(1, "add_message", bot("", [discover, discover, streamedCall], "msg-1")), sse(2, "human_input_required", connectRequest)]),
+      );
+      expect(steps(events).at(-1)).toMatchObject({ id: "msg-1:2", status: "running" });
+      const approval = events.find((e) => e.type === "approval") as Extract<AgentEvent, { type: "approval" }>;
+      expect(approval.state).toEqual({ jobId: JOB, requestId: "Agent-1:job:nonce", lastEventId: "2", step: { id: "msg-1:2", messageKey: "msg-1", tool: "composio_manage_connections" } });
+    });
+
+    it("has no step to settle when the paused call wasn't reported before the pause", async () => {
+      const status = { type: "tool_use", name: "take_action", tool_input: connect, output: "ok", error: null };
+      const { events } = await run(base, streamResponse([sse(1, "add_message", bot("", [discover, status], "msg-1")), sse(2, "human_input_required", connectRequest)]));
+      const approval = events.find((e) => e.type === "approval") as Extract<AgentEvent, { type: "approval" }>;
+      expect((approval.state as { step?: unknown }).step).toBeUndefined();
+    });
+
+    it("settles that step with the resumed call instead of adding another", async () => {
+      const state = { jobId: JOB, requestId: "r", lastEventId: "2", step: { id: "msg-1:2", messageKey: "msg-1", tool: "composio_manage_connections" } };
+      const search = { type: "tool_use", name: "search", tool_input: { query: "q" }, output: { results: [] }, error: null };
+      const { events, error } = await run(
+        base,
+        streamResponse([
+          sse(3, "add_message", bot("", [pausedCall], "msg-2")),
+          sse(4, "add_message", bot("", [approvedCall, innerCall], "msg-2")),
+          sse(5, "add_message", bot("Here's the link.", [approvedCall, innerCall, search], "msg-2")),
+          sse(6, "end", end("Here's the link.")),
+        ]),
+        input(tenantA, { resume: { decision: "approve", state } }),
+        { "/resume": () => Response.json({ status: "resuming" }) },
+      );
+      expect(error).toBeUndefined();
+      const ids = new Set(steps(events).map((s) => s.id));
+      expect([...ids]).toEqual(["msg-1:2", "msg-2:2"]);
+      expect(steps(events).filter((s) => s.id === "msg-1:2").at(-1)).toMatchObject({ status: "done" });
+    });
+
+    it("settles it as failed when the resumed call fails", async () => {
+      const state = { jobId: JOB, requestId: "r", lastEventId: "2", step: { id: "msg-1:2", messageKey: "msg-1", tool: "composio_manage_connections" } };
+      const failed = { ...pausedCall, output: "Tool composio_manage_connections failed: 503 Service Unavailable" };
+      const { events } = await run(
+        base,
+        streamResponse([sse(3, "add_message", bot("Couldn't connect.", [failed], "msg-2")), sse(4, "end", end("Couldn't connect."))]),
+        input(tenantA, { resume: { decision: "approve", state } }),
+        { "/resume": () => Response.json({ status: "resuming" }) },
+      );
+      expect(steps(events).map((s) => s.id)).toEqual(["msg-1:2"]);
+      expect(steps(events)[0]).toMatchObject({ status: "failed" });
+    });
+
+    it("leaves step ids alone when the resumed job continues the same message", async () => {
+      const state = { jobId: JOB, requestId: "r", lastEventId: "2", step: { id: "msg-1:2", messageKey: "msg-1", tool: "composio_manage_connections" } };
+      const { events } = await run(
+        base,
+        streamResponse([sse(3, "add_message", bot("Done.", [discover, discover, approvedCall, innerCall], "msg-1")), sse(4, "end", end("Done."))]),
+        input(tenantA, { resume: { decision: "approve", state } }),
+        { "/resume": () => Response.json({ status: "resuming" }) },
+      );
+      expect([...new Set(steps(events).map((s) => s.id))]).toEqual(["msg-1:0", "msg-1:1", "msg-1:2"]);
+      expect(steps(events).at(-1)).toMatchObject({ id: "msg-1:2", status: "done" });
+    });
+
+    it("points a second pause at its own call, not the one already settled", async () => {
+      const state = { jobId: JOB, requestId: "r", lastEventId: "2", step: { id: "msg-1:2", messageKey: "msg-1", tool: "composio_manage_connections" } };
+      const next = { ...pausedCall, tool_input: { ...connect, arguments: { toolkits: ["googlesheets"] } } };
+      const { events } = await run(
+        base,
+        streamResponse([sse(3, "add_message", bot("", [approvedCall, innerCall, next], "msg-2")), sse(4, "human_input_required", connectRequest)]),
+        input(tenantA, { resume: { decision: "approve", state } }),
+        { "/resume": () => Response.json({ status: "resuming" }) },
+      );
+      const approval = events.find((e) => e.type === "approval") as Extract<AgentEvent, { type: "approval" }>;
+      expect((approval.state as { step: unknown }).step).toEqual({ id: "msg-2:2", messageKey: "msg-2", tool: "composio_manage_connections" });
+    });
+  });
+
   it("tells the agent a decline was the owner's choice", async () => {
     const state = { jobId: JOB, requestId: "r", lastEventId: null };
     const { calls } = await run(base, streamResponse([sse(1, "end", {})]), input(tenantA, { resume: { decision: "reject", state } }), {

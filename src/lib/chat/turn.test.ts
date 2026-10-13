@@ -345,6 +345,49 @@ describe("approvals", () => {
     expect(messages[1].activity.map((s) => s.label)).toEqual(["Found the thread"]);
   });
 
+  describe("the step the run paused on", () => {
+    const connecting: AgentEvent = { type: "activity", id: "msg-1:2", label: "Connecting Gmail", status: "running", app: "gmail", action: "connect" };
+    const pausedOnStep: AgentEvent[] = [connecting, { type: "approval", summary: "Connect Gmail", app: "gmail", details: [], state: { jobId: "job-1", requestId: "r-1" } }];
+
+    function pausingOn(onResume: AgentEvent[]): AgentAdapter {
+      return {
+        ...scripted([]),
+        discard: async () => {},
+        async *run(input) {
+          yield* input.resume ? onResume : pausedOnStep;
+        },
+      };
+    }
+
+    async function decide(onResume: AgentEvent[], decision: "approve" | "reject") {
+      const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), [], pausingOn(onResume));
+      const events = await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision }));
+      const end = events.at(-1);
+      if (end?.type !== "end") throw new Error("no end");
+      return { end: end.message, saved: (await store.listMessages(id))[1] };
+    }
+
+    it("is settled by the resumed call, with no second step", async () => {
+      const { end, saved } = await decide(
+        [{ ...connecting, label: "Got a link to connect Gmail", status: "done" } as AgentEvent, { type: "text-delta", text: "Here's the link." }],
+        "approve",
+      );
+      for (const message of [end, saved]) {
+        expect(message.activity).toEqual([expect.objectContaining({ id: "msg-1:2", label: "Got a link to connect Gmail", status: "done", endedAt: expect.any(Number) })]);
+      }
+    });
+
+    it("is settled when the approved run finishes without reporting it again", async () => {
+      const { end, saved } = await decide([{ type: "text-delta", text: "Connected." }], "approve");
+      for (const message of [end, saved]) expect(message.activity).toEqual([expect.objectContaining({ id: "msg-1:2", status: "done", endedAt: expect.any(Number) })]);
+    });
+
+    it("fails when the member declined it", async () => {
+      const { end } = await decide([{ type: "text-delta", text: "Okay, I won't." }], "reject");
+      expect(end.activity).toEqual([expect.objectContaining({ id: "msg-1:2", status: "failed", detail: "You declined this." })]);
+    });
+  });
+
   it("answers each request once", async () => {
     const { id, deps, approval } = await pause();
     await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "reject" }));
