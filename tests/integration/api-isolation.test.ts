@@ -95,6 +95,7 @@ describe("API tenant isolation", () => {
     expect((await bob.json(`/api/conversations/${aliceConv}`, "GET")).status).toBe(404);
     expect((await bob.json(`/api/conversations/${aliceConv}`, "PATCH", { title: "pwned" })).status).toBe(404);
     expect((await bob.json(`/api/conversations/${aliceConv}`, "DELETE")).status).toBe(404);
+    expect((await bob.json(`/api/conversations/${aliceConv}/stop`, "POST")).status).toBe(404);
     const retry = await bob.json(`/api/conversations/${aliceConv}/messages`, "POST", { kind: "retry" });
     expect(retry.status).toBe(404);
     const send = await bob.send(aliceConv, "inject into alice");
