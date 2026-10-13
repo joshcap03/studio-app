@@ -2,16 +2,17 @@
 node_modules/
 
 # Build output
+.next/
+.next-qa/
+out/
 dist/
-
-# TypeScript incremental build metadata
+next-env.d.ts
 *.tsbuildinfo
-
-# Emitted by `tsc -b` from the config files below; never edit by hand
 vite.config.js
 vite.config.d.ts
 vitest.config.js
 vitest.config.d.ts
+.vite/
 
 # Logs
 *.log
@@ -22,9 +23,19 @@ npm-debug.log*
 .env.*
 !.env.example
 
+# Local SQLite database (conversation history)
+.data/
+
 # Real business data (filed returns, order snapshots, agent state) - never commit
 data/
 state/
 
+# Langflow flow backups written by langflow/install.py (may hold component settings)
+langflow/backup-*.json
+
 # macOS
 .DS_Store
+
+# Vercel CLI link
+.vercel
+__pycache__/

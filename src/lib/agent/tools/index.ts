@@ -1,0 +1,766 @@
+import { appForToolkit, appName, isKnownToolkit, type AppId } from "@/lib/apps";
+import type { ActivityStatus, Artifact, StepAction, StepPreview } from "@/lib/types";
+import {
+  capList,
+  clip,
+  composioEnvelope,
+  domainOf,
+  firstString,
+  isRecord,
+  maybeJson,
+  safeUrl,
+  unwrapResult,
+} from "./sanitize";
+
+// Tool interpretation: turns raw tool calls into steps a business owner can follow, in plain
+// language, with the app each step worked in and a receipt of what it actually did.
+//
+// Provider-neutral: adapters hand over normalized calls ({ name, input, output, error }) in
+// the order the agent made them. Everything here is derived from those calls. Nothing is
+// guessed, and agent reasoning fields (e.g. "thought") are never shown; "current_step" is
+// the agent's own user-facing narration and is used as the label when present.
+
+export interface ToolCall {
+  name: string;
+  input: unknown;
+  /** undefined/null while the call is still running. */
+  output: unknown;
+  error: unknown;
+}
+
+export interface InterpretedStep {
+  /** Index of the call this step starts at; stable as more calls arrive. */
+  index: number;
+  label: string;
+  status: ActivityStatus;
+  detail?: string;
+  app: AppId;
+  action: StepAction;
+  preview?: StepPreview;
+  hidden?: boolean;
+  artifacts?: Artifact[];
+}
+
+interface Interpretation {
+  labels: { running: string; done: string; failed?: string };
+  app: AppId;
+  action: StepAction;
+  preview?: StepPreview;
+  hidden?: boolean;
+  artifacts?: Artifact[];
+  /** A failure reported inside a successful-looking result (e.g. Composio successful: false). */
+  innerError?: string;
+}
+
+const MAX_ITEMS = 8;
+const MAX_ROWS = 50;
+
+/** Gateway/meta tools that only find or describe other tools. Counted, not listed. */
+const PLUMBING = new Set([
+  "discover_tools",
+  "composio_search_tools",
+  "composio_get_tool_schemas",
+  "composio_search_skills",
+  "composio_manage_skill",
+  "get_current_date",
+  "select_space",
+  "set_active_tag",
+  "who_am_i",
+  "whoami",
+  "list_spaces",
+  "listspaces",
+  "composio_submit_feedback",
+]);
+
+const COMPOSIO_SLUG = /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/;
+
+// ------------------------------------------------------------------------------------------
+// Entry point
+
+export function interpretCalls(calls: ToolCall[]): InterpretedStep[] {
+  // A gateway call (execute_tool) is followed, not always immediately (the agent runs tools
+  // in parallel), by the real call it made. Each inner call is merged into the earliest
+  // unclaimed gateway call that invoked it; the step keeps the gateway call's position.
+  const merged = new Map<number, ToolCall>();
+  const pending: { index: number; target: string; args: Record<string, unknown>; wrapper: ToolCall }[] = [];
+
+  calls.forEach((call, index) => {
+    // take_action is the same gateway call for actions that needed the owner's approval.
+    if (GATEWAY_TOOLS.has(call.name) && isRecord(call.input) && typeof call.input.tool_name === "string") {
+      const args = isRecord(call.input.arguments) ? call.input.arguments : {};
+      pending.push({ index, target: call.input.tool_name, args, wrapper: call });
+      merged.set(index, { name: call.input.tool_name, input: args, output: call.output, error: call.error });
+      return;
+    }
+    // Match by content first: the gateway passes its arguments straight through, so the
+    // inner call's input equals the gateway call's arguments. Then by exact tool name, then
+    // by a Composio slug the multi-execute ran. A gateway call that failed invoked nothing.
+    const live = (p: (typeof pending)[number]) => {
+      const out = p.wrapper.output == null ? undefined : unwrapResult(p.wrapper.output);
+      return !(typeof out === "string" && gatewayFailure(out));
+    };
+    const inputKey = stableJson(call.input);
+    let owner = pending.findIndex((p) => live(p) && p.target === call.name && stableJson(p.args) === inputKey);
+    if (owner < 0) owner = pending.findIndex((p) => live(p) && p.target === call.name);
+    if (owner < 0) owner = pending.findIndex((p) => live(p) && invokes(p.target, call));
+    if (owner >= 0) {
+      const [p] = pending.splice(owner, 1);
+      merged.set(p.index, {
+        name: call.name,
+        input: isRecord(call.input) ? { ...p.args, ...call.input } : p.args,
+        output: call.output ?? p.wrapper.output,
+        error: call.error || p.wrapper.error,
+      });
+      return;
+    }
+    merged.set(index, call);
+  });
+
+  return [...merged.entries()].sort(([a], [b]) => a - b).map(([index, call]) => toStep(call, index));
+}
+
+function stableJson(value: unknown): string {
+  const sort = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(sort) : isRecord(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])])) : v;
+  return JSON.stringify(sort(value ?? {}));
+}
+
+/** The gateway's own tools, which a person should never see named. */
+const GATEWAY_TOOLS = new Set(["execute_tool", "take_action", "discover_tools"]);
+
+function invokes(target: string, next: ToolCall): boolean {
+  if (next.name === target) return true;
+  if (next.name === "composio_multi_execute_tool" && isRecord(next.input) && Array.isArray(next.input.tools)) {
+    return next.input.tools.some((t) => isRecord(t) && t.tool_slug === target);
+  }
+  return false;
+}
+
+function toStep(call: ToolCall, index: number): InterpretedStep {
+  const input = isRecord(call.input) ? call.input : {};
+  const result = call.output == null ? undefined : unwrapResult(call.output);
+  // MCP results flag failures with isError rather than an error field.
+  const mcpError = isRecord(call.output) && call.output.isError === true ? stringResult(call.output) || "The tool reported an error." : undefined;
+  // Tool gateways report failures as text results ("Tool X failed: …", "Tool X timed out …").
+  const gatewayError = typeof result === "string" ? gatewayFailure(result) : undefined;
+  const interpretation = interpret(call.name, input, result);
+  if (typeof result === "string" && NEEDS_APPROVAL.test(result.trim())) {
+    return { index, label: withoutRepeats(interpretation.labels.running), status: "done", app: interpretation.app, action: interpretation.action, hidden: true };
+  }
+  const envelope = composioEnvelope(result);
+  const errorText =
+    (errorMessage(call.error) ? humanReason(errorMessage(call.error)!) : undefined) ??
+    (mcpError ? errorMessage(mcpError) : undefined) ??
+    gatewayError ??
+    (envelope && !envelope.successful ? errorMessage(envelope.error) ?? "The tool reported a failure." : undefined) ??
+    interpretation.innerError;
+  const status: ActivityStatus = errorText ? "failed" : call.output == null ? "running" : "done";
+
+  // The agent's own plain-language description of this step, when it gave one.
+  const narration = typeof input.current_step === "string" ? narrate(input.current_step) : undefined;
+  const label = withoutRepeats(
+    narration ??
+    (status === "running"
+      ? interpretation.labels.running
+      : status === "failed"
+        ? interpretation.labels.failed ?? `${interpretation.labels.running} didn't work`
+        : interpretation.labels.done),
+  );
+
+  return {
+    index,
+    label,
+    status,
+    detail: errorText ? clip(errorText, 240) : undefined,
+    app: interpretation.app,
+    action: interpretation.action,
+    preview: status === "running" && interpretation.preview?.type !== "code" ? undefined : interpretation.preview,
+    // Plumbing is hidden only while it works; a failure is always shown.
+    hidden: interpretation.hidden && status !== "failed" ? true : undefined,
+    artifacts: status === "done" ? interpretation.artifacts : undefined,
+  };
+}
+
+// ------------------------------------------------------------------------------------------
+// Interpreters
+
+function interpret(name: string, input: Record<string, unknown>, result: unknown): Interpretation {
+  if (GATEWAY_TOOLS.has(name)) {
+    return { labels: { running: "Starting a tool", done: "Started a tool", failed: "A tool call didn't go through" }, app: "agent", action: "other", hidden: true };
+  }
+  if (PLUMBING.has(name)) {
+    return { labels: { running: "Looking for the right tool", done: "Found the right tool" }, app: "agent", action: "other", hidden: true };
+  }
+  if (COMPOSIO_SLUG.test(name)) return composioTool(name, input, result);
+  if (isKnownToolkit(name)) return composioTool(name.toUpperCase(), input, result);
+
+  switch (name) {
+    case "composio_multi_execute_tool":
+      return multiExecute(input, result);
+    case "composio_remote_workbench":
+    case "composio_remote_bash_tool":
+    case "python_repl":
+    case "run_python":
+      return code(name, input, result);
+    case "composio_manage_connections":
+    case "composio_wait_for_connections":
+      return connections(name, input, result);
+    case "search":
+    case "web_search":
+    case "exa_search":
+    case "search_web":
+      return webSearch(input, result);
+    case "search_memory":
+    case "list_memories":
+    case "listmemories":
+    case "get_profile":
+    case "list_documents":
+    case "listdocuments":
+    case "get_document":
+    case "getdocument":
+      return memoryRead(input, result);
+    case "add_memory":
+    case "save_memory":
+    case "guided_save":
+      return memoryWrite(input);
+    case "forget_memory":
+      return { labels: { running: "Updating memory", done: "Updated memory" }, app: "memory", action: "remember" };
+    case "start":
+      return { labels: { running: "Opening a browser", done: "Opened a browser" }, app: "browser", action: "browse" };
+    case "navigate":
+      return navigate(input);
+    case "extract":
+    case "observe":
+    case "act":
+      return browserPage(name, result);
+    case "evaluate_expression":
+    case "calculator":
+      return {
+        labels: { running: "Calculating", done: "Calculated" },
+        app: "calculator",
+        action: "run",
+        preview: typeof input.expression === "string" ? textPreview(`${input.expression} = ${stringResult(result)}`) : undefined,
+      };
+    case "load_skill":
+      return { labels: { running: "Checking a playbook", done: "Checked a playbook" }, app: "agent", action: "read", hidden: true };
+    case "remember":
+    case "propose_memory":
+      // What was remembered is shown on its own line under the reply, with an Undo.
+      return { labels: { running: "Noting something to remember", done: "Remembered something" }, app: "memory", action: "remember", hidden: true };
+  }
+  const words = humanize(name);
+  return { labels: { running: `Using ${words}`, done: `Used ${words}` }, app: "agent", action: "other" };
+}
+
+function composioTool(slug: string, input: Record<string, unknown>, result: unknown): Interpretation {
+  const app = appForToolkit(slug);
+  const verb = verbFor(slug, app);
+  const envelope = composioEnvelope(result);
+  const data = envelope ? envelope.data : result;
+  return {
+    labels: verb.labels,
+    app,
+    action: verb.action,
+    preview: withQuery(previewFor(slug, app, input, data) ?? readablePreview(data), input),
+    artifacts: [artifactFor(slug, app, data)].filter((a): a is Artifact => !!a),
+  };
+}
+
+function multiExecute(input: Record<string, unknown>, result: unknown): Interpretation {
+  const tools = Array.isArray(input.tools) ? input.tools.filter(isRecord) : [];
+  const envelope = composioEnvelope(result);
+  const results = isRecord(envelope?.data) && Array.isArray(envelope.data.results) ? envelope.data.results.filter(isRecord) : [];
+  const first = tools[0];
+  if (!first || typeof first.tool_slug !== "string") {
+    return { labels: { running: "Working in your apps", done: "Worked in your apps" }, app: "agent", action: "other" };
+  }
+  const response = results.find((r) => r.tool_slug === first.tool_slug) ?? results[0];
+  const inner = response && isRecord(response.response) ? response.response : undefined;
+  const interpretation = composioTool(first.tool_slug, isRecord(first.arguments) ? first.arguments : {}, inner);
+  // With several tools, show the first one that returned something readable.
+  if (!interpretation.preview) {
+    for (const tool of tools.slice(1)) {
+      if (typeof tool.tool_slug !== "string") continue;
+      const r = results.find((x) => x.tool_slug === tool.tool_slug);
+      const other = composioTool(tool.tool_slug, isRecord(tool.arguments) ? tool.arguments : {}, r && isRecord(r.response) ? r.response : undefined);
+      if (other.preview) {
+        interpretation.preview = other.preview;
+        interpretation.app = other.app;
+        break;
+      }
+    }
+  }
+  if (inner && inner.successful === false) interpretation.innerError = errorMessage(inner.error) ?? "The tool reported a failure.";
+  if (tools.length > 1) {
+    const apps = [...new Set(tools.map((t) => (typeof t.tool_slug === "string" ? appName(appForToolkit(t.tool_slug)) : null)).filter(Boolean))];
+    const where = apps.length > 1 ? `${apps.slice(0, -1).join(", ")} and ${apps.at(-1)}` : apps[0];
+    interpretation.labels = { running: `Working in ${where}`, done: `Worked in ${where}` };
+  }
+  return interpretation;
+}
+
+function code(name: string, input: Record<string, unknown>, result: unknown): Interpretation {
+  const source = firstString(input, ["code_to_execute", "code", "command", "python_code"]);
+  const envelope = composioEnvelope(result);
+  const data = isRecord(envelope?.data) ? envelope.data : isRecord(result) ? result : {};
+  const rawStdout = firstString(data, ["stdout", "output", "results"]);
+  const stderr = firstString(data, ["stderr"]);
+  const failure = firstString(data, ["error"]);
+  const { steps, artifacts, rest } = readMarkers(rawStdout ?? "");
+  const stdout = rest.trim();
+  return {
+    labels: { running: "Working through the data", done: "Worked through the data", failed: "Hit an error working through the data" },
+    app: "code",
+    action: "run",
+    preview: source
+      ? {
+          type: "code",
+          language: name.includes("bash") ? "bash" : "python",
+          code: clip(source, 4000),
+          output: stdout ? clip(stdout, 2000) : undefined,
+          steps: steps.length > 0 ? steps : undefined,
+        }
+      : undefined,
+    artifacts,
+    innerError: failure ? clip(failure, 400) : stderr && !stdout ? clip(stderr, 400) : undefined,
+  };
+}
+
+function connections(name: string, input: Record<string, unknown>, result: unknown): Interpretation {
+  // Composio takes toolkits as plain names (["gmail"]) or as records ({ name: "gmail", … }).
+  const toolkits = (Array.isArray(input.toolkits) ? input.toolkits : [])
+    .map((t) => (typeof t === "string" ? t.trim() : isRecord(t) ? firstString(t, ["name", "toolkit", "slug"]) : undefined))
+    .filter((t): t is string => !!t);
+  const apps = [...new Set(toolkits.map((t) => appForToolkit(t)))];
+  const app: AppId = apps.length === 1 ? apps[0] : "agent";
+  const names = apps.map((a) => appName(a));
+  const where = names.length === 0 ? undefined : names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  const envelope = composioEnvelope(result);
+  const link = findUrl(envelope?.data, /redirect|connect|auth|link/i);
+  if (name === "composio_wait_for_connections") {
+    return {
+      labels: where
+        ? { running: `Waiting for you to connect ${where}`, done: `${where} connected`, failed: `Couldn't confirm ${where} is connected` }
+        : { running: "Waiting for you to connect your apps", done: "Your apps are connected", failed: "Couldn't confirm your apps are connected" },
+      app,
+      action: "connect",
+    };
+  }
+  return {
+    labels: where
+      ? { running: `Connecting ${where}`, done: link ? `Got a link to connect ${where}` : `Checked the ${where} connection${names.length > 1 ? "s" : ""}`, failed: `Couldn't connect ${where}` }
+      : { running: "Checking your app connections", done: link ? "Got a link to connect your apps" : "Checked your app connections", failed: "Couldn't check your app connections" },
+    app,
+    action: "connect",
+    preview: link ? { type: "link", url: link, title: where ? `Connect ${where}` : "Connect your apps" } : undefined,
+  };
+}
+
+function webSearch(input: Record<string, unknown>, result: unknown): Interpretation {
+  const query = typeof input.query === "string" ? clip(input.query, 80) : "";
+  const label = query ? ` for “${query}”` : "";
+  return {
+    labels: { running: `Searching the web${label}`, done: `Searched the web${label}` },
+    app: "web",
+    action: "search",
+    preview: sourcesPreview(result),
+  };
+}
+
+function memoryRead(input: Record<string, unknown>, result: unknown): Interpretation {
+  const query = firstString(input, ["query", "q", "search"]);
+  const about = query ? `“${clip(query, 60)}”` : "your business";
+  return {
+    labels: { running: `Checking what I know about ${about}`, done: `Checked what I know about ${about}` },
+    app: "memory",
+    action: "remember",
+    preview: withQuery(readablePreview(result) ?? (query ? { type: "items", items: [], total: 0 } : undefined), { query }),
+  };
+}
+
+function memoryWrite(input: Record<string, unknown>): Interpretation {
+  const content = firstString(input, ["content", "memory", "text"]);
+  return {
+    labels: { running: "Noting this for next time", done: "Noted this for next time" },
+    app: "memory",
+    action: "remember",
+    preview: content ? readablePreview(content) : undefined,
+  };
+}
+
+function navigate(input: Record<string, unknown>): Interpretation {
+  const url = safeUrl(input.url);
+  const where = url ? domainOf(url) : "a page";
+  return {
+    labels: { running: `Visiting ${where}`, done: `Visited ${where}`, failed: `Couldn't open ${where}` },
+    app: "browser",
+    action: "browse",
+    preview: url ? { type: "link", url, title: where } : undefined,
+  };
+}
+
+function browserPage(name: string, result: unknown): Interpretation {
+  const labels =
+    name === "extract"
+      ? { running: "Reading the page", done: "Read the page" }
+      : name === "observe"
+        ? { running: "Looking at the page", done: "Looked at the page" }
+        : { running: "Using the page", done: "Used the page" };
+  const value = unwrapResult(result);
+  const data = isRecord(value) && "data" in value ? value.data : value;
+  return { labels, app: "browser", action: "browse", preview: readablePreview(data) };
+}
+
+/**
+ * Explicit progress markers printed by code the agent runs (see README, "Work markers"):
+ *   STEP <plain-language progress>
+ *   ARTIFACT {"id","kind","title","url","description"?,"source"?}
+ * Only lines that start with these exact markers count; nothing else in the output is
+ * interpreted. Artifacts are validated again (https only, known kinds) before display.
+ */
+export function readMarkers(output: string): { steps: string[]; artifacts: Artifact[]; rest: string } {
+  const steps: string[] = [];
+  const artifacts: Artifact[] = [];
+  const rest: string[] = [];
+  for (const line of output.split("\n")) {
+    const step = /^STEP\s+(.+)$/.exec(line.trim());
+    const artifact = /^ARTIFACT\s+(\{.*\})$/.exec(line.trim());
+    if (step) {
+      if (steps.length < 20) steps.push(clip(step[1], 160));
+    } else if (artifact) {
+      const value = maybeJson(artifact[1]);
+      if (isRecord(value)) {
+        const url = safeUrl(value.url);
+        const title = firstString(value, ["title"]);
+        if (url && title && artifacts.length < 5) {
+          artifacts.push({
+            id: clip(firstString(value, ["id"]) ?? url, 200),
+            kind: (typeof value.kind === "string" ? value.kind : "file") as Artifact["kind"],
+            title: clip(title, 200),
+            description: firstString(value, ["description"]) ? clip(value.description, 300) : undefined,
+            source: firstString(value, ["source"]) ? clip(value.source, 80) : undefined,
+            url,
+          });
+        }
+      }
+    } else {
+      rest.push(line);
+    }
+  }
+  return { steps, artifacts, rest: rest.join("\n") };
+}
+
+// ------------------------------------------------------------------------------------------
+// Composio verbs, previews, and artifacts
+
+const VERBS: [RegExp, StepAction, (app: string) => { running: string; done: string }][] = [
+  [/_(SEND|REPLY|FORWARD)/, "write", (a) => (a === "Gmail" || a === "Outlook" ? { running: "Sending an email", done: "Sent an email" } : { running: `Sending in ${a}`, done: `Sent in ${a}` })],
+  [/_(CREATE_DRAFT|DRAFT)/, "write", () => ({ running: "Drafting an email", done: "Drafted an email" })],
+  [/^GOOGLESHEETS_CREATE/, "write", () => ({ running: "Creating a spreadsheet", done: "Created a spreadsheet" })],
+  [/^GOOGLEDOCS_CREATE/, "write", () => ({ running: "Creating a document", done: "Created a document" })],
+  [/_(CREATE|ADD|INSERT)/, "write", (a) => ({ running: `Adding to ${a}`, done: `Added to ${a}` })],
+  [/_(UPDATE|APPEND|BATCH|WRITE|SET|EDIT|MODIFY|MOVE)/, "write", (a) => ({ running: `Updating ${a}`, done: `Updated ${a}` })],
+  [/_(DELETE|REMOVE|TRASH|ARCHIVE)/, "write", (a) => ({ running: `Removing from ${a}`, done: `Removed from ${a}` })],
+  [/_(SEARCH|FIND|QUERY|LOOKUP)/, "search", (a) => ({ running: `Searching ${a}`, done: `Searched ${a}` })],
+  [/_(FETCH|LIST|GET|READ|RETRIEVE|EXPORT|DOWNLOAD)/, "read", (a) => ({ running: `Checking ${a}`, done: `Checked ${a}` })],
+];
+
+function verbFor(slug: string, app: AppId): { labels: { running: string; done: string }; action: StepAction } {
+  const name = appName(app);
+  for (const [pattern, action, labels] of VERBS) if (pattern.test(slug)) return { labels: labels(name), action };
+  return { labels: { running: `Working in ${name}`, done: `Worked in ${name}` }, action: "other" };
+}
+
+function previewFor(slug: string, app: AppId, input: Record<string, unknown>, data: unknown): StepPreview | undefined {
+  // Rows the agent wrote: shown exactly as sent.
+  const values = input.values ?? (isRecord(input.data) ? input.data.values : undefined);
+  if (Array.isArray(values) && values.every(Array.isArray)) return tablePreview(values as unknown[][], firstString(input, ["range", "sheet_name"]));
+
+  if (app === "gmail" || app === "outlook") {
+    const messages = findArray(data, ["messages", "emails", "value"]);
+    if (messages) {
+      const items = messages.filter(isRecord).map((m) => ({
+        primary: clip(firstString(m, ["subject", "Subject"]) ?? "(no subject)", 120),
+        secondary: clip(firstString(m, ["sender", "from", "From"]) ?? "", 80) || undefined,
+        url: safeUrl(m.display_url ?? m.webLink),
+      }));
+      const { items: shown, total } = capList(items, MAX_ITEMS);
+      return { type: "items", items: shown, total };
+    }
+    if (/_(SEND|REPLY|DRAFT)/.test(slug)) {
+      const to = firstString(input, ["recipient_email", "to", "recipient"]);
+      const subject = firstString(input, ["subject"]);
+      if (to || subject) return { type: "items", items: [{ primary: clip(subject ?? "(no subject)", 120), secondary: to ? `To ${clip(to, 80)}` : undefined }] };
+    }
+  }
+
+  // Generic lists of records (orders, products, events, files…).
+  const list = findArray(data, LIST_KEYS);
+  if (list && list.length > 0 && list.every(isRecord)) {
+    const items = (list as Record<string, unknown>[]).map((r) => ({
+      primary: clip(firstString(r, ["title", "name", "subject", "summary", "id"]) ?? "Item", 120),
+      secondary: clip(firstString(r, ["summary", "snippet", "description", "status", "email", "date", "created_at", "updated_at"]) ?? "", 160) || undefined,
+      url: safeUrl(r.url ?? r.webViewLink ?? r.htmlLink),
+    }));
+    const { items: shown, total } = capList(items, MAX_ITEMS);
+    return { type: "items", items: shown, total };
+  }
+  const sheetValues = findArray(data, ["values"]);
+  if (sheetValues && sheetValues.every(Array.isArray)) return tablePreview(sheetValues as unknown[][]);
+  return undefined;
+}
+
+/** Files the agent created, from the create call's own structured result. */
+function artifactFor(slug: string, app: AppId, data: unknown): Artifact | undefined {
+  if (!/_CREATE/.test(slug)) return undefined;
+  const kind = app === "sheets" ? "spreadsheet" : app === "docs" ? "document" : app === "drive" ? "file" : undefined;
+  if (!kind) return undefined;
+  const url = findUrl(data, /url|link/i);
+  if (!url) return undefined;
+  const record = isRecord(data) ? data : {};
+  const props = isRecord(record.properties) ? record.properties : {};
+  const title = firstString(props, ["title"]) ?? firstString(record, ["title", "name"]) ?? (kind === "spreadsheet" ? "New spreadsheet" : "New document");
+  const id = firstString(record, ["spreadsheetId", "documentId", "id"]) ?? url;
+  return { id, kind, title: clip(title, 200), source: appName(app), url };
+}
+
+// ------------------------------------------------------------------------------------------
+// Preview builders
+
+function sourcesPreview(result: unknown): StepPreview | undefined {
+  const value = unwrapResult(result);
+  let entries: { title: string; url: string }[] = [];
+  if (isRecord(value) && Array.isArray(value.results)) {
+    entries = value.results.filter(isRecord).flatMap((r) => {
+      const url = safeUrl(r.url);
+      return url ? [{ title: clip(firstString(r, ["title"]) ?? domainOf(url), 140), url }] : [];
+    });
+  } else if (typeof value === "string") {
+    // Text form: repeated "Title: …\nURL: …" blocks.
+    const pattern = /Title:\s*(.*)\n\s*URL:\s*(\S+)/g;
+    for (const match of value.matchAll(pattern)) {
+      const url = safeUrl(match[2]);
+      if (url) entries.push({ title: clip(match[1] || domainOf(url), 140), url });
+    }
+  }
+  if (entries.length === 0) return undefined;
+  const unique = [...new Map(entries.map((e) => [e.url, e])).values()];
+  const { items, total } = capList(unique.map((e) => ({ ...e, domain: domainOf(e.url) })), MAX_ITEMS);
+  return { type: "sources", items, total };
+}
+
+function tablePreview(values: unknown[][], title?: string): StepPreview | undefined {
+  const rows = values.map((row) => row.map((cell) => clip(cell ?? "", 80)));
+  if (rows.length === 0) return undefined;
+  const [header, ...body] = rows;
+  const width = Math.min(12, Math.max(...rows.map((r) => r.length)));
+  const columns = header.slice(0, width);
+  const { items, total } = capList(body.map((r) => r.slice(0, width)), MAX_ROWS);
+  return { type: "table", columns, rows: items, total, title: title ? clip(title, 80) : undefined };
+}
+
+function textPreview(text: string): StepPreview {
+  return { type: "text", text: clip(text, 1200) };
+}
+
+/** Attaches what the tool was asked (its query) to list and text receipts. */
+function withQuery(preview: StepPreview | undefined, input: Record<string, unknown>): StepPreview | undefined {
+  const query = firstString(input, ["query", "q", "search", "keyword", "question", "search_query"]);
+  if (!preview || !query || (preview.type !== "text" && preview.type !== "items")) return preview;
+  return { ...preview, query: clip(query, 80) };
+}
+
+/** Keys under which apps commonly return lists of records. */
+const LIST_KEYS = [
+  "items", "results", "records", "rows", "orders", "products", "events", "files", "notes", "meetings",
+  "documents", "memories", "threads", "contacts", "customers", "entries", "facts", "static", "dynamic", "data",
+];
+
+const TITLE_KEYS = ["title", "name", "subject", "label", "key"];
+const BODY_KEYS = ["summary", "content", "memory", "text", "description", "value", "snippet", "answer", "result", "response", "output", "data"];
+
+/**
+ * A human-readable receipt for an arbitrary tool result, or nothing. Raw data is never
+ * shown: JSON becomes a list of titles and summaries when it has them, plain strings stay
+ * as text, and anything else is omitted.
+ */
+export function readablePreview(result: unknown): StepPreview | undefined {
+  const value = unwrapResult(result);
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text || /^[[{]/.test(text)) return undefined; // unparseable JSON-ish text: omit
+    return textPreview(text);
+  }
+  const list = Array.isArray(value) ? value : findArray(value, LIST_KEYS);
+  if (list && list.length === 0) return { type: "items", items: [], total: 0 };
+  if (list && list.length > 0) {
+    const items = list.flatMap((entry) => {
+      if (typeof entry === "string") return entry.trim() && !/^[[{]/.test(entry.trim()) ? [{ primary: clip(entry, 160) }] : [];
+      if (!isRecord(entry)) return [];
+      const title = firstString(entry, TITLE_KEYS);
+      const body = firstString(entry, BODY_KEYS);
+      if (!title && !body) return [];
+      return [{ primary: clip(title ?? body!, 120), secondary: title && body ? clip(body, 220) : undefined }];
+    });
+    if (items.length === 0) return undefined;
+    const { items: shown, total } = capList(items, MAX_ITEMS);
+    return { type: "items", items: shown, total };
+  }
+  if (isRecord(value)) {
+    const body = firstString(value, BODY_KEYS);
+    if (body && !/^[[{]/.test(body.trim())) return textPreview(body);
+    // Any other natural-language field, e.g. { extraction: "…" }.
+    const prose = Object.values(value).find(
+      (v): v is string => typeof v === "string" && v.trim().length > 20 && /\s/.test(v) && !/^[[{]/.test(v.trim()) && !/^https?:\/\//.test(v.trim()),
+    );
+    if (prose) return textPreview(prose);
+    // One level down: { data: { result: … } }, { result: [ … ] }.
+    for (const key of BODY_KEYS) {
+      const nested = value[key];
+      if (isRecord(nested) || Array.isArray(nested)) {
+        const inner = readablePreview(nested);
+        if (inner) return inner;
+      }
+    }
+  }
+  return undefined;
+}
+
+function stringResult(result: unknown): string {
+  const value = unwrapResult(result);
+  if (typeof value === "string") return value;
+  if (isRecord(value) && typeof value.result === "string") return value.result;
+  return value == null ? "" : JSON.stringify(value);
+}
+
+// ------------------------------------------------------------------------------------------
+// Utilities
+
+function findArray(data: unknown, keys: string[], depth = 0): unknown[] | undefined {
+  const value = maybeJson(data);
+  if (Array.isArray(value)) return depth === 0 ? undefined : value;
+  if (!isRecord(value) || depth > 3) return undefined;
+  for (const key of keys) if (Array.isArray(value[key])) return value[key] as unknown[];
+  for (const nested of Object.values(value)) {
+    if (isRecord(nested)) {
+      const found = findArray(nested, keys, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function findUrl(data: unknown, keyPattern: RegExp, depth = 0): string | undefined {
+  const value = maybeJson(data);
+  if (!isRecord(value) || depth > 3) return undefined;
+  for (const [key, nested] of Object.entries(value)) {
+    if (keyPattern.test(key)) {
+      const url = safeUrl(nested);
+      if (url) return url;
+    }
+  }
+  for (const nested of Object.values(value)) {
+    const url = findUrl(nested, keyPattern, depth + 1);
+    if (url) return url;
+  }
+  return undefined;
+}
+
+function errorMessage(value: unknown): string | undefined {
+  if (value == null || value === false || value === "") return undefined;
+  if (typeof value === "string") {
+    // e.g. "MCP tool 'X' failed: {\"successful\": false, \"error\": \"…\"}" → the inner reason.
+    const brace = value.indexOf("{");
+    if (brace >= 0) {
+      const inner = maybeJson(value.slice(brace));
+      if (isRecord(inner)) {
+        const data = isRecord(inner.data) ? inner.data : {};
+        const reason = firstString(inner, ["error", "message", "detail"]) ?? firstString(data, ["error", "stderr", "message"]);
+        if (reason) return reason;
+      }
+    }
+    return value;
+  }
+  if (isRecord(value)) return firstString(value, ["message", "error", "detail"]) ?? JSON.stringify(value);
+  return String(value);
+}
+
+function humanize(name: string): string {
+  return (
+    name
+      .replace(/^composio_/, "")
+      .replace(/[_-]+/g, " ")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .trim()
+      .toLowerCase() || "a tool"
+  );
+}
+
+/** A gateway's plain-text failure report, reduced to the reason a person needs. */
+export function gatewayFailure(text: string): string | undefined {
+  const value = text.trim().replace(/^"|"$/g, "");
+  const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(value);
+  if (failed) return humanReason(errorMessage(failed[1]) ?? failed[1]);
+  const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(value);
+  if (timedOut) return `The service didn't respond within ${timedOut[1]} seconds.`;
+  const unknown = /^Unknown tool '([^']+)'/.exec(value);
+  if (unknown && GATEWAY_TOOLS.has(unknown[1])) return "Called its tool runner the wrong way.";
+  if (unknown) return `Asked for a tool called “${humanize(unknown[1])}”, which doesn't exist here.`;
+  if (/^(Invalid arguments for|Tool arguments must be)/.test(value)) return "Sent the tool the wrong details.";
+  if (/^Approvals aren't available in this run/.test(value)) return "Couldn't ask for your approval here, so nothing was changed.";
+  return undefined;
+}
+
+/** The gateway turned a change away until it goes through approval; the next call asks. */
+const NEEDS_APPROVAL = /^"?This changes something in the owner's accounts, so it needs their approval\./;
+
+/** Common technical failure reasons in plain words; anything else passes through, trimmed. */
+export function humanReason(raw: string): string {
+  const reason = raw
+    .replace(/^MCP tool '[^']+' failed:\s*/i, "")
+    .replace(/\s*[{[][\s\S]*$/, "")
+    .replace(/^(\w*(Error|Exception)):\s*/i, "")
+    .trim();
+  if (/\b(401|403)\b|unauthori[sz]ed|forbidden|not authenticated|invalid (api )?key|expired token/i.test(reason)) {
+    return "The app isn't connected or needs to be re-authorized.";
+  }
+  if (/\b429\b|rate.?limit|too many requests/i.test(reason)) return "The app is rate-limiting requests right now.";
+  if (/\b404\b|not found/i.test(reason)) return "It couldn't find what it was looking for.";
+  if (/timed? ?out|timeout/i.test(reason)) return "The app took too long to respond.";
+  if (/\b5\d\d\b|internal server error|service unavailable|bad gateway/i.test(reason)) return "The app had a temporary problem.";
+  if (/no active session|session (closed|expired)/i.test(reason)) return "The browser session had closed.";
+  if (/\d+ out of \d+ tools failed/i.test(reason)) return "The app couldn't complete those requests.";
+  if (/is required|missing (required )?(field|argument|parameter)/i.test(reason)) return "The tool was missing some details it needed.";
+  // Anything that still reads like code or a stack trace gets a plain fallback.
+  if (!reason || /['"`{}()<>\[\]]|_[a-z]|[a-z]_|object has no attribute|traceback|undefined|null\b|nonetype|\.py\b/i.test(reason)) {
+    return "Something went wrong on the app's side.";
+  }
+  return clip(reason, 200);
+}
+
+/**
+ * Collapses an accidentally repeated word ("Checking your your apps") left by a template
+ * filled with a phrase that already carries it. Applied to every label.
+ */
+export function withoutRepeats(label: string): string {
+  // Quoted text (a search query, a page title) is the user's or the source's own words: kept.
+  return label
+    .split(/(“[^”]*”)/)
+    .map((part) => (part.startsWith("“") ? part : part.replace(/\b([\p{L}']+)(\s+\1\b)+/giu, "$1")))
+    .join("");
+}
+
+/**
+ * The agent's step narration. It sometimes arrives as a status code ("FETCHING_EMAILS",
+ * "READ_HEADERS"); those become sentence case. Natural sentences are kept as written.
+ */
+export function narrate(raw: string): string | undefined {
+  const text = raw.trim();
+  if (!text) return undefined;
+  if (/^[A-Z0-9_ -]+$/.test(text) && /[A-Z]/.test(text)) {
+    const words = text.replace(/[_-]+/g, " ").trim().toLowerCase();
+    return clip(words.charAt(0).toUpperCase() + words.slice(1), 120);
+  }
+  return clip(text, 120);
+}
+

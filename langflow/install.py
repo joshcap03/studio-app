@@ -1,0 +1,190 @@
+"""Installs the Studio components into a Langflow flow, in place, after backing it up.
+
+    python3 langflow/install.py <flow-id> [--copy "Name"] [--strip-apps] [--keep-python]
+
+Reads LANGFLOW_BASE_URL and LANGFLOW_API_KEY from the environment. Does these things:
+  1. Replaces the Tool Gateway's code with langflow/components/tool_gateway.py (adds the
+     approval-gated take_action and remember).
+  2. Adds a Workspace Context node feeding the Agent's instructions, carrying the Agent's
+     current prompt as its base, so the app's settings and confirmed memories reach the agent.
+  3. Marks the per-run fields (workspace context, chat input files) as API-editable.
+  4. Removes Supermemory MCP nodes. One connection would be shared by every workspace; the
+     app keeps memory per workspace and member instead, and the agent saves via remember.
+  5. Replaces shared Composio MCP nodes (one account for everyone) with a Member Apps node
+     that opens a Composio session for the calling member only. It reads the Langflow
+     global variable COMPOSIO_API_KEY, which must be a Composio *project* key.
+  6. Installs Load Skill from langflow/components/load_skill.py if the flow has one.
+  7. Moves a literal Exa key into the Langflow global variable EXA_API_KEY.
+  8. Removes Python REPL nodes: they run code inside the Langflow server, next to every
+     tenant's keys. Pass --keep-python only if the server has LANGFLOW_SANDBOX_BACKEND set.
+     (Members' code runs in their own Composio workbench instead.)
+Then prints the LANGFLOW_TWEAKS value the app needs.
+
+--copy saves the result as a new flow instead of changing this one. --strip-apps (with
+--copy) drops MCP and search tool nodes, for a test flow that can't act on real accounts.
+"""
+
+import json
+import os
+import sys
+import time
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.environ["LANGFLOW_BASE_URL"].rstrip("/")
+KEY = os.environ["LANGFLOW_API_KEY"]
+
+
+def call(method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"Content-Type": "application/json", "x-api-key": KEY})
+    with urllib.request.urlopen(req) as r:
+        return json.loads(r.read())
+
+
+def main(argv):
+    flow_id = argv[0]
+    copy_name = argv[argv.index("--copy") + 1] if "--copy" in argv else None
+    strip = "--strip-apps" in argv
+    if strip and not copy_name:
+        sys.exit("--strip-apps only makes sense with --copy")
+
+    flow = call("GET", f"/api/v1/flows/{flow_id}")
+    backup = os.path.join(HERE, f"backup-{flow_id}-{int(time.time())}.json")
+    with open(backup, "w") as f:
+        json.dump(flow, f)
+    print("backed up to", backup)
+
+    data = flow["data"]
+    by_type = lambda t: next((n for n in data["nodes"] if n["data"].get("type") == t), None)
+    agent, gateway, chat_input = by_type("Agent"), by_type("ToolGatewayComponent"), by_type("ChatInput")
+    if not (agent and gateway and chat_input):
+        sys.exit("the flow needs an Agent, a Tool Gateway, and a Chat Input")
+
+    if strip:
+        drop = {n["data"]["id"] for n in data["nodes"] if n["data"].get("type") in ("MCPTools", "MCP") or n["data"]["id"].startswith("ext:exa")}
+        data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
+        data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+
+    def is_supermemory(n):
+        server = (n["data"].get("node", {}).get("template", {}).get("mcp_server") or {}).get("value") or {}
+        return isinstance(server, dict) and "supermemory" in json.dumps(server).lower()
+
+    drop = {n["data"]["id"] for n in data["nodes"] if is_supermemory(n)}
+    if drop:
+        print("removing shared Supermemory connection:", ", ".join(sorted(drop)))
+        data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
+        data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+
+    enc = lambda d: json.dumps(d, separators=(",", ":")).replace('"', "œ")
+
+    def connect(source_id, source_type, output, target_id, field, input_types, field_type):
+        source = {"dataType": source_type, "id": source_id, "name": output, "output_types": input_types}
+        target = {"fieldName": field, "id": target_id, "inputTypes": input_types, "type": field_type}
+        data["edges"].append({
+            "source": source_id,
+            "target": target_id,
+            "sourceHandle": enc(source),
+            "targetHandle": enc(target),
+            "data": {"sourceHandle": source, "targetHandle": target},
+            "id": f"xy-edge__{source_id}{enc(source)}-{target_id}{enc(target)}",
+            "selected": False,
+            "animated": False,
+            "className": "",
+        })
+
+    def mcp_url(n):
+        server = (n["data"].get("node", {}).get("template", {}).get("mcp_server") or {}).get("value") or {}
+        return json.dumps(server).lower() if isinstance(server, dict) else ""
+
+    gateway_id = gateway["data"]["id"]
+    shared = [n for n in data["nodes"] if n["data"].get("type") in ("MCPTools", "MCP") and "composio" in mcp_url(n)]
+    member_apps_id = None
+    if not strip and (shared or by_type("MemberApps")):
+        drop = {n["data"]["id"] for n in shared}
+        existing = by_type("MemberApps")
+        if existing:
+            drop.add(existing["data"]["id"])
+        if shared:
+            print("replacing shared Composio connection:", ", ".join(sorted(n["data"]["id"] for n in shared)))
+        anchor = (existing or shared[0])["position"]
+        data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
+        data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+        apps = call("POST", "/api/v1/custom_component", {"code": open(os.path.join(HERE, "components/composio_member.py")).read()})["data"]
+        apps["template"]["api_key"]["load_from_db"] = True
+        apps["template"]["api_key"]["value"] = "COMPOSIO_API_KEY"
+        for field in ("member_id", "toolkits"):
+            apps["template"][field]["api_editable"] = True
+        member_apps_id = "MemberApps-studio"
+        data["nodes"].append({
+            "id": member_apps_id,
+            "type": "genericNode",
+            "position": anchor,
+            "data": {"id": member_apps_id, "type": "MemberApps", "node": apps, "showNode": True},
+        })
+        connect(member_apps_id, "MemberApps", "tools", gateway_id, "tools", ["Tool"], "other")
+
+    if "--keep-python" not in argv:
+        drop = {n["data"]["id"] for n in data["nodes"] if n["data"].get("type") == "PythonREPLComponent"}
+        if drop:
+            print("removing in-process Python REPL:", ", ".join(sorted(drop)))
+            data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
+            data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+
+    load_skill = by_type("LoadSkill")
+    if load_skill:
+        load_skill["data"]["node"]["template"]["code"]["value"] = open(os.path.join(HERE, "components/load_skill.py")).read()
+
+    for n in data["nodes"]:
+        field = n["data"].get("node", {}).get("template", {}).get("exa_api_key")
+        if isinstance(field, dict) and field.get("value") and not field.get("load_from_db"):
+            names = {v["name"] for v in call("GET", "/api/v1/variables/")}
+            if "EXA_API_KEY" not in names:
+                call("POST", "/api/v1/variables/", {"name": "EXA_API_KEY", "value": field["value"], "type": "Credential", "default_fields": []})
+            field["value"], field["load_from_db"] = "EXA_API_KEY", True
+            print("moved the Exa key into the global variable EXA_API_KEY")
+
+    gateway["data"]["node"]["template"]["code"]["value"] = open(os.path.join(HERE, "components/tool_gateway.py")).read()
+    chat_input["data"]["node"]["template"]["files"]["api_editable"] = True
+
+    node = call("POST", "/api/v1/custom_component", {"code": open(os.path.join(HERE, "components/workspace_context.py")).read()})["data"]
+    existing = by_type("WorkspaceContext")
+    prompt_field = agent["data"]["node"]["template"]["system_prompt"]
+    if existing:
+        context_id = existing["data"]["id"]
+        base_prompt = existing["data"]["node"]["template"]["base_prompt"]["value"]
+        data["nodes"].remove(existing)
+    else:
+        context_id = "WorkspaceContext-studio"
+        base_prompt = prompt_field.get("value") or ""
+    node["template"]["base_prompt"]["value"] = base_prompt
+    node["template"]["workspace_context"]["api_editable"] = True
+    pos = agent["position"]
+    data["nodes"].append({
+        "id": context_id,
+        "type": "genericNode",
+        "position": {"x": pos["x"] - 450, "y": pos["y"] + 380},
+        "data": {"id": context_id, "type": "WorkspaceContext", "node": node, "showNode": True},
+    })
+    prompt_field["value"] = ""
+    agent_id = agent["data"]["id"]
+    data["edges"] = [e for e in data["edges"] if not (e["target"] == agent_id and e["data"]["targetHandle"]["fieldName"] == "system_prompt")]
+    connect(context_id, "WorkspaceContext", "system_prompt", agent_id, "system_prompt", ["Message"], "str")
+
+    if copy_name:
+        result = call("POST", "/api/v1/flows/", {"name": copy_name, "data": data, "folder_id": flow.get("folder_id")})
+        print("created flow", result["id"])
+    else:
+        call("PATCH", f"/api/v1/flows/{flow_id}", {"data": data})
+        print("updated flow", flow_id)
+
+    tweaks = {context_id: {"workspace_context": "{{system_context}}"}, chat_input["data"]["id"]: {"files": "{{files}}"}}
+    if member_apps_id:
+        tweaks[member_apps_id] = {"member_id": "{{composio_user_id}}", "toolkits": "{{composio_toolkits}}"}
+    print("\nSet in the app's environment:\nLANGFLOW_TWEAKS=" + json.dumps(tweaks, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    main(sys.argv[1:])

@@ -1,229 +1,241 @@
 # Studio
 
-This repository holds two things:
+A multi-tenant AI workspace for running a business. People sign up, create a workspace,
+connect their own apps, and chat with a shared agent that works with *their* business
+context, memory, and connections. Nothing about
+any one business is built into the app or the agent integration.
 
-- **NY Sales Tax Agent** (`agent/`) — a deterministic quarterly ST-100 filing
-  agent for eligible one-person New York Shopify businesses: it tracks the
-  deadline, ingests sales, computes every figure the return asks for,
-  reconciles computed vs collected tax, produces a filing packet in Web File
-  order, answers grounded NY sales tax questions, and starts on its own days
-  before the due date. Operator docs below; package internals in
-  [`agent/README.md`](agent/README.md).
-- **Jewelry studio prototype** (root `src/`) — the mobile-first React app for
-  tracking studio money. It is front-end-only seed data and is unaffected by
-  the agent. See [the prototype section](#jewelry-studio-prototype) and
-  `AGENTS.md`.
+The agent runs separately (Langflow today). This app is the product around it: accounts,
+workspaces, conversations, streaming, execution activity, artifacts, memory, connected apps,
+limits, and the tenant isolation that keeps businesses apart.
 
-## NY Sales Tax Agent
+The previous projects (the NY sales-tax agent and the Vite prototype) are in
+[`archive/`](archive/), tagged `archive/sales-tax-agent-2026-10-12`.
 
-The agent owns a quarterly filing end to end except the filing itself: New
-York Online Services is never logged into, filled, or submitted by this code.
-You file from the packet yourself, then record the confirmation.
+## Run it locally
 
-Eligibility (all four must hold): registered for NY sales tax and filing only
-in NY; quarterly ST-100 with no extra schedules; one Shopify store, no
-marketplaces; ordinary taxable goods only.
-
-### Setup
-
-Requires Node.js ≥ 22.18.0 and npm 10.
-
-```bash
-npm --prefix agent install
-cp .env.example .env    # then fill in the keys you have (see Credentials)
-```
-
-`.env` is gitignored and holds secrets only; `.env.example` stays
-placeholder-pure (a test enforces this).
-
-### Opening the agent (no terminal needed)
-
-Install the double-click launcher once:
-
-```bash
-npm --prefix agent run install-app   # writes two apps into ~/Applications
-```
-
-After that, double-click **NY Sales Tax Agent.app**. It builds the page if
-needed, starts the server in the background on 127.0.0.1:8787 (loopback only;
-no terminal window), and opens the page in your browser. If the agent is
-already running, a second launch just opens the page. To quit, double-click
-**Stop NY Sales Tax Agent.app**; it stops only the server the launcher
-started. Launcher and server output go to `state/logs/launcher.log`.
-
-The terminal alternative is the same server in the foreground:
-
-```bash
-npm --prefix agent start    # builds the page, serves http://127.0.0.1:8787; Ctrl-C stops it
-```
-
-### The chat-first page
-
-The page opens on the chat, even on the very first visit with no business set
-up. A "Start here" explainer above the chat says what the agent does, that you
-file on NY Online Services yourself, and how to begin, with a **Set up your
-business** button. The composer is docked at the bottom of the scrolling
-message list: **Enter sends, Shift+Enter starts a new line**.
-
-- **Before setup** you can already ask plain New York sales-tax questions in
-  the chat. Answers are written conversationally over the saved official
-  sources — the rule, the exact quoted passages with links, and the
-  recommendation stay attached to the answer. A question the saved sources do
-  not settle gets a general answer clearly labeled "General guidance — not
-  from saved sources", plus a question for your CPA. A filing request
-  ("Prepare the quarterly ST-100.") tells you plainly that no business is set
-  up yet and points to setup; nothing is started.
-- **Setup** is a six-step wizard — Basics, Ship-from address, Pickup /
-  in-person locations, Eligibility, Notifications and source, Review — with a
-  progress line and per-step validation (native browser address autofill
-  works; New York is the default state). The Eligibility step asks the five
-  eligibility questions. Saving from the Review step writes the profile under
-  `state/<business-slug>/` and returns to the chat.
-- **After setup** the chat home stays calm: the chat dominates, one
-  **Prepare the quarterly ST-100** button is the primary action, and the run
-  bar, saved rules, confirmation, and run events stay collapsed behind their
-  headers until the state makes them relevant. Send that one message (or type
-  your own). The run advances through ingest → compute → reconcile → packet on its
-own, pausing at most once per five questions, each with a recommended answer
-and evidence. When the run ties out, the draft return and packet are on the
-page and on disk.
-
-If you do nothing, the agent comes to you instead: the installed scheduler
-ticks daily, starts the same run headlessly inside your profile's start-days
-window, emails a one-way ready notice, and follows up at 7/3/1 days before the
-due date until the filing is confirmed.
-
-```bash
-npm --prefix agent run install-scheduler   # idempotent launchd job, daily 09:00 ET
-npm --prefix agent run tick                # run today's tick by hand
-npm --prefix agent run status              # per-business deadline and readiness
-npm --prefix agent run dry-run             # current-period run from what is connected
-```
-
-### From packet to Web File (the human handoff)
-
-The packet is one Markdown file per period at
-`state/<business-slug>/packets/<period>.md`, laid out in official ST-100 line
-order with every number traceable to order IDs, plus a "what you type where"
-checklist. You sign in to NY Web File yourself, key the packet values, pay,
-and come back to the page to record the confirmation number and amount paid.
-The packet writer refuses to emit a packet with an unexplained reconciliation
-gap, and nothing in this repository can log in to, fill, submit, pay through,
-or retrieve anything from NY Online Services.
-
-### Tests, backtest, and gates
-
-```bash
-npm --prefix agent run typecheck
-npm --prefix agent run lint
-npm --prefix agent test              # vitest suite incl. hygiene guards
-npm --prefix agent run backtest      # engine vs the three filed returns, to the cent
-npm --prefix agent run verify        # live Fireworks tool-calling smoke check
-```
-
-One-command experience scripts (each is a headless, self-checking run that
-leaves nothing running):
-
-| Command | What it proves |
-| --- | --- |
-| `npm --prefix agent run experience:m1` | Fixture ingest → compute → reconcile → packet for both businesses, cent-exact backtest, expected-figures sign-off |
-| `npm --prefix agent run experience:m2` | Cold-start filing in ≤5 questions, saved rules prevent repeats, ten grounded Q&A answers with byte-matched citations |
-| `npm --prefix agent run experience:m3` | The proactive slice and final hygiene check: deadline status, honest no-source dry runs, the idempotent 7/3/1 tick ladder, one-way notifications with honest SMTP failure handling, server-start safety tick, idempotent launchd install, and the no-page/no-portal evidence stage |
-| `npm --prefix agent run experience:m4` | The chat-first interface: first visit with no business shows the explainer, a grounded pre-setup answer, an honest setup pointer for a filing request, setup, the filing started from the chat, the question batch, a tied-out draft and packet, and a recorded confirmation (transcript in `state/m4-experience/transcript.txt`) |
-| `npm --prefix agent run experience:m6` | The calm guided UI: a fresh first visit through the explainer and the six-step setup wizard to the calm post-setup chat home, then a warm grounded answer and an out-of-corpus answer carrying the exact "General guidance — not from saved sources" label (fake model, scripted turns; transcript in `state/m6-experience/transcript.txt`) |
-| `npm --prefix agent run experience:m7` | The conversational router: a first-visit "hello" gets a conversation and no run, before and after setup; an explicit "do my sales tax" the day after a quarter closes starts the run on that quarter and pauses on one batched ask; run mechanics stay out of the chat and in the collapsed Activity disclosure (fake model; transcript in `state/m7-experience/transcript.txt`) |
-
-The assistant is graded against Josh's golden behavior spec,
-`agent/golden/golden-conversations.json` (committed verbatim, sha256 pinned).
-`npm --prefix agent test` runs the deterministic golden grader over every
-case and variant; `npm --prefix agent run verify` adds a report-only live pass
-over the P0 cases. Unmet cases are reported as known gaps (see `PROGRESS.md`);
-prose voice is Josh's own evaluation, with no LLM judge.
-
-The backtest harness runs the engine on period-matched fixtures against the
-figures extracted from the three real filed returns (the answer key), plus a
-second synthetic business with a different ship-from county to prove nothing
-is hardcoded. `npm --prefix agent run extract-expected` re-extracts those
-figures from the PDFs under `data/filed-returns/`.
-
-### Credentials and deferred integrations
-
-- **Fireworks (LLM)** — configured in `.env`; the pinned tool-calling model is
-  selected by `FIREWORKS_MODEL`. `npm --prefix agent run verify` does a live
-  tool-calling round trip without printing the key.
-- **SMTP notifications** — deferred until a Gmail app password is supplied.
-  Set `SMTP_USER`, `SMTP_PASS`, and `NOTIFY_TO` in `.env`, then run
-  `npm --prefix agent run tick` on a due stage to send the real one-way
-  message. Until then every notification is honestly recorded as
-  `smtp-not-configured` with the ready marker and macOS notification fallback.
-- **Shopify live pull** — deferred until the Dev Dashboard app exists. The
-  read-only puller ships and is fixture-tested; set `SHOPIFY_SHOP` plus a
-  token (`SHOPIFY_ACCESS_TOKEN`, or `SHOPIFY_CLIENT_ID`/`SHOPIFY_CLIENT_SECRET`)
-  and run `npm --prefix agent run snapshot -- --period <YYYY-MM-DD>`. With no
-  source connected the agent reports sales as unknown, never zero.
-- **NY Web File login/fill** — permanently human. Post-filing, only the
-  confirmation number and amount paid are recorded, on the page.
-
-### Boundaries (enforced in code and tests)
-
-- Shopify access is read-only: only `read_*` scopes exist, the GraphQL
-  documents define no mutation, and a test scans the source for write
-  operations.
-- Nothing logs in to or automates NY Online Services; portal requests get a
-  deterministic refusal, and the configuration surface has no portal
-  credential keys (hygiene test).
-- Customer PII and secrets never enter logs, transcripts, commits, or
-  fixtures; every log line passes a redaction layer and `data/`, `state/`, and
-  `.env` are gitignored (hygiene test).
-- The server binds only `127.0.0.1` (any other `HOST` is rejected) on port
-  8787. Ports 5173/4173 belong to the prototype and are never touched.
-- No business-specific constants in engine, prompts, or tests; both businesses
-  run the same harness.
-
-More: [`DECISIONS.md`](DECISIONS.md) (locked decisions),
-[`WALKTHROUGH.md`](WALKTHROUGH.md) (per-milestone guide),
-[`PROGRESS.md`](PROGRESS.md) (status and deferred validation),
-[`agent/README.md`](agent/README.md) (package internals),
-[`tax-sources/README.md`](tax-sources/README.md) (the official source corpus).
-
-## Jewelry studio prototype
-
-A mobile-first web app for a jewelry studio: capture vendor receipts, sort
-costs into items, track designs and pieces, and record sales with profit.
-
-### Status
-
-Prototype. The whole UI runs in the browser with seed data held in React
-state. There is no backend, no database, and no persistence, so data resets on
-every reload. Sign-in is a placeholder that accepts any input.
-
-### Getting started
+Requires Node 22.13+, Docker (Colima works), and the Supabase CLI.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+npm run db:start          # local Supabase: Postgres, Auth, REST (prints URL + anon key)
+npm run db:reset          # apply migrations in supabase/migrations
+cp .env.example .env.local  # fill NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
+npm run dev               # http://127.0.0.1:3000
 ```
 
-### Commands
+Create an account at `/login`, set up a workspace, and start chatting. With
+`AGENT_PROVIDER=mock` replies are simulated and labeled **Mock agent** throughout the UI.
 
-| Command              | What it does                                          |
-| -------------------- | ----------------------------------------------------- |
-| `npm run dev`        | Start the Vite dev server with hot reload              |
-| `npm run build`      | Type check (`tsc -b`) then build to `dist/`            |
-| `npm run preview`    | Serve the built app from `dist/`                       |
-| `npm run typecheck`  | Type check only                                        |
-| `npm test`           | Run the vitest suite once (jsdom)                      |
-| `npm run test:watch` | Run vitest in watch mode                               |
-| `npm run qa:serve`   | Dev server pinned to 127.0.0.1:5173, for scripted QA   |
-| `npm run qa:preview` | Preview server pinned to 127.0.0.1:4173 (build first)  |
+| Command | What it does |
+| --- | --- |
+| `npm run dev` / `npm run qa:serve` | Dev server on :3000 / QA server on :3100 |
+| `npm run typecheck` | TypeScript |
+| `npm test` | Unit tests: turn lifecycle, tenant scoping, Langflow protocol |
+| `npm run test:integration` | Against local Supabase (+ QA server, + Langflow if configured): RLS, API isolation with two accounts, limits, live Langflow |
+| `npm run build` / `npm start` | Production build / server |
 
-### Screens
+## Architecture
 
-`signin` → `home` → `receipt` (photo or manual) → `items` / `new-item` →
-`pieces` / `new-piece` / `piece` / `sold` → `account`. Loading the app at
-`/states` opens a review screen that jumps straight to any of these states.
+```
+browser ── Supabase session cookie ──▶ Next.js app ── tenant context ──▶ agent provider (Langflow)
+            NDJSON event stream          │    │                          shared deployment
+                                         │    └── Composio (per-member user ids)
+                                         └── Supabase Postgres + Auth (RLS on every table)
+```
 
-## For agents
+- **Tenancy.** Workspaces are the tenant boundary (`workspaces`, `workspace_members`,
+  `workspace_settings`). The MVP has one owner per workspace; membership roles are already
+  modeled for teams. A person can belong to several workspaces and switch between them.
+- **Identity.** User and workspace come only from the authenticated Supabase session. The
+  active workspace is a preference cookie that is honored only after a membership check.
+- **Data isolation, twice.** The app queries Postgres *as the signed-in user*, so Row Level
+  Security applies to every request, and every query also filters by workspace and user.
+  Composite foreign keys stop rows from being attached to another tenant's conversation.
+  There is no service-role key in the app.
+- **Visibility.** Workspace settings and shared memory are visible to members.
+  Conversations, messages, personal memory, usage rows, and each member's Composio id are
+  private to that member.
+- **Agent boundary** (`src/lib/agent/`). `types.ts` defines one provider-neutral interface
+  (run → stream of `thread`, `text-delta`, `message`, `activity`, `artifact`, `approval`,
+  `memory-proposal` events; resume; typed errors; abort) plus declared **capabilities**
+  (streaming, cancellation mode, tool events, artifacts, run status, approvals, attachments,
+  rewind). `langflow.ts` is the only Langflow-aware file; `mock.ts` is the
+  development agent; `index.ts` picks one from `AGENT_PROVIDER`. Adding LangGraph or Deep
+  Agents means adding one adapter and one `case`.
+- **Turn runner** (`src/lib/chat/turn.ts`). Persists the user message, builds the tenant's
+  agent context, streams events to the browser, checkpoints partial output with a heartbeat,
+  enforces an idle timeout, and records the final state however the run ends.
+- **Memory.** Lives in Supermemory (`src/lib/memory.ts`), one namespace per workspace
+  (shared) and one per member of a workspace (personal), both derived from the session; the
+  agent and the browser never name one. Before each reply the app recalls the workspace's
+  and the member's profile plus memories matching the message, and sends them with the run.
+  When the agent calls `remember`, the app saves the fact at once and shows it under the
+  reply with Undo; if saving fails, it stays a suggestion the member can save. Members manage
+  memory in Settings. (The old `memories` table is no longer used.)
+- **Approvals.** When the agent wants to change something (send, create, update, delete),
+  the run pauses and the reply shows what it will do. Nothing runs until the member approves;
+  a decline is passed to the agent. One undecided request per conversation; new messages
+  wait for it. Retrying, editing, or deleting the conversation abandons it.
+- **Files.** Members attach PDF, Word, CSV, text, and image files (10 MB, 5 per message).
+  Bytes live in the private `attachments` Storage bucket under `<workspace>/<member>/`;
+  only the owner can read them, and they're deleted with their conversation.
+- **Edit and retry.** The latest message can be edited and answered again, and the latest
+  reply retried. Both drop the replaced exchange from the provider's own memory too.
+- **Limits.** Per-member messages per minute, concurrent runs, and per-workspace runs per
+  day (counted in Postgres, so they hold across server instances); message, memory, and
+  context size caps; three workspaces per account; Supabase Auth's own sign-up and sign-in
+  rate limits.
 
-See `AGENTS.md` for commands, layout, conventions, boundaries, and the
-verification checklist for both projects.
+## Connecting Langflow
+
+Verified against Langflow 1.12.4. Each turn starts a background job (`POST /api/v2/workflows`,
+`mode: "background"`) and reads its events (`GET /api/v2/workflows/{job}/events`), which
+Langflow keeps even if the connection drops. Events translate as: `token` → streamed text,
+bot `add_message` → the reply and its `tool_use` steps as activity, `human_input_required`
+→ an approval (the job is suspended), `error` → a readable failure, `end` → completion.
+A decision resumes the job (`POST /api/v2/workflows/{job}/resume`); Stop cancels it
+(`POST /api/v2/workflows/stop`). Attached files are uploaded to Langflow under random names
+(`POST /api/v2/files`) and passed to the Chat Input. Retry and edit delete the replaced
+exchange from the session's stored messages.
+
+1. Set `AGENT_PROVIDER=langflow`, `LANGFLOW_BASE_URL`, `LANGFLOW_API_KEY`, `LANGFLOW_FLOW_ID`.
+2. **Install the Studio components** into the flow (it must have an Agent, a Tool Gateway,
+   and a Chat Input). This backs the flow up to `langflow/backup-*.json`, then updates it:
+   ```
+   LANGFLOW_BASE_URL=… LANGFLOW_API_KEY=… python3 langflow/install.py <flow-id>
+   ```
+   - The **Tool Gateway** (`langflow/components/tool_gateway.py`) refuses changes through
+     `execute_tool` and routes them to `take_action`, which carries Langflow's tool-approval
+     metadata, so the Agent pauses before it runs. Composio actions count as changes unless
+     their slug only reads (GET, LIST, FETCH, SEARCH, …); unknown verbs ask. Browser `act`
+     always asks. Workbench and bash code always asks, since code can build slugs or call any
+     API at runtime. Composio's own meta tools (connections, skills, feedback) ask unless
+     they're lookups (search, schemas, waiting for a connection). `take_action`
+     refuses to run at all if the Agent has no approval checkpoint (nothing paused).
+     It also adds `remember`, whose structured result the app saves to the caller's memory.
+     The installer removes any Supermemory MCP node from the flow: one connection would be
+     shared by every workspace, so memory goes through the app instead.
+   - **Workspace Context** (`langflow/components/workspace_context.py`) holds the Agent's
+     instructions and appends what the app sends per run.
+   - **Member Apps** (`langflow/components/composio_member.py`) replaces any shared Composio
+     MCP node. Per run it opens a Composio tool-router session for the calling member's id
+     only, limited to the apps in `COMPOSIO_TOOLKITS`, and returns no app tools without a
+     valid member id. It reads the Langflow global variable `COMPOSIO_API_KEY`, which must
+     be the Composio **project** key (`ak_…`) the app uses, not a consumer key (`ck_…`).
+     Connecting apps happens in Settings, not in chat.
+   - **Load Skill** gets its code from `langflow/components/load_skill.py` (no business names).
+   - A literal Exa key moves into the global variable `EXA_API_KEY`.
+   - **Python REPL nodes are removed**: they execute in the Langflow server process, next
+     to every tenant's keys. Keep them (`--keep-python`) only with `LANGFLOW_SANDBOX_BACKEND`
+     configured on the server. Members' code runs in their own Composio workbench.
+   - It prints the `LANGFLOW_TWEAKS` value to set, which fills the workspace context, Chat
+     Input files, and Member Apps on every run.
+   Use `--copy "Name" --strip-apps` to make a test copy with no app connections.
+3. **Make the flow tenant-aware.** One shared flow serves every workspace, so it must take
+   tenant-specific values from each request, never from hard-coded component settings:
+   - `LANGFLOW_TWEAKS` maps per-run values onto component fields. Placeholders:
+     `workspace_id`, `workspace_name`, `user_id`, `composio_user_id`, `composio_toolkits`
+     (JSON `{slug: auth config id}`), `business_context`,
+     `agent_instructions`, `memories`, `system_context`, and `files` (a value of exactly
+     `"{{files}}"` becomes the uploaded file paths; without it, attachments are off).
+     Runs also send `X-LANGFLOW-GLOBAL-VAR-*` headers, but Langflow 1.12 ignores them for
+     background jobs, so anything the flow must read goes through tweaks.
+   - Business specifics live in each workspace's settings and memory. The base prompt in
+     Workspace Context and the skills must not name a business.
+   - Only then set `AGENT_LIVE_WORKSPACES=*`. Until the flow is tenant-aware, keep it to the
+     workspace ids the flow was built for.
+4. Session ids are always `<workspace_id>.<member composio id>.<conversation_id>`, so
+   Langflow's chat memory never mixes tenants. The member id is there because Langflow
+   1.12 drops tweaks when a run resumes after an approval but keeps the session id;
+   Member Apps reads it then. For defense in depth, also set `LANGFLOW_SERVING_END_USER_HEADER`
+   and `LANGFLOW_SERVING_TRUST_PROXY_HEADERS=true` on the Langflow server and the same header
+   name in `LANGFLOW_END_USER_HEADER` here. (Rewind isn't claimed with an end-user header:
+   it hasn't been verified against the scoped session ids.)
+5. **Artifacts** render only from structured tool output that declares one:
+   `{"artifact": {"id", "kind", "title", "url", "description"?, "source"?}}` (https links
+   only). Links in plain text never become cards.
+
+6. **Work markers.** Code the agent runs (e.g. Composio workbench scripts) can report
+   progress and files explicitly by printing lines that start with these markers:
+   ```
+   STEP Fetched 95 products from shop.example
+   ARTIFACT {"id": "…", "kind": "spreadsheet", "title": "…", "url": "https://…", "description": "…", "source": "Google Sheets"}
+   ```
+   `STEP` lines become a checklist in that step's receipt; `ARTIFACT` lines become file
+   cards (https only, validated). Nothing else in tool output is interpreted.
+
+Not used yet: polling job status after the fact (`capabilities.runStatus` is false).
+
+The live tests in `tests/integration/langflow.test.ts` also run against a flow with the
+Studio components when `LANGFLOW_TEST_GATEWAY_FLOW_ID` is set (use a `--strip-apps` copy):
+pause, decline, a stale decision, reading an attached file, and rewind.
+
+## Connected apps (Composio)
+
+Set `COMPOSIO_API_KEY` (a Composio project key, the same one the flow's Member Apps node
+uses) and `COMPOSIO_TOOLKITS`, with one auth config per app (Composio dashboard → Auth
+Configs). Each
+workspace member gets a stable, opaque Composio user id (`workspace_members.composio_user_id`);
+connecting, listing, and disconnecting always use the caller's own id, and that same id is
+sent to the agent on every run. One person's connections are never visible to, or usable
+by, anyone else.
+
+## Isolation tests
+
+`npm run test:integration` creates independent accounts and attempts cross-tenant access:
+
+- **Database (RLS):** reads, inserts, updates, deletes, moving rows between workspaces,
+  spoofing ownership columns, joining another workspace, and calling RPCs for another
+  workspace, all directly through PostgREST with a valid session.
+- **API:** another tenant's conversation id on every verb, retry and send into it, forged
+  active-workspace cookie, switching into a foreign workspace, deleting foreign memory,
+  overwriting foreign settings, unauthenticated and cross-origin requests.
+- **Limits:** concurrent runs and runs per minute.
+- **Langflow:** two tenants with the same conversation id land in different Langflow
+  sessions, and each one's history contains only its own messages.
+- **Approvals, files, suggestions:** another tenant can't read, answer, or forge an approval,
+  read or plant files in another member's Storage folder, claim another member's upload,
+  edit their messages, or undo or save their memories; provider state never reaches the
+  browser.
+
+## Deploying (Vercel + Supabase Cloud)
+
+1. **Supabase.** Create a project, then `npx supabase link --project-ref <ref>` and
+   `npx supabase db push`. In the dashboard:
+   - Authentication → Sign In / Providers → Email: keep sign-ups on, turn **Confirm email** on.
+   - Authentication → URL Configuration: Site URL = the app's production URL (the email
+     links are built from it); add it under Redirect URLs too.
+   - Authentication → Emails → Templates: paste `supabase/templates/confirmation.html` into
+     "Confirm signup" and `recovery.html` into "Reset password". The defaults use a
+     redirect flow `/auth/confirm` doesn't accept.
+   - Authentication → Emails → SMTP: set up a real sender (Resend, Postmark, SES…). The
+     built-in sender only reaches your team's addresses and a few emails an hour.
+2. **Langflow.** Follow [`langflow/deploy/README.md`](langflow/deploy/README.md): deploy the
+   container (Railway or Render blueprint, managed Postgres, ≥1 GB RAM), create an API key,
+   copy the flow with `export_flow.py`, run `langflow/install.py` against it, and create the
+   global variables it reads. Only the app should call this server.
+3. **Vercel.** Import the repo. Set the env vars from `.env.example` for Production:
+   Supabase URL + anon key, `AGENT_PROVIDER=langflow`, the `LANGFLOW_*` values (tweaks
+   from the installer), `COMPOSIO_*`, `SUPERMEMORY_API_KEY`, `AGENT_LIVE_WORKSPACES=*`, and
+   **`LIMIT_RUNS_SERVICE_PER_DAY`** so open sign-ups can't run up the model bill. The chat
+   route asks for 300 s (`maxDuration`), the Hobby ceiling; raise it on Pro.
+4. **Composio.** Add the production URL to each auth config's allowed redirects; the connect
+   flow returns to `/settings`.
+5. **Smoke test.** Sign up with a fresh address, confirm, create a workspace, connect an
+   app, and ask the agent something that uses it. Then sign up a second account and
+   confirm it can't see the first one's apps.
+
+## Limitations
+
+- A run is tied to the browser request. Closing the tab stops it, and the message shows as
+  interrupted with Retry. Cancellation in Langflow is best effort.
+- One user per workspace in the UI. Invitations and roles beyond owner come next; the
+  schema already supports them.
+- Attached files are copied to Langflow under random names with the app's one Langflow key.
+  Tenants can't name each other's files, but anyone holding that key could list them, so
+  the key must stay server-side.
+- Code runs in each member's Composio workbench. The shared flow has no in-process Python;
+  the installer removes it unless the Langflow server has a sandbox backend.
+- Shared, stateless tools (web search, the hosted browser) use one service account for
+  everyone. Browser actions still need the member's approval.
