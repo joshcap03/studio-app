@@ -220,7 +220,7 @@ describe("interpretCalls", () => {
     ]);
     expect(timedOut).toMatchObject({ status: "failed", detail: "The service didn't respond within 45 seconds.", label: "Looking for the right tool didn't work" });
     expect(timedOut.hidden).toBeUndefined();
-    expect(failed).toMatchObject({ status: "failed", app: "gmail", detail: "Rate limited" });
+    expect(failed).toMatchObject({ status: "failed", app: "gmail", detail: "The app is rate-limiting requests right now." });
   });
 
   it("finds readable results from apps it has no special handling for, across multi-tool calls", () => {
@@ -252,6 +252,36 @@ describe("interpretCalls", () => {
     expect(step.preview).toEqual({ type: "items", items: [{ primary: "Weekly sync with Franzi", secondary: "Agreed on the launch date." }] });
   });
 
+  it("pairs a retry with its own call, not an earlier failed one (recorded shape)", () => {
+    const slug = "GRANOLA_MCP_QUERY_GRANOLA_MEETINGS";
+    const answer = JSON.stringify({
+      successful: true,
+      data: { results: [{ tool_slug: slug, index: 0, response: { successful: true, data: { data: "Found 9 meetings…" } } }] },
+    });
+    const steps = interpretCalls([
+      gateway(slug, { query: "Franzi" }, `Unknown tool '${slug}'. Close matches: []`),
+      { name: "discover_tools", input: { query: slug }, output: "[]", error: null },
+      gateway("composio_multi_execute_tool", { tools: [{ tool_slug: slug, arguments: { query: "Franzi" } }], current_step: "Searching Granola notes for Franzi" }, "ok"),
+      {
+        name: "composio_multi_execute_tool",
+        input: { tools: [{ tool_slug: slug, arguments: { query: "Franzi" } }], current_step: "Searching Granola notes for Franzi" },
+        output: { content: [{ type: "text", text: answer }], isError: false },
+        error: null,
+      },
+    ]).filter((s) => !s.hidden);
+    expect(steps.map((s) => [s.index, s.status, s.app])).toEqual([
+      [0, "failed", "granola"],
+      [2, "done", "granola"],
+    ]);
+    expect(steps[0].detail).toBe("Tried a tool that isn't reachable that way.");
+    expect(steps[1].preview).toEqual({ type: "text", text: "Found 9 meetings…" });
+  });
+
+  it("puts common technical failures in plain words", () => {
+    const [step] = interpretCalls([gateway("GMAIL_SEND_EMAIL", {}, "Tool GMAIL_SEND_EMAIL failed: HTTPError: 401 Unauthorized. Do not blindly retry writes.")]);
+    expect(step.detail).toBe("The app isn't connected or needs to be re-authorized.");
+  });
+
   it("treats an MCP isError result as a failure", () => {
     const [step] = interpretCalls([
       { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: { content: [{ type: "text", text: "Sandbox crashed" }], isError: true }, error: null },
@@ -265,7 +295,7 @@ describe("interpretCalls", () => {
       { name: "navigate", input: { url: "https://airline.example/book" }, output: null, error: "Session not authenticated" },
     ]);
     expect(workbench).toMatchObject({ status: "failed", detail: "Sandbox timed out" });
-    expect(nav).toMatchObject({ status: "failed", app: "browser", label: "Couldn't open airline.example", detail: "Session not authenticated" });
+    expect(nav).toMatchObject({ status: "failed", app: "browser", label: "Couldn't open airline.example", detail: "The app isn't connected or needs to be re-authorized." });
   });
 
   it("hides tool-discovery plumbing but keeps it in the count", () => {

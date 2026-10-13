@@ -249,7 +249,7 @@ describe("Langflow streaming", () => {
   it("reports a failed tool call", async () => {
     const failed = { type: "tool_use", name: "gmail_send", tool_input: {}, output: null, error: "Rate limited" };
     const { events } = await run(base, streamResponse([frame("add_message", bot("", [failed])), frame("end", end("Sorry."))]));
-    expect(events.find((e) => e.type === "activity")).toMatchObject({ status: "failed", detail: "Rate limited", app: "gmail" });
+    expect(events.find((e) => e.type === "activity")).toMatchObject({ status: "failed", detail: "The app is rate-limiting requests right now.", app: "gmail" });
   });
 
   it("does not invent artifacts from text or unstructured tool output", async () => {

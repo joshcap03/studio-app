@@ -39,7 +39,11 @@ describe("findings", () => {
   });
 
   it("reports problems with their reason", () => {
-    expect(findingFor(step({ status: "failed", detail: "Session not authenticated" }))).toMatchObject({ text: "Problem: Session not authenticated", tone: "problem" });
+    expect(findingFor(step({ status: "failed", detail: "The app isn't connected or needs to be re-authorized." }))).toMatchObject({
+      text: "Hit a snag: The app isn't connected or needs to be re-authorized.",
+      tone: "problem",
+    });
+    expect(findingFor(step({ app: "granola", preview: { type: "text", text: "Long private meeting summary…" } }))?.text).toBe("Got results from Granola");
   });
 
   it("has nothing to say for steps without a receipt or still running", () => {

@@ -91,7 +91,11 @@ export function interpretCalls(calls: ToolCall[]): InterpretedStep[] {
       merged.set(index, { name: call.input.tool_name, input: args, output: call.output, error: call.error });
       return;
     }
-    const owner = pending.findIndex((p) => invokes(p.target, call));
+    // Prefer the gateway call that named this exact tool; fall back to one whose Composio
+    // slug this multi-execute ran. A gateway call that already failed invoked nothing.
+    const live = (p: (typeof pending)[number]) => !(typeof p.wrapper.output === "string" && gatewayFailure(p.wrapper.output));
+    let owner = pending.findIndex((p) => live(p) && p.target === call.name);
+    if (owner < 0) owner = pending.findIndex((p) => live(p) && invokes(p.target, call));
     if (owner >= 0) {
       const [p] = pending.splice(owner, 1);
       merged.set(p.index, {
@@ -126,7 +130,7 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
   const interpretation = interpret(call.name, input, result);
   const envelope = composioEnvelope(result);
   const errorText =
-    errorMessage(call.error) ??
+    (errorMessage(call.error) ? humanReason(errorMessage(call.error)!) : undefined) ??
     (mcpError ? errorMessage(mcpError) : undefined) ??
     gatewayError ??
     (envelope && !envelope.successful ? errorMessage(envelope.error) ?? "The tool reported a failure." : undefined) ??
@@ -527,7 +531,7 @@ const LIST_KEYS = [
 ];
 
 const TITLE_KEYS = ["title", "name", "subject", "label", "key"];
-const BODY_KEYS = ["summary", "content", "memory", "text", "description", "value", "snippet"];
+const BODY_KEYS = ["summary", "content", "memory", "text", "description", "value", "snippet", "answer", "result", "response", "output", "data"];
 
 /**
  * A human-readable receipt for an arbitrary tool result, or nothing. Raw data is never
@@ -634,12 +638,26 @@ function humanize(name: string): string {
 
 /** A gateway's plain-text failure report, reduced to the reason a person needs. */
 export function gatewayFailure(text: string): string | undefined {
-  const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(text.trim());
-  if (failed) return errorMessage(failed[1]) ?? failed[1];
-  const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(text.trim());
+  const value = text.trim().replace(/^"|"$/g, "");
+  const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(value);
+  if (failed) return humanReason(errorMessage(failed[1]) ?? failed[1]);
+  const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(value);
   if (timedOut) return `The service didn't respond within ${timedOut[1]} seconds.`;
-  if (/^(Unknown tool|Invalid arguments for|Tool arguments must be)/.test(text.trim())) return clip(text, 200);
+  if (/^Unknown tool/.test(value)) return "Tried a tool that isn't reachable that way.";
+  if (/^(Invalid arguments for|Tool arguments must be)/.test(value)) return "Sent the tool the wrong details.";
   return undefined;
+}
+
+/** Common technical failure reasons in plain words; anything else passes through, trimmed. */
+export function humanReason(reason: string): string {
+  if (/\b(401|403)\b|unauthori[sz]ed|forbidden|not authenticated|invalid (api )?key|expired token/i.test(reason)) {
+    return "The app isn't connected or needs to be re-authorized.";
+  }
+  if (/\b429\b|rate.?limit|too many requests/i.test(reason)) return "The app is rate-limiting requests right now.";
+  if (/\b404\b|not found/i.test(reason)) return "It couldn't find what it was looking for.";
+  if (/timed? ?out|timeout/i.test(reason)) return "The app took too long to respond.";
+  if (/\b5\d\d\b|internal server error|service unavailable|bad gateway/i.test(reason)) return "The app had a temporary problem.";
+  return clip(reason.replace(/^\w*(Error|Exception):\s*/, ""), 200);
 }
 
 /**

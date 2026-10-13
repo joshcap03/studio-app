@@ -1,3 +1,4 @@
+import { appName } from "@/lib/apps";
 import type { ActivityStep, Artifact } from "@/lib/types";
 
 // One-line summaries of what the agent found or produced, for the work panel. The chat
@@ -17,7 +18,7 @@ const EMAIL_APPS = new Set(["gmail", "outlook"]);
 
 export function findingFor(step: ActivityStep): Finding | null {
   if (step.status === "failed") {
-    return { id: step.id, app: step.app, text: step.detail ? `Problem: ${step.detail}` : `${step.label}`, tone: "problem", step };
+    return { id: step.id, app: step.app, text: step.detail ? `Hit a snag: ${step.detail}` : step.label, tone: "problem", step };
   }
   const p = step.preview;
   if (step.status !== "done" || !p) return null;
@@ -49,7 +50,12 @@ export function findingFor(step: ActivityStep): Finding | null {
     case "code":
       return p.steps?.length ? { ...base, text: p.steps.at(-1)! } : null;
     case "text":
-      return { ...base, text: step.label.startsWith("Noted") ? `Noted: “${short(p.text)}”` : `Remembered: ${short(p.text)}` };
+      if (step.app === "memory") {
+        return { ...base, text: step.label.startsWith("Noted") ? `Noted: “${short(p.text)}”` : `Remembered: ${short(p.text)}` };
+      }
+      // Free-form answers from apps can be long or sensitive: say where it came from, and
+      // keep the text one click away.
+      return { ...base, text: `Got results from ${appName(step.app)}` };
     case "link":
       return { ...base, text: step.action === "connect" ? `${p.title ?? "A connection"} needs your OK` : `Opened ${p.title ?? "a page"}` };
   }
