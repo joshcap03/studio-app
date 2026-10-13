@@ -52,7 +52,7 @@ describe("interpretCalls", () => {
     ]);
     expect(steps.map((s) => [s.index, s.label, s.hidden ?? false])).toEqual([
       [0, "Found the right tool", true],
-      [1, "Checked memory", false],
+      [1, "Checked what I know about “vendors”", false],
     ]);
     expect(steps[1].preview).toEqual({ type: "text", text: "Casting house is Acme" });
   });
@@ -187,6 +187,32 @@ describe("interpretCalls", () => {
     ]);
   });
 
+  it("never shows raw JSON: memory documents become titles and summaries", () => {
+    const docs = {
+      documents: [
+        { id: "d1", title: "Business entity", type: "text", status: "done", createdAt: "2026-01-01", summary: "The shop is run by Example LLC." },
+        { id: "d2", title: "Owner preferences", type: "text", status: "done", summary: "Keep replies short and warm." },
+      ],
+    };
+    const [step] = interpretCalls([
+      { name: "list_documents", input: { limit: 10 }, output: { content: [{ type: "text", text: JSON.stringify(docs) }], isError: false }, error: null },
+    ]);
+    expect(step.label).toBe("Checked what I know about your business");
+    expect(step.preview).toEqual({
+      type: "items",
+      items: [
+        { primary: "Business entity", secondary: "The shop is run by Example LLC." },
+        { primary: "Owner preferences", secondary: "Keep replies short and warm." },
+      ],
+    });
+    expect(JSON.stringify(step.preview)).not.toContain("createdAt");
+  });
+
+  it("omits a receipt rather than show unreadable data", () => {
+    const [step] = interpretCalls([{ name: "get_profile", input: {}, output: '{"weird": {"nested": [1,2,3]}}', error: null }]);
+    expect(step.preview).toBeUndefined();
+  });
+
   it("treats an MCP isError result as a failure", () => {
     const [step] = interpretCalls([
       { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: { content: [{ type: "text", text: "Sandbox crashed" }], isError: true }, error: null },
@@ -211,7 +237,7 @@ describe("interpretCalls", () => {
     ]);
     expect(steps).toHaveLength(3);
     expect(steps.filter((s) => s.hidden)).toHaveLength(2);
-    expect(steps[2]).toMatchObject({ app: "memory", label: "Saved to memory", preview: { type: "text", text: "Fiscal year starts in February" } });
+    expect(steps[2]).toMatchObject({ app: "memory", label: "Noted this for next time", preview: { type: "text", text: "Fiscal year starts in February" } });
   });
 
   it("names Composio apps and verbs from the slug", () => {

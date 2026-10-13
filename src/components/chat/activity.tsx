@@ -25,7 +25,8 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
   const visible = steps.filter((s) => !s.hidden);
 
   if (running) {
-    const current = [...visible].reverse().find((s) => s.status === "running") ?? visible.at(-1);
+    // The step in progress; between steps the agent is deciding what to do next.
+    const current = [...visible].reverse().find((s) => s.status === "running");
     const hiddenCount = Math.max(0, visible.length - VISIBLE_WHILE_RUNNING);
     return (
       <div className="mb-4 animate-fade-in" aria-live="polite">
@@ -118,7 +119,9 @@ function WorkingHeader({ since, current, onOpenPanel }: { since?: number; curren
         <span className="breathe size-1.5 rounded-full bg-accent" aria-hidden="true" />
       )}
       <span className="text-shimmer font-medium">Working</span>
-      {current && current.status === "running" ? <span className="min-w-0 truncate text-fg-3">{current.label}</span> : null}
+      <span key={current?.id ?? "thinking"} className="min-w-0 truncate text-fg-3 animate-fade-in">
+        {current ? current.label : "Thinking it through"}
+      </span>
       {seconds >= 3 && <span className="shrink-0 text-fg-4 tabular-nums">{formatSeconds(seconds)}</span>}
       {onOpenPanel ? (
         <button

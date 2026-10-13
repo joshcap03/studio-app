@@ -15,10 +15,10 @@ import { StepPreview } from "./step-preview";
 export function WorkPanel({ message, onClose }: { message: ChatMessage | null; onClose: () => void }) {
   const steps = message?.activity.filter((s) => !s.hidden) ?? [];
   const running = message?.status === "streaming";
-  const focus =
-    [...steps].reverse().find((s) => s.status === "running") ??
-    [...steps].reverse().find((s) => s.preview) ??
-    steps.at(-1);
+  const active = [...steps].reverse().find((s) => s.status === "running");
+  // While running with no step in progress, the agent is deciding what to do next.
+  const thinking = running && !active;
+  const focus = thinking ? undefined : (active ?? [...steps].reverse().find((s) => s.preview) ?? steps.at(-1));
 
   return (
     <aside
@@ -39,10 +39,14 @@ export function WorkPanel({ message, onClose }: { message: ChatMessage | null; o
       </header>
 
       <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-5 pb-8">
+        {thinking ? (
+          <section className="mt-1 flex items-center gap-3 rounded-xl border border-line bg-surface p-4 shadow-composer animate-fade-in">
+            <span className="breathe size-2 rounded-full bg-accent" aria-hidden="true" />
+            <p className="text-shimmer text-[14px] font-medium">Thinking it through</p>
+          </section>
+        ) : null}
         {!message || steps.length === 0 ? (
-          <p className="mt-6 text-[13.5px] leading-relaxed text-fg-3">
-            {running ? "Steps appear here as the agent works." : "This reply didn't use any tools."}
-          </p>
+          running ? null : <p className="mt-6 text-[13.5px] leading-relaxed text-fg-3">This reply didn&apos;t use any tools.</p>
         ) : (
           <>
             {focus ? (

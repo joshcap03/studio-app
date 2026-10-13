@@ -174,7 +174,7 @@ Want me to put the reorder list in a spreadsheet, or draft a note to your castin
           total: 9,
         },
       },
-      { kind: "activity", id: "memory", running: "Checking memory", done: "Checked memory", ms: 700, app: "memory", action: "remember", preview: { type: "text", text: "Entry huggies retail at $320; diamond huggies at $880." } },
+      { kind: "activity", id: "memory", running: "Checking what I know about huggie pricing", done: "Checked what I know about huggie pricing", ms: 700, app: "memory", action: "remember", preview: { type: "text", text: "Entry huggies retail at $320; diamond huggies at $880." } },
       { kind: "activity", id: "compare", running: "Comparing pricing", done: "Compared pricing", ms: 900, app: "code", action: "run" },
       {
         kind: "text",
@@ -219,7 +219,7 @@ Sources: [example.com/brand-a](https://example.com/brand-a), [example.com/brand-
           total: 212,
         },
       },
-      { kind: "activity", id: "s2", running: "Extracting invoices", done: "Extracted 64 invoices", ms: 2600, app: "code", action: "run" },
+      { kind: "activity", id: "s2", running: "Pulling the invoices out of those emails", done: "Pulled out 64 invoices", ms: 2600, app: "code", action: "run" },
       { kind: "activity", id: "s3", running: "Checking QuickBooks payments", done: "Checked QuickBooks payments", ms: 2400, app: "quickbooks", action: "read" },
       { kind: "activity", id: "s4", running: "Matching invoices to payments", done: "Matched 61 of 64 invoices", ms: 2000, app: "code", action: "run" },
       {

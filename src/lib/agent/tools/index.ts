@@ -137,7 +137,7 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
     (status === "running"
       ? interpretation.labels.running
       : status === "failed"
-        ? interpretation.labels.failed ?? `Couldn't finish: ${lower(interpretation.labels.running)}`
+        ? interpretation.labels.failed ?? `${interpretation.labels.running} didn't work`
         : interpretation.labels.done);
 
   return {
@@ -187,7 +187,7 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "listdocuments":
     case "get_document":
     case "getdocument":
-      return memoryRead(result);
+      return memoryRead(input, result);
     case "add_memory":
     case "save_memory":
     case "guided_save":
@@ -261,7 +261,7 @@ function code(name: string, input: Record<string, unknown>, result: unknown): In
   const { steps, artifacts, rest } = readMarkers(rawStdout ?? "");
   const stdout = rest.trim();
   return {
-    labels: { running: "Running an analysis", done: "Ran an analysis", failed: "The analysis hit an error" },
+    labels: { running: "Working through the data", done: "Worked through the data", failed: "Hit an error working through the data" },
     app: "code",
     action: "run",
     preview: source
@@ -307,23 +307,24 @@ function webSearch(input: Record<string, unknown>, result: unknown): Interpretat
   };
 }
 
-function memoryRead(result: unknown): Interpretation {
-  const text = stringResult(result);
+function memoryRead(input: Record<string, unknown>, result: unknown): Interpretation {
+  const query = firstString(input, ["query", "q", "search"]);
+  const about = query ? `“${clip(query, 60)}”` : "your business";
   return {
-    labels: { running: "Checking memory", done: "Checked memory" },
+    labels: { running: `Checking what I know about ${about}`, done: `Checked what I know about ${about}` },
     app: "memory",
     action: "remember",
-    preview: text ? textPreview(text) : undefined,
+    preview: readablePreview(result),
   };
 }
 
 function memoryWrite(input: Record<string, unknown>): Interpretation {
   const content = firstString(input, ["content", "memory", "text"]);
   return {
-    labels: { running: "Saving to memory", done: "Saved to memory" },
+    labels: { running: "Noting this for next time", done: "Noted this for next time" },
     app: "memory",
     action: "remember",
-    preview: content ? textPreview(content) : undefined,
+    preview: content ? readablePreview(content) : undefined,
   };
 }
 
@@ -347,8 +348,7 @@ function browserPage(name: string, result: unknown): Interpretation {
         : { running: "Using the page", done: "Used the page" };
   const value = unwrapResult(result);
   const data = isRecord(value) && "data" in value ? value.data : value;
-  const text = typeof data === "string" ? data : data != null ? JSON.stringify(data) : "";
-  return { labels, app: "browser", action: "browse", preview: text ? textPreview(text) : undefined };
+  return { labels, app: "browser", action: "browse", preview: readablePreview(data) };
 }
 
 /**
@@ -503,6 +503,42 @@ function textPreview(text: string): StepPreview {
   return { type: "text", text: clip(text, 1200) };
 }
 
+const TITLE_KEYS = ["title", "name", "subject", "label", "key"];
+const BODY_KEYS = ["summary", "content", "memory", "text", "description", "value", "snippet"];
+
+/**
+ * A human-readable receipt for an arbitrary tool result, or nothing. Raw data is never
+ * shown: JSON becomes a list of titles and summaries when it has them, plain strings stay
+ * as text, and anything else is omitted.
+ */
+export function readablePreview(result: unknown): StepPreview | undefined {
+  const value = unwrapResult(result);
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text || /^[[{]/.test(text)) return undefined; // unparseable JSON-ish text: omit
+    return textPreview(text);
+  }
+  const list = Array.isArray(value) ? value : findArray(value, ["documents", "memories", "results", "items", "facts", "static", "dynamic", "data"]);
+  if (list && list.length > 0) {
+    const items = list.flatMap((entry) => {
+      if (typeof entry === "string") return entry.trim() && !/^[[{]/.test(entry.trim()) ? [{ primary: clip(entry, 160) }] : [];
+      if (!isRecord(entry)) return [];
+      const title = firstString(entry, TITLE_KEYS);
+      const body = firstString(entry, BODY_KEYS);
+      if (!title && !body) return [];
+      return [{ primary: clip(title ?? body!, 120), secondary: title && body ? clip(body, 220) : undefined }];
+    });
+    if (items.length === 0) return undefined;
+    const { items: shown, total } = capList(items, MAX_ITEMS);
+    return { type: "items", items: shown, total };
+  }
+  if (isRecord(value)) {
+    const body = firstString(value, BODY_KEYS);
+    if (body && !/^[[{]/.test(body.trim())) return textPreview(body);
+  }
+  return undefined;
+}
+
 function stringResult(result: unknown): string {
   const value = unwrapResult(result);
   if (typeof value === "string") return value;
@@ -587,6 +623,3 @@ export function narrate(raw: string): string | undefined {
   return clip(text, 120);
 }
 
-function lower(text: string): string {
-  return text.charAt(0).toLowerCase() + text.slice(1);
-}

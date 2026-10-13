@@ -87,7 +87,7 @@ export function StepPreview({ preview, size = "inline" }: { preview: Preview; si
       );
     case "code":
       return (
-        <CodePreview code={preview.code} output={preview.output} steps={preview.steps} language={preview.language} defaultOpen={panel && !preview.steps} />
+        <CodePreview code={preview.code} output={preview.output} steps={preview.steps} language={preview.language} defaultOpen={false} />
       );
     case "text":
       return (
@@ -141,7 +141,8 @@ function CodePreview({
           ))}
         </ol>
       ) : null}
-      {output && (!steps || open) ? (
+      {/* Code and raw output are technical details: shown only on request. */}
+      {output && open ? (
         <pre className="scroll-quiet max-h-56 overflow-auto rounded-lg bg-subtle px-3 py-2 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-fg">
           {output}
         </pre>
@@ -153,7 +154,7 @@ function CodePreview({
         className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg-2"
       >
         <ChevronRight size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />
-        {open ? "Hide" : "Show"} the {language} it ran{steps && output ? " and its output" : ""}
+        {open ? "Hide" : "Show"} technical details
       </button>
       {open ? (
         <pre className="scroll-quiet max-h-72 overflow-auto rounded-lg border border-line px-3 py-2 font-mono text-[12px] leading-relaxed text-fg-2">
