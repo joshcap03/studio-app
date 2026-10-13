@@ -15,7 +15,8 @@
     "qa:serve": "AGENT_PROVIDER=mock NEXT_DIST_DIR=.next-qa next dev --hostname 127.0.0.1 --port 3100",
     "test:integration": "vitest run -c vitest.integration.config.ts",
     "db:start": "supabase start -x studio,imgproxy,storage-api,edge-runtime,logflare,vector,realtime,supavisor,postgres-meta",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "test:audit": "vitest run -c vitest.integration.config.ts tests/integration/steps-audit.test.ts"
   },
   "dependencies": {
     "@composio/core": "^0.23.0",

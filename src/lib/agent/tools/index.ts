@@ -91,10 +91,16 @@ export function interpretCalls(calls: ToolCall[]): InterpretedStep[] {
       merged.set(index, { name: call.input.tool_name, input: args, output: call.output, error: call.error });
       return;
     }
-    // Prefer the gateway call that named this exact tool; fall back to one whose Composio
-    // slug this multi-execute ran. A gateway call that already failed invoked nothing.
-    const live = (p: (typeof pending)[number]) => !(typeof p.wrapper.output === "string" && gatewayFailure(p.wrapper.output));
-    let owner = pending.findIndex((p) => live(p) && p.target === call.name);
+    // Match by content first: the gateway passes its arguments straight through, so the
+    // inner call's input equals the gateway call's arguments. Then by exact tool name, then
+    // by a Composio slug the multi-execute ran. A gateway call that failed invoked nothing.
+    const live = (p: (typeof pending)[number]) => {
+      const out = p.wrapper.output == null ? undefined : unwrapResult(p.wrapper.output);
+      return !(typeof out === "string" && gatewayFailure(out));
+    };
+    const inputKey = stableJson(call.input);
+    let owner = pending.findIndex((p) => live(p) && p.target === call.name && stableJson(p.args) === inputKey);
+    if (owner < 0) owner = pending.findIndex((p) => live(p) && p.target === call.name);
     if (owner < 0) owner = pending.findIndex((p) => live(p) && invokes(p.target, call));
     if (owner >= 0) {
       const [p] = pending.splice(owner, 1);
@@ -111,6 +117,15 @@ export function interpretCalls(calls: ToolCall[]): InterpretedStep[] {
 
   return [...merged.entries()].sort(([a], [b]) => a - b).map(([index, call]) => toStep(call, index));
 }
+
+function stableJson(value: unknown): string {
+  const sort = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(sort) : isRecord(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])])) : v;
+  return JSON.stringify(sort(value ?? {}));
+}
+
+/** The gateway's own tools, which a person should never see named. */
+const GATEWAY_TOOLS = new Set(["execute_tool", "discover_tools"]);
 
 function invokes(target: string, next: ToolCall): boolean {
   if (next.name === target) return true;
@@ -165,6 +180,9 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
 // Interpreters
 
 function interpret(name: string, input: Record<string, unknown>, result: unknown): Interpretation {
+  if (GATEWAY_TOOLS.has(name)) {
+    return { labels: { running: "Starting a tool", done: "Started a tool", failed: "A tool call didn't go through" }, app: "agent", action: "other", hidden: true };
+  }
   if (PLUMBING.has(name)) {
     return { labels: { running: "Looking for the right tool", done: "Found the right tool" }, app: "agent", action: "other", hidden: true };
   }
@@ -335,7 +353,7 @@ function memoryRead(input: Record<string, unknown>, result: unknown): Interpreta
     labels: { running: `Checking what I know about ${about}`, done: `Checked what I know about ${about}` },
     app: "memory",
     action: "remember",
-    preview: readablePreview(result),
+    preview: withQuery(readablePreview(result) ?? (query ? { type: "items", items: [], total: 0 } : undefined), { query }),
   };
 }
 
@@ -553,6 +571,7 @@ export function readablePreview(result: unknown): StepPreview | undefined {
     return textPreview(text);
   }
   const list = Array.isArray(value) ? value : findArray(value, LIST_KEYS);
+  if (list && list.length === 0) return { type: "items", items: [], total: 0 };
   if (list && list.length > 0) {
     const items = list.flatMap((entry) => {
       if (typeof entry === "string") return entry.trim() && !/^[[{]/.test(entry.trim()) ? [{ primary: clip(entry, 160) }] : [];
@@ -569,6 +588,19 @@ export function readablePreview(result: unknown): StepPreview | undefined {
   if (isRecord(value)) {
     const body = firstString(value, BODY_KEYS);
     if (body && !/^[[{]/.test(body.trim())) return textPreview(body);
+    // Any other natural-language field, e.g. { extraction: "…" }.
+    const prose = Object.values(value).find(
+      (v): v is string => typeof v === "string" && v.trim().length > 20 && /\s/.test(v) && !/^[[{]/.test(v.trim()) && !/^https?:\/\//.test(v.trim()),
+    );
+    if (prose) return textPreview(prose);
+    // One level down: { data: { result: … } }, { result: [ … ] }.
+    for (const key of BODY_KEYS) {
+      const nested = value[key];
+      if (isRecord(nested) || Array.isArray(nested)) {
+        const inner = readablePreview(nested);
+        if (inner) return inner;
+      }
+    }
   }
   return undefined;
 }
@@ -651,13 +683,19 @@ export function gatewayFailure(text: string): string | undefined {
   const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(value);
   if (timedOut) return `The service didn't respond within ${timedOut[1]} seconds.`;
   const unknown = /^Unknown tool '([^']+)'/.exec(value);
+  if (unknown && GATEWAY_TOOLS.has(unknown[1])) return "Called its tool runner the wrong way.";
   if (unknown) return `Asked for a tool called “${humanize(unknown[1])}”, which doesn't exist here.`;
   if (/^(Invalid arguments for|Tool arguments must be)/.test(value)) return "Sent the tool the wrong details.";
   return undefined;
 }
 
 /** Common technical failure reasons in plain words; anything else passes through, trimmed. */
-export function humanReason(reason: string): string {
+export function humanReason(raw: string): string {
+  const reason = raw
+    .replace(/^MCP tool '[^']+' failed:\s*/i, "")
+    .replace(/\s*[{[][\s\S]*$/, "")
+    .replace(/^(\w*(Error|Exception)):\s*/i, "")
+    .trim();
   if (/\b(401|403)\b|unauthori[sz]ed|forbidden|not authenticated|invalid (api )?key|expired token/i.test(reason)) {
     return "The app isn't connected or needs to be re-authorized.";
   }
@@ -665,7 +703,14 @@ export function humanReason(reason: string): string {
   if (/\b404\b|not found/i.test(reason)) return "It couldn't find what it was looking for.";
   if (/timed? ?out|timeout/i.test(reason)) return "The app took too long to respond.";
   if (/\b5\d\d\b|internal server error|service unavailable|bad gateway/i.test(reason)) return "The app had a temporary problem.";
-  return clip(reason.replace(/^\w*(Error|Exception):\s*/, ""), 200);
+  if (/no active session|session (closed|expired)/i.test(reason)) return "The browser session had closed.";
+  if (/\d+ out of \d+ tools failed/i.test(reason)) return "The app couldn't complete those requests.";
+  if (/is required|missing (required )?(field|argument|parameter)/i.test(reason)) return "The tool was missing some details it needed.";
+  // Anything that still reads like code or a stack trace gets a plain fallback.
+  if (!reason || /['"`{}()<>\[\]]|_[a-z]|[a-z]_|object has no attribute|traceback|undefined|null\b|nonetype|\.py\b/i.test(reason)) {
+    return "Something went wrong on the app's side.";
+  }
+  return clip(reason, 200);
 }
 
 /**

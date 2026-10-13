@@ -54,7 +54,7 @@ describe("findings", () => {
   it("has nothing to say for steps without a receipt or still running", () => {
     expect(findingFor(step({ preview: undefined }))).toBeNull();
     expect(findingFor(step({ status: "running", preview: { type: "text", text: "x" } }))).toBeNull();
-    expect(findingFor(step({ preview: { type: "code", language: "python", code: "x" } }))).toBeNull();
+    expect(findingFor(step({ preview: { type: "code", language: "python", code: "x" } }))).toMatchObject({ generic: true });
   });
 
   it("headlines a free-form answer with the agent's own line about it", () => {

@@ -21,6 +21,12 @@ their own `archive/AGENTS.md`. Don't modify `archive/` unless the task is about 
 Verify before handoff: typecheck, test, build, and the integration suite when touching data
 access, auth, or the agent boundary. For UI changes, drive the flow on the QA server.
 
+Changes to how agent steps are labeled, summarized ("Found" panel), or reported as errors
+must hold for **every tool**, not just the one in front of you: run `npm run test:audit`
+(set `LANGFLOW_AUDIT_BASE_URL`, `LANGFLOW_AUDIT_API_KEY`, `LANGFLOW_AUDIT_FLOW_ID`), which
+replays every tool call in the flow's real history and fails on missing findings or
+raw/technical text.
+
 ## Layout
 
 - `supabase/migrations/`: schema, RLS policies, RPCs. Append new migrations; never edit applied ones.

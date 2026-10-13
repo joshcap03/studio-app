@@ -10,6 +10,8 @@ export interface Finding {
   app?: string;
   text: string;
   tone: "normal" | "problem";
+  /** A placeholder line ("Looked through Granola"); the agent's own words are preferred. */
+  generic?: boolean;
   step?: ActivityStep;
   artifact?: Artifact;
 }
@@ -25,8 +27,14 @@ export function findingsForReply(steps: ActivityStep[], artifacts: Artifact[]): 
   steps.forEach((step, i) => {
     if (step.hidden || step.action === "note") return;
     const after = steps.slice(i + 1).find((s) => !s.hidden && (s.action === "note" || s.status !== "running"));
+    const said = after?.action === "note" ? summaryFromAgent(after.label) : undefined;
     const finding = findingFor(step, after?.action === "note" ? after.label : undefined);
-    if (finding) out.push(finding);
+    // Any tool: when a step has nothing specific to say, use the agent's line about it.
+    if ((!finding || finding.generic) && said && step.status === "done") {
+      out.push({ id: step.id, app: step.app, text: said, tone: "normal", step });
+    } else if (finding) {
+      out.push(finding);
+    }
   });
   return [...out, ...artifacts.map(findingForArtifact)];
 }
@@ -48,6 +56,10 @@ export function findingFor(step: ActivityStep, agentSaid?: string): Finding | nu
     case "items": {
       const n = p.total ?? p.items.length;
       const first = p.items[0]?.primary;
+      if (n === 0) {
+        const about = p.query && p.query.length <= 40 ? ` about “${p.query}”` : "";
+        return { ...base, text: step.app === "memory" ? `Nothing in memory${about} yet` : `Found nothing${about} in ${appName(step.app)}` };
+      }
       if (step.action === "write") return { ...base, text: first ? `Sent: “${first}”` : "Done" };
       if (EMAIL_APPS.has(step.app ?? "")) {
         return { ...base, text: `Found ${n} ${plural(n, "email")}${first ? ` · latest “${first}”` : ""}` };
@@ -64,15 +76,19 @@ export function findingFor(step: ActivityStep, agentSaid?: string): Finding | nu
       return { ...base, text: step.action === "write" ? `Wrote ${n} ${plural(n, "row")}${where}` : `Read ${n} ${plural(n, "row")}` };
     }
     case "code":
-      return p.steps?.length ? { ...base, text: p.steps.at(-1)! } : null;
+      return p.steps?.length ? { ...base, text: p.steps.at(-1)! } : { ...base, text: "Worked through the data", generic: true };
     case "text":
+      if (step.app === "calculator") return { ...base, text: `Calculated: ${short(p.text)}` };
       if (step.app === "memory") {
         return { ...base, text: step.label.startsWith("Noted") ? `Noted: “${short(p.text)}”` : `Remembered: ${short(p.text)}` };
       }
       // Free-form answers from apps: say it in the agent's words when it summarized the
       // result, otherwise just where it looked. Raw answer text is never the headline; it
       // stays one click away.
-      return { ...base, text: summaryFromAgent(agentSaid) ?? lookedThrough(appName(step.app), p.query) };
+      {
+        const said = summaryFromAgent(agentSaid);
+        return said ? { ...base, text: said } : { ...base, text: lookedThrough(appName(step.app), p.query), generic: true };
+      }
     case "link":
       return { ...base, text: step.action === "connect" ? `${p.title ?? "A connection"} needs your OK` : `Opened ${p.title ?? "a page"}` };
   }

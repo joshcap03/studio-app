@@ -54,7 +54,7 @@ describe("interpretCalls", () => {
       [0, "Found the right tool", true],
       [1, "Checked what I know about “vendors”", false],
     ]);
-    expect(steps[1].preview).toEqual({ type: "text", text: "Casting house is Acme" });
+    expect(steps[1].preview).toEqual({ type: "text", text: "Casting house is Acme", query: "vendors" });
   });
 
   it("turns status-code narration into plain words", () => {
@@ -276,6 +276,28 @@ describe("interpretCalls", () => {
     ]);
     expect(steps[0].detail).toBe("Asked for a tool called “granola mcp query granola meetings”, which doesn't exist here.");
     expect(steps[1].preview).toEqual({ type: "text", text: "Found 9 meetings…", query: "Franzi" });
+  });
+
+  it("pairs by arguments when a gateway call never produced an inner call (recorded shape)", () => {
+    const slug = "GRANOLA_MCP_QUERY_GRANOLA_MEETINGS";
+    const args = (q: string, step: string) => ({ tools: [{ tool_slug: slug, arguments: { query: q } }], sync_response_to_workbench: false, current_step: step });
+    const answer = (text: string) => ({
+      content: [{ type: "text", text: JSON.stringify({ successful: true, data: { results: [{ tool_slug: slug, response: { successful: true, data: { data: text } } }] } }) }],
+      isError: false,
+    });
+    const rejected = { type: "tool", tool_call_id: "t", content: "Invalid arguments for composio_multi_execute_tool: missing tools" };
+    const steps = interpretCalls([
+      gateway("composio_multi_execute_tool", args("a", "First search"), rejected),
+      gateway("composio_multi_execute_tool", args("b", "Second search"), "ok"),
+      { name: "composio_multi_execute_tool", input: args("b", "Second search"), output: answer("Second answer text here."), error: null },
+      gateway("composio_multi_execute_tool", args("c", "Third search"), "ok"),
+      { name: "composio_multi_execute_tool", input: args("c", "Third search"), output: answer("Third answer text here."), error: null },
+    ]).filter((s) => !s.hidden);
+    expect(steps.map((s) => [s.label, s.status, s.preview?.type === "text" ? s.preview.text : s.preview?.type])).toEqual([
+      ["First search", "failed", undefined],
+      ["Second search", "done", "Second answer text here."],
+      ["Third search", "done", "Third answer text here."],
+    ]);
   });
 
   it("puts common technical failures in plain words", () => {
