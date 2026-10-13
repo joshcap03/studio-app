@@ -5,6 +5,9 @@ import { getSession } from "@/lib/tenant";
 import { AuthForm } from "./auth-form";
 
 export const metadata: Metadata = { title: "Sign in" };
+// Reads the session, so it renders per request; prerendering it would need server config
+// at build time and fail the build when that isn't set.
+export const dynamic = "force-dynamic";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; mode?: string; error?: string }> }) {
   if (await getSession()) redirect("/");
