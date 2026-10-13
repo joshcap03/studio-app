@@ -12,7 +12,8 @@ export async function POST(request: NextRequest) {
   const input = await parseBody(request, body);
   if (input instanceof NextResponse) return input;
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.auth.resetPasswordForEmail(input.email);
+  const redirectTo = new URL("/auth/confirm?next=/reset-password", request.nextUrl.origin).toString();
+  const { error } = await supabase.auth.resetPasswordForEmail(input.email, { redirectTo });
   if (error?.status === 429) return jsonError(429, "Too many requests. Try again in a few minutes.");
   return NextResponse.json({ ok: true });
 }
