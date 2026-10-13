@@ -123,6 +123,77 @@ describe("interpretCalls", () => {
     expect(step.preview).toEqual({ type: "code", language: "python", code: "print(42)", output: "42" });
   });
 
+  it("reads workbench output from an MCP CallToolResult (recorded shape)", () => {
+    const code = 'products = fetch_shopify_products("shop.example")\nprint(len(products))';
+    const payload = JSON.stringify({
+      successful: true,
+      data: { results: "", stdout: "OK source=95 matched=95 written=95\n", stderr: "", error: "" },
+      error: null,
+      log_id: "log_x",
+    });
+    const steps = interpretCalls([
+      gateway("composio_remote_workbench", { code_to_execute: code, current_step: "Building the inventory spreadsheet", thought: "x" }, {
+        type: "tool",
+        tool_call_id: "t",
+        artifact: null,
+        content: payload,
+      }),
+      {
+        name: "composio_remote_workbench",
+        input: { code_to_execute: code, current_step: "Building the inventory spreadsheet", thought: "x" },
+        output: { meta: null, content: [{ type: "text", text: payload, annotations: null, meta: null }], structuredContent: null, isError: false },
+        error: null,
+      },
+    ]);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ status: "done", label: "Building the inventory spreadsheet", app: "code" });
+    expect(steps[0].preview).toMatchObject({ type: "code", output: "OK source=95 matched=95 written=95" });
+  });
+
+  it("turns STEP and ARTIFACT markers into progress and a file card, and nothing else", () => {
+    const stdout = [
+      "created https://docs.google.com/spreadsheets/d/abc/edit",
+      "STEP Fetched 95 products from shop.example",
+      'STEP Wrote 95 rows to the "Inventory" tab',
+      'ARTIFACT {"id": "abc", "kind": "spreadsheet", "title": "Shop - Inventory", "url": "https://docs.google.com/spreadsheets/d/abc/edit", "description": "95 rows · 11 columns", "source": "Google Sheets"}',
+      'ARTIFACT {"id": "bad", "kind": "file", "title": "Nope", "url": "javascript:alert(1)"}',
+      "OK source=95 written=95",
+      "not a STEP marker: STEP inside text",
+    ].join("\n");
+    const [step] = interpretCalls([
+      {
+        name: "composio_remote_workbench",
+        input: { code_to_execute: "run()", current_step: "Building the inventory spreadsheet" },
+        output: { content: [{ type: "text", text: JSON.stringify({ successful: true, data: { stdout } }) }], isError: false },
+        error: null,
+      },
+    ]);
+    expect(step.preview).toMatchObject({
+      type: "code",
+      steps: ["Fetched 95 products from shop.example", 'Wrote 95 rows to the "Inventory" tab'],
+    });
+    const output = (step.preview as { output?: string }).output ?? "";
+    expect(output).toContain("OK source=95");
+    expect(output).not.toContain("ARTIFACT");
+    expect(step.artifacts).toEqual([
+      {
+        id: "abc",
+        kind: "spreadsheet",
+        title: "Shop - Inventory",
+        description: "95 rows · 11 columns",
+        source: "Google Sheets",
+        url: "https://docs.google.com/spreadsheets/d/abc/edit",
+      },
+    ]);
+  });
+
+  it("treats an MCP isError result as a failure", () => {
+    const [step] = interpretCalls([
+      { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: { content: [{ type: "text", text: "Sandbox crashed" }], isError: true }, error: null },
+    ]);
+    expect(step).toMatchObject({ status: "failed", detail: "Sandbox crashed" });
+  });
+
   it("marks failures from Composio envelopes and tool errors, with the reason", () => {
     const [workbench, nav] = interpretCalls([
       { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: toolMessage({ successful: false, error: "Sandbox timed out", data: {} }), error: null },
@@ -178,7 +249,7 @@ describe("interpretCalls", () => {
     ]);
     expect(write.preview).toEqual({ type: "table", columns: ["Month", "Revenue"], rows: [["Jan", "1200"], ["Feb", "900"]], total: undefined, title: "Orders" });
     expect(create).toMatchObject({ label: "Created a spreadsheet", app: "sheets" });
-    expect(create.artifact).toEqual({ id: "abc", kind: "spreadsheet", title: "Q3 orders", source: "Google Sheets", url: "https://docs.google.com/spreadsheets/d/abc/edit" });
+    expect(create.artifacts?.[0]).toEqual({ id: "abc", kind: "spreadsheet", title: "Q3 orders", source: "Google Sheets", url: "https://docs.google.com/spreadsheets/d/abc/edit" });
   });
 
   it("caps long lists and keeps the true total", () => {

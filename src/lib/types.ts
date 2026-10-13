@@ -24,7 +24,14 @@ export type StepPreview =
   | { type: "sources"; items: { title: string; url: string; domain: string }[]; total?: number }
   | { type: "items"; items: { primary: string; secondary?: string; url?: string }[]; total?: number }
   | { type: "table"; columns: string[]; rows: string[][]; total?: number; title?: string }
-  | { type: "code"; language: string; code: string; output?: string }
+  | {
+      type: "code";
+      language: string;
+      code: string;
+      output?: string;
+      /** Progress the code reported with explicit "STEP …" lines, in order. */
+      steps?: string[];
+    }
   | { type: "text"; text: string }
   | { type: "link"; url: string; title?: string };
 

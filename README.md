@@ -100,6 +100,15 @@ cancels the run in Langflow (best effort).
    `{"artifact": {"id", "kind", "title", "url", "description"?, "source"?}}` (https links
    only). Links in plain text never become cards.
 
+5. **Work markers.** Code the agent runs (e.g. Composio workbench scripts) can report
+   progress and files explicitly by printing lines that start with these markers:
+   ```
+   STEP Fetched 95 products from shop.example
+   ARTIFACT {"id": "…", "kind": "spreadsheet", "title": "…", "url": "https://…", "description": "…", "source": "Google Sheets"}
+   ```
+   `STEP` lines become a checklist in that step's receipt; `ARTIFACT` lines become file
+   cards (https only, validated). Nothing else in tool output is interpreted.
+
 Not used because Langflow's `/run` API doesn't provide it: polling run status
 (`capabilities.runStatus` is false).
 

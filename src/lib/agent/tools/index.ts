@@ -38,7 +38,7 @@ export interface InterpretedStep {
   action: StepAction;
   preview?: StepPreview;
   hidden?: boolean;
-  artifact?: Artifact;
+  artifacts?: Artifact[];
 }
 
 interface Interpretation {
@@ -47,7 +47,7 @@ interface Interpretation {
   action: StepAction;
   preview?: StepPreview;
   hidden?: boolean;
-  artifact?: Artifact;
+  artifacts?: Artifact[];
   /** A failure reported inside a successful-looking result (e.g. Composio successful: false). */
   innerError?: string;
 }
@@ -119,10 +119,13 @@ function invokes(target: string, next: ToolCall): boolean {
 function toStep(call: ToolCall, index: number): InterpretedStep {
   const input = isRecord(call.input) ? call.input : {};
   const result = call.output == null ? undefined : unwrapResult(call.output);
+  // MCP results flag failures with isError rather than an error field.
+  const mcpError = isRecord(call.output) && call.output.isError === true ? stringResult(call.output) || "The tool reported an error." : undefined;
   const interpretation = interpret(call.name, input, result);
   const envelope = composioEnvelope(result);
   const errorText =
     errorMessage(call.error) ??
+    (mcpError ? errorMessage(mcpError) : undefined) ??
     (envelope && !envelope.successful ? errorMessage(envelope.error) ?? "The tool reported a failure." : undefined) ??
     interpretation.innerError;
   const status: ActivityStatus = errorText ? "failed" : call.output == null ? "running" : "done";
@@ -146,7 +149,7 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
     action: interpretation.action,
     preview: status === "running" && interpretation.preview?.type !== "code" ? undefined : interpretation.preview,
     hidden: interpretation.hidden,
-    artifact: status === "done" ? interpretation.artifact : undefined,
+    artifacts: status === "done" ? interpretation.artifacts : undefined,
   };
 }
 
@@ -224,7 +227,7 @@ function composioTool(slug: string, input: Record<string, unknown>, result: unkn
     app,
     action: verb.action,
     preview: previewFor(slug, app, input, data),
-    artifact: artifactFor(slug, app, data),
+    artifacts: [artifactFor(slug, app, data)].filter((a): a is Artifact => !!a),
   };
 }
 
@@ -252,16 +255,25 @@ function code(name: string, input: Record<string, unknown>, result: unknown): In
   const source = firstString(input, ["code_to_execute", "code", "command", "python_code"]);
   const envelope = composioEnvelope(result);
   const data = isRecord(envelope?.data) ? envelope.data : isRecord(result) ? result : {};
-  const stdout = firstString(data, ["stdout", "output", "results"]);
+  const rawStdout = firstString(data, ["stdout", "output", "results"]);
   const stderr = firstString(data, ["stderr"]);
   const failure = firstString(data, ["error"]);
+  const { steps, artifacts, rest } = readMarkers(rawStdout ?? "");
+  const stdout = rest.trim();
   return {
     labels: { running: "Running an analysis", done: "Ran an analysis", failed: "The analysis hit an error" },
     app: "code",
     action: "run",
     preview: source
-      ? { type: "code", language: name.includes("bash") ? "bash" : "python", code: clip(source, 4000), output: stdout ? clip(stdout, 2000) : undefined }
+      ? {
+          type: "code",
+          language: name.includes("bash") ? "bash" : "python",
+          code: clip(source, 4000),
+          output: stdout ? clip(stdout, 2000) : undefined,
+          steps: steps.length > 0 ? steps : undefined,
+        }
       : undefined,
+    artifacts,
     innerError: failure ? clip(failure, 400) : stderr && !stdout ? clip(stderr, 400) : undefined,
   };
 }
@@ -337,6 +349,45 @@ function browserPage(name: string, result: unknown): Interpretation {
   const data = isRecord(value) && "data" in value ? value.data : value;
   const text = typeof data === "string" ? data : data != null ? JSON.stringify(data) : "";
   return { labels, app: "browser", action: "browse", preview: text ? textPreview(text) : undefined };
+}
+
+/**
+ * Explicit progress markers printed by code the agent runs (see README, "Work markers"):
+ *   STEP <plain-language progress>
+ *   ARTIFACT {"id","kind","title","url","description"?,"source"?}
+ * Only lines that start with these exact markers count; nothing else in the output is
+ * interpreted. Artifacts are validated again (https only, known kinds) before display.
+ */
+export function readMarkers(output: string): { steps: string[]; artifacts: Artifact[]; rest: string } {
+  const steps: string[] = [];
+  const artifacts: Artifact[] = [];
+  const rest: string[] = [];
+  for (const line of output.split("\n")) {
+    const step = /^STEP\s+(.+)$/.exec(line.trim());
+    const artifact = /^ARTIFACT\s+(\{.*\})$/.exec(line.trim());
+    if (step) {
+      if (steps.length < 20) steps.push(clip(step[1], 160));
+    } else if (artifact) {
+      const value = maybeJson(artifact[1]);
+      if (isRecord(value)) {
+        const url = safeUrl(value.url);
+        const title = firstString(value, ["title"]);
+        if (url && title && artifacts.length < 5) {
+          artifacts.push({
+            id: clip(firstString(value, ["id"]) ?? url, 200),
+            kind: (typeof value.kind === "string" ? value.kind : "file") as Artifact["kind"],
+            title: clip(title, 200),
+            description: firstString(value, ["description"]) ? clip(value.description, 300) : undefined,
+            source: firstString(value, ["source"]) ? clip(value.source, 80) : undefined,
+            url,
+          });
+        }
+      }
+    } else {
+      rest.push(line);
+    }
+  }
+  return { steps, artifacts, rest: rest.join("\n") };
 }
 
 // ------------------------------------------------------------------------------------------

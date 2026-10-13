@@ -62,9 +62,14 @@ export function unwrapResult(output: unknown): unknown {
   let value = output;
   for (let depth = 0; depth < 4; depth++) {
     value = maybeJson(value);
-    if (isRecord(value) && "content" in value && ("tool_call_id" in value || "type" in value || "artifact" in value)) {
-      value = value.content;
-      continue;
+    // LangChain ToolMessage ({ content, tool_call_id, … }) or MCP CallToolResult
+    // ({ content, structuredContent, isError }).
+    if (isRecord(value) && "content" in value) {
+      const envelope = value;
+      if (["tool_call_id", "type", "artifact", "isError", "structuredContent", "meta"].some((k) => k in envelope)) {
+        value = isRecord(envelope.structuredContent) ? envelope.structuredContent : envelope.content;
+        continue;
+      }
     }
     if (Array.isArray(value) && value.length > 0 && value.every((v) => isRecord(v) && v.type === "text" && "text" in v)) {
       const texts = value.map((v) => (v as { text: unknown }).text);

@@ -208,7 +208,7 @@ export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
     events.push({ type: "artifact", artifact: artifact as never });
   };
   for (const step of interpretCalls(toCalls(message))) {
-    if (step.artifact) push(step.artifact);
+    for (const artifact of step.artifacts ?? []) push(artifact);
   }
   for (const tool of toolUses(message)) {
     let output = tool.output;

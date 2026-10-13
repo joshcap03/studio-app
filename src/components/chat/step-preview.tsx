@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { ArrowUpRight, Check, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import type { StepPreview as Preview } from "@/lib/types";
 
@@ -86,7 +86,9 @@ export function StepPreview({ preview, size = "inline" }: { preview: Preview; si
         </div>
       );
     case "code":
-      return <CodePreview code={preview.code} output={preview.output} language={preview.language} defaultOpen={panel} />;
+      return (
+        <CodePreview code={preview.code} output={preview.output} steps={preview.steps} language={preview.language} defaultOpen={panel && !preview.steps} />
+      );
     case "text":
       return (
         <p className={`border-l-2 border-line-strong pl-3 whitespace-pre-wrap text-fg-2 ${panel ? "text-[13.5px]" : "text-[13px]"} leading-relaxed`}>
@@ -113,11 +115,33 @@ function More({ total, shown, noun }: { total?: number; shown: number; noun: str
   return <p className="pt-1.5 text-[12px] text-fg-3">+{total - shown} more {noun}</p>;
 }
 
-function CodePreview({ code, output, language, defaultOpen }: { code: string; output?: string; language: string; defaultOpen: boolean }) {
+function CodePreview({
+  code,
+  output,
+  steps,
+  language,
+  defaultOpen,
+}: {
+  code: string;
+  output?: string;
+  steps?: string[];
+  language: string;
+  defaultOpen: boolean;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="space-y-2">
-      {output ? (
+      {steps ? (
+        <ol className="space-y-1">
+          {steps.map((step, i) => (
+            <li key={i} className="flex items-start gap-2 text-[13px] text-fg animate-fade-up" style={{ animationDelay: `${i * 70}ms` }}>
+              <Check size={13} strokeWidth={2.5} className="mt-[3px] shrink-0 text-success" />
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {output && (!steps || open) ? (
         <pre className="scroll-quiet max-h-56 overflow-auto rounded-lg bg-subtle px-3 py-2 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-fg">
           {output}
         </pre>
@@ -129,7 +153,7 @@ function CodePreview({ code, output, language, defaultOpen }: { code: string; ou
         className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg-2"
       >
         <ChevronRight size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />
-        {open ? "Hide" : "Show"} the {language} it ran
+        {open ? "Hide" : "Show"} the {language} it ran{steps && output ? " and its output" : ""}
       </button>
       {open ? (
         <pre className="scroll-quiet max-h-72 overflow-auto rounded-lg border border-line px-3 py-2 font-mono text-[12px] leading-relaxed text-fg-2">
