@@ -164,15 +164,42 @@ describe("Langflow streaming", () => {
       streamResponse([frame("add_message", bot("", [running])), frame("add_message", bot("", [done])), frame("token", { chunk: "Done." }), frame("end", end("Done."))]),
     );
     const activity = events.filter((e) => e.type === "activity");
-    expect(activity[0]).toMatchObject({ id: "msg-1:0", status: "running", label: "Using googlesheets create" });
-    expect(activity[1]).toMatchObject({ id: "msg-1:0", status: "done", label: "Used googlesheets create" });
+    expect(activity[0]).toMatchObject({ id: "msg-1:0", status: "running", label: "Creating a spreadsheet", app: "sheets" });
+    expect(activity[1]).toMatchObject({ id: "msg-1:0", status: "done", label: "Created a spreadsheet", app: "sheets" });
     expect(events.filter((e) => e.type === "artifact")).toHaveLength(1);
+  });
+
+  it("shows gateway-wrapped tools as one plain-language step with a receipt (recorded shape)", async () => {
+    const wrapper = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: "search", arguments: { query: "casting houses nyc" } }, output: null, error: null };
+    const inner = { type: "tool_use", name: "search", tool_input: { query: "casting houses nyc" }, output: null, error: null };
+    const doneWrapper = { ...wrapper, output: { type: "tool", tool_call_id: "c1", content: "Title: Acme Casting\nURL: https://acme.example/" } };
+    const doneInner = { ...inner, output: { results: [{ url: "https://acme.example/", title: "Acme Casting" }] } };
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("add_message", bot("", [{ type: "tool_use", name: "discover_tools", tool_input: { query: "search" }, output: {}, error: null }, wrapper])),
+        frame("add_message", bot("", [{ type: "tool_use", name: "discover_tools", tool_input: { query: "search" }, output: {}, error: null }, wrapper, inner])),
+        frame("add_message", bot("", [{ type: "tool_use", name: "discover_tools", tool_input: { query: "search" }, output: {}, error: null }, doneWrapper, doneInner])),
+        frame("token", { chunk: "Found one." }),
+        frame("end", end("Found one.")),
+      ]),
+    );
+    const steps = events.filter((e) => e.type === "activity") as Extract<AgentEvent, { type: "activity" }>[];
+    const visible = steps.filter((e) => !e.hidden);
+    expect(new Set(visible.map((e) => e.id))).toEqual(new Set(["msg-1:1"]));
+    expect(visible[0]).toMatchObject({ status: "running", label: "Searching the web for “casting houses nyc”", app: "web" });
+    expect(visible.at(-1)).toMatchObject({
+      status: "done",
+      label: "Searched the web for “casting houses nyc”",
+      preview: { type: "sources", items: [{ title: "Acme Casting", url: "https://acme.example/", domain: "acme.example" }] },
+    });
+    expect(steps.find((e) => e.id === "msg-1:0")).toMatchObject({ hidden: true });
   });
 
   it("reports a failed tool call", async () => {
     const failed = { type: "tool_use", name: "gmail_send", tool_input: {}, output: null, error: "Rate limited" };
     const { events } = await run(base, streamResponse([frame("add_message", bot("", [failed])), frame("end", end("Sorry."))]));
-    expect(events.find((e) => e.type === "activity")).toMatchObject({ status: "failed", detail: "Rate limited" });
+    expect(events.find((e) => e.type === "activity")).toMatchObject({ status: "failed", detail: "Rate limited", app: "gmail" });
   });
 
   it("does not invent artifacts from text or unstructured tool output", async () => {

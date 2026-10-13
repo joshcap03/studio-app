@@ -14,12 +14,32 @@ export type MessageStatus = "streaming" | "complete" | "stopped" | "error" | "in
 
 export type ActivityStatus = "running" | "done" | "failed";
 
+export type StepAction = "search" | "read" | "write" | "run" | "remember" | "browse" | "connect" | "other";
+
+/**
+ * What a step actually did, built from the tool call's real input and output. Size-capped
+ * and sanitized on the server before it is stored or sent.
+ */
+export type StepPreview =
+  | { type: "sources"; items: { title: string; url: string; domain: string }[]; total?: number }
+  | { type: "items"; items: { primary: string; secondary?: string; url?: string }[]; total?: number }
+  | { type: "table"; columns: string[]; rows: string[][]; total?: number; title?: string }
+  | { type: "code"; language: string; code: string; output?: string }
+  | { type: "text"; text: string }
+  | { type: "link"; url: string; title?: string };
+
 /** One observable step of agent execution, as reported by the agent backend. */
 export interface ActivityStep {
   id: string;
   label: string;
   status: ActivityStatus;
   detail?: string;
+  /** The app the step worked in (see src/lib/apps.ts). */
+  app?: string;
+  action?: StepAction;
+  preview?: StepPreview;
+  /** Internal plumbing (tool discovery, schema lookups): counted, not listed. */
+  hidden?: boolean;
   startedAt: number;
   endedAt?: number;
 }
@@ -69,7 +89,8 @@ export interface ConversationSummary {
 }
 
 export interface AgentStatus {
-  mode: "mock" | "live";
+  /** "unavailable": a live agent is configured but not enabled for this workspace. */
+  mode: "mock" | "live" | "unavailable";
   label: string;
 }
 

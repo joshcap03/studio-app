@@ -1,3 +1,4 @@
+import { interpretCalls, type ToolCall } from "./tools";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Langflow adapter. Everything Langflow-specific lives in this file.
@@ -155,43 +156,60 @@ function toolUses(message: LangflowMessage): LangflowToolUse[] {
   return out;
 }
 
-function humanize(name: string): string {
-  const words = name
-    .replace(/[_-]+/g, " ")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .trim()
-    .toLowerCase();
-  return words || "tool";
-}
-
 function short(value: unknown, max = 160): string | undefined {
   if (value == null) return undefined;
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/** Activity events for the tool calls in a bot message, keyed by message id and position. */
-export function toolActivity(message: LangflowMessage, messageKey: string): AgentEvent[] {
-  return toolUses(message).map((tool, index) => {
-    const name = humanize(tool.name ?? "tool");
-    const failed = tool.error != null && tool.error !== "" && tool.error !== false;
-    const done = !failed && tool.output !== undefined && tool.output !== null;
-    return {
-      type: "activity",
-      id: `${messageKey}:${index}`,
-      label: failed ? `Couldn't use ${name}` : done ? `Used ${name}` : `Using ${name}`,
-      status: failed ? "failed" : done ? "done" : "running",
-      detail: failed ? short(tool.error) : undefined,
-    } satisfies AgentEvent;
-  });
+function toCalls(message: LangflowMessage): ToolCall[] {
+  return toolUses(message).map((tool) => ({
+    name: tool.name ?? "tool",
+    input: tool.tool_input ?? tool.input ?? {},
+    output: tool.output,
+    error: tool.error,
+  }));
 }
 
 /**
- * Artifacts only come from structured tool output that explicitly declares one:
+ * Steps for the tool calls in a bot message, in plain language with the app each worked in
+ * (see src/lib/agent/tools). Ids are keyed by message and call position, so re-sent
+ * messages update the same steps.
+ */
+export function toolActivity(message: LangflowMessage, messageKey: string): AgentEvent[] {
+  return interpretCalls(toCalls(message)).map(
+    (step) =>
+      ({
+        type: "activity",
+        id: `${messageKey}:${step.index}`,
+        label: step.label,
+        status: step.status,
+        detail: step.detail,
+        app: step.app,
+        action: step.action,
+        preview: step.preview,
+        hidden: step.hidden,
+      }) satisfies AgentEvent,
+  );
+}
+
+/**
+ * Artifacts come only from structured tool results: a file-creating tool's own result
+ * (e.g. a new spreadsheet's URL), or tool output that explicitly declares
  * `{ "artifact": { "id", "kind", "title", "url", ... } }`. Text is never parsed for links.
  */
 export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
+  const seen = new Set<string>();
+  const push = (artifact: { id?: unknown; url?: unknown }) => {
+    const key = String(artifact.url ?? artifact.id ?? "");
+    if (seen.has(key)) return;
+    seen.add(key);
+    events.push({ type: "artifact", artifact: artifact as never });
+  };
+  for (const step of interpretCalls(toCalls(message))) {
+    if (step.artifact) push(step.artifact);
+  }
   for (const tool of toolUses(message)) {
     let output = tool.output;
     if (typeof output === "string" && output.trimStart().startsWith("{")) {
@@ -202,7 +220,7 @@ export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
       }
     }
     const artifact = output && typeof output === "object" ? (output as { artifact?: unknown }).artifact : undefined;
-    if (artifact && typeof artifact === "object") events.push({ type: "artifact", artifact: artifact as never });
+    if (artifact && typeof artifact === "object") push(artifact as { id?: unknown; url?: unknown });
   }
   return events;
 }

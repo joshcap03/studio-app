@@ -23,8 +23,21 @@ export function getAgentAdapter(): AgentAdapter {
   return adapter;
 }
 
+/**
+ * Whether this workspace may use the configured agent. A live provider is gated by
+ * AGENT_LIVE_WORKSPACES so a flow that isn't tenant-aware yet (shared tool connections or
+ * memory) is only reachable by the workspaces it was built for. The mock is always allowed.
+ */
+export function agentEnabledFor(workspaceId: string): boolean {
+  if (!getAgentAdapter().live) return true;
+  const allowed = getConfig().agent.liveWorkspaces;
+  return allowed === "all" || allowed.has(workspaceId);
+}
+
 /** What the browser is told about the backend. Never includes URLs or credentials. */
-export function getAgentStatus(): AgentStatus {
+export function getAgentStatus(workspaceId: string): AgentStatus {
   const a = getAgentAdapter();
-  return { mode: a.live ? "live" : "mock", label: a.label };
+  if (!a.live) return { mode: "mock", label: a.label };
+  if (!agentEnabledFor(workspaceId)) return { mode: "unavailable", label: "Agent not enabled for this workspace" };
+  return { mode: "live", label: a.label };
 }

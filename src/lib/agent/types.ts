@@ -1,4 +1,4 @@
-import type { ActivityStatus, Artifact } from "@/lib/types";
+import type { ActivityStatus, Artifact, StepAction, StepPreview } from "@/lib/types";
 
 // The contract between this application and any agent provider (Langflow today; LangGraph,
 // Deep Agents, or others later). Adapters translate their provider's protocol into these
@@ -41,7 +41,17 @@ export type AgentEvent =
   /** The full assistant text at once. Replaces any prior text. */
   | { type: "message"; text: string }
   /** A step started, changed, or finished. Re-emit the same id to update it. */
-  | { type: "activity"; id: string; label: string; status: ActivityStatus; detail?: string }
+  | {
+      type: "activity";
+      id: string;
+      label: string;
+      status: ActivityStatus;
+      detail?: string;
+      app?: string;
+      action?: StepAction;
+      preview?: StepPreview;
+      hidden?: boolean;
+    }
   /** A structured output the provider produced. */
   | { type: "artifact"; artifact: Artifact };
 

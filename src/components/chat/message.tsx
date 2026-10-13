@@ -23,9 +23,10 @@ interface AssistantProps {
   message: ChatMessage;
   isLast: boolean;
   onRetry: (messageId: string) => void;
+  onOpenPanel?: (messageId: string) => void;
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry }: AssistantProps) {
+export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel }: AssistantProps) {
   const streaming = message.status === "streaming";
   const hasContent = message.content.trim().length > 0;
   // Show live progress until text arrives, and again whenever the agent starts a new step.
@@ -34,7 +35,11 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
   return (
     <article className="group/message" aria-busy={streaming || undefined}>
       {working || message.activity.length > 0 ? (
-        <ActivityLog steps={message.activity} running={working} />
+        <ActivityLog
+          steps={message.activity}
+          running={working}
+          onOpenPanel={onOpenPanel ? () => onOpenPanel(message.id) : undefined}
+        />
       ) : null}
 
       {hasContent ? <Markdown content={message.content} /> : null}
@@ -76,6 +81,11 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
           }`}
         >
           <CopyButton text={message.content} />
+          {isLast && message.status === "complete" ? (
+            <IconButton label="Retry" side="bottom" onClick={() => onRetry(message.id)} className="size-7">
+              <RotateCcw size={14} />
+            </IconButton>
+          ) : null}
         </div>
       ) : null}
     </article>

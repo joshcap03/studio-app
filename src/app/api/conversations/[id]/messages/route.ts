@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { getAgentAdapter } from "@/lib/agent";
+import { agentEnabledFor, getAgentAdapter } from "@/lib/agent";
 import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
@@ -30,6 +30,10 @@ export async function POST(request: NextRequest, { params }: Context) {
   if (!conversationId.success) return jsonError(404, "Conversation not found.");
   const input = await parseBody(request, body);
   if (input instanceof NextResponse) return input;
+
+  if (!agentEnabledFor(tenant.workspace.id)) {
+    return jsonError(403, "The agent isn't enabled for this workspace yet.", "agent_unavailable");
+  }
 
   try {
     const limit = await checkRunLimits(tenant);

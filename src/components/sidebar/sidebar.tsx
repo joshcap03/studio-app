@@ -147,11 +147,11 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
 
       <div className="flex shrink-0 items-center gap-2 border-t border-line py-2 pr-2 pl-4">
         <span
-          className={`size-1.5 shrink-0 rounded-full ${agent.mode === "live" ? "bg-success" : "bg-accent"}`}
+          className={`size-1.5 shrink-0 rounded-full ${agent.mode === "live" ? "bg-success" : agent.mode === "mock" ? "bg-accent" : "bg-fg-4"}`}
           aria-hidden="true"
         />
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">
-          {agent.mode === "live" ? agent.label : "Mock agent · not connected"}
+          {agent.mode === "mock" ? "Mock agent · not connected" : agent.label}
         </span>
         <IconButton label="Settings" side="top" onClick={() => window.location.assign("/settings")}>
           <Settings size={15} strokeWidth={1.75} />

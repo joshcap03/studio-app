@@ -10,6 +10,7 @@ const STICK_THRESHOLD = 64;
 interface Props {
   messages: ChatMessage[];
   onRetry: (messageId: string) => void;
+  onOpenPanel?: (messageId: string) => void;
   /** Changes whenever the user sends, to pull the view back to the latest message. */
   sendCount: number;
   footer: React.ReactNode;
@@ -19,7 +20,7 @@ interface Props {
  * The scrolling message list. Follows new output while the reader is at the bottom, and
  * leaves the scroll position alone once they scroll up to read earlier messages.
  */
-export function Thread({ messages, onRetry, sendCount, footer }: Props) {
+export function Thread({ messages, onRetry, onOpenPanel, sendCount, footer }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -73,7 +74,7 @@ export function Thread({ messages, onRetry, sendCount, footer }: Props) {
                 {message.role === "user" ? (
                   <UserMessage message={message} />
                 ) : (
-                  <AssistantMessage message={message} isLast={index === messages.length - 1} onRetry={onRetry} />
+                  <AssistantMessage message={message} isLast={index === messages.length - 1} onRetry={onRetry} onOpenPanel={onOpenPanel} />
                 )}
               </div>
             );

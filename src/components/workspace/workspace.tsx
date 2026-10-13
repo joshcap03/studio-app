@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Composer, type ComposerHandle } from "@/components/chat/composer";
 import { EmptyState } from "@/components/chat/empty-state";
 import { Thread } from "@/components/chat/thread";
+import { WorkPanel } from "@/components/chat/work-panel";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
@@ -35,6 +36,7 @@ interface Props {
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
+const WORK_PANEL_KEY = "lj.work-panel";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function conversationIdFrom(pathname: string): string | null {
@@ -72,6 +74,9 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   const [sendCount, setSendCount] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  /** Message shown in the work panel; "latest" follows the newest reply. null = closed. */
+  const [panel, setPanel] = useState<string | null>(null);
+  const panelAuto = useRef(true);
 
   const controllers = useRef(new Map<string, AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
@@ -87,6 +92,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
   useEffect(() => {
     try {
       setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
+      panelAuto.current = localStorage.getItem(WORK_PANEL_KEY) !== "off";
     } catch {
       // storage unavailable; keep the default
     }
@@ -312,6 +318,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
       });
       if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
+      if (panelAuto.current) setPanel("latest");
       void runTurn(conversationId, { kind: "send", text }, { user: user.id, assistant: assistant.id });
     },
     [navigate, runTurn],
@@ -359,6 +366,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
       };
       patchMessages(conversationId, (messages) => [...messages.filter((m) => m.id !== messageId), assistant]);
       setSendCount((n) => n + 1);
+      if (panelAuto.current) setPanel("latest");
       void runTurn(conversationId, { kind: "retry" }, { assistant: assistant.id });
     },
     [activeId, patchMessages, runTurn, running, sendTo],
@@ -406,6 +414,34 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
     [activeId, conversations, navigate],
   );
 
+  // Switching to a conversation that isn't working closes the panel.
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  useEffect(() => {
+    if (activeId && runningRef.current.has(activeId)) return;
+    setPanel(null);
+  }, [activeId]);
+
+  const openPanel = useCallback((messageId: string) => {
+    panelAuto.current = true;
+    try {
+      localStorage.setItem(WORK_PANEL_KEY, "auto");
+    } catch {
+      // ignore
+    }
+    setPanel(messageId);
+  }, []);
+
+  const closePanel = useCallback(() => {
+    panelAuto.current = false;
+    try {
+      localStorage.setItem(WORK_PANEL_KEY, "off");
+    } catch {
+      // ignore
+    }
+    setPanel(null);
+  }, []);
+
   // ---------------------------------------------------------------------------------------
   // Keyboard shortcuts
 
@@ -451,6 +487,8 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
       <p className="text-[12px] text-fg-3">
         Mock agent — responses are simulated. Connect the agent API to work with real data.
       </p>
+    ) : agent.mode === "unavailable" ? (
+      <p className="text-[12px] text-fg-3">The agent isn&apos;t enabled for this workspace yet.</p>
     ) : null;
 
   return (
@@ -543,6 +581,7 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
               key={activeId}
               messages={activeThread.messages}
               onRetry={retry}
+              onOpenPanel={openPanel}
               sendCount={sendCount}
               footer={
                 <div className="mx-auto w-full max-w-[46rem] px-3 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
@@ -567,6 +606,17 @@ export function Workspace({ initialConversations, initialThread, agent, workspac
             </div>
           )}
         </main>
+
+        {panel && activeId && activeThread?.status === "ready" ? (
+          <WorkPanel
+            message={
+              panel === "latest"
+                ? (activeThread.messages.findLast((m) => m.role === "assistant") ?? null)
+                : (activeThread.messages.find((m) => m.id === panel) ?? null)
+            }
+            onClose={closePanel}
+          />
+        ) : null}
       </div>
     </Tooltip.Provider>
   );

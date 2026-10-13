@@ -37,6 +37,9 @@ const schema = z.object({
   LANGFLOW_STREAM: bool(true),
   LANGFLOW_END_USER_HEADER: z.string().optional(),
   LANGFLOW_TWEAKS: jsonRecord,
+  // Workspaces allowed to use a live agent: comma-separated workspace ids, or "*" for all.
+  // Unset means none (fail closed) — for flows that aren't tenant-aware yet.
+  AGENT_LIVE_WORKSPACES: z.string().optional(),
 
   COMPOSIO_API_KEY: z.string().optional(),
   COMPOSIO_TOOLKITS: jsonRecord,
@@ -64,6 +67,8 @@ export interface AppConfig {
     provider: "mock" | "langflow";
     idleTimeoutMs: number;
     mockStreaming: boolean;
+    /** Workspace ids allowed to use a live provider; "all" when set to "*". */
+    liveWorkspaces: "all" | Set<string>;
     langflow?: {
       baseUrl: string;
       apiKey: string;
@@ -119,6 +124,10 @@ export function getConfig(): AppConfig {
       provider: env.AGENT_PROVIDER,
       idleTimeoutMs: env.AGENT_IDLE_TIMEOUT_MS,
       mockStreaming: env.MOCK_STREAMING,
+      liveWorkspaces:
+        env.AGENT_LIVE_WORKSPACES?.trim() === "*"
+          ? "all"
+          : new Set((env.AGENT_LIVE_WORKSPACES ?? "").split(",").map((s) => s.trim()).filter(Boolean)),
       langflow,
     },
     composio,

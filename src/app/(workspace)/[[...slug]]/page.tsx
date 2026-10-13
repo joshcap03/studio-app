@@ -38,7 +38,7 @@ export default async function WorkspacePage({ params }: { params: Promise<{ slug
     <Workspace
       initialConversations={conversations}
       initialThread={initialThread}
-      agent={getAgentStatus()}
+      agent={getAgentStatus(tenant.workspace.id)}
       workspace={tenant.workspace}
       workspaces={tenant.workspaces}
       email={tenant.email}

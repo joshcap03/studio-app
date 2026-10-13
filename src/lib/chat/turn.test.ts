@@ -136,6 +136,15 @@ describe("startTurn", () => {
     ]);
   });
 
+  it("retries a finished reply by replacing it", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const deps = (text: string) => ({ store, adapter: scripted([{ type: "message", text }]), context: context(scopeA), idleTimeoutMs: 1000 });
+    await collect(startTurn(deps("first answer"), { conversationId: id, kind: "send", text: "question" }, signal()));
+    await collect(startTurn(deps("second answer"), { conversationId: id, kind: "retry" }, signal()));
+    expect((await store.listMessages(id)).map((m) => m.content)).toEqual(["question", "second answer"]);
+  });
+
   it("fails a run that goes quiet past the idle timeout", async () => {
     const store = createMemoryStore(scopeA);
     const hanging: AgentAdapter = {

@@ -88,8 +88,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSig
   if (request.kind === "retry") {
     if (!conversation) throw new TurnError(404, "Conversation not found.");
     const last = existing.at(-1);
+    // Retry replaces the latest reply, whether it failed or finished.
     if (last?.role === "assistant") {
-      if (last.status === "complete") throw new TurnError(409, "The last response finished; there is nothing to retry.");
       await store.deleteMessage(last.id);
       existing = existing.slice(0, -1);
     }
@@ -195,16 +195,21 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSig
             case "activity": {
               const at = Date.now();
               const index = activity.findIndex((s) => s.id === event.id);
+              const previous = index >= 0 ? activity[index] : undefined;
               const step: ActivityStep = {
                 id: event.id,
                 label: event.label,
                 status: event.status,
                 detail: event.detail,
-                startedAt: index >= 0 ? activity[index].startedAt : at,
-                endedAt: event.status === "running" ? undefined : (index >= 0 ? activity[index].endedAt : undefined) ?? at,
+                app: event.app,
+                action: event.action,
+                // Keep a receipt once seen, even if a later update omits it.
+                preview: event.preview ?? previous?.preview,
+                hidden: event.hidden,
+                startedAt: previous?.startedAt ?? at,
+                endedAt: event.status === "running" ? undefined : previous?.endedAt ?? at,
               };
-              const previous = index >= 0 ? activity[index] : undefined;
-              if (previous && previous.status === step.status && previous.label === step.label && previous.detail === step.detail) break;
+              if (previous && sameStep(previous, step)) break;
               if (index >= 0) activity[index] = step;
               else activity.push(step);
               send({ type: "activity", step });
@@ -267,6 +272,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest, requestSig
       controller.abort();
     },
   });
+}
+
+function sameStep(a: ActivityStep, b: ActivityStep): boolean {
+  return (
+    a.status === b.status &&
+    a.label === b.label &&
+    a.detail === b.detail &&
+    a.app === b.app &&
+    a.hidden === b.hidden &&
+    JSON.stringify(a.preview) === JSON.stringify(b.preview)
+  );
 }
 
 /** Fails the run if the agent goes quiet for longer than `ms`, and stops on abort. */

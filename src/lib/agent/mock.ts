@@ -1,5 +1,5 @@
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput } from "./types";
-import type { Artifact } from "@/lib/types";
+import type { Artifact, StepAction, StepPreview } from "@/lib/types";
 
 // MOCK AGENT — for development only. Simulated responses, tool activity, and artifacts that
 // exercise exactly the same AgentAdapter interface as the real backend. Every mock reply is
@@ -13,7 +13,18 @@ export interface MockOptions {
 }
 
 type Step =
-  | { kind: "activity"; id: string; running: string; done: string; ms: number; detail?: string; fail?: string }
+  | {
+      kind: "activity";
+      id: string;
+      running: string;
+      done: string;
+      ms: number;
+      detail?: string;
+      fail?: string;
+      app?: string;
+      action?: StepAction;
+      preview?: StepPreview;
+    }
   | { kind: "artifact"; artifact: Artifact }
   | { kind: "text"; text: string }
   | { kind: "error"; message: string };
@@ -27,13 +38,14 @@ const SCENARIOS: Scenario[] = [
   {
     match: /simulate (a )?failure/i,
     steps: [
-      { kind: "activity", id: "connect", running: "Connecting to Shopify", done: "Connected to Shopify", ms: 700 },
+      { kind: "activity", id: "connect", running: "Connecting to Shopify", done: "Connected to Shopify", ms: 700, app: "shopify" },
       {
         kind: "activity",
         id: "orders",
         running: "Retrieving recent orders",
         done: "Retrieved recent orders",
         ms: 1600,
+        app: "shopify",
         fail: "Shopify didn't respond within 30 seconds",
       },
       { kind: "error", message: "The agent couldn't finish: Shopify timed out. Nothing was changed." },
@@ -42,9 +54,35 @@ const SCENARIOS: Scenario[] = [
   {
     match: /inventory|stock/i,
     steps: [
-      { kind: "activity", id: "catalog", running: "Retrieving product catalog", done: "Retrieved product catalog", ms: 1100, detail: "148 products from Shopify" },
-      { kind: "activity", id: "variants", running: "Processing variants", done: "Processed 629 variants", ms: 1400 },
-      { kind: "activity", id: "velocity", running: "Comparing against 90-day sales", done: "Compared against 90-day sales", ms: 1200 },
+      {
+        kind: "activity",
+        id: "catalog",
+        running: "Checking Shopify products",
+        done: "Checked 148 Shopify products",
+        ms: 1100,
+        app: "shopify",
+        action: "read",
+        preview: {
+          type: "items",
+          items: [
+            { primary: "Pavé Huggie Hoops", secondary: "12 variants" },
+            { primary: "Solitaire Pendant", secondary: "8 variants" },
+            { primary: "Signet Ring", secondary: "14 variants" },
+          ],
+          total: 148,
+        },
+      },
+      {
+        kind: "activity",
+        id: "variants",
+        running: "Totaling stock by variant",
+        done: "Totaled stock for 629 variants",
+        ms: 1400,
+        app: "code",
+        action: "run",
+        preview: { type: "code", language: "python", code: "low = [v for v in variants if v.on_hand / max(v.weekly_sales, 1) < 2]\nprint(len(low))", output: "3" },
+      },
+      { kind: "activity", id: "velocity", running: "Checking 90-day sales in Shopify", done: "Checked 90-day sales in Shopify", ms: 1200, app: "shopify", action: "read" },
       {
         kind: "text",
         text: `Here's where inventory stands across **629 variants**.
@@ -72,10 +110,28 @@ Want me to put the reorder list in a spreadsheet, or draft a note to your castin
   {
     match: /spreadsheet|sheet/i,
     steps: [
-      { kind: "activity", id: "gather", running: "Gathering order data", done: "Gathered 1,284 orders", ms: 1200 },
-      { kind: "activity", id: "create", running: "Creating Google Sheet", done: "Created Google Sheet", ms: 1500 },
-      { kind: "activity", id: "write", running: "Writing rows", done: "Wrote 1,284 rows", ms: 1100 },
-      { kind: "activity", id: "verify", running: "Verifying results", done: "Verified totals match Shopify", ms: 800 },
+      { kind: "activity", id: "gather", running: "Checking Shopify orders", done: "Checked 1,284 Shopify orders", ms: 1200, app: "shopify", action: "read" },
+      { kind: "activity", id: "create", running: "Creating a spreadsheet", done: "Created a spreadsheet", ms: 1500, app: "sheets", action: "write" },
+      {
+        kind: "activity",
+        id: "write",
+        running: "Updating Google Sheets",
+        done: "Updated Google Sheets",
+        ms: 1100,
+        app: "sheets",
+        action: "write",
+        preview: {
+          type: "table",
+          title: "Summary",
+          columns: ["Month", "Orders", "Revenue"],
+          rows: [
+            ["Jan", "96", "$41,220"],
+            ["Feb", "88", "$38,410"],
+            ["Mar", "121", "$52,900"],
+          ],
+        },
+      },
+      { kind: "activity", id: "verify", running: "Checking totals against Shopify", done: "Totals match Shopify", ms: 800, app: "code", action: "run" },
       {
         kind: "artifact",
         artifact: {
@@ -100,9 +156,26 @@ Want me to put the reorder list in a spreadsheet, or draft a note to your castin
   {
     match: /competitor|research/i,
     steps: [
-      { kind: "activity", id: "search", running: "Searching the web", done: "Searched the web", ms: 1300, detail: "6 queries" },
-      { kind: "activity", id: "read", running: "Reading sources", done: "Read 9 sources", ms: 1800 },
-      { kind: "activity", id: "compare", running: "Comparing pricing", done: "Compared pricing", ms: 900 },
+      {
+        kind: "activity",
+        id: "search",
+        running: "Searching the web for “fine gold huggies pricing”",
+        done: "Searched the web for “fine gold huggies pricing”",
+        ms: 1300,
+        app: "web",
+        action: "search",
+        preview: {
+          type: "sources",
+          items: [
+            { title: "Brand A · Huggies", url: "https://example.com/brand-a", domain: "example.com" },
+            { title: "Brand B · Diamond huggies", url: "https://example.com/brand-b", domain: "example.com" },
+            { title: "Brand C · Shipping & returns", url: "https://example.com/brand-c", domain: "example.com" },
+          ],
+          total: 9,
+        },
+      },
+      { kind: "activity", id: "memory", running: "Checking memory", done: "Checked memory", ms: 700, app: "memory", action: "remember", preview: { type: "text", text: "Entry huggies retail at $320; diamond huggies at $880." } },
+      { kind: "activity", id: "compare", running: "Comparing pricing", done: "Compared pricing", ms: 900, app: "code", action: "run" },
       {
         kind: "text",
         text: `Here's a quick read on the competitive set for fine gold huggies in the $300–$900 range.
@@ -128,10 +201,27 @@ Sources: [example.com/brand-a](https://example.com/brand-a), [example.com/brand-
   {
     match: /long|slow/i,
     steps: [
-      { kind: "activity", id: "s1", running: "Searching Gmail", done: "Found 212 vendor emails", ms: 1800 },
-      { kind: "activity", id: "s2", running: "Extracting invoices", done: "Extracted 64 invoices", ms: 2600 },
-      { kind: "activity", id: "s3", running: "Matching invoices to payments", done: "Matched 61 of 64 invoices", ms: 2400 },
-      { kind: "activity", id: "s4", running: "Checking the 3 unmatched invoices", done: "Checked unmatched invoices", ms: 2000 },
+      {
+        kind: "activity",
+        id: "s1",
+        running: "Searching Gmail",
+        done: "Searched Gmail",
+        ms: 1800,
+        app: "gmail",
+        action: "search",
+        preview: {
+          type: "items",
+          items: [
+            { primary: "Invoice #4471", secondary: "Casting Co" },
+            { primary: "March setting work", secondary: "Stone Setter" },
+            { primary: "Packaging order confirmation", secondary: "Box Supply" },
+          ],
+          total: 212,
+        },
+      },
+      { kind: "activity", id: "s2", running: "Extracting invoices", done: "Extracted 64 invoices", ms: 2600, app: "code", action: "run" },
+      { kind: "activity", id: "s3", running: "Checking QuickBooks payments", done: "Checked QuickBooks payments", ms: 2400, app: "quickbooks", action: "read" },
+      { kind: "activity", id: "s4", running: "Matching invoices to payments", done: "Matched 61 of 64 invoices", ms: 2000, app: "code", action: "run" },
       {
         kind: "text",
         text: `Done. **61 of 64 vendor invoices** from the last quarter match a payment.
@@ -229,12 +319,13 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
 
       for (const step of steps) {
         if (step.kind === "activity") {
-          yield { type: "activity", id: step.id, label: step.running, status: "running" };
+          const base = { type: "activity", id: step.id, app: step.app ?? "agent", action: step.action } as const;
+          yield { ...base, label: step.running, status: "running" };
           await wait(step.ms * pace, signal);
           if (step.fail) {
-            yield { type: "activity", id: step.id, label: step.running, status: "failed", detail: step.fail };
+            yield { ...base, label: step.running, status: "failed", detail: step.fail };
           } else {
-            yield { type: "activity", id: step.id, label: step.done, status: "done", detail: step.detail };
+            yield { ...base, label: step.done, status: "done", detail: step.detail, preview: step.preview };
           }
         } else if (step.kind === "artifact") {
           yield { type: "artifact", artifact: step.artifact };

@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 .next/
+.next-qa/
 out/
 dist/
 next-env.d.ts
