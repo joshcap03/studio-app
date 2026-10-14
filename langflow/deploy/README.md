@@ -35,6 +35,32 @@ Python.
   `LANGFLOW_DATABASE_URL=${{Postgres.DATABASE_URL}}`; add a volume mounted at
   `/app/data/langflow` (the image runs as a non-root user; if Langflow can't write there, set
   `RAILWAY_RUN_UID=0`); set the other three variables; generate a public domain.
+- **Google Cloud Run** (free tier covers light use; needs a billing account) with an external
+  Postgres such as Neon (use the **direct**, non-pooled connection string). Its disk is
+  in-memory and resets with the instance; everything that matters is in Postgres. Keep the
+  four variables in Secret Manager, piping values in so they never land in a file:
+
+  ```sh
+  gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
+    artifactregistry.googleapis.com secretmanager.googleapis.com
+  pbpaste | gcloud secrets create langflow-database-url --data-file=-
+  python3 -c "import secrets;print(secrets.token_urlsafe(32),end='')" \
+    | gcloud secrets create langflow-secret-key --data-file=-
+  printf %s '<superuser>' | gcloud secrets create langflow-superuser --data-file=-
+  read -rs P && printf %s "$P" | gcloud secrets create langflow-superuser-password --data-file=-; unset P
+  gcloud projects add-iam-policy-binding "$(gcloud config get project)" \
+    --member="serviceAccount:$(gcloud projects describe "$(gcloud config get project)" --format='value(projectNumber)')-compute@developer.gserviceaccount.com" \
+    --role=roles/secretmanager.secretAccessor
+  gcloud run deploy studio-langflow --source langflow/deploy --region us-central1 \
+    --memory 2Gi --cpu 1 --cpu-boost --min-instances 0 --max-instances 1 --timeout 3600 \
+    --allow-unauthenticated \
+    --set-secrets LANGFLOW_DATABASE_URL=langflow-database-url:latest,LANGFLOW_SECRET_KEY=langflow-secret-key:latest,LANGFLOW_SUPERUSER=langflow-superuser:latest,LANGFLOW_SUPERUSER_PASSWORD=langflow-superuser-password:latest
+  ```
+
+  One instance at most: paused approvals live with a single Langflow worker.
+  `--allow-unauthenticated` only opens the network path; Langflow still requires its API
+  key. With no traffic it scales to zero, so the first run after a quiet spell waits for a
+  cold start (tens of seconds).
 
 Health check: `GET /health` (liveness). `GET /health_check` also probes the database.
 

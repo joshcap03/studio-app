@@ -14,6 +14,7 @@ too; move it into a global variable before exporting.
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -27,7 +28,8 @@ DROP = {"id", "user_id", "folder_id", "workspace_id", "fs_path", "updated_at", "
 # Model fields don't name their key; Langflow reads it from the provider's global variable.
 PROVIDER_VARIABLES = {
     "OpenAI": ["OPENAI_API_KEY"],
-    "OpenAI Compatible": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+    # The lfx-openai-compatible extension (OpenRouter, Together, vLLM, ...), not plain OpenAI.
+    "OpenAI Compatible": ["OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL"],
     "Anthropic": ["ANTHROPIC_API_KEY"],
     "Google Generative AI": ["GOOGLE_API_KEY"],
     "Groq": ["GROQ_API_KEY"],
@@ -62,6 +64,13 @@ def referenced(data):
                 for model in spec["value"]:
                     provider = isinstance(model, dict) and model.get("provider")
                     names.update(PROVIDER_VARIABLES.get(provider, [f"<the {provider} provider's key>"] if provider else []))
+            elif field == "mcp_server" and isinstance(spec.get("value"), dict):
+                # An MCP server's headers and env name global variables Langflow created for
+                # them (e.g. MCP_BROWSERBASE_AUTHORIZATION_<hash>).
+                config = spec["value"].get("config") or {}
+                for value in [*(config.get("headers") or {}).values(), *(config.get("env") or {}).values()]:
+                    if isinstance(value, str) and re.fullmatch(r"[A-Z][A-Z0-9_]+", value):
+                        names.add(value)
             elif spec.get("password") and spec.get("value"):
                 literals.append(f"{node.get('id')}.{field}")
     return sorted(names), literals

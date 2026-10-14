@@ -8,11 +8,20 @@ ENV LANGFLOW_BACKEND_ONLY=true \
     LANGFLOW_AUTO_LOGIN=false \
     LANGFLOW_ENABLE_SIGNUP=false \
     LANGFLOW_NEW_USER_IS_ACTIVE=false \
+    LANGFLOW_CUSTOM_COMPONENT_ADMIN_ONLY=true \
     LANGFLOW_HOST=0.0.0.0 \
     LANGFLOW_WORKERS=1 \
     LANGFLOW_CONFIG_DIR=/app/data/langflow \
     LANGFLOW_DO_NOT_TRACK=true
 # LANGFLOW_SANDBOX_BACKEND is deliberately unset: the shared flow runs no in-process Python.
+
+# Packages the flow's components import that the base image doesn't ship (Exa web search).
+# The import check fails the build, not a chat, if the flow needs something still missing.
+USER root
+RUN if command -v uv >/dev/null; then uv pip install --python /app/.venv/bin/python exa-py==2.25.0; \
+    else /app/.venv/bin/python -m ensurepip && /app/.venv/bin/python -m pip install exa-py==2.25.0; fi \
+ && /app/.venv/bin/python -c "import exa_py, fastapi, httpx, langchain, langchain_core, langgraph, orjson, pydantic, requests"
+USER 1000
 
 # Mount the persistent volume here (Railway volume / Render disk).
 VOLUME ["/app/data/langflow"]

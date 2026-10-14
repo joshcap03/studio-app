@@ -24,14 +24,29 @@ const STATUS: Record<string, ToolkitConnection["status"]> = {
   INITIALIZING: "pending",
 };
 
+// Offered when COMPOSIO_TOOLKITS pins nothing, so members always have something to connect
+// in onboarding and settings. These connect with Composio-managed auth, like apps in chat.
+const DEFAULT_APPS: { slug: string; name: string; description: string; authConfigId?: string }[] = [
+  { slug: "gmail", name: "Gmail", description: "Read, search, and draft email" },
+  { slug: "googlecalendar", name: "Google Calendar", description: "Check and schedule events" },
+  { slug: "googlesheets", name: "Google Sheets", description: "Read and update spreadsheets" },
+  { slug: "googledrive", name: "Google Drive", description: "Find and read files" },
+  { slug: "slack", name: "Slack", description: "Read and send messages" },
+  { slug: "notion", name: "Notion", description: "Search and edit pages" },
+];
+
 export async function listConnections(composioUserId: string): Promise<ConnectionsState> {
   const config = getConfig().composio;
   const sdk = composio();
   if (!config || !sdk) return { configured: false, toolkits: [] };
 
   const accounts = await sdk.connectedAccounts.list({ userIds: [composioUserId] });
-  const offered = config.toolkits.map<ToolkitConnection>((t) => {
-    const matches = accounts.items.filter((a) => a.toolkit.slug === t.slug && a.authConfig.id === t.authConfigId);
+  const apps = config.toolkits.length > 0 ? config.toolkits : DEFAULT_APPS;
+  const offered = apps.map<ToolkitConnection>((t) => {
+    // A pinned auth config must match; a default app counts however it was connected.
+    const matches = accounts.items.filter(
+      (a) => a.toolkit.slug === t.slug && (!t.authConfigId || a.authConfig.id === t.authConfigId),
+    );
     const best = matches.find((a) => a.status === "ACTIVE") ?? matches.find((a) => STATUS[a.status] === "pending");
     return {
       slug: t.slug,
@@ -42,7 +57,8 @@ export async function listConnections(composioUserId: string): Promise<Connectio
     };
   });
   // Apps are dynamic: the agent can connect any app in chat, so also list what this member
-  // connected that isn't in the offered list.
+  // connected that isn't in the offered list. Default apps connect through the tool-router
+  // path in createConnectLink, since they aren't in config.toolkits.
   const listed = new Set(offered.map((t) => t.slug));
   const others = new Map<string, ToolkitConnection>();
   for (const a of accounts.items) {

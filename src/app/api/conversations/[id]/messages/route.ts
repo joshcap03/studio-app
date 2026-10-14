@@ -54,15 +54,17 @@ export async function POST(request: NextRequest, { params }: Context) {
   }
 
   try {
-    const limit = await checkRunLimits(tenant);
-    if (limit) return jsonError(429, limit, "rate_limited");
-
+    // Context (settings and memory recall) loads alongside the limit and skill checks rather
+    // than after them; it only reads, so a refused run just discards it.
+    const context = buildAgentContext(tenant, "text" in input ? input.text : undefined);
+    context.catch(() => undefined);
     const loadSkill = (id: string) => getSkill(tenant, id);
-    let skill = undefined;
-    if (input.kind === "send" && input.skillId) {
-      skill = (await loadSkill(input.skillId)) ?? undefined;
-      if (!skill) return jsonError(404, "Skill not found.");
-    }
+    const [limit, skill] = await Promise.all([
+      checkRunLimits(tenant),
+      input.kind === "send" && input.skillId ? loadSkill(input.skillId) : Promise.resolve(undefined),
+    ]);
+    if (limit) return jsonError(429, limit, "rate_limited");
+    if (skill === null) return jsonError(404, "Skill not found.");
 
     const store = storeFor(tenant);
     // A conversation id that exists for another tenant fails here: the insert collides with
@@ -71,14 +73,14 @@ export async function POST(request: NextRequest, { params }: Context) {
       {
         store,
         adapter: getAgentAdapter(),
-        context: await buildAgentContext(tenant, "text" in input ? input.text : undefined),
+        context: await context,
         remember: memoryEnabled() ? async (content, scope) => (await remember(tenant, content, scope)).id : undefined,
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
         loadAttachment: (attachment) => readAttachment(tenant, attachment),
         loadSkill,
       },
       input.kind === "send"
-        ? { conversationId: conversationId.data, kind: "send", text: input.text, skill, attachmentIds: input.attachmentIds }
+        ? { conversationId: conversationId.data, kind: "send", text: input.text, skill: skill ?? undefined, attachmentIds: input.attachmentIds }
         : { conversationId: conversationId.data, ...input },
     );
     await recordRun(tenant);
