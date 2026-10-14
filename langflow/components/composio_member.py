@@ -13,25 +13,36 @@ which Langflow does restore. If both are present they must agree.
 Apps are dynamic: the session covers Composio's whole catalog, and the agent can send the
 member a link to connect an app in chat (Composio-managed auth unless `toolkits` pins an
 auth config for that app). Wire the output to the Tool Gateway's
-Tools input. Needs the Langflow global variable COMPOSIO_API_KEY (the same Composio project
+Tools input.
+
+Opening a session and listing its tools takes several round trips, so the tools are kept
+for a few minutes per member (and pinned auth configs) in the process's shared component
+cache. The session spans the whole catalog, so an app connected in between still works. Needs the Langflow global variable COMPOSIO_API_KEY (the same Composio project
 the app uses). Source of truth: langflow/components/composio_member.py in the Studio repo.
 """
 
+import hashlib
 import json
 import re
+import time
 
 import httpx
-from lfx.base.mcp.util import update_tools
-from lfx.custom.custom_component.component import Component
+from lfx.base.agents.utils import safe_cache_get, safe_cache_set
+from lfx.base.mcp.util import MCPStreamableHttpClient, update_tools
+from lfx.custom.custom_component.component_with_cache import ComponentWithCache
 from lfx.io import MessageTextInput, MultilineInput, Output, SecretStrInput
 
 # The app's format (workspace_members.composio_user_id). Anything else, including an
 # unfilled "{{composio_user_id}}" placeholder, is refused rather than run as some shared user.
 MEMBER_ID = re.compile(r"^lj_[0-9a-f]{32}$")
 SLUG = re.compile(r"^[a-z0-9_]+$")
+# How long one member's session and tools are reused before a fresh session is opened.
+SESSION_TTL_S = 600
 
 
-class MemberAppsComponent(Component):
+
+
+class MemberAppsComponent(ComponentWithCache):
     display_name = "Member Apps"
     description = "Composio tools scoped to the calling member's own connected apps."
     icon = "plug"
@@ -74,6 +85,16 @@ class MemberAppsComponent(Component):
             return []
 
         base = (self.base_url or "https://backend.composio.dev").rstrip("/")
+        # Keyed by everything the session depends on, the API key included, so a cached
+        # session is only ever reused for the same member under the same settings.
+        key = "member_apps:" + hashlib.sha256(
+            json.dumps([member, toolkits, base, self.api_key], sort_keys=True).encode()
+        ).hexdigest()
+        cached = safe_cache_get(self._shared_component_cache, key)
+        if cached and time.monotonic() - cached[0] < SESSION_TTL_S:
+            self.status = f"{len(cached[1])} tools for this member (reused session)"
+            return cached[1]
+
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 f"{base}/api/v3.1/tool_router/session",
@@ -95,9 +116,13 @@ class MemberAppsComponent(Component):
         _, tools, _ = await update_tools(
             server_name="composio",
             server_config={"mode": "Streamable_HTTP", "url": url, "headers": {"x-api-key": self.api_key}},
+            # Shares MCP connections across runs instead of reconnecting for every call.
+            mcp_streamable_http_client=MCPStreamableHttpClient(component_cache=self._shared_component_cache),
         )
         # The gateway keys on lowercase composio_* names; the session may report them upper-case.
         for tool in tools:
             tool.name = tool.name.lower()
+        if tools:
+            safe_cache_set(self._shared_component_cache, key, (time.monotonic(), tools))
         self.status = f"{len(tools)} tools for this member"
         return tools

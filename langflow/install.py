@@ -18,6 +18,8 @@ Reads LANGFLOW_BASE_URL and LANGFLOW_API_KEY from the environment. Does these th
   8. Removes Python REPL nodes: they run code inside the Langflow server, next to every
      tenant's keys. Pass --keep-python only if the server has LANGFLOW_SANDBOX_BACKEND set.
      (Members' code runs in their own Composio workbench instead.)
+  9. Turns on "Use Cached Server" for the remaining MCP nodes (shared services with one
+     service key, like Browserbase), so their tools aren't re-listed on every run.
 Then prints the LANGFLOW_TWEAKS value the app needs.
 
 --copy saves the result as a new flow instead of changing this one. --strip-apps (with
@@ -130,6 +132,13 @@ def main(argv):
             print("removing in-process Python REPL:", ", ".join(sorted(drop)))
             data["nodes"] = [n for n in data["nodes"] if n["data"]["id"] not in drop]
             data["edges"] = [e for e in data["edges"] if e["source"] not in drop and e["target"] not in drop]
+
+    for n in data["nodes"]:
+        if n["data"].get("type") in ("MCPTools", "MCP"):
+            field = n["data"].get("node", {}).get("template", {}).get("use_cache")
+            if isinstance(field, dict) and not field.get("value"):
+                field["value"] = True
+                print("caching MCP server tools:", n["data"]["id"])
 
     load_skill = by_type("LoadSkill")
     if load_skill:
