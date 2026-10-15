@@ -5,8 +5,9 @@
 Reads LANGFLOW_BASE_URL and LANGFLOW_API_KEY from the environment. Does these things:
   1. Replaces the Tool Gateway's code with langflow/components/tool_gateway.py (adds the
      approval-gated take_action and remember).
-  2. Adds a Workspace Context node feeding the Agent's instructions, carrying the Agent's
-     current prompt as its base, so the app's settings and confirmed memories reach the agent.
+  2. Adds a Workspace Context node feeding the Agent's instructions, with
+     langflow/agent_instructions.md as its base, so the app's settings and confirmed memories
+     reach the agent.
   3. Marks the per-run fields (workspace context, chat input files) as API-editable.
   4. Removes Supermemory MCP nodes. One connection would be shared by every workspace; the
      app keeps memory per workspace and member instead, and the agent saves via remember.
@@ -166,7 +167,7 @@ def main(argv):
     else:
         context_id = "WorkspaceContext-studio"
         base_prompt = prompt_field.get("value") or ""
-    node["template"]["base_prompt"]["value"] = base_prompt
+    node["template"]["base_prompt"]["value"] = open(os.path.join(HERE, "agent_instructions.md")).read() or base_prompt
     node["template"]["workspace_context"]["api_editable"] = True
     pos = agent["position"]
     data["nodes"].append({
