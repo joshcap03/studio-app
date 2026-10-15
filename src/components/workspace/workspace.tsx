@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, PanelLeftOpen, SquarePen } from "lucide-react";
+import { Menu, PanelLeftOpen, Paperclip, SquarePen } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { Tooltip } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -115,11 +115,38 @@ export function Workspace({
   const [notice, setNotice] = useState<string | null>(null);
   const drafts = useRef(new Map<string, string>());
   const composer = useRef<ComposerHandle>(null);
+  /** Whether files are being dragged over the chat; nested enter/leave events are counted. */
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
   const search = useRef<HTMLInputElement>(null);
 
   const desktop = useMedia("(min-width: 768px)", true);
   const [mod, setMod] = useState("Ctrl+");
   useEffect(() => setMod(isMac() ? "⌘" : "Ctrl+"), []);
+
+  // A file dropped outside the chat would otherwise open in the tab and lose the page.
+  useEffect(() => {
+    const guard = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    const reset = () => {
+      dragDepth.current = 0;
+      setDropping(false);
+    };
+    window.addEventListener("dragover", guard);
+    window.addEventListener("drop", guard);
+    window.addEventListener("drop", reset);
+    window.addEventListener("dragend", reset);
+    return () => {
+      window.removeEventListener("dragover", guard);
+      window.removeEventListener("drop", guard);
+      window.removeEventListener("drop", reset);
+      window.removeEventListener("dragend", reset);
+    };
+  }, []);
+
+  /** Files can be dropped while a composer is on screen and the agent can read them. */
+  const acceptsDrop = (e: React.DragEvent) => agent.attachments && composer.current !== null && e.dataTransfer.types.includes("Files");
 
   useEffect(() => {
     try {
@@ -704,7 +731,40 @@ export function Workspace({
           />
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main
+          className="relative flex min-w-0 flex-1 flex-col"
+          onDragEnter={(e) => {
+            if (!acceptsDrop(e)) return;
+            dragDepth.current += 1;
+            setDropping(true);
+          }}
+          onDragOver={(e) => {
+            if (!acceptsDrop(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+          }}
+          onDragLeave={() => {
+            dragDepth.current = Math.max(0, dragDepth.current - 1);
+            if (dragDepth.current === 0) setDropping(false);
+          }}
+          onDrop={(e) => {
+            dragDepth.current = 0;
+            setDropping(false);
+            if (!acceptsDrop(e) || e.dataTransfer.files.length === 0) return;
+            e.preventDefault();
+            composer.current?.addFiles(e.dataTransfer.files);
+          }}
+        >
+          {dropping ? (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-2 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-bg/85 animate-fade-in"
+            >
+              <Paperclip size={22} strokeWidth={1.75} className="text-accent" />
+              <p className="text-[15px] font-medium text-fg">Drop files to attach</p>
+              <p className="text-[13px] text-fg-3">PDF, Word, CSV, text, or images up to 10 MB</p>
+            </div>
+          ) : null}
           <header className="flex h-14 shrink-0 items-center gap-1 px-3 md:px-4">
             <IconButton label="Open sidebar" className="md:hidden" onClick={() => setDrawerOpen(true)}>
               <Menu size={18} strokeWidth={1.75} />

@@ -23,6 +23,8 @@ export interface ComposerHandle {
   setValue(value: string): void;
   /** Attach a skill to the next message. */
   attachSkill(skill: MessageSkill): void;
+  /** Attach files, e.g. dropped anywhere on the chat. */
+  addFiles(files: FileList | File[]): void;
 }
 
 /** What goes with a message besides its text. */
@@ -74,7 +76,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [highlight, setHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
-  const [dragging, setDragging] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const sent = useRef(new Set<string>());
@@ -111,6 +112,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     },
     attachSkill: (next) => {
       setSkill(next);
+      focusEnd(value);
+    },
+    addFiles: (list) => {
+      addFiles(list);
       focusEnd(value);
     },
   }));
@@ -228,23 +233,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         e.preventDefault();
         submit();
       }}
-      onDragOver={(e) => {
-        if (!allowFiles || !e.dataTransfer.types.includes("Files")) return;
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
-      }}
-      onDrop={(e) => {
-        if (!allowFiles || e.dataTransfer.files.length === 0) return;
-        e.preventDefault();
-        setDragging(false);
-        addFiles(e.dataTransfer.files);
-      }}
-      className={`group/composer relative flex cursor-text flex-wrap items-end gap-2 border bg-surface shadow-composer transition-[border-color,box-shadow] duration-200 focus-within:border-line-strong ${
-        dragging ? "border-accent" : "border-line"
-      } ${hero ? "rounded-[20px] p-2.5 pl-[18px]" : "rounded-[18px] p-2 pl-4"}`}
+      className={`group/composer relative flex cursor-text flex-wrap items-end gap-2 border border-line bg-surface shadow-composer transition-[border-color,box-shadow] duration-200 focus-within:border-line-strong ${hero ? "rounded-[20px] p-2.5 pl-[18px]" : "rounded-[18px] p-2 pl-4"}`}
       onMouseDown={(e) => {
         // Clicking the padding focuses the field, like a native input.
         if (e.target === e.currentTarget) {
