@@ -27,9 +27,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           initialMode={mode === "signup" ? "signup" : "signin"}
           notice={
             error === "confirm"
-              ? "That confirmation link is invalid or expired. Sign in or create the account again."
+              ? "That confirmation link has expired or was already used. Try signing in, or sign up again for a new link."
               : error === "reset"
-                ? "That reset link is invalid or expired. Request a new one."
+                ? "That reset link has expired or was already used. Request a new one below."
                 : null
           }
         />

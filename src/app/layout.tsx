@@ -7,7 +7,7 @@ const newsreader = Newsreader({ subsets: ["latin"], variable: "--font-newsreader
 
 export const metadata: Metadata = {
   title: { default: "Studio", template: "%s · Studio" },
-  description: "An AI workspace for running your business.",
+  description: "An AI agent that knows your business, works in your apps, and asks before it changes anything.",
   robots: { index: false, follow: false },
 };
 

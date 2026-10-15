@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, Briefcase, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
+import { CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 import { forwardRef, useEffect } from "react";
 import type { WorkspaceSkill } from "@/lib/types";
 import { Composer, type ComposerHandle, type MessageExtras } from "./composer";
@@ -15,10 +15,10 @@ interface Suggestion {
 }
 
 const SUGGESTIONS: Suggestion[] = [
-  { icon: Boxes, label: "Analyze my inventory", prompt: "Analyze my inventory and flag anything that needs attention." },
-  { icon: Sheet, label: "Create a spreadsheet", prefill: "Create a spreadsheet of " },
+  { icon: Inbox, label: "Triage my inbox", prompt: "Go through my recent email. Tell me what needs a reply and draft the easy ones." },
+  { icon: CalendarDays, label: "Prep my week", prompt: "Look at my calendar for this week and tell me what I should prepare for." },
   { icon: Search, label: "Research a competitor", prefill: "Research this competitor and summarize their pricing and positioning: " },
-  { icon: Briefcase, label: "Help with operations", prompt: "Help me with business operations. What can you take off my plate?" },
+  { icon: Sheet, label: "Build a spreadsheet", prefill: "Build a spreadsheet of " },
 ];
 
 interface Props {

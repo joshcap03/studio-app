@@ -174,6 +174,8 @@ export interface ToolkitConnection {
   slug: string;
   name: string;
   description?: string;
+  /** Composio's logo for the app (https). */
+  logo?: string;
   status: "connected" | "pending" | "disconnected";
   connectionId?: string;
 }

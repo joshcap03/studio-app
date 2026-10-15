@@ -27,12 +27,12 @@ const STATUS: Record<string, ToolkitConnection["status"]> = {
 // Offered when COMPOSIO_TOOLKITS pins nothing, so members always have something to connect
 // in onboarding and settings. These connect with Composio-managed auth, like apps in chat.
 const DEFAULT_APPS: { slug: string; name: string; description: string; authConfigId?: string }[] = [
-  { slug: "gmail", name: "Gmail", description: "Read, search, and draft email" },
-  { slug: "googlecalendar", name: "Google Calendar", description: "Check and schedule events" },
-  { slug: "googlesheets", name: "Google Sheets", description: "Read and update spreadsheets" },
-  { slug: "googledrive", name: "Google Drive", description: "Find and read files" },
-  { slug: "slack", name: "Slack", description: "Read and send messages" },
-  { slug: "notion", name: "Notion", description: "Search and edit pages" },
+  { slug: "gmail", name: "Gmail", description: "Triage your inbox and draft replies" },
+  { slug: "googlecalendar", name: "Google Calendar", description: "See your schedule and book meetings" },
+  { slug: "googlesheets", name: "Google Sheets", description: "Pull numbers and build reports" },
+  { slug: "googledrive", name: "Google Drive", description: "Find and read your files" },
+  { slug: "slack", name: "Slack", description: "Catch up on channels and post updates" },
+  { slug: "notion", name: "Notion", description: "Search your docs and keep them current" },
 ];
 
 export async function listConnections(composioUserId: string): Promise<ConnectionsState> {
@@ -56,6 +56,7 @@ export async function listConnections(composioUserId: string): Promise<Connectio
       connectionId: best?.id,
     };
   });
+  await Promise.all(offered.map(async (t) => (t.logo = (await toolkitInfo(sdk, t.slug)).logo)));
   // Apps are dynamic: the agent can connect any app in chat, so also list what this member
   // connected that isn't in the offered list. Default apps connect through the tool-router
   // path in createConnectLink, since they aren't in config.toolkits.
@@ -68,7 +69,7 @@ export async function listConnections(composioUserId: string): Promise<Connectio
     if (prev?.status === "connected") continue;
     others.set(a.toolkit.slug, { slug: a.toolkit.slug, name: a.toolkit.slug, status, connectionId: a.id });
   }
-  await Promise.all([...others.values()].map(async (t) => (t.name = await appName(sdk, t.slug))));
+  await Promise.all([...others.values()].map(async (t) => Object.assign(t, await toolkitInfo(sdk, t.slug))));
   return { configured: true, toolkits: [...offered, ...[...others.values()].sort((x, y) => x.name.localeCompare(y.name))] };
 }
 
@@ -99,17 +100,17 @@ export async function disconnect(composioUserId: string, toolkitSlug: string): P
   return owned.length > 0;
 }
 
-const appNames = new Map<string, string>();
+const toolkitInfos = new Map<string, { name: string; logo?: string }>();
 
-/** Composio's display name for an app connected in chat ("googlecalendar" → "Google Calendar"). */
-async function appName(sdk: Composio, slug: string): Promise<string> {
-  const known = appNames.get(slug);
+/** Composio's display name and logo for an app ("googlecalendar" → "Google Calendar"). */
+async function toolkitInfo(sdk: Composio, slug: string): Promise<{ name: string; logo?: string }> {
+  const known = toolkitInfos.get(slug);
   if (known) return known;
-  const name = await sdk.toolkits
-    .get(slug)
-    .then((t) => t.name)
-    .catch(() => null);
-  if (!name) return slug.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  appNames.set(slug, name);
-  return name;
+  const toolkit = await sdk.toolkits.get(slug).catch(() => null);
+  if (!toolkit) return { name: slug.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) };
+  // Only https logos reach the browser.
+  const logo = toolkit.meta?.logo?.startsWith("https://") ? toolkit.meta.logo : undefined;
+  const info = { name: toolkit.name, logo };
+  toolkitInfos.set(slug, info);
+  return info;
 }

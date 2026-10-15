@@ -2,7 +2,7 @@
 
 import { Check, Plug } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ConnectionsState } from "@/lib/types";
+import type { ConnectionsState, ToolkitConnection } from "@/lib/types";
 
 /**
  * The signed-in member's own connected apps. Connecting sends them to the provider's
@@ -53,10 +53,10 @@ export function ConnectionsList({ returnTo }: { returnTo: "/onboarding" | "/sett
   if (state && !state.configured) {
     return (
       <div className="rounded-xl border border-dashed border-line-strong px-4 py-5 text-[14px] text-fg-2">
-        <p className="font-medium text-fg">Connected apps aren&apos;t set up on this server yet.</p>
+        <p className="font-medium text-fg">Connected apps aren&apos;t available yet.</p>
         <p className="mt-1 text-fg-3">
-          Once Composio is configured, you&apos;ll connect Gmail, Google Sheets, and more here. Each person&apos;s
-          connections stay private to them.
+          Once they&apos;re set up, you&apos;ll connect Gmail, Google Sheets, and more here. Each person&apos;s connections
+          stay private to them.
         </p>
       </div>
     );
@@ -67,8 +67,7 @@ export function ConnectionsList({ returnTo }: { returnTo: "/onboarding" | "/sett
       <div className="rounded-xl border border-dashed border-line-strong px-4 py-5 text-[14px] text-fg-2">
         <p className="font-medium text-fg">No apps connected yet.</p>
         <p className="mt-1 text-fg-3">
-          Ask the agent to use an app (&quot;check my Gmail&quot;) and it will send you a link to connect it. Your connections stay
-          private to you.
+          Ask the agent to use one, like &quot;what&apos;s in my inbox?&quot;, and it will give you a link to connect it.
         </p>
       </div>
     );
@@ -79,13 +78,11 @@ export function ConnectionsList({ returnTo }: { returnTo: "/onboarding" | "/sett
       <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
         {state?.toolkits.map((t) => (
           <li key={t.slug} className="flex items-center gap-3 px-4 py-3">
-            <span className="flex size-8 items-center justify-center rounded-lg bg-subtle text-fg-2">
-              <Plug size={15} strokeWidth={1.75} />
-            </span>
+            <AppLogo app={t} />
             <span className="min-w-0 flex-1">
               <span className="block text-[14px] font-medium">{t.name}</span>
               <span className="block truncate text-[12.5px] text-fg-3">
-                {t.status === "connected" ? "Connected" : t.status === "pending" ? "Waiting for authorization" : t.description ?? "Not connected"}
+                {t.status === "connected" ? "Connected" : t.status === "pending" ? "Not finished connecting" : t.description ?? "Not connected"}
               </span>
             </span>
             {t.status === "connected" ? (
@@ -119,5 +116,19 @@ export function ConnectionsList({ returnTo }: { returnTo: "/onboarding" | "/sett
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** The app's own logo when Composio has one; a plug otherwise, or if it fails to load. */
+function AppLogo({ app }: { app: ToolkitConnection }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-subtle text-fg-2">
+      {app.logo && !failed ? (
+        <img src={app.logo} alt="" width={18} height={18} className="size-[18px] object-contain" onError={() => setFailed(true)} />
+      ) : (
+        <Plug size={15} strokeWidth={1.75} />
+      )}
+    </span>
   );
 }
