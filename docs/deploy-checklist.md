@@ -1,7 +1,7 @@
 # Deploy checklist (Vercel + Supabase Cloud)
 
 Do these in order. `APP_URL` is the production URL (e.g. `https://studio.example.com`, or the
-`*.vercel.app` URL until a domain is attached). Background is in README.md, "Deploying".
+`*.vercel.app` URL until a domain is attached). Background is in docs/development.md, "Deploying".
 
 ## 0. Before you start
 
