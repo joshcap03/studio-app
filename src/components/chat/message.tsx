@@ -9,7 +9,7 @@ import { ActivityLog } from "./activity";
 import { ArtifactCard } from "./artifact-card";
 import { AttachmentList } from "./attachments";
 import { Markdown } from "./markdown";
-import { ApprovalCard, MemoryProposalCard } from "./requests";
+import { ApprovalCard, MemoryProposalCard, QuestionCard } from "./requests";
 
 interface UserProps {
   message: ChatMessage;
@@ -122,9 +122,11 @@ interface AssistantProps {
   /** Present while the latest reply waits on an approval and can be answered. */
   onDecide?: (approvalId: string, decision: "approve" | "reject") => void;
   onProposal?: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
+  /** Present while the latest reply's questions can be answered; sends the answer as a message. */
+  onAnswer?: (text: string) => void;
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal }: AssistantProps) {
+export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal, onAnswer }: AssistantProps) {
   const streaming = message.status === "streaming";
   const hasContent = message.content.trim().length > 0;
   // Show live progress until text arrives, and again whenever the agent starts a new step.
@@ -153,6 +155,10 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
         <div className={message.approvals?.length ? "mt-4" : undefined}>
           <Markdown content={message.content} />
         </div>
+      ) : null}
+
+      {message.questions?.length ? (
+        <QuestionCard questions={message.questions} onAnswer={onAnswer && message.status === "complete" ? onAnswer : undefined} />
       ) : null}
 
       {message.artifacts.length > 0 ? (

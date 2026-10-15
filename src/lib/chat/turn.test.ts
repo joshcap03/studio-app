@@ -680,6 +680,26 @@ describe("edits, files, and memory suggestions", () => {
     expect(quiet.some((e) => e.type === "timeline")).toBe(false);
   });
 
+  it("keeps the agent's questions on the reply, validated, even with no text", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const adapter = scripted([
+      {
+        type: "questions",
+        questions: [
+          { question: " Which   tone? ", header: "Tone", options: [{ label: "Warm" }, { label: "warm" }, { label: "Formal", description: "Like a letter" }] },
+          { question: "Only one option", options: [{ label: "A" }] },
+        ],
+      },
+    ]);
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "x" }));
+    const reply = (await store.listMessages(id))[1];
+    const expected = [{ question: "Which tone?", header: "Tone", options: [{ label: "Warm" }, { label: "Formal", description: "Like a letter" }], multiSelect: false }];
+    expect(reply.status).toBe("complete");
+    expect(reply.questions).toEqual(expected);
+    expect(events.find((e) => e.type === "questions")).toEqual({ type: "questions", questions: expected });
+  });
+
   it("keeps the agent's memory suggestions on the reply, pending, when there's no memory to save to", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

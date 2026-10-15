@@ -346,6 +346,17 @@ export function toolTimelines(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Multiple-choice questions the agent asked through ask_user (validated by the turn). */
+export function toolQuestions(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    if (isRecord(result) && isRecord(result.ask_user)) events.push({ type: "questions", questions: result.ask_user.questions });
+  }
+  return events;
+}
+
 /** The step of the tool call a run paused on, so the resumed call settles it. */
 interface PausedStep {
   /** The step's id (`<message key>:<call index>`). */
@@ -665,12 +676,12 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         let lastBot: LangflowMessage | undefined;
         const seenArtifacts = new Set<string>();
         const seenProposals = new Set<string>();
-        const seenTimelines = new Set<string>();
-        const newTimelines = (message: LangflowMessage) =>
-          toolTimelines(message).filter((t) => {
+        const seenReports = new Set<string>();
+        const newReports = (message: LangflowMessage) =>
+          [...toolTimelines(message), ...toolQuestions(message)].filter((t) => {
             const key = JSON.stringify(t);
-            if (seenTimelines.has(key)) return false;
-            seenTimelines.add(key);
+            if (seenReports.has(key)) return false;
+            seenReports.add(key);
             return true;
           });
         // A resumed run reports the approved (or declined) call again, in a new bot message.
@@ -752,7 +763,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   yield a;
                 }
               }
-              yield* newTimelines(message);
+              yield* newReports(message);
               for (const p of toolMemoryProposals(message)) {
                 if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {
                   seenProposals.add(p.content);
@@ -796,7 +807,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               if (final) {
                 yield* activityFor(final, lastBot?.id ?? final.id ?? "message");
                 // A suggestion made right before the end may only arrive in the result message.
-                yield* newTimelines(final);
+                yield* newReports(final);
                 for (const p of toolMemoryProposals(final)) {
                   if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {
                     seenProposals.add(p.content);

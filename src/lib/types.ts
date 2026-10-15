@@ -160,6 +160,8 @@ export interface ChatMessage {
   skill?: MessageSkill | null;
   /** A "why?" investigation's timeline, as the agent reported it (see Timeline). */
   timeline?: Timeline | null;
+  /** Multiple-choice questions the agent asked at the end of this reply. */
+  questions?: Question[] | null;
   createdAt: number;
 }
 
@@ -262,6 +264,7 @@ export type StreamEvent =
   | { type: "approval"; approval: Approval }
   | { type: "memory-proposal"; proposal: MemoryProposal }
   | { type: "timeline"; timeline: Timeline }
+  | { type: "questions"; questions: Question[] }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
 export const MAX_MESSAGE_LENGTH = 32_000;
@@ -349,3 +352,19 @@ export interface Timeline {
 
 export const MAX_TIMELINE_ENTRIES = 40;
 export const MAX_TIMELINE_CAUSES = 5;
+
+/**
+ * A question the agent asked the member, with choices to click. Answering sends the picked
+ * labels as the member's next message; the member can also type their own answer instead.
+ */
+export interface Question {
+  question: string;
+  /** A short label for the question, e.g. "Tone". */
+  header?: string;
+  options: { label: string; description?: string }[];
+  /** More than one option can be picked. */
+  multiSelect: boolean;
+}
+
+export const MAX_QUESTIONS = 3;
+export const MAX_QUESTION_OPTIONS = 4;

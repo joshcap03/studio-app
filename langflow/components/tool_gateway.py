@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -45,22 +45,63 @@ class MemoryArgs(BaseModel):
     category: str = Field(default="other", description="What the fact is about: customers, suppliers, products (products and pricing), policies (policies and rules), voice (tone and style), team, or other.")
 
 
-class TimelineEntryArgs(BaseModel):
-    when: str = Field(description="When it happened, from the record: ISO date or date-time, e.g. 2026-10-06.")
-    what: str = Field(description="What happened, in one plain sentence, e.g. 'Stripe refunded 4 orders ($612)'.")
-    app: str = Field(default="", description="The app's toolkit slug in lower case, e.g. stripe, shopify, gmail, googlecalendar.")
-    url: str = Field(default="", description="The record's https link exactly as a tool result returned it; empty if none.")
-
-
-class TimelineCauseArgs(BaseModel):
-    text: str = Field(description="One likely cause, in a plain sentence.")
-    entries: list[int] = Field(default_factory=list, description="Indexes into entries that support this cause.")
+# Nested argument shapes are plain JSON schema rather than nested models: LangChain rebuilds
+# a tool's argument model where nested model names can't be resolved inside Langflow, and the
+# agent then sees the tool with no arguments at all.
+TIMELINE_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "when": {"type": "string", "description": "When it happened, from the record: ISO date or date-time, e.g. 2026-10-06."},
+        "what": {"type": "string", "description": "What happened, in one plain sentence, e.g. 'Stripe refunded 4 orders ($612)'."},
+        "app": {"type": "string", "description": "The app's toolkit slug in lower case, e.g. stripe, shopify, gmail, googlecalendar."},
+        "url": {"type": "string", "description": "The record's https link exactly as a tool result returned it; empty if none."},
+    },
+    "required": ["when", "what"],
+}
+TIMELINE_CAUSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string", "description": "One likely cause, in a plain sentence."},
+        "entries": {"type": "array", "items": {"type": "integer"}, "description": "Indexes into entries that support this cause."},
+    },
+    "required": ["text"],
+}
 
 
 class TimelineArgs(BaseModel):
     question: str = Field(description="What is being explained, e.g. 'Why revenue dipped on Tue Oct 6'.")
-    entries: list[TimelineEntryArgs] = Field(description="Dated events found in the owner's apps, one per record.")
-    causes: list[TimelineCauseArgs] = Field(default_factory=list, description="Likely causes, most likely first.")
+    entries: list[dict] = Field(description="Dated events found in the owner's apps, one per record.",
+                                json_schema_extra={"items": TIMELINE_ENTRY_SCHEMA})
+    causes: list[dict] = Field(default_factory=list, description="Likely causes, most likely first.",
+                               json_schema_extra={"items": TIMELINE_CAUSE_SCHEMA})
+
+
+QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "question": {"type": "string", "description": "The question, one sentence ending in a question mark."},
+        "header": {"type": "string", "description": "A 1-3 word label for it, e.g. 'Tone' or 'Date range'."},
+        "options": {
+            "type": "array", "minItems": 2, "maxItems": 4,
+            "description": "2-4 distinct choices, your recommendation first. Don't add 'Other'; the owner can always type their own answer.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "description": "The choice as the owner would say it, 1-6 words."},
+                    "description": {"type": "string", "description": "Optional: what picking it means, one short sentence."},
+                },
+                "required": ["label"],
+            },
+        },
+        "multi_select": {"type": "boolean", "description": "True when more than one choice can apply."},
+    },
+    "required": ["question", "options"],
+}
+
+
+class AskArgs(BaseModel):
+    questions: list[dict] = Field(description="1-3 questions, asked together.",
+                                  json_schema_extra={"items": QUESTION_SCHEMA, "minItems": 1, "maxItems": 3})
 
 
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
@@ -68,9 +109,8 @@ DiscoverArgs.model_rebuild()
 ExecuteArgs.model_rebuild()
 ActionArgs.model_rebuild()
 MemoryArgs.model_rebuild()
-TimelineEntryArgs.model_rebuild()
-TimelineCauseArgs.model_rebuild()
 TimelineArgs.model_rebuild()
+AskArgs.model_rebuild()
 
 
 def words(s):
@@ -468,9 +508,32 @@ class ToolGatewayComponent(Component):
         async def report_timeline_async(question: str, entries: list, causes: list | None = None) -> str:
             return report_timeline(question, entries, causes)
 
+        def ask_user(questions: list) -> str:
+            # Like remember, this changes nothing and doesn't wait: the app reads the structured
+            # result and shows the questions as buttons under the reply. The owner's answer
+            # arrives as their next message.
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
+            items = []
+            for q in [plain(q) for q in (questions or [])][:3]:
+                options = [{"label": o} if isinstance(o, str) else plain(o) for o in (q.get("options") or [])][:4]
+                if q.get("question") and len(options) >= 2:
+                    items.append({**q, "options": options})
+            if not items:
+                return "Nothing to ask: each question needs text and at least two options."
+            return json.dumps({
+                "ask_user": {"questions": items},
+                "note": ("The owner now sees these questions with the options as buttons. End your reply here: "
+                         "at most one short sentence, without repeating the question or listing the options. "
+                         "Their answer arrives as their next message."),
+            })
+
+        async def ask_user_async(questions: list) -> str:
+            return ask_user(questions)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, ask_user"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -509,5 +572,14 @@ class ToolGatewayComponent(Component):
                 description=("Only when the request asks you to investigate why something happened: after reading the "
                              "owner's apps, report the dated events you found, each with the record's link exactly as "
                              "a tool returned it, and the likely causes. The owner sees it as a timeline. Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=ask_user, coroutine=ask_user_async, name="ask_user",
+                args_schema=AskArgs,
+                description=("Ask the owner a question with a few choices to click, when you need their decision or a "
+                             "missing detail and can't sensibly pick a default yourself (which of several matching "
+                             "records, which way to go, a preference). Don't use it for yes/no on an action (take_action "
+                             "already asks), or for things you can look up. Call it as the last thing in your reply; "
+                             "their answer arrives as the next message."),
             ),
         ]

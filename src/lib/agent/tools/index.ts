@@ -247,6 +247,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "report_timeline":
       // Shown as the Timeline in Results, not as a step.
       return { labels: { running: "Putting the timeline together", done: "Put the timeline together" }, app: "agent", action: "note", hidden: true };
+    case "ask_user":
+      // The questions are shown under the reply as choices to click.
+      return { labels: { running: "Writing a question for you", done: "Asked you a question" }, app: "agent", action: "note", hidden: true };
     case "remember":
     case "propose_memory":
       // What was remembered is shown on its own line under the reply, with an Undo.

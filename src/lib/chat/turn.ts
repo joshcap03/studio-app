@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, type AgentTenantContext } from "@/lib/agent/types";
 import { STALE_STREAM_MS, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
 import { renderSkillMessage } from "@/lib/skills/render";
+import { buildQuestions } from "./questions";
 import { buildTimeline, linksSeen } from "./timeline";
 import {
   ARTIFACT_KINDS,
@@ -15,6 +16,7 @@ import {
   type MemoryProposal,
   type MessageStatus,
   type StreamEvent,
+  type Question,
   type Timeline,
 } from "@/lib/types";
 
@@ -340,6 +342,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       const remembering: Promise<void>[] = [];
       let timeline: Timeline | null = assistant.timeline ?? null;
+      let questions: Question[] | null = assistant.questions ?? null;
       let status: MessageStatus = "complete";
       let error: string | null = null;
       let paused = false;
@@ -348,7 +351,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const checkpoint = () => {
         lastCheckpoint = Date.now();
         saving = saving
-          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline }))
+          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, questions }))
           .catch((e) => console.error("[turn] checkpoint failed", e));
       };
       const heartbeat = setInterval(() => {
@@ -438,6 +441,14 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               }
               break;
             }
+            case "questions": {
+              const built = buildQuestions(event.questions);
+              if (built) {
+                questions = built;
+                send({ type: "questions", questions: built });
+              }
+              break;
+            }
             case "memory-proposal": {
               const text = event.content.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_LENGTH);
               if (!text || proposals.length >= MAX_PROPOSALS || proposals.some((p) => p.content === text)) break;
@@ -491,7 +502,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         }
         if (paused) {
           status = "awaiting";
-        } else if (!content.trim() && artifacts.length === 0 && proposals.length === 0) {
+        } else if (!content.trim() && artifacts.length === 0 && proposals.length === 0 && !questions) {
           status = "error";
           error = "The agent finished without a response.";
         }
@@ -532,7 +543,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await saving;
       let updated = summary;
       try {
-        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, error });
+        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, questions, error });
         updated = await store.touchConversation(conversationId);
       } catch (e) {
         console.error("[turn] failed to save final state", e);
@@ -540,7 +551,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       finished();
       send({
         type: "end",
-        message: { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, error },
+        message: { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, questions, error },
         conversation: updated,
       });
       if (open) {

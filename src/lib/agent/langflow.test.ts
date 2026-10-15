@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, templateValues, toolTimelines, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, templateValues, toolQuestions, toolTimelines, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -596,6 +596,22 @@ describe("Langflow approvals", () => {
     const chatter = { type: "tool_use", name: "search", tool_input: {}, output: "timeline: made up", error: null };
     const message = bot("", [tool, chatter]) as never;
     expect(toolTimelines(message)).toEqual([{ type: "timeline", timeline }]);
+  });
+
+  it("passes on questions only from structured ask_user output, and hides the step", async () => {
+    const questions = [{ question: "Which store?", options: [{ label: "Main" }, { label: "Outlet" }] }];
+    const ask = {
+      type: "tool_use",
+      name: "ask_user",
+      tool_input: { questions },
+      output: { type: "tool", tool_call_id: "c3", content: JSON.stringify({ ask_user: { questions }, note: "x" }) },
+      error: null,
+    };
+    const chatter = { type: "tool_use", name: "search", tool_input: {}, output: JSON.stringify({ questions }), error: null };
+    expect(toolQuestions(bot("", [ask, chatter]) as never)).toEqual([{ type: "questions", questions }]);
+    const { events } = await run(base, streamResponse([frame("add_message", bot("One question.", [ask])), frame("end", {})]));
+    expect(events.filter((e) => e.type === "questions")).toEqual([{ type: "questions", questions }]);
+    expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ hidden: true });
   });
 
   it("passes on a memory suggestion that only arrives in the job's result message", async () => {

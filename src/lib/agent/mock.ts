@@ -31,7 +31,8 @@ type Step =
   | { kind: "error"; message: string }
   | { kind: "approval"; summary: string; app: string; details: [string, string][] }
   | { kind: "remember"; content: string }
-  | { kind: "timeline"; timeline: unknown };
+  | { kind: "timeline"; timeline: unknown }
+  | { kind: "questions"; questions: unknown };
 
 interface Scenario {
   match: RegExp;
@@ -89,6 +90,33 @@ const SCENARIOS: Scenario[] = [
       {
         kind: "text",
         text: "This is a mock investigation. Most likely, the gold huggies (your top seller) were out of stock from Oct 5 because the clasp shipment slipped, and a $212 refund landed the same day. I couldn't check ad spend; no ads app is connected.",
+      },
+    ],
+  },
+  {
+    // Asks before going on; the member's pick arrives as their next message.
+    match: /\bask me\b/i,
+    steps: [
+      { kind: "text", text: "A couple of quick questions first (mock)." },
+      {
+        kind: "questions",
+        questions: [
+          {
+            question: "Which customers should this go to?",
+            header: "Audience",
+            options: [
+              { label: "Everyone", description: "All 1,240 subscribers" },
+              { label: "Repeat buyers", description: "Ordered at least twice" },
+              { label: "Lapsed customers", description: "No order in 6 months" },
+            ],
+          },
+          {
+            question: "What should it cover?",
+            header: "Topics",
+            multi_select: true,
+            options: [{ label: "New arrivals" }, { label: "Restocks" }, { label: "A discount code" }],
+          },
+        ],
       },
     ],
   },
@@ -482,6 +510,9 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "timeline") {
           await wait(500 * pace, signal);
           yield { type: "timeline", timeline: step.timeline };
+        } else if (step.kind === "questions") {
+          await wait(400 * pace, signal);
+          yield { type: "questions", questions: step.questions };
         } else if (step.kind === "remember") {
           yield { type: "memory-proposal", content: step.content, scope: "workspace", category: "suppliers" };
         } else if (!streaming) {

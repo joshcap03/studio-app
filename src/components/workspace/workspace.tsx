@@ -382,6 +382,9 @@ export function Workspace({
           case "timeline":
             patchMessage(conversationId, assistantId, (m) => ({ ...m, timeline: event.timeline }));
             break;
+          case "questions":
+            patchMessage(conversationId, assistantId, (m) => ({ ...m, questions: event.questions }));
+            break;
           case "end":
             cancelAnimationFrame(frame);
             buffered = "";
@@ -850,6 +853,8 @@ export function Workspace({
 
   const isRunning = activeId ? running.has(activeId) : false;
   const awaiting = activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "awaiting";
+  const asking =
+    !isRunning && activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "complete" && Boolean(activeThread.messages.at(-1)?.questions?.length);
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
   const draftKey = activeId ?? "new";
   const projectDraftKey = `project:${activeProjectId}`;
@@ -1041,6 +1046,7 @@ export function Workspace({
               onEdit={edit}
               onDecide={decide}
               onProposal={answerProposal}
+              onAnswer={send}
               onOpenPanel={openPanel}
               sendCount={sendCount}
               footer={
@@ -1062,7 +1068,7 @@ export function Workspace({
                     placeholder={isRunning ? "Redirect the agent…" : "Reply…"}
                     autoFocus={desktop}
                     allowFiles={agent.attachments}
-                    hint={awaiting ? "Approve or decline above, or reply to change course" : undefined}
+                    hint={awaiting ? "Approve or decline above, or reply to change course" : asking ? "Pick an answer above, or type your own" : undefined}
                   />
                   {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
                 </div>

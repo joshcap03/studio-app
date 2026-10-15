@@ -1,13 +1,13 @@
 "use client";
 
-import { Ban, BookmarkCheck, BookmarkPlus, Check, Clock, X } from "lucide-react";
+import { ArrowUp, Ban, BookmarkCheck, BookmarkPlus, Check, Clock, MessageCircleQuestion, X } from "lucide-react";
 import { useState } from "react";
 import { appName } from "@/lib/apps";
-import type { Approval, MemoryProposal } from "@/lib/types";
+import type { Approval, MemoryProposal, Question } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
 
-// Cards for what the agent asked of the member: an action to approve before it runs, and a
-// fact to remember. Rendered only from what the backend reported; nothing here acts until
+// Cards for what the agent asked of the member: an action to approve before it runs, a
+// question to answer, and a fact to remember. Rendered only from what the backend reported; nothing here acts until
 // the member clicks.
 
 interface ApprovalProps {
@@ -163,6 +163,122 @@ export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
           </button>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+interface QuestionsProps {
+  questions: Question[];
+  /** Present only while these can still be answered (the latest reply, agent idle). */
+  onAnswer?: (text: string) => void;
+}
+
+/** The message that answers `questions` with the member's picks. */
+export function answerText(questions: Question[], picks: string[][]): string {
+  if (questions.length === 1) return picks[0].join(", ");
+  return questions.map((q, i) => `${q.header ? `${q.header}:` : q.question} ${picks[i].join(", ")}`).join("\n");
+}
+
+/**
+ * Questions the agent asked, with choices to click. One single-choice question sends on
+ * click; otherwise the member picks for each and sends. Typing in the composer answers too.
+ */
+export function QuestionCard({ questions, onAnswer }: QuestionsProps) {
+  const [picks, setPicks] = useState<string[][]>(() => questions.map(() => []));
+  const [sent, setSent] = useState(false);
+  const instant = questions.length === 1 && !questions[0].multiSelect;
+  const complete = picks.every((p) => p.length > 0);
+
+  if (!onAnswer || sent) {
+    return (
+      <section aria-label="Question from the agent" className="mt-3 flex flex-col gap-1 animate-fade-up">
+        {questions.map((q, i) => (
+          <p key={i} className="flex items-start gap-2 text-[13px] leading-[1.5] text-fg-3">
+            <MessageCircleQuestion size={14} className="mt-[3px] shrink-0 text-fg-4" />
+            <span className="min-w-0 [overflow-wrap:anywhere]">{q.question}</span>
+          </p>
+        ))}
+      </section>
+    );
+  }
+
+  function submit(next: string[][]) {
+    if (sent || !onAnswer || !next.every((p) => p.length > 0)) return;
+    setSent(true);
+    onAnswer(answerText(questions, next));
+  }
+
+  function pick(qi: number, label: string) {
+    const q = questions[qi];
+    const current = picks[qi];
+    const value = q.multiSelect ? (current.includes(label) ? current.filter((l) => l !== label) : [...current, label]) : [label];
+    const next = picks.map((p, i) => (i === qi ? value : p));
+    setPicks(next);
+    if (instant) submit(next);
+  }
+
+  return (
+    <section
+      aria-label="Question from the agent"
+      className="mt-4 overflow-hidden rounded-xl border border-line-strong bg-surface shadow-composer animate-fade-up"
+    >
+      {questions.map((q, qi) => (
+        <fieldset key={qi} className={`px-3 pt-3.5 pb-3 ${qi > 0 ? "border-t border-line" : ""}`}>
+          <legend className="contents">
+            <span className="block px-1 text-[12px] font-medium tracking-[0.01em] text-fg-3">
+              {q.header || "Question"}
+              {q.multiSelect ? " · Pick any" : ""}
+            </span>
+            <span className="mt-0.5 block px-1 text-[15px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{q.question}</span>
+          </legend>
+          <div className="mt-2.5 flex flex-col gap-1">
+            {q.options.map((option, oi) => {
+              const chosen = picks[qi].includes(option.label);
+              return (
+                <button
+                  key={oi}
+                  type="button"
+                  role={q.multiSelect ? "checkbox" : "radio"}
+                  aria-checked={chosen}
+                  onClick={() => pick(qi, option.label)}
+                  className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                    chosen ? "border-accent bg-accent-soft" : "border-line hover:border-line-strong hover:bg-hover"
+                  }`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`mt-[3px] flex size-[18px] shrink-0 items-center justify-center text-[11px] font-medium ${
+                      q.multiSelect ? "rounded-[5px]" : "rounded-full"
+                    } ${chosen ? "bg-accent text-on-inverse" : "border border-line-strong text-fg-3"}`}
+                  >
+                    {chosen ? <Check size={12} strokeWidth={2.5} /> : q.multiSelect ? null : oi + 1}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[14px] leading-[1.5] font-medium text-fg [overflow-wrap:anywhere]">{option.label}</span>
+                    {option.description ? (
+                      <span className="block text-[13px] leading-[1.45] text-fg-3 [overflow-wrap:anywhere]">{option.description}</span>
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+      ))}
+      <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
+        <span className="mr-auto pl-1 text-[12px] text-fg-3">Or type your own answer below.</span>
+        {instant ? null : (
+          <button
+            type="button"
+            onClick={() => submit(picks)}
+            disabled={!complete}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:bg-press disabled:text-fg-4"
+          >
+            <ArrowUp size={14} />
+            Send
+          </button>
+        )}
+      </div>
     </section>
   );
 }
