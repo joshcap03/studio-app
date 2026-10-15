@@ -420,6 +420,16 @@ describe("Langflow approvals", () => {
     expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("")).toContain("Sent it to Jo");
   });
 
+  it("says the reply was lost when the job is gone after the stream drops", async () => {
+    let reads = 0;
+    const { error } = await run(base, streamResponse([sse(1, "add_message", user("Hi"))]), input(tenantA), {
+      [`/workflows/${JOB}/events`]: () => (++reads === 1 ? streamResponse([sse(1, "add_message", user("Hi"))]) : Response.json({ detail: "Job not found" }, { status: 404 })),
+    });
+    expect(reads).toBe(2);
+    expect((error as Error).message).toMatch(/restarted partway through/);
+    expect((error as AgentError).retryable).toBe(true);
+  });
+
   describe("the step a run paused on", () => {
     // Recorded shape: the paused message holds hidden discovery calls, then take_action with no
     // output. The resumed job reports the approved call again in a new bot message.

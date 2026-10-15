@@ -515,6 +515,8 @@ export async function* parseEventStream(body: ReadableStream<Uint8Array>): Async
 
 const EXPIRED = "This request expired before it was answered, so nothing was done. Ask again to retry.";
 
+const RESTARTED = "The agent service restarted partway through, so this reply was lost. Try again.";
+
 /** Times the event stream may drop and be re-read from the last event before giving up. */
 const RECONNECTS = 2;
 
@@ -673,6 +675,8 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
             if (attempt < RECONNECTS) continue;
             throw new AgentError("Lost the connection to the agent service.", { cause: error });
           }
+          // Jobs live in the Langflow process: after a restart, reading on finds no such job.
+          if (attempt > 0 && response.status === 404) throw new AgentError(RESTARTED);
           if (!response.ok || !response.body) throw errorFor(response.status);
 
           for await (const { event, data, id } of parseEventStream(response.body)) {
