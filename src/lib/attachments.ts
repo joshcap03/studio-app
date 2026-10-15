@@ -14,6 +14,15 @@ export function attachmentError(message: string, status = 400): Error {
   return Object.assign(new Error(message), { status });
 }
 
+/** A failed Storage upload as an error the member can act on. */
+export function uploadError(error: { message: string }): Error {
+  // Storage's own policy refuses uploads past the member's quota (the app checks everything else first).
+  if (/row-level security/i.test(error.message)) {
+    return attachmentError("You've reached the file storage limit for this workspace. Remove some files first.", 413);
+  }
+  return new Error(`Storage error: ${error.message}`);
+}
+
 /** The file's type, decided by its extension against the allowlist (never the browser's claim). */
 export function attachmentType(name: string): string | null {
   const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
@@ -50,8 +59,8 @@ export async function uploadAttachment(tenant: Tenant, file: File): Promise<Atta
 
   const path = `${tenant.workspace.id}/${tenant.userId}/${crypto.randomUUID()}/${name}`;
   const storage = tenant.db.storage.from(ATTACHMENTS_BUCKET);
-  const uploaded = await storage.upload(path, file, { contentType: mimeType, upsert: false });
-  if (uploaded.error) throw new Error(`Storage error: ${uploaded.error.message}`);
+  const uploaded = await storage.upload(path, new Blob([file], { type: mimeType }), { contentType: mimeType, upsert: false });
+  if (uploaded.error) throw uploadError(uploaded.error);
 
   const { data, error } = await tenant.db
     .from("attachments")

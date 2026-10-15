@@ -1,6 +1,6 @@
 import { getAgentAdapter } from "@/lib/agent";
 import type { AgentAttachment, AgentTenantContext } from "@/lib/agent/types";
-import { ATTACHMENTS_BUCKET, attachmentError, checkUpload, readAttachment, removeAttachmentFiles } from "@/lib/attachments";
+import { ATTACHMENTS_BUCKET, attachmentError, checkUpload, readAttachment, removeAttachmentFiles, uploadError } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
 import type { StoredAttachment } from "@/lib/db/store";
 import type { Tenant } from "@/lib/tenant";
@@ -177,11 +177,11 @@ export async function addProjectFile(tenant: Tenant, projectId: string, file: Fi
 
   const path = `${tenant.workspace.id}/${tenant.userId}/projects/${projectId}/${crypto.randomUUID()}/${name}`;
   const storage = tenant.db.storage.from(ATTACHMENTS_BUCKET);
-  const uploaded = await storage.upload(path, file, {
+  const uploaded = await storage.upload(path, new Blob([file], { type: mimeType }), {
     contentType: mimeType,
     upsert: false,
   });
-  if (uploaded.error) throw new Error(`Storage error: ${uploaded.error.message}`);
+  if (uploaded.error) throw uploadError(uploaded.error);
 
   const { data, error } = await files(tenant)
     .insert({

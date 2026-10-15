@@ -47,7 +47,7 @@ beforeAll(async () => {
   aliceApproval = approval.data!.id;
 
   alicePath = `${aliceWs}/${alice.userId}/${crypto.randomUUID()}/orders.csv`;
-  const upload = await alice.client.storage.from("attachments").upload(alicePath, new Blob(["alice-file-bytes"]), { contentType: "text/csv" });
+  const upload = await alice.client.storage.from("attachments").upload(alicePath, new Blob(["alice-file-bytes"], { type: "text/csv" }), { contentType: "text/csv" });
   expect(upload.error).toBeNull();
   const file = await alice.client
     .from("attachments")

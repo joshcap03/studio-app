@@ -73,27 +73,35 @@ export async function usageSnapshot(tenant: Tenant) {
   };
 }
 
-/** The limit the caller would exceed by starting another agent run, if any. */
-export async function checkRunLimits(tenant: Tenant): Promise<string | null> {
+/**
+ * Claims one agent run for the caller, writing to the reply `replyId`: checks every limit and
+ * records the run atomically, so requests sent at the same moment can't all slip under a limit.
+ * Returns the limit it would exceed (nothing is recorded then), or null once the run is claimed.
+ */
+export async function claimRun(tenant: Tenant, replyId?: string): Promise<string | null> {
   const { limits } = getConfig();
-  const usage = await usageSnapshot(tenant);
-  if (usage.userRunning >= limits.concurrentRuns) {
-    return `You already have ${usage.userRunning} tasks running. Wait for one to finish.`;
+  const refused = check(
+    await tenant.db.rpc("claim_run", {
+      ws: tenant.workspace.id,
+      p_concurrent: limits.concurrentRuns,
+      p_per_minute: limits.runsPerMinute,
+      p_per_day: limits.runsPerWorkspacePerDay,
+      p_service_per_day: limits.runsServicePerDay ?? null,
+      p_message_id: replyId ?? null,
+    }),
+  ) as string | null;
+  switch (refused) {
+    case null:
+      return null;
+    case "concurrent":
+      return "You already have tasks running. Wait for one to finish.";
+    case "per_minute":
+      return "You're sending messages too quickly. Try again in a minute.";
+    case "workspace_day":
+      return "This workspace has reached today's message limit. It resets at midnight UTC.";
+    default:
+      return "Studio is at capacity for today. Try again tomorrow.";
   }
-  if (usage.userLastMinute >= limits.runsPerMinute) {
-    return "You're sending messages too quickly. Try again in a minute.";
-  }
-  if (usage.workspaceToday >= limits.runsPerWorkspacePerDay) {
-    return "This workspace has reached today's message limit. It resets at midnight UTC.";
-  }
-  if (limits.runsServicePerDay && check(await tenant.db.rpc("service_runs_at_limit", { p_limit: limits.runsServicePerDay }))) {
-    return "Studio is at capacity for today. Try again tomorrow.";
-  }
-  return null;
-}
-
-export async function recordRun(tenant: Tenant): Promise<void> {
-  check(await tenant.db.from("usage_events").insert({ workspace_id: tenant.workspace.id, user_id: tenant.userId, kind: "agent_run" }));
 }
 
 /**

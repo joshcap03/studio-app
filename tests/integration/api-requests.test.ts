@@ -98,6 +98,20 @@ describe("approvals over the API", () => {
   });
 });
 
+describe("run limits over the API", () => {
+  it("lets at most the concurrency limit through when many messages arrive at once", async () => {
+    const carol = await signUp("carol");
+    const statuses = await Promise.all(
+      Array.from({ length: 12 }, async () => {
+        const { res } = await carol.turn(crypto.randomUUID(), { kind: "send", text: "hi" });
+        return res.status;
+      }),
+    );
+    expect(statuses.filter((s) => s === 200).length).toBeLessThanOrEqual(2);
+    expect(statuses.filter((s) => s !== 200).every((s) => s === 429)).toBe(true);
+  });
+});
+
 describe("attachments over the API", () => {
   it("uploads, sends with a message, downloads only for the owner, and rejects unsupported files", async () => {
     const up = await alice.upload("orders.csv", "sku,qty\nA,3\n");
