@@ -64,6 +64,8 @@ else {
   else if (anon.length < 20) fail("NEXT_PUBLIC_SUPABASE_ANON_KEY", "too short to be a key");
   else warn("NEXT_PUBLIC_SUPABASE_ANON_KEY", "unrecognized key format; double-check it is the anon key");
 }
+if (!env.SUPABASE_ACCESS_TOKEN) fail("SUPABASE_ACCESS_TOKEN", "not set; production builds need it to apply migrations");
+else pass("SUPABASE_ACCESS_TOKEN");
 
 function jwtRole(token) {
   const parts = token.split(".");
