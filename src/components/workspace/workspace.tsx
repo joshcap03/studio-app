@@ -101,7 +101,7 @@ export function Workspace({
   const [sendCount, setSendCount] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  /** Whether the "Found" panel is open, and which reply to bring into view in it. */
+  /** Whether the Results panel is open, and which reply to bring into view in it. */
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelFocus, setPanelFocus] = useState<string | null>(null);
   const panelAuto = useRef(true);
