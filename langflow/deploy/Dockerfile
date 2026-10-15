@@ -12,7 +12,14 @@ ENV LANGFLOW_BACKEND_ONLY=true \
     LANGFLOW_HOST=0.0.0.0 \
     LANGFLOW_WORKERS=1 \
     LANGFLOW_CONFIG_DIR=/app/data/langflow \
-    LANGFLOW_DO_NOT_TRACK=true
+    LANGFLOW_DO_NOT_TRACK=true \
+    LANGFLOW_WORKER_TIMEOUT=0 \
+    LANGFLOW_CREATE_STARTER_PROJECTS=false
+# WORKER_TIMEOUT=0 turns off gunicorn's heartbeat check. Hosts that pause the CPU between
+# requests (Cloud Run's default) freeze the heartbeat, and gunicorn then kills the idle
+# worker on the next request and boots a new one (~90s). Agent runs need no worker timeout:
+# the app and the host enforce their own request timeouts.
+# Starter projects are editor examples; with no UI they only slow every boot.
 # LANGFLOW_SANDBOX_BACKEND is deliberately unset: the shared flow runs no in-process Python.
 
 # Packages the flow's components import that the base image doesn't ship (Exa web search).

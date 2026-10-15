@@ -52,15 +52,25 @@ Python.
     --member="serviceAccount:$(gcloud projects describe "$(gcloud config get project)" --format='value(projectNumber)')-compute@developer.gserviceaccount.com" \
     --role=roles/secretmanager.secretAccessor
   gcloud run deploy studio-langflow --source langflow/deploy --region us-central1 \
-    --memory 2Gi --cpu 1 --cpu-boost --min-instances 0 --max-instances 1 --timeout 3600 \
+    --memory 2Gi --cpu 1 --cpu-boost --min-instances 1 --max-instances 1 --no-cpu-throttling \
+    --timeout 3600 \
+    --startup-probe=httpGet.path=/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=60 \
     --allow-unauthenticated \
     --set-secrets LANGFLOW_DATABASE_URL=langflow-database-url:latest,LANGFLOW_SECRET_KEY=langflow-secret-key:latest,LANGFLOW_SUPERUSER=langflow-superuser:latest,LANGFLOW_SUPERUSER_PASSWORD=langflow-superuser-password:latest
   ```
 
   One instance at most: paused approvals live with a single Langflow worker.
   `--allow-unauthenticated` only opens the network path; Langflow still requires its API
-  key. With no traffic it scales to zero, so the first run after a quiet spell waits for a
-  cold start (tens of seconds).
+  key. `--min-instances 1` keeps one instance up (booting takes over a minute), and
+  `--no-cpu-throttling` keeps its CPU between requests so it doesn't stall when traffic
+  returns. Both bill for an always-on instance; drop them to scale to zero and accept a
+  cold start after a quiet spell. The first run after an hour or so still spends a few
+  seconds reconnecting to MCP servers, whose tool cache expires.
+
+  The HTTP startup probe matters: gunicorn opens the port well before Langflow finishes
+  starting (about 1.5 minutes), so the default TCP probe sends traffic to an instance that
+  can't answer yet and shuts the old revision down early. Probing `/health` keeps the old
+  revision serving until the new one is ready.
 
 Health check: `GET /health` (liveness). `GET /health_check` also probes the database.
 
