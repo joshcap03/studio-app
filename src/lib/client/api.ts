@@ -1,4 +1,4 @@
-import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, StreamEvent } from "@/lib/types";
+import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, Project, ProjectSummary, StreamEvent } from "@/lib/types";
 
 // Browser-side calls to this application's own API. The browser never talks to the agent
 // backend directly and never holds credentials; the session cookie is httpOnly.
@@ -40,6 +40,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ title }),
     }),
+  moveConversation: (id: string, projectId: string | null) =>
+    request<{ conversation: ConversationSummary }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ projectId }),
+    }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   stopRun: (id: string) => request<void>(`/api/conversations/${id}/stop`, { method: "POST" }),
   decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss" | "undo") =>
@@ -47,25 +52,41 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ decision }),
     }),
+  listProjects: () => request<{ projects: ProjectSummary[] }>("/api/projects"),
+  getProject: (id: string, signal?: AbortSignal) => request<{ project: Project }>(`/api/projects/${id}`, { signal }),
+  createProject: (name: string) => request<{ project: Project }>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),
+  updateProject: (id: string, patch: { name?: string; instructions?: string }) =>
+    request<{ project: Project }>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+  deleteProjectFile: (projectId: string, fileId: string) => request<void>(`/api/projects/${projectId}/files/${fileId}`, { method: "DELETE" }),
   deleteAttachment: (id: string) => request<void>(`/api/attachments/${id}`, { method: "DELETE" }),
   signOut: () => request<{ ok: true }>("/api/auth/signout", { method: "POST" }),
 };
 
-/** Uploads a file to attach to the next message. */
-export async function uploadAttachment(file: File, signal?: AbortSignal): Promise<Attachment> {
+async function upload<T>(path: string, file: File, signal?: AbortSignal): Promise<T> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/attachments", { method: "POST", body: form, signal });
+  const res = await fetch(path, { method: "POST", body: form, signal });
   if (res.status === 401) {
     window.location.assign("/login");
     throw new ApiError(401, "Signed out.");
   }
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
-  return ((await res.json()) as { attachment: Attachment }).attachment;
+  return (await res.json()) as T;
+}
+
+/** Uploads a file to attach to the next message. */
+export async function uploadAttachment(file: File, signal?: AbortSignal): Promise<Attachment> {
+  return (await upload<{ attachment: Attachment }>("/api/attachments", file, signal)).attachment;
+}
+
+/** Adds a file to a project; the agent gets it with every message in the project. */
+export async function uploadProjectFile(projectId: string, file: File): Promise<Attachment> {
+  return (await upload<{ file: Attachment }>(`/api/projects/${projectId}/files`, file)).file;
 }
 
 export type TurnBody =
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject" };

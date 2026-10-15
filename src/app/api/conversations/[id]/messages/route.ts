@@ -9,6 +9,7 @@ import { getConfig } from "@/lib/config";
 import { getSkill } from "@/lib/skills";
 import { BUILTIN_SKILL_IDS } from "@/lib/skills/builtin";
 import { previewEnabled } from "@/lib/flags";
+import { projectForRun } from "@/lib/projects";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
 import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
@@ -37,6 +38,8 @@ const body = z.discriminatedUnion("kind", [
       attachmentIds: z.array(z.uuid()).max(MAX_ATTACHMENTS).optional(),
       // Stop the agent if it's still working here (or decline its pending request) and answer this.
       steer: z.boolean().optional(),
+      // One of the caller's projects to start a new conversation in. Ignored for existing ones.
+      projectId: z.uuid().optional(),
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
   z.object({ kind: z.literal("retry") }),
@@ -73,21 +76,31 @@ export async function POST(request: NextRequest, { params }: Context) {
       .catch(() => ("text" in input ? [input.text] : []))
       .then((asks) => buildAgentContext(tenant, recallQuery(asks)));
     context.catch(() => undefined);
+    const adapter = getAgentAdapter();
     const loadSkill = (id: string) => getSkill(tenant, id);
-    const [limit, skill] = await Promise.all([
+    // A conversation's project is the one it was started in (or moved to) by its member.
+    const loadProject = async () => {
+      const conversation = await store.getConversation(conversationId.data);
+      const projectId = conversation ? conversation.projectId : input.kind === "send" ? input.projectId : undefined;
+      return projectId ? projectForRun(tenant, projectId, adapter.capabilities.attachments) : undefined;
+    };
+    const [limit, skill, project] = await Promise.all([
       checkRunLimits(tenant),
       input.kind === "send" && input.skillId ? loadSkill(input.skillId) : Promise.resolve(undefined),
+      loadProject(),
     ]);
     if (limit) return jsonError(429, limit, "rate_limited");
     if (skill === null) return jsonError(404, "Skill not found.");
+    if (project === null) return jsonError(404, "Project not found.");
 
     // A conversation id that exists for another tenant fails here: the insert collides with
     // a row this tenant cannot see, and the database refuses it.
     const stream = await startTurn(
       {
         store,
-        adapter: getAgentAdapter(),
-        context: await context,
+        adapter,
+        context: { ...(await context), project: project?.context ?? null },
+        projectFiles: project?.files,
         remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
         timelines: previewEnabled(tenant, "why"),
@@ -95,7 +108,15 @@ export async function POST(request: NextRequest, { params }: Context) {
         loadSkill,
       },
       input.kind === "send"
-        ? { conversationId: conversationId.data, kind: "send", text: input.text, skill: skill ?? undefined, attachmentIds: input.attachmentIds, steer: input.steer }
+        ? {
+            conversationId: conversationId.data,
+            kind: "send",
+            text: input.text,
+            skill: skill ?? undefined,
+            attachmentIds: input.attachmentIds,
+            steer: input.steer,
+            projectId: input.projectId,
+          }
         : { conversationId: conversationId.data, ...input },
     );
     await recordRun(tenant);

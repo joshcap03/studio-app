@@ -20,6 +20,8 @@ export interface AgentTenantContext {
   agentInstructions: string;
   /** What memory recalls for this run: workspace and personal facts, most relevant first, size-capped. */
   memories: string[];
+  /** The member's project this conversation is in, if any. Its files arrive as attachments. */
+  project?: { name: string; instructions: string; files: string[] } | null;
 }
 
 /** A file the member attached to the message being answered. */

@@ -1,13 +1,14 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
-import { Workspace, type InitialThread } from "@/components/workspace/workspace";
+import { Workspace, type InitialProject, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
 import { storeFor } from "@/lib/chat/store-for";
+import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
 import { requirePageTenant } from "@/lib/tenant";
 
-// One page serves "/" (new conversation) and "/c/<id>". After the first load the browser
+// One page serves "/" (new conversation), "/c/<id>", and "/p/<project id>". After the first load the browser
 // switches conversations in place, without a server round trip per navigation.
 
 export const dynamic = "force-dynamic";
@@ -23,18 +24,23 @@ export default async function WorkspacePage({
 
   const { slug = [] } = await params;
   let conversationId: string | null = null;
+  let projectId: string | null = null;
   if (slug.length > 0) {
     const id = z.uuid().safeParse(slug[1]);
-    if (slug.length !== 2 || slug[0] !== "c" || !id.success) notFound();
-    conversationId = id.data;
+    if (slug.length !== 2 || (slug[0] !== "c" && slug[0] !== "p") || !id.success) notFound();
+    if (slug[0] === "c") conversationId = id.data;
+    else projectId = id.data;
   }
 
   const store = storeFor(tenant);
-  const [conversations, conversation, workspaceSkills] = await Promise.all([
+  const [conversations, conversation, workspaceSkills, projects, project] = await Promise.all([
     store.listConversations(),
     conversationId ? store.getConversation(conversationId) : null,
     listSkills(tenant),
+    listProjects(tenant),
+    projectId ? getProject(tenant, projectId) : null,
   ]);
+  const initialProject: InitialProject | null = projectId ? { id: projectId, project } : null;
   const skills = [...builtinSkills(tenant), ...workspaceSkills];
   const requested = (await searchParams).skill;
   const initialSkillId = skills.find((s) => s.id === requested)?.id ?? null;
@@ -50,6 +56,8 @@ export default async function WorkspacePage({
     <Workspace
       initialConversations={conversations}
       initialThread={initialThread}
+      initialProjects={projects}
+      initialProject={initialProject}
       agent={getAgentStatus(tenant.workspace.id)}
       workspace={tenant.workspace}
       workspaces={tenant.workspaces}

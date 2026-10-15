@@ -166,9 +166,31 @@ export interface ChatMessage {
 export interface ConversationSummary {
   id: string;
   title: string;
+  /** The project it belongs to, if any. */
+  projectId: string | null;
   createdAt: number;
   updatedAt: number;
 }
+
+/**
+ * A member's folder of related conversations. Its instructions and files reach the agent on
+ * every run in one of its conversations. Private to the member who made it.
+ */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Project extends ProjectSummary {
+  instructions: string;
+  files: Attachment[];
+}
+
+export const MAX_PROJECT_NAME_LENGTH = 80;
+export const MAX_PROJECT_FILES = 10;
+export const MAX_PROJECTS = 100;
 
 export interface AgentStatus {
   /** "unavailable": a live agent is configured but not enabled for this workspace. */

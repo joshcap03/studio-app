@@ -54,9 +54,13 @@ export interface StoredAttachment extends Attachment {
 export interface Store {
   readonly scope: Scope;
   listConversations(query?: string): Promise<ConversationSummary[]>;
+  /** The conversations in one project (searching covers every conversation). */
+  listProjectConversations(projectId: string): Promise<ConversationSummary[]>;
   getConversation(id: string): Promise<Conversation | null>;
-  createConversation(input: { id: string; title: string }): Promise<Conversation>;
+  createConversation(input: { id: string; title: string; projectId?: string | null }): Promise<Conversation>;
   renameConversation(id: string, title: string): Promise<ConversationSummary | null>;
+  /** Moves a conversation into a project of the caller's, or out of any (null). */
+  moveConversation(id: string, projectId: string | null): Promise<ConversationSummary | null>;
   deleteConversation(id: string): Promise<boolean>;
   setAgentThread(conversationId: string, provider: string, threadId: string): Promise<void>;
   touchConversation(conversationId: string): Promise<ConversationSummary>;
@@ -85,6 +89,7 @@ export interface Store {
 interface ConversationRow {
   id: string;
   title: string;
+  project_id: string | null;
   agent_provider: string | null;
   agent_thread_id: string | null;
   created_at: string;
@@ -131,7 +136,7 @@ interface AttachmentRow {
   storage_path: string;
 }
 
-const CONVERSATION_COLUMNS = "id, title, agent_provider, agent_thread_id, created_at, updated_at";
+const CONVERSATION_COLUMNS = "id, title, project_id, agent_provider, agent_thread_id, created_at, updated_at";
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
@@ -164,6 +169,7 @@ const toAttachment = (r: Omit<AttachmentRow, "storage_path">): Attachment => ({ 
 const toSummary = (r: ConversationRow): ConversationSummary => ({
   id: r.id,
   title: r.title,
+  projectId: r.project_id,
   createdAt: Date.parse(r.created_at),
   updatedAt: Date.parse(r.updated_at),
 });
@@ -259,6 +265,19 @@ export function createStore(db: Db, scope: Scope): Store {
       return [...titleRows, ...contentRows].map(toSummary).sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
+    async listProjectConversations(projectId) {
+      const rows = check(
+        await conversations()
+          .select(CONVERSATION_COLUMNS)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .eq("project_id", projectId)
+          .order("updated_at", { ascending: false })
+          .limit(500),
+      ) as ConversationRow[];
+      return rows.map(toSummary);
+    },
+
     async getConversation(id) {
       const row = check(
         await conversations()
@@ -271,10 +290,10 @@ export function createStore(db: Db, scope: Scope): Store {
       return row ? toConversation(row) : null;
     },
 
-    async createConversation({ id, title }) {
+    async createConversation({ id, title, projectId = null }) {
       const row = check(
         await conversations()
-          .insert({ id, title, workspace_id: workspaceId, user_id: userId })
+          .insert({ id, title, project_id: projectId, workspace_id: workspaceId, user_id: userId })
           .select(CONVERSATION_COLUMNS)
           .single(),
       ) as ConversationRow;
@@ -285,6 +304,19 @@ export function createStore(db: Db, scope: Scope): Store {
       const row = check(
         await conversations()
           .update({ title })
+          .eq("id", id)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .select(CONVERSATION_COLUMNS)
+          .maybeSingle(),
+      ) as ConversationRow | null;
+      return row ? toSummary(row) : null;
+    },
+
+    async moveConversation(id, projectId) {
+      const row = check(
+        await conversations()
+          .update({ project_id: projectId })
           .eq("id", id)
           .eq("workspace_id", workspaceId)
           .eq("user_id", userId)

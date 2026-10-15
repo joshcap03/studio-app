@@ -12,16 +12,22 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
         .filter(owns)
         .filter((c) => !q || c.title.toLowerCase().includes(q) || shared.messages.some((m) => m.conversationId === c.id && m.content.toLowerCase().includes(q)))
         .sort((a, b) => b.updatedAt - a.updatedAt)
-        .map(({ id, title, createdAt, updatedAt }) => ({ id, title, createdAt, updatedAt }));
+        .map(summary);
+    },
+    async listProjectConversations(projectId) {
+      return [...shared.conversations.values()]
+        .filter((c) => owns(c) && c.projectId === projectId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map(summary);
     },
     async getConversation(id) {
       const c = shared.conversations.get(id);
       return c && owns(c) ? strip(c) : null;
     },
-    async createConversation({ id, title }) {
+    async createConversation({ id, title, projectId = null }) {
       if (shared.conversations.has(id)) throw new Error("duplicate key value violates unique constraint");
       const now = Date.now();
-      const c = { id, title, createdAt: now, updatedAt: now, agentProvider: null, agentThreadId: null, ...scope };
+      const c = { id, title, projectId, createdAt: now, updatedAt: now, agentProvider: null, agentThreadId: null, ...scope };
       shared.conversations.set(id, c);
       return strip(c);
     },
@@ -29,7 +35,13 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       const c = shared.conversations.get(id);
       if (!c || !owns(c)) return null;
       c.title = title;
-      return { id, title, createdAt: c.createdAt, updatedAt: c.updatedAt };
+      return summary(c);
+    },
+    async moveConversation(id, projectId) {
+      const c = shared.conversations.get(id);
+      if (!c || !owns(c)) return null;
+      c.projectId = projectId;
+      return summary(c);
     },
     async deleteConversation(id) {
       const c = shared.conversations.get(id);
@@ -45,7 +57,7 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
     async touchConversation(id) {
       const c = shared.conversations.get(id)!;
       c.updatedAt = Date.now();
-      return { id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt };
+      return summary(c);
     },
     async listMessages(conversationId) {
       const c = shared.conversations.get(conversationId);
@@ -144,4 +156,5 @@ export interface MemoryDb {
 }
 export const createMemoryDb = (): MemoryDb => ({ conversations: new Map(), messages: [], approvals: [], attachments: [] });
 const stripScope = ({ workspaceId: _w, userId: _u, ...a }: StoredApproval & Scope): StoredApproval => ({ ...a });
+const summary = ({ id, title, projectId, createdAt, updatedAt }: Row) => ({ id, title, projectId, createdAt, updatedAt });
 const strip = ({ workspaceId: _w, userId: _u, ...c }: Row): Conversation => ({ ...c });

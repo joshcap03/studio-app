@@ -182,6 +182,40 @@ describe("API tenant isolation", () => {
     expect((await alice.json(`/api/conversations/${crypto.randomUUID()}/messages`, "POST", { kind: "send", text: " " })).status).toBe(400);
   }, 60_000);
 
+  it("keeps projects to the member who made them", async () => {
+    const created = await alice.json("/api/projects", "POST", { name: "Spring catalog" });
+    expect(created.status).toBe(201);
+    const project = ((await created.json()) as { project: { id: string } }).project.id;
+    expect((await alice.json(`/api/projects/${project}`, "PATCH", { instructions: "alice-project-secret" })).status).toBe(200);
+
+    // A chat started in the project lands in it.
+    const inProject = crypto.randomUUID();
+    const sent = await alice.json(`/api/conversations/${inProject}/messages`, "POST", { kind: "send", text: "non-streaming hi", projectId: project });
+    expect(sent.status).toBe(200);
+    await sent.text();
+    const list = (await (await alice.request("/api/conversations")).json()) as { conversations: { id: string; projectId: string | null }[] };
+    expect(list.conversations.find((c) => c.id === inProject)?.projectId).toBe(project);
+
+    // Bob can't read, change, delete, start a chat in, or move a chat into Alice's project.
+    expect((await bob.request(`/api/projects/${project}`)).status).toBe(404);
+    expect((await bob.json(`/api/projects/${project}`, "PATCH", { name: "forged" })).status).toBe(404);
+    expect((await bob.json(`/api/projects/${project}`, "DELETE")).status).toBe(404);
+    expect((await bob.json(`/api/projects/${project}/files/${crypto.randomUUID()}`, "DELETE")).status).toBe(404);
+    const bobSend = await bob.json(`/api/conversations/${crypto.randomUUID()}/messages`, "POST", { kind: "send", text: "x", projectId: project });
+    expect(bobSend.status).toBe(404);
+    const bobConv = crypto.randomUUID();
+    await (await bob.send(bobConv, "non-streaming bob")).body;
+    expect((await bob.json(`/api/conversations/${bobConv}`, "PATCH", { projectId: project })).status).toBe(404);
+    const bobProjects = (await (await bob.request("/api/projects")).json()) as { projects: unknown[] };
+    expect(bobProjects.projects).toEqual([]);
+    // Nor move Alice's chat out of it.
+    expect((await bob.json(`/api/conversations/${inProject}`, "PATCH", { projectId: null })).status).toBe(404);
+
+    // Deleting the project deletes its chats.
+    expect((await alice.json(`/api/projects/${project}`, "DELETE")).status).toBe(204);
+    expect((await alice.request(`/api/conversations/${inProject}`)).status).toBe(404);
+  });
+
   it("rejects unauthenticated and cross-origin requests", async () => {
     const anon = new Client();
     expect((await anon.json("/api/conversations", "GET")).status).toBe(401);

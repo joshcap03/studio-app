@@ -6,7 +6,7 @@ import type { Attachment } from "@/lib/types";
 // File chips: on a sent message (download links) and in the composer (uploading, ready, or
 // failed, with a remove button).
 
-function iconFor(name: string, mimeType?: string): LucideIcon {
+export function iconFor(name: string, mimeType?: string): LucideIcon {
   if (mimeType?.startsWith("image/") || /\.(png|jpe?g)$/i.test(name)) return ImageIcon;
   if (/\.(csv|json)$/i.test(name)) return FileSpreadsheet;
   return FileText;

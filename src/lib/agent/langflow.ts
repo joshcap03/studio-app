@@ -62,6 +62,8 @@ export const TEMPLATE_VARIABLES = [
   "business_context",
   "agent_instructions",
   "memories",
+  "project_name",
+  "project_instructions",
   "system_context",
 ] as const;
 
@@ -84,10 +86,12 @@ const BACKGROUND_ONLY =
 
 export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPLATE_VARIABLES)[number], string> {
   const memories = tenant.memories.map((m) => `- ${m}`).join("\n");
+  const project = tenant.project;
   const system = [
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
     `Business: ${tenant.workspaceName}`,
     tenant.businessContext.trim() && `About the business:\n${tenant.businessContext.trim()}`,
+    project && projectContext(project),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
     (tenant.businessContext.trim() || memories) && BACKGROUND_ONLY,
   ]
@@ -102,8 +106,21 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     business_context: tenant.businessContext,
     agent_instructions: tenant.agentInstructions,
     memories,
+    project_name: project?.name ?? "",
+    project_instructions: project?.instructions ?? "",
     system_context: system,
   };
+}
+
+/** The conversation's project: what it's for, and the files attached to every message in it. */
+function projectContext(project: NonNullable<AgentTenantContext["project"]>): string {
+  return [
+    `This conversation is in the member's project "${project.name}".`,
+    project.instructions.trim() && `Project instructions (follow these here):\n${project.instructions.trim()}`,
+    project.files.length > 0 && `Project files, attached to every message in this project: ${project.files.join(", ")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 const FILES_PLACEHOLDER = /^\{\{\s*files\s*\}\}$/;

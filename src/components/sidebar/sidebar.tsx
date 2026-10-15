@@ -1,9 +1,14 @@
 "use client";
 
-import { AlertDialog, DropdownMenu } from "radix-ui";
+import { AlertDialog, Dialog, DropdownMenu } from "radix-ui";
 import {
   Check,
+  ChevronRight,
   ChevronsUpDown,
+  FolderInput,
+  FolderMinus,
+  FolderOpen,
+  FolderPlus,
   LibraryBig,
   LogOut,
   MoreHorizontal,
@@ -21,7 +26,7 @@ import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { BrandMark } from "@/components/ui/brand-mark";
 import { IconButton } from "@/components/ui/icon-button";
 import { api } from "@/lib/client/api";
-import type { AgentStatus, ConversationSummary, WorkspaceSummary } from "@/lib/types";
+import { MAX_PROJECT_NAME_LENGTH, type AgentStatus, type ConversationSummary, type ProjectSummary, type WorkspaceSummary } from "@/lib/types";
 
 interface Props {
   conversations: ConversationSummary[];
@@ -37,15 +42,46 @@ interface Props {
   onCollapse: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  projects: ProjectSummary[];
+  activeProjectId: string | null;
+  onSelectProject: (id: string) => void;
+  /** Resolves once the project exists (and is open), or rejects with a message to show. */
+  onCreateProject: (name: string) => Promise<void>;
+  onRenameProject: (id: string, name: string) => void;
+  onDeleteProject: (id: string) => void;
+  onMove: (conversationId: string, projectId: string | null) => void;
 }
 
 export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
-  { conversations, activeId, running, agent, workspace, workspaces, email, mod, onSelect, onNew, onCollapse, onRename, onDelete },
+  {
+    conversations,
+    activeId,
+    running,
+    agent,
+    workspace,
+    workspaces,
+    email,
+    mod,
+    onSelect,
+    onNew,
+    onCollapse,
+    onRename,
+    onDelete,
+    projects,
+    activeProjectId,
+    onSelectProject,
+    onCreateProject,
+    onRenameProject,
+    onDeleteProject,
+    onMove,
+  },
   searchRef,
 ) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ConversationSummary[] | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConversationSummary | null>(null);
+  const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectSummary | null>(null);
+  const [creating, setCreating] = useState(false);
 
   // Titles filter instantly; message contents are searched on the server.
   useEffect(() => {
@@ -69,7 +105,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return conversations;
+    // A project's chats live in the project; searching covers every chat.
+    if (!q) return conversations.filter((c) => !c.projectId);
     const byTitle = conversations.filter((c) => c.title.toLowerCase().includes(q));
     if (!results) return byTitle;
     const ids = new Set(byTitle.map((c) => c.id));
@@ -134,6 +171,71 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
       </div>
 
       <nav aria-label="Conversations" className="scroll-quiet mt-4 min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+        {query.trim() ? null : (
+          <section className="mb-4" aria-labelledby="sidebar-projects">
+            <div className="flex items-center pr-1 pb-1 pl-2.5">
+              <h2 id="sidebar-projects" className="flex-1 text-[11.5px] font-medium text-fg-3">
+                Projects
+              </h2>
+              <IconButton label="New project" className="size-6!" onClick={() => setCreating(true)}>
+                <Plus size={14} />
+              </IconButton>
+            </div>
+            <ul>
+              {projects.length === 0 ? (
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => setCreating(true)}
+                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13.5px] text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+                  >
+                    <FolderPlus size={15} strokeWidth={1.75} />
+                    New project
+                  </button>
+                </li>
+              ) : (
+                projects.map((p) => {
+                  const inProject = conversations.filter((c) => c.projectId === p.id);
+                  // The project on screen, or holding the open chat, shows its latest chats.
+                  const open = p.id === activeProjectId || inProject.some((c) => c.id === activeId);
+                  const shown = open ? inProject.slice(0, NESTED_CHATS) : [];
+                  const current = inProject.find((c) => c.id === activeId);
+                  if (current && !shown.includes(current)) shown.push(current);
+                  return (
+                    <ProjectItem
+                      key={p.id}
+                      project={p}
+                      active={p.id === activeProjectId}
+                      running={inProject.some((c) => running.has(c.id))}
+                      onSelect={onSelectProject}
+                      onRename={onRenameProject}
+                      onDelete={() => setPendingProjectDelete(p)}
+                    >
+                      {shown.length > 0 ? (
+                        <ul className="ml-[17px] border-l border-line pl-1.5">
+                          {shown.map((c) => (
+                            <ConversationItem
+                              key={c.id}
+                              conversation={c}
+                              active={c.id === activeId}
+                              running={running.has(c.id)}
+                              onSelect={onSelect}
+                              onRename={onRename}
+                              onDelete={() => setPendingDelete(c)}
+                              canSaveSkill={workspace.role === "owner"}
+                              projects={projects}
+                              onMove={onMove}
+                            />
+                          ))}
+                        </ul>
+                      ) : null}
+                    </ProjectItem>
+                  );
+                })
+              )}
+            </ul>
+          </section>
+        )}
         {!hydrated ? null : groups.length === 0 ? (
           <p className="px-2.5 py-2 text-[13px] text-fg-3">
             {query.trim() ? "No conversations match." : "Your conversations will appear here."}
@@ -153,6 +255,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
                     onRename={onRename}
                     onDelete={() => setPendingDelete(c)}
                     canSaveSkill={workspace.role === "owner"}
+                    projects={projects}
+                    onMove={onMove}
                   />
                 ))}
               </ul>
@@ -200,9 +304,217 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           </AlertDialog.Content>
         </AlertDialog.Portal>
       </AlertDialog.Root>
+
+      <AlertDialog.Root open={pendingProjectDelete !== null} onOpenChange={(open) => !open && setPendingProjectDelete(null)}>
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/20 animate-fade-in" />
+          <AlertDialog.Content className="fixed top-1/2 left-1/2 z-50 w-[calc(100vw-32px)] max-w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-surface p-6 shadow-pop animate-fade-up">
+            <AlertDialog.Title className="text-[16px] font-semibold tracking-[-0.01em]">Delete project?</AlertDialog.Title>
+            <AlertDialog.Description className="mt-2 text-[14px] leading-relaxed text-fg-2">
+              <span className="font-medium text-fg">{pendingProjectDelete?.name}</span>
+              {projectContents(pendingProjectDelete ? conversations.filter((c) => c.projectId === pendingProjectDelete.id).length : 0)} will be
+              permanently deleted.
+            </AlertDialog.Description>
+            <div className="mt-6 flex justify-end gap-2">
+              <AlertDialog.Cancel className="h-9 rounded-lg px-3.5 text-[13.5px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg">
+                Cancel
+              </AlertDialog.Cancel>
+              <AlertDialog.Action
+                onClick={() => pendingProjectDelete && onDeleteProject(pendingProjectDelete.id)}
+                className="h-9 rounded-lg bg-danger px-3.5 text-[13.5px] font-medium text-white transition-opacity hover:opacity-90"
+              >
+                Delete
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+
+      <Dialog.Root open={creating} onOpenChange={setCreating}>
+        {creating ? (
+          <NewProjectDialog
+            onCreate={async (name) => {
+              await onCreateProject(name);
+              setCreating(false);
+            }}
+          />
+        ) : null}
+      </Dialog.Root>
     </div>
   );
 });
+
+/** What else goes when a project is deleted, after its name. */
+function projectContents(chats: number): string {
+  if (chats === 0) return " and its files";
+  return `, its ${chats === 1 ? "chat" : `${chats} chats`}, and its files`;
+}
+
+function NewProjectDialog({ onCreate }: { onCreate: (name: string) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onCreate(name.trim());
+    } catch (e) {
+      setError((e as Error).message || "Couldn't create the project. Try again.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog.Portal>
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-black/20 animate-fade-in" />
+      <Dialog.Content className="fixed top-1/2 left-1/2 z-50 w-[calc(100vw-32px)] max-w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-surface p-6 shadow-pop animate-fade-up">
+        <Dialog.Title className="text-[16px] font-semibold tracking-[-0.01em]">New project</Dialog.Title>
+        <Dialog.Description className="mt-1 text-[13.5px] leading-relaxed text-fg-3">
+          Keep related chats together, with instructions and files the agent uses in all of them.
+        </Dialog.Description>
+        <form onSubmit={submit} className="mt-5">
+          <input
+            autoFocus
+            required
+            aria-label="Project name"
+            maxLength={MAX_PROJECT_NAME_LENGTH}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Spring wholesale catalog"
+            className="h-10 w-full rounded-xl border border-line bg-surface px-3.5 text-[14.5px] text-fg outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
+          />
+          {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
+          <div className="mt-5 flex justify-end gap-2">
+            <Dialog.Close className="h-9 rounded-lg px-3.5 text-[13.5px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg">
+              Cancel
+            </Dialog.Close>
+            <button
+              type="submit"
+              disabled={saving || !name.trim()}
+              className="h-9 rounded-lg bg-inverse px-3.5 text-[13.5px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {saving ? "Creating…" : "Create project"}
+            </button>
+          </div>
+        </form>
+      </Dialog.Content>
+    </Dialog.Portal>
+  );
+}
+
+function ProjectItem({
+  project,
+  active,
+  running,
+  onSelect,
+  onRename,
+  onDelete,
+  children,
+}: {
+  project: ProjectSummary;
+  active: boolean;
+  running: boolean;
+  onSelect: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: () => void;
+  /** The project's chats, when it is open. */
+  children?: React.ReactNode;
+}) {
+  const [editing, setEditing] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const renaming = useRef(false);
+
+  function commit() {
+    const name = input.current?.value.trim();
+    setEditing(false);
+    if (name && name !== project.name) onRename(project.id, name);
+  }
+
+  return (
+    <li>
+      <div className="group/item relative">
+        {editing ? (
+          <input
+            ref={input}
+            defaultValue={project.name}
+            aria-label="Project name"
+            maxLength={MAX_PROJECT_NAME_LENGTH}
+            autoFocus
+            onFocus={(e) => e.target.select()}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            className="h-8 w-full rounded-lg bg-surface px-2.5 text-[13.5px] text-fg shadow-[inset_0_0_0_1px_var(--line-strong)] outline-none focus-visible:outline-none"
+          />
+        ) : (
+          <a
+            href={`/p/${project.id}`}
+            aria-current={active ? "page" : undefined}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              onSelect(project.id);
+            }}
+            className="flex h-8 items-center gap-2 rounded-lg pr-8 pl-2.5 text-[13.5px] text-fg-2 transition-colors hover:bg-hover hover:text-fg aria-[current=page]:bg-press aria-[current=page]:text-fg"
+          >
+            <FolderOpen size={15} strokeWidth={1.75} className="shrink-0 text-fg-3" />
+            <span className="min-w-0 flex-1 truncate">{project.name}</span>
+            {running ? <span className="spinner shrink-0" aria-label="Working" /> : null}
+          </a>
+        )}
+        <DropdownMenu.Root modal={false}>
+          <DropdownMenu.Trigger
+            aria-label={`Options for ${project.name}`}
+            hidden={editing}
+            className="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-3 opacity-0 transition-opacity group-hover/item:opacity-100 hover:bg-press hover:text-fg focus-visible:opacity-100 data-[state=open]:bg-press data-[state=open]:opacity-100 max-md:opacity-100"
+          >
+            <MoreHorizontal size={15} />
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="start"
+              // Renaming moves focus into the name field; don't pull it back to the trigger.
+              onCloseAutoFocus={(e) => {
+                if (renaming.current) {
+                  e.preventDefault();
+                  renaming.current = false;
+                  input.current?.focus();
+                }
+              }}
+              sideOffset={4}
+              className="z-50 min-w-[160px] rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in"
+            >
+              <DropdownMenu.Item
+                onSelect={() => {
+                  renaming.current = true;
+                  setEditing(true);
+                }}
+                className={menuItem}
+              >
+                <Pencil size={14} className="text-fg-3" />
+                Rename
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onSelect={onDelete}
+                className="flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-danger outline-none data-[highlighted]:bg-danger-soft"
+              >
+                <Trash2 size={14} />
+                Delete
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
+      {children}
+    </li>
+  );
+}
 
 function ConversationItem({
   conversation,
@@ -212,6 +524,8 @@ function ConversationItem({
   onRename,
   onDelete,
   canSaveSkill,
+  projects,
+  onMove,
 }: {
   conversation: ConversationSummary;
   active: boolean;
@@ -220,7 +534,10 @@ function ConversationItem({
   onRename: (id: string, title: string) => void;
   onDelete: () => void;
   canSaveSkill: boolean;
+  projects: ProjectSummary[];
+  onMove: (conversationId: string, projectId: string | null) => void;
 }) {
+  const elsewhere = projects.filter((p) => p.id !== conversation.projectId);
   const [editing, setEditing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const renaming = useRef(false);
@@ -308,6 +625,34 @@ function ConversationItem({
                 Save as skill
               </DropdownMenu.Item>
             ) : null}
+            {elsewhere.length > 0 ? (
+              <DropdownMenu.Sub>
+                <DropdownMenu.SubTrigger className={`${menuItem} data-[state=open]:bg-hover`}>
+                  <FolderInput size={14} className="text-fg-3" />
+                  <span className="flex-1">Move to project</span>
+                  <ChevronRight size={14} className="text-fg-3" />
+                </DropdownMenu.SubTrigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.SubContent
+                    sideOffset={4}
+                    className="z-50 max-h-[320px] max-w-[240px] min-w-[160px] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in"
+                  >
+                    {elsewhere.map((p) => (
+                      <DropdownMenu.Item key={p.id} onSelect={() => onMove(conversation.id, p.id)} className={menuItem}>
+                        <FolderOpen size={14} className="shrink-0 text-fg-3" />
+                        <span className="min-w-0 truncate">{p.name}</span>
+                      </DropdownMenu.Item>
+                    ))}
+                  </DropdownMenu.SubContent>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Sub>
+            ) : null}
+            {conversation.projectId ? (
+              <DropdownMenu.Item onSelect={() => onMove(conversation.id, null)} className={menuItem}>
+                <FolderMinus size={14} className="text-fg-3" />
+                Remove from project
+              </DropdownMenu.Item>
+            ) : null}
             <DropdownMenu.Item
               onSelect={onDelete}
               className="flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-danger outline-none data-[highlighted]:bg-danger-soft"
@@ -323,6 +668,7 @@ function ConversationItem({
 }
 
 const noop = () => () => {};
+const NESTED_CHATS = 5;
 
 const menuItem =
   "flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover";

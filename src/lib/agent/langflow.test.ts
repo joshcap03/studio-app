@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, toolTimelines, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, templateValues, toolTimelines, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -130,6 +130,17 @@ describe("Langflow request", () => {
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Be brief.");
     expect(body.tweaks["Agent-x"].system_prompt).toMatch(/current conversation decides the topic.*Don't narrow a search or answer by the business's location/);
     expect(fillTemplate({ k: "{{unknown}}" }, {})).toEqual({ k: "{{unknown}}" });
+  });
+
+  it("adds the conversation's project to the agent's context, and nothing when there is none", () => {
+    const project = { name: "Spring catalog", instructions: "Cite the price list.", files: ["prices.csv"] };
+    const system = templateValues({ ...tenantA, project }).system_context;
+    expect(system).toContain('project "Spring catalog"');
+    expect(system).toContain("Cite the price list.");
+    expect(system).toContain("prices.csv");
+    expect(templateValues({ ...tenantA, project: { ...project, instructions: "", files: [] } }).system_context).not.toContain("Project instructions");
+    expect(templateValues(tenantA).system_context).not.toContain("project");
+    expect(templateValues({ ...tenantA, project }).project_instructions).toBe("Cite the price list.");
   });
 
   it("gives the Member Apps node this member's id and the offered apps, nobody else's", () => {

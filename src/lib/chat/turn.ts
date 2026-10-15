@@ -41,8 +41,11 @@ export interface TurnSkill {
 }
 
 export type TurnRequest = { conversationId: string } & (
-  /** `steer`: if the agent is still working here, stop it and answer this instead. */
-  | { kind: "send"; text: string; skill?: TurnSkill; attachmentIds?: string[]; steer?: boolean }
+  /**
+   * `steer`: if the agent is still working here, stop it and answer this instead.
+   * `projectId` places a new conversation in one of the caller's projects (ignored for existing ones).
+   */
+  | { kind: "send"; text: string; skill?: TurnSkill; attachmentIds?: string[]; steer?: boolean; projectId?: string }
   | { kind: "retry" }
   /** Replace the latest member message and answer it again (keeping its skill and files). */
   | { kind: "edit"; messageId: string; text: string }
@@ -57,6 +60,8 @@ export interface TurnDeps {
   idleTimeoutMs: number;
   /** Loads an attachment's bytes for the agent (under the caller's session). */
   loadAttachment?: (attachment: StoredAttachment) => Promise<Blob>;
+  /** The conversation's project files, given to the agent on every new run (not on a resumed one). */
+  projectFiles?: AgentAttachment[];
   /** Loads a skill from the caller's workspace, for retrying or editing a message sent with one. */
   loadSkill?: (id: string) => Promise<TurnSkill | null>;
   /**
@@ -239,7 +244,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     const created = !conversation;
     if (!conversation) {
       const title = titleFromMessage(request.skill ? [request.skill.name, request.text.trim()].filter(Boolean).join(" — ") : request.text);
-      conversation = await store.createConversation({ id: conversationId, title });
+      conversation = await store.createConversation({ id: conversationId, title, projectId: request.projectId });
     }
     userMessage = await store.insertMessage({
       id: crypto.randomUUID(),
@@ -266,7 +271,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   }
   if (!conversation) throw new TurnError(404, "Conversation not found.");
 
-  const attachments: AgentAttachment[] = [];
+  const attachments: AgentAttachment[] = resume ? [] : [...(deps.projectFiles ?? [])];
   if (promptMessageId && !resume) {
     const stored = await store.listAttachments(promptMessageId);
     if (stored.length > 0 && !deps.loadAttachment) throw new TurnError(400, "Attached files can't be read right now.");
@@ -309,6 +314,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   const summary: ConversationSummary = {
     id: conversation.id,
     title: conversation.title,
+    projectId: conversation.projectId,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
   };

@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, PanelLeftOpen, Paperclip, SquarePen } from "lucide-react";
+import { ChevronRight, Menu, PanelLeftOpen, Paperclip, SquarePen } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { Tooltip } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,6 +8,7 @@ import { Composer, type ComposerHandle } from "@/components/chat/composer";
 import { EmptyState } from "@/components/chat/empty-state";
 import { Thread } from "@/components/chat/thread";
 import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
+import { ProjectView } from "@/components/project/project-view";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
@@ -19,6 +20,8 @@ import type {
   ConversationSummary,
   MemoryProposal,
   MessageSkill,
+  Project,
+  ProjectSummary,
   StreamEvent,
   WorkspaceSkill,
   WorkspaceSummary,
@@ -40,9 +43,19 @@ export interface InitialThread {
   messages: ChatMessage[];
 }
 
+type ProjectState = { status: "loading" } | { status: "ready"; project: Project } | { status: "missing" } | { status: "error" };
+
+export interface InitialProject {
+  id: string;
+  project: Project | null;
+}
+
 interface Props {
   initialConversations: ConversationSummary[];
   initialThread: InitialThread | null;
+  initialProjects: ProjectSummary[];
+  /** The project page being loaded, if any. */
+  initialProject: InitialProject | null;
   agent: AgentStatus;
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
@@ -62,6 +75,11 @@ function conversationIdFrom(pathname: string): string | null {
   return match && UUID.test(match[1]) ? match[1] : null;
 }
 
+function projectIdFrom(pathname: string): string | null {
+  const match = /^\/p\/([^/]+)\/?$/.exec(pathname);
+  return match && UUID.test(match[1]) ? match[1] : null;
+}
+
 function provisionalTitle(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > 60 ? `${line.slice(0, 57).trimEnd()}…` : line;
@@ -75,6 +93,8 @@ function provisionalTitle(text: string): string {
 export function Workspace({
   initialConversations,
   initialThread,
+  initialProjects,
+  initialProject,
   agent,
   workspace,
   workspaces,
@@ -86,6 +106,8 @@ export function Workspace({
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
   const activeId = conversationIdFrom(pathname);
+  /** The project page on screen (not the project of an open conversation). */
+  const activeProjectId = activeId ? null : projectIdFrom(pathname);
 
   useEffect(() => {
     const onPop = () => setPathname(window.location.pathname);
@@ -96,6 +118,14 @@ export function Workspace({
   const [conversations, setConversations] = useState(initialConversations);
   const [threads, setThreads] = useState<Record<string, ThreadState>>(() =>
     initialThread ? { [initialThread.id]: { status: initialThread.status, messages: initialThread.messages } } : {},
+  );
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+  const [projects, setProjects] = useState(initialProjects);
+  const [projectDetails, setProjectDetails] = useState<Record<string, ProjectState>>(() =>
+    initialProject
+      ? { [initialProject.id]: initialProject.project ? { status: "ready", project: initialProject.project } : { status: "missing" } }
+      : {},
   );
   const [running, setRunning] = useState<ReadonlySet<string>>(() => new Set());
   const [sendCount, setSendCount] = useState(0);
@@ -239,14 +269,44 @@ export function Workspace({
     };
   }, [activeId]);
 
-  const activeTitle = useMemo(
-    () => (activeId ? conversations.find((c) => c.id === activeId)?.title : undefined),
-    [activeId, conversations],
-  );
+  const activeConversation = useMemo(() => (activeId ? conversations.find((c) => c.id === activeId) : undefined), [activeId, conversations]);
+  const activeTitle = activeConversation?.title;
+  /** The project the open conversation is in, for the header. */
+  const conversationProject = activeConversation?.projectId ? projects.find((p) => p.id === activeConversation.projectId) : undefined;
 
+  // Load a project page that isn't in memory.
+  const activeProject = activeProjectId ? projectDetails[activeProjectId] : undefined;
+  const projectDetailsRef = useRef(projectDetails);
+  projectDetailsRef.current = projectDetails;
   useEffect(() => {
-    document.title = activeTitle ? `${activeTitle} · Studio` : `${workspace.name} · Studio`;
-  }, [activeTitle, workspace.name]);
+    if (!activeProjectId) return;
+    const existing = projectDetailsRef.current[activeProjectId];
+    if (existing && existing.status !== "error") return;
+    const controller = new AbortController();
+    setProjectDetails((all) => ({ ...all, [activeProjectId]: { status: "loading" } }));
+    api
+      .getProject(activeProjectId, controller.signal)
+      .then(({ project }) => setProjectDetails((all) => ({ ...all, [activeProjectId]: { status: "ready", project } })))
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        const status = error instanceof ApiError && error.status === 404 ? "missing" : "error";
+        setProjectDetails((all) => ({ ...all, [activeProjectId]: { status } }));
+      });
+    return () => {
+      controller.abort();
+      setProjectDetails((all) => {
+        if (all[activeProjectId]?.status !== "loading") return all;
+        const { [activeProjectId]: _, ...rest } = all;
+        return rest;
+      });
+    };
+  }, [activeProjectId]);
+
+  const activeProjectName = activeProject?.status === "ready" ? activeProject.project.name : undefined;
+  useEffect(() => {
+    const title = activeTitle ?? activeProjectName;
+    document.title = title ? `${title} · Studio` : `${workspace.name} · Studio`;
+  }, [activeTitle, activeProjectName, workspace.name]);
 
   // ---------------------------------------------------------------------------------------
   // Running turns
@@ -375,7 +435,7 @@ export function Workspace({
   );
 
   const sendTo = useCallback(
-    (conversationId: string, text: string, isNew: boolean, extras: SendExtras = NO_EXTRAS, steer = false) => {
+    (conversationId: string, text: string, isNew: boolean, extras: SendExtras = NO_EXTRAS, steer = false, projectId: string | null = null) => {
       const { skill, attachments } = extras;
       const now = Date.now();
       const base = { conversationId, activity: [], artifacts: [], createdAt: now };
@@ -404,7 +464,13 @@ export function Workspace({
         const existing = list.find((c) => c.id === conversationId);
         const summary = existing
           ? { ...existing, updatedAt: now }
-          : { id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), createdAt: now, updatedAt: now };
+          : {
+              id: conversationId,
+              title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text),
+              projectId,
+              createdAt: now,
+              updatedAt: now,
+            };
         return [summary, ...list.filter((c) => c.id !== conversationId)];
       });
       if (isNew) navigate(`/c/${conversationId}`);
@@ -414,7 +480,15 @@ export function Workspace({
       const attachmentIds = attachments.map((a) => a.id);
       void runTurn(
         conversationId,
-        { kind: "send", text, skillId: skill?.id, ...(attachmentIds.length ? { attachmentIds } : {}), ...(steer ? { steer } : {}) },
+        {
+          kind: "send",
+          text,
+          skillId: skill?.id,
+          ...(attachmentIds.length ? { attachmentIds } : {}),
+          ...(steer ? { steer } : {}),
+          // Only creates it there; the server ignores it for a conversation that already exists.
+          ...(projectId ? { projectId } : {}),
+        },
         { user: user.id, assistant: assistant.id },
       );
     },
@@ -430,11 +504,11 @@ export function Workspace({
         drafts.current.delete(activeId);
         sendTo(activeId, text, false, full, running.has(activeId) || awaitingHere);
       } else {
-        drafts.current.delete("new");
-        sendTo(crypto.randomUUID(), text, true, full);
+        drafts.current.delete(activeProjectId ? `project:${activeProjectId}` : "new");
+        sendTo(crypto.randomUUID(), text, true, full, false, activeProjectId);
       }
     },
-    [activeId, running, sendTo],
+    [activeId, activeProjectId, running, sendTo],
   );
 
   /** Answers the agent's pending request and continues the same reply. */
@@ -519,7 +593,8 @@ export function Workspace({
           const index = messages.findIndex((m) => m.id === messageId);
           return index > 0 ? messages.slice(0, index - 1) : messages.filter((m) => m.id !== messageId);
         });
-        sendTo(conversationId, unsentSend.text, false, unsentSend.extras);
+        const projectId = conversationsRef.current.find((c) => c.id === conversationId)?.projectId ?? null;
+        sendTo(conversationId, unsentSend.text, false, unsentSend.extras, false, projectId);
         return;
       }
       setNotice(null);
@@ -620,6 +695,87 @@ export function Workspace({
     [activeId, conversations, navigate],
   );
 
+  const createProject = useCallback(
+    async (name: string) => {
+      try {
+        const { project } = await api.createProject(name);
+        const { instructions: _i, files: _f, ...summary } = project;
+        setProjects((list) => [summary, ...list]);
+        setProjectDetails((all) => ({ ...all, [project.id]: { status: "ready", project } }));
+        navigate(`/p/${project.id}`);
+        requestAnimationFrame(() => composer.current?.focus());
+      } catch (error) {
+        throw new Error(error instanceof ApiError ? error.message : "Couldn't create the project. Try again.");
+      }
+    },
+    [navigate],
+  );
+
+  /** Keeps the sidebar and the project page in step with what the server saved. */
+  const projectSaved = useCallback((project: Project) => {
+    const { instructions: _i, files: _f, ...summary } = project;
+    setProjects((list) => list.map((p) => (p.id === project.id ? summary : p)));
+    setProjectDetails((all) => ({ ...all, [project.id]: { status: "ready", project } }));
+  }, []);
+
+  const renameProject = useCallback(
+    (id: string, name: string) => {
+      const previous = projects.find((p) => p.id === id);
+      const setName = (value: string) => {
+        setProjects((list) => list.map((p) => (p.id === id ? { ...p, name: value } : p)));
+        setProjectDetails((all) => {
+          const current = all[id];
+          return current?.status === "ready" ? { ...all, [id]: { status: "ready", project: { ...current.project, name: value } } } : all;
+        });
+      };
+      setName(name);
+      api
+        .updateProject(id, { name })
+        .then(({ project }) => projectSaved(project))
+        .catch(() => previous && setName(previous.name));
+    },
+    [projects, projectSaved],
+  );
+
+  /** Deletes a project with its chats and files. */
+  const removeProject = useCallback(
+    (id: string) => {
+      const snapshot = { projects, conversations };
+      const doomed = new Set(conversations.filter((c) => c.projectId === id).map((c) => c.id));
+      for (const conversationId of doomed) controllers.current.get(conversationId)?.abort();
+      setProjects((list) => list.filter((p) => p.id !== id));
+      setConversations((list) => list.filter((c) => !doomed.has(c.id)));
+      if (activeProjectId === id || (activeId && doomed.has(activeId))) navigate("/");
+      api
+        .deleteProject(id)
+        .then(() => {
+          setThreads((all) => Object.fromEntries(Object.entries(all).filter(([key]) => !doomed.has(key))));
+          setProjectDetails((all) => {
+            const { [id]: _, ...rest } = all;
+            return rest;
+          });
+        })
+        .catch(() => {
+          setProjects(snapshot.projects);
+          setConversations(snapshot.conversations);
+        });
+    },
+    [activeId, activeProjectId, conversations, navigate, projects],
+  );
+
+  const moveConversation = useCallback(
+    (id: string, projectId: string | null) => {
+      const previous = conversations.find((c) => c.id === id);
+      if (!previous) return;
+      setConversations((list) => list.map((c) => (c.id === id ? { ...c, projectId } : c)));
+      api.moveConversation(id, projectId).catch(() => {
+        setConversations((list) => list.map((c) => (c.id === id ? { ...c, projectId: previous.projectId } : c)));
+        setNotice("Couldn't move the conversation. Try again.");
+      });
+    },
+    [conversations],
+  );
+
   // The panel opens on its own once a running reply has found something worth showing.
   const latestReply = activeThread?.status === "ready" ? activeThread.messages.findLast((m) => m.role === "assistant") : undefined;
   const latestHasFindings =
@@ -696,6 +852,7 @@ export function Workspace({
   const awaiting = activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "awaiting";
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
   const draftKey = activeId ?? "new";
+  const projectDraftKey = `project:${activeProjectId}`;
 
   const footnote =
     agent.mode === "mock" ? (
@@ -740,6 +897,13 @@ export function Workspace({
             onCollapse={toggleSidebar}
             onRename={rename}
             onDelete={remove}
+            projects={projects}
+            activeProjectId={activeProjectId}
+            onSelectProject={(id) => navigate(`/p/${id}`)}
+            onCreateProject={createProject}
+            onRenameProject={renameProject}
+            onDeleteProject={removeProject}
+            onMove={moveConversation}
           />
         </aside>
 
@@ -791,8 +955,24 @@ export function Workspace({
                 </IconButton>
               </div>
             ) : null}
-            <h1 className="min-w-0 flex-1 truncate px-1.5 text-[14px] font-medium text-fg-2 max-md:text-center">
-              {activeTitle ?? ""}
+            <h1 className="flex min-w-0 flex-1 items-center gap-1 px-1.5 text-[14px] font-medium text-fg-2 max-md:justify-center">
+              {conversationProject ? (
+                <>
+                  <a
+                    href={`/p/${conversationProject.id}`}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                      e.preventDefault();
+                      navigate(`/p/${conversationProject.id}`);
+                    }}
+                    className="max-w-[40%] shrink-0 truncate rounded-md text-fg-3 transition-colors hover:text-fg"
+                  >
+                    {conversationProject.name}
+                  </a>
+                  <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
+                </>
+              ) : null}
+              <span className="min-w-0 truncate">{activeTitle ?? ""}</span>
             </h1>
             {agent.mode === "mock" ? (
               <Tooltip.Root>
@@ -813,7 +993,31 @@ export function Workspace({
             </IconButton>
           </header>
 
-          {!activeId ? (
+          {activeProjectId ? (
+            activeProject?.status === "ready" ? (
+              <ProjectView
+                key={activeProjectId}
+                ref={composer}
+                project={activeProject.project}
+                conversations={conversations.filter((c) => c.projectId === activeProjectId)}
+                running={running}
+                draft={drafts.current.get(projectDraftKey) ?? ""}
+                onDraftChange={(v) => drafts.current.set(projectDraftKey, v)}
+                onSubmit={send}
+                onOpen={(id) => navigate(`/c/${id}`)}
+                onChange={projectSaved}
+                skills={skills}
+                allowFiles={agent.attachments}
+                footnote={footnote}
+              />
+            ) : activeProject?.status === "missing" || activeProject?.status === "error" ? (
+              <Unavailable what="project" missing={activeProject.status === "missing"} onNew={newChat} />
+            ) : (
+              <div className="flex flex-1 items-center justify-center" aria-busy="true">
+                <span className="spinner animate-fade-in [animation-delay:200ms]" aria-label="Loading project" />
+              </div>
+            )
+          ) : !activeId ? (
             <EmptyState
               key="new"
               ref={composer}
@@ -827,7 +1031,7 @@ export function Workspace({
               footnote={footnote}
             />
           ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
-            <Unavailable missing={activeThread.status === "missing"} onNew={newChat} />
+            <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
           ) : activeThread?.status === "ready" ? (
             <Thread
               key={activeId}
@@ -883,11 +1087,11 @@ export function Workspace({
   );
 }
 
-function Unavailable({ missing, onNew }: { missing: boolean; onNew: () => void }) {
+function Unavailable({ what, missing, onNew }: { what: "conversation" | "project"; missing: boolean; onNew: () => void }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 pb-[10vh] text-center animate-fade-up">
       <h2 className="font-display text-[24px] tracking-[-0.01em]">
-        {missing ? "This conversation isn't here" : "Couldn't load this conversation"}
+        {missing ? `This ${what} isn't here` : `Couldn't load this ${what}`}
       </h2>
       <p className="mt-2 max-w-sm text-[14px] text-fg-3">
         {missing ? "It may have been deleted." : "Check your connection and reload the page."}

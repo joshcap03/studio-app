@@ -6,7 +6,7 @@ import { ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES, type Attachment } from "@/lib/t
 // under <workspace>/<user>/, rows in public.attachments; both are reached only through the
 // member's own session, so Storage policies and RLS keep each member's files to themselves.
 
-const BUCKET = "attachments";
+export const ATTACHMENTS_BUCKET = "attachments";
 /** Uploaded files not yet sent with a message, per member. Keeps abandoned uploads bounded. */
 const MAX_UNSENT = 20;
 
@@ -26,12 +26,18 @@ function safeName(name: string): string {
   return (cleaned || "file").slice(-150);
 }
 
-export async function uploadAttachment(tenant: Tenant, file: File): Promise<Attachment> {
+/** A file's stored name and type, or an error the member can act on. */
+export function checkUpload(file: File): { name: string; mimeType: string } {
   const name = safeName(file.name);
   const mimeType = attachmentType(name);
   if (!mimeType) throw attachmentError("That kind of file isn't supported. Try PDF, Word, CSV, text, or an image.", 415);
   if (file.size === 0) throw attachmentError("That file is empty.");
   if (file.size > MAX_ATTACHMENT_BYTES) throw attachmentError("Files can be up to 10 MB.", 413);
+  return { name, mimeType };
+}
+
+export async function uploadAttachment(tenant: Tenant, file: File): Promise<Attachment> {
+  const { name, mimeType } = checkUpload(file);
 
   const { count, error: countError } = await tenant.db
     .from("attachments")
@@ -43,7 +49,7 @@ export async function uploadAttachment(tenant: Tenant, file: File): Promise<Atta
   if ((count ?? 0) >= MAX_UNSENT) throw attachmentError("Too many files are waiting to be sent. Send or remove some first.", 429);
 
   const path = `${tenant.workspace.id}/${tenant.userId}/${crypto.randomUUID()}/${name}`;
-  const storage = tenant.db.storage.from(BUCKET);
+  const storage = tenant.db.storage.from(ATTACHMENTS_BUCKET);
   const uploaded = await storage.upload(path, file, { contentType: mimeType, upsert: false });
   if (uploaded.error) throw new Error(`Storage error: ${uploaded.error.message}`);
 
@@ -59,9 +65,9 @@ export async function uploadAttachment(tenant: Tenant, file: File): Promise<Atta
   return { id: data.id, name: data.name, mimeType: data.mime_type, size: data.size };
 }
 
-/** Reads a stored file under the member's session. */
-export async function readAttachment(tenant: Tenant, attachment: StoredAttachment): Promise<Blob> {
-  const { data, error } = await tenant.db.storage.from(BUCKET).download(attachment.storagePath);
+/** Reads a stored file (a message attachment or a project file) under the member's session. */
+export async function readAttachment(tenant: Tenant, attachment: Pick<StoredAttachment, "storagePath">): Promise<Blob> {
+  const { data, error } = await tenant.db.storage.from(ATTACHMENTS_BUCKET).download(attachment.storagePath);
   if (error || !data) throw attachmentError("That file couldn't be read.", 404);
   return data;
 }
@@ -85,6 +91,6 @@ export async function removeUnsentAttachment(tenant: Tenant, id: string): Promis
 /** Deletes stored bytes (their rows go with their messages). Best effort. */
 export async function removeAttachmentFiles(tenant: Tenant, paths: string[]): Promise<void> {
   if (paths.length === 0) return;
-  const { error } = await tenant.db.storage.from(BUCKET).remove(paths);
+  const { error } = await tenant.db.storage.from(ATTACHMENTS_BUCKET).remove(paths);
   if (error) console.error("[attachments] couldn't remove files", error.message);
 }

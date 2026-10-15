@@ -572,6 +572,33 @@ describe("edits, files, and memory suggestions", () => {
     expect(await store.getConversation(fresh)).toBeNull();
   });
 
+  it("starts a conversation in a project and gives the agent the project's files ahead of the message's", async () => {
+    const db = createMemoryDb();
+    const store = createMemoryStore(scopeA, db);
+    db.attachments.push({ id: "m1", name: "note.txt", mimeType: "text/plain", size: 3, storagePath: "ws-a/user-a/m1", messageId: null, ...scopeA });
+    const seen: AgentRunInput[] = [];
+    const projectFile = { id: "p1", name: "brief.pdf", mimeType: "application/pdf", size: 9, read: async () => new Blob(["brief"]) };
+    const adapter = { ...scripted([{ type: "message", text: "ok" }], undefined, seen) };
+    const deps = {
+      store,
+      adapter,
+      context: context(scopeA),
+      idleTimeoutMs: 1000,
+      projectFiles: [projectFile],
+      loadAttachment: async (a: { storagePath: string }) => new Blob([a.storagePath]),
+    };
+    const id = crypto.randomUUID();
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "go", projectId: "proj-1", attachmentIds: ["m1"] }));
+    expect(events[0]).toMatchObject({ type: "start", conversation: { projectId: "proj-1" } });
+    expect(await store.getConversation(id)).toMatchObject({ projectId: "proj-1" });
+    expect(seen[0].attachments.map((a) => a.name)).toEqual(["brief.pdf", "note.txt"]);
+
+    // A later message keeps the conversation where it is; the project files come along again.
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "more", projectId: "proj-2" }));
+    expect(await store.getConversation(id)).toMatchObject({ projectId: "proj-1" });
+    expect(seen[1].attachments.map((a) => a.name)).toEqual(["brief.pdf"]);
+  });
+
   it("refuses files when the agent can't read them", async () => {
     const store = createMemoryStore(scopeA);
     const adapter = { ...scripted([]), capabilities: { ...caps, attachments: false } };
