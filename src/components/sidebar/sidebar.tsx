@@ -162,12 +162,12 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
       </nav>
 
       <div className="flex shrink-0 items-center gap-2 border-t border-line py-2 pr-2 pl-4">
-        <span
-          className={`size-1.5 shrink-0 rounded-full ${agent.mode === "live" ? "bg-success" : agent.mode === "mock" ? "bg-accent" : "bg-fg-4"}`}
-          aria-hidden="true"
-        />
+        {/* A working agent needs no status line; only a mock or disabled one is worth flagging. */}
+        {agent.mode !== "live" ? (
+          <span className={`size-1.5 shrink-0 rounded-full ${agent.mode === "mock" ? "bg-accent" : "bg-fg-4"}`} aria-hidden="true" />
+        ) : null}
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">
-          {agent.mode === "mock" ? "Mock agent · not connected" : agent.label}
+          {agent.mode === "mock" ? "Mock agent · not connected" : agent.mode === "live" ? null : agent.label}
         </span>
         <IconButton label="Skills" side="top" onClick={() => window.location.assign("/skills")}>
           <LibraryBig size={15} strokeWidth={1.75} />

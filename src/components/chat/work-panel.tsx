@@ -20,7 +20,7 @@ export function WorkPanel({
   onClose,
 }: {
   messages: ChatMessage[];
-  /** Reply to bring into view (from its "show what it found" button). */
+  /** Reply to bring into view (from its "Show results" button). */
   focusId: string | null;
   onClose: () => void;
 }) {
@@ -44,11 +44,11 @@ export function WorkPanel({
 
   return (
     <aside
-      aria-label="What the agent found"
+      aria-label="Results"
       className="hidden w-[380px] shrink-0 flex-col border-l border-line bg-bg min-[1180px]:flex animate-fade-in"
     >
       <header className="flex h-14 shrink-0 items-center gap-2 pr-2 pl-5">
-        <h2 className="text-[14px] font-semibold tracking-[-0.01em]">Found</h2>
+        <h2 className="text-[14px] font-semibold tracking-[-0.01em]">Results</h2>
         {running ? <Elapsed since={running.activity[0]?.startedAt} /> : count > 0 ? <span className="text-[12.5px] text-fg-3">{count}</span> : null}
         <button
           type="button"
@@ -70,7 +70,7 @@ export function WorkPanel({
       >
         {groups.length === 0 ? (
           <p className="mt-2 px-2 text-[13.5px] leading-relaxed text-fg-3">
-            {running ? "What it finds will show up here." : "Nothing found in this conversation yet."}
+            {running ? "What the agent finds and makes will show up here." : "No results in this conversation yet."}
           </p>
         ) : (
           groups.map((group) => (

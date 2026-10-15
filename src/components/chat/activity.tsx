@@ -108,8 +108,8 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
           <button
             type="button"
             onClick={onOpenPanel}
-            aria-label="Show what it found"
-            title="Show what it found"
+            aria-label="Show results"
+            title="Show results"
             className="hidden size-7 items-center justify-center rounded-md text-fg-4 transition-colors hover:bg-hover hover:text-fg-2 min-[1180px]:inline-flex"
           >
             <PanelRightOpen size={14} />
@@ -177,8 +177,8 @@ function WorkingHeader({
         <button
           type="button"
           onClick={onOpenPanel}
-          aria-label="Show what it found"
-          title="Show what it found"
+          aria-label="Show results"
+          title="Show results"
           className="ml-auto hidden size-6 items-center justify-center rounded-md text-fg-4 hover:bg-hover hover:text-fg-2 min-[1180px]:inline-flex"
         >
           <PanelRightOpen size={13} />
