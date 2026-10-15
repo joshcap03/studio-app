@@ -22,10 +22,10 @@ export function SettingsView({ initialSettings, initialMemories, usage, canEdit,
     <div className="mt-10 space-y-14">
       <BusinessSection initial={initialSettings} canEdit={canEdit} />
       <MemorySection initial={initialMemories} isOwner={canEdit} />
-      <Section title="Connected apps" description="Apps the agent can use on your behalf. Your connections are private to you.">
+      <Section title="Connected apps" description="Apps the agent can use for you. It asks before changing anything, and only you can use your connections.">
         <ConnectionsList returnTo="/settings" />
       </Section>
-      <Section title="Usage" description="Agent runs in this workspace today.">
+      <Section title="Usage" description="Messages to the agent in this workspace today.">
         <div className="rounded-xl border border-line bg-surface px-4 py-4">
           <div className="flex items-baseline justify-between text-[14px]">
             <span className="text-fg-2">Today</span>
@@ -208,7 +208,7 @@ function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner
   return (
     <Section
       title="Memory"
-      description="What the agent remembers. It picks things up as you talk, and you can add or remove them here. Workspace memory is shared with members; personal memory is only yours."
+      description="What the agent knows about you and the business. It saves things as you talk, and you can add or remove them here. Workspace memories are shared with members; “Only me” memories are private."
     >
       {initial === null ? (
         <p className="text-[13.5px] text-fg-3">Memory isn't available right now.</p>
@@ -258,7 +258,7 @@ function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner
       ) : null}
 
       {memories.length === 0 ? (
-        <p className="mt-4 text-[13.5px] text-fg-3">Nothing yet.</p>
+        <p className="mt-4 text-[13.5px] text-fg-3">Nothing saved yet. Add something above, or just tell the agent in chat.</p>
       ) : (
         <ul className="mt-4 divide-y divide-line">
           {memories.map((m) => (

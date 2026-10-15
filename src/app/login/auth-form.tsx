@@ -8,21 +8,21 @@ type Mode = "signin" | "signup" | "forgot";
 const COPY: Record<Mode, { title: string; subtitle: string; submit: string; switchText: string; switchAction: string }> = {
   signin: {
     title: "Welcome back",
-    subtitle: "Sign in to your workspace.",
+    subtitle: "Sign in to pick up where you left off.",
     submit: "Sign in",
     switchText: "New here?",
     switchAction: "Create an account",
   },
   signup: {
     title: "Create your account",
-    subtitle: "Set up a workspace for your business in a minute.",
+    subtitle: "An AI agent that knows your business and works in the apps you already use.",
     submit: "Create account",
     switchText: "Already have an account?",
     switchAction: "Sign in",
   },
   forgot: {
     title: "Reset your password",
-    subtitle: "We'll email you a link to choose a new one.",
+    subtitle: "Enter your email and we'll send you a link to choose a new one.",
     submit: "Send reset link",
     switchText: "Remembered it?",
     switchAction: "Sign in",
@@ -80,7 +80,7 @@ export function AuthForm({ destination, initialMode, notice }: { destination: st
             </>
           ) : (
             <>
-              We sent a confirmation link to <span className="font-medium text-fg">{email}</span>. Follow it to finish setting up.
+              We sent a confirmation link to <span className="font-medium text-fg">{email}</span>. Open it to finish setting up.
             </>
           )}
         </p>

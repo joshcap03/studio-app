@@ -63,7 +63,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
       {step === "workspace" ? (
         <form onSubmit={createWorkspace} className="mt-8 animate-fade-up" noValidate>
           <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">Set up your workspace</h1>
-          <p className="mt-1.5 text-[14px] text-fg-3">Your conversations, memory, and settings live here.</p>
+          <p className="mt-1.5 text-[14px] text-fg-3">A few details so the agent knows who it&apos;s working for.</p>
 
           <label htmlFor="ws-name" className="mt-8 block text-[13px] font-medium text-fg-2">
             Business name
@@ -87,10 +87,10 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
             maxLength={8000}
             value={about}
             onChange={(e) => setAbout(e.target.value)}
-            placeholder="What you sell, who your customers are, and the tools you run on. For example: we sell handmade goods online through Shopify and at two shops…"
+            placeholder="What you sell, who buys it, and the tools you run on. For example: we sell handmade candles on Shopify and wholesale to about 20 shops…"
             className="mt-1.5 w-full resize-none rounded-xl border border-line bg-surface px-3.5 py-3 text-[14.5px] leading-relaxed outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
           />
-          <p className="mt-1.5 text-[12.5px] text-fg-3">The agent uses this as background for every conversation. You can change it later.</p>
+          <p className="mt-1.5 text-[12.5px] text-fg-3">The agent reads this before every conversation. You can edit it anytime in Settings.</p>
 
           <p role="alert" className="mt-4 min-h-5 text-[13px] text-danger">
             {error}
@@ -116,8 +116,8 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
         <div className="mt-8 animate-fade-up">
           <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">Connect your apps</h1>
           <p className="mt-1.5 text-[14px] text-fg-3">
-            Let the agent work in the tools {created ? <span className="text-fg-2">{created}</span> : "your business"} already uses.
-            Your connections are private to you.
+            Give the agent access to the tools {created ? <span className="text-fg-2">{created}</span> : "your business"} runs on. It
+            asks before sending, changing, or deleting anything, and only you can use your connections.
           </p>
           <div className="mt-6">
             <ConnectionsList returnTo="/onboarding" />
@@ -130,7 +130,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
               Start chatting
               <ArrowRight size={15} />
             </a>
-            <span className="text-[12.5px] text-fg-3">You can connect more later in Settings.</span>
+            <span className="text-[12.5px] text-fg-3">You can skip this and connect apps anytime.</span>
           </div>
         </div>
       )}
