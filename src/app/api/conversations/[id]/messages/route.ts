@@ -13,7 +13,7 @@ import { projectForRun } from "@/lib/projects";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
 import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
-import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
+import { buildAgentContext, claimRun } from "@/lib/workspace";
 
 // Starts a turn and streams it back as NDJSON (one StreamEvent per line). Creating the
 // conversation on first send lets the browser create conversations optimistically. The
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest, { params }: Context) {
   }
 
   try {
-    // Context (settings and memory recall) loads alongside the limit and skill checks rather
+    // Context (settings and memory recall) loads alongside the skill and project lookups rather
     // than after them; it only reads, so a refused run just discards it.
     // Memory is searched with the member's recent messages, not just this one, so a follow-up
     // recalls what the conversation is about rather than only the business's standing facts.
@@ -84,12 +84,10 @@ export async function POST(request: NextRequest, { params }: Context) {
       const projectId = conversation ? conversation.projectId : input.kind === "send" ? input.projectId : undefined;
       return projectId ? projectForRun(tenant, projectId, adapter.capabilities.attachments) : undefined;
     };
-    const [limit, skill, project] = await Promise.all([
-      checkRunLimits(tenant),
+    const [skill, project] = await Promise.all([
       input.kind === "send" && input.skillId ? loadSkill(input.skillId) : Promise.resolve(undefined),
       loadProject(),
     ]);
-    if (limit) return jsonError(429, limit, "rate_limited");
     if (skill === null) return jsonError(404, "Skill not found.");
     if (project === null) return jsonError(404, "Project not found.");
 
@@ -103,6 +101,8 @@ export async function POST(request: NextRequest, { params }: Context) {
         projectFiles: project?.files,
         remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
+        // Checks the limits and records the run in one step, so a burst can't slip under them.
+        claim: (replyId) => claimRun(tenant, replyId),
         timelines: previewEnabled(tenant, "why"),
         loadAttachment: (attachment) => readAttachment(tenant, attachment),
         loadSkill,
@@ -119,7 +119,6 @@ export async function POST(request: NextRequest, { params }: Context) {
           }
         : { conversationId: conversationId.data, ...input },
     );
-    await recordRun(tenant);
     return new Response(stream, {
       headers: {
         "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -128,7 +127,7 @@ export async function POST(request: NextRequest, { params }: Context) {
       },
     });
   } catch (error) {
-    if (error instanceof TurnError) return jsonError(error.status, error.message);
+    if (error instanceof TurnError) return jsonError(error.status, error.message, error.status === 429 ? "rate_limited" : undefined);
     if (/duplicate key|violates/.test((error as Error)?.message ?? "")) return jsonError(404, "Conversation not found.");
     return errorResponse(error);
   }

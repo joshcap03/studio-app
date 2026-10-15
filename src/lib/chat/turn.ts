@@ -75,6 +75,11 @@ export interface TurnDeps {
     scope: MemoryProposal["scope"],
     options: { category?: MemoryCategory; source: { conversationId: string; messageId: string } },
   ) => Promise<string>;
+  /**
+   * Claims one run against the member's limits, once the turn is known to be valid, for the
+   * reply it will write. Returns why it was refused, or null to go ahead.
+   */
+  claim?: (replyId: string) => Promise<string | null>;
   /** Whether this member gets "why?" timelines; when false they're dropped. */
   timelines?: boolean;
   /** How often partial output is saved while streaming. */
@@ -191,13 +196,22 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await store.settleApproval(pending.id, "pending", "expired");
       throw new TurnError(409, "This request can't be answered anymore. Ask the agent again.");
     }
-    const to = request.decision === "approve" ? "approved" : "declined";
-    if (!(await store.settleApproval(pending.id, "pending", to))) throw new TurnError(409, "This request was already answered.");
-    decided = { ...pending, status: to, decidedAt: Date.now() };
-    resume = { decision: request.decision, state: pending.providerState };
   } else if (pending && request.kind === "send") {
     // A new message waits for the pending decision.
     throw new TurnError(409, "Approve or decline the agent's request first.");
+  }
+
+  // The turn is valid; it counts against the member's limits before anything changes.
+  const replyId = continued?.id ?? crypto.randomUUID();
+  const refused = await deps.claim?.(replyId);
+  if (refused) throw new TurnError(429, refused);
+
+  if (request.kind === "decide") {
+    const approval = pending!;
+    const to = request.decision === "approve" ? "approved" : "declined";
+    if (!(await store.settleApproval(approval.id, "pending", to))) throw new TurnError(409, "This request was already answered.");
+    decided = { ...approval, status: to, decidedAt: Date.now() };
+    resume = { decision: request.decision, state: approval.providerState };
   }
 
   /** Retrying or editing abandons a pending decision, once the request is known to be valid. */
@@ -298,7 +312,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     };
   } else {
     assistant = await store.insertMessage({
-      id: crypto.randomUUID(),
+      id: replyId,
       conversationId,
       role: "assistant",
       content: "",
