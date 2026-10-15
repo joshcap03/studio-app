@@ -106,6 +106,33 @@ export interface MemoryProposal {
   scope: "workspace" | "personal";
   status: "pending" | "saved" | "dismissed";
   memoryId?: string;
+  category?: MemoryCategory;
+}
+
+/** How Business Brain groups facts. The agent picks one when it saves; members can change it. */
+export const MEMORY_CATEGORIES = [
+  "customers",
+  "suppliers",
+  "products",
+  "policies",
+  "voice",
+  "team",
+  "other",
+] as const;
+export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
+
+export const MEMORY_CATEGORY_LABELS: Record<MemoryCategory, string> = {
+  customers: "Customers",
+  suppliers: "Suppliers",
+  products: "Products & pricing",
+  policies: "Policies & rules",
+  voice: "Voice & style",
+  team: "Team",
+  other: "Other",
+};
+
+export function toMemoryCategory(value: unknown): MemoryCategory {
+  return typeof value === "string" && (MEMORY_CATEGORIES as readonly string[]).includes(value) ? (value as MemoryCategory) : "other";
 }
 
 /** A file the member attached to a message. */
@@ -168,6 +195,11 @@ export interface Memory {
   scope: "workspace" | "personal";
   createdAt: number;
   mine: boolean;
+  category: MemoryCategory;
+  /** Pinned facts always reach the agent, ahead of anything recalled by relevance. */
+  pinned: boolean;
+  /** The message the agent saved this from. Absent for facts added by hand. */
+  source?: { conversationId: string; messageId: string };
 }
 
 export interface ToolkitConnection {
@@ -254,3 +286,16 @@ export const MAX_SKILL_NAME_LENGTH = 80;
 export const MAX_SKILL_DESCRIPTION_LENGTH = 200;
 export const MAX_SKILL_INSTRUCTIONS_LENGTH = 4000;
 export const MAX_SKILLS = 50;
+
+/** A member's request to share one of their personal memories with the whole workspace. */
+export interface MemoryPromotion {
+  id: string;
+  /** The personal memory it came from (`personal:<doc>`); only meaningful to the requester. */
+  memoryId: string;
+  content: string;
+  category: MemoryCategory;
+  status: "pending" | "approved" | "rejected";
+  /** True when the caller asked for it. */
+  mine: boolean;
+  createdAt: number;
+}

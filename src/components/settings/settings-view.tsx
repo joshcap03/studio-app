@@ -2,13 +2,16 @@
 
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { Memory, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import type { Memory, MemoryPromotion, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import { BusinessBrain } from "./business-brain";
 import { ConnectionsList } from "./connections-list";
 
 interface Props {
   initialSettings: WorkspaceSettings;
   /** null when memory isn't available (not set up, or couldn't be reached). */
   initialMemories: Memory[] | null;
+  /** Set (possibly empty) only when Business Brain is on for this account. */
+  initialPromotions: MemoryPromotion[] | null;
   usage: UsageSummary;
   canEdit: boolean;
   email: string | null;
@@ -17,11 +20,24 @@ interface Props {
 const input =
   "w-full rounded-xl border border-line bg-surface px-3.5 text-[14.5px] text-fg outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none disabled:bg-subtle/50 disabled:text-fg-2";
 
-export function SettingsView({ initialSettings, initialMemories, usage, canEdit, email }: Props) {
+export function SettingsView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, email }: Props) {
   return (
     <div className="mt-10 space-y-14">
       <BusinessSection initial={initialSettings} canEdit={canEdit} />
-      <MemorySection initial={initialMemories} isOwner={canEdit} />
+      {initialPromotions ? (
+        <Section
+          title="Business Brain"
+          description="Everything the agent knows about the business and you, by topic. It saves facts as you talk; edit, pin, or remove them here. Share a personal fact and the owner can make it part of the workspace."
+        >
+          {initialMemories === null ? (
+            <p className="text-[13.5px] text-fg-3">Memory isn't available right now.</p>
+          ) : (
+            <BusinessBrain initialMemories={initialMemories} initialPromotions={initialPromotions} isOwner={canEdit} />
+          )}
+        </Section>
+      ) : (
+        <MemorySection initial={initialMemories} isOwner={canEdit} />
+      )}
       <Section title="Connected apps" description="Apps the agent can use for you. It asks before changing anything, and only you can use your connections.">
         <ConnectionsList returnTo="/settings" />
       </Section>

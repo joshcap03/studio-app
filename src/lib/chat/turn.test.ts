@@ -506,22 +506,23 @@ describe("edits, files, and memory suggestions", () => {
   it("saves what the agent remembers right away, keeping its id so the member can undo it", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
-    const saved: [string, string][] = [];
+    const saved: [string, string, unknown][] = [];
     const adapter = scripted([
-      { type: "memory-proposal", content: "Ships orders on Tuesdays.", scope: "workspace" },
+      { type: "memory-proposal", content: "Ships orders on Tuesdays.", scope: "workspace", category: "policies" },
       { type: "memory-proposal", content: "Prefers short replies.", scope: "personal" },
       { type: "message", text: "Got it." },
     ]);
-    const remember = async (content: string, scope: string) => {
+    const remember = async (content: string, scope: string, options: unknown) => {
       if (scope === "personal") throw new Error("memory down");
-      saved.push([content, scope]);
+      saved.push([content, scope, options]);
       return "workspace:doc1";
     };
     const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, remember }, { conversationId: id, kind: "send", text: "x" }));
-    expect(saved).toEqual([["Ships orders on Tuesdays.", "workspace"]]);
     const reply = (await store.listMessages(id))[1];
+    // Saved with its category and the reply it came from, so Business Brain can link back.
+    expect(saved).toEqual([["Ships orders on Tuesdays.", "workspace", { category: "policies", source: { conversationId: id, messageId: reply.id } }]]);
     expect(reply.memoryProposals).toEqual([
-      { id: expect.any(String), content: "Ships orders on Tuesdays.", scope: "workspace", status: "saved", memoryId: "workspace:doc1" },
+      { id: expect.any(String), content: "Ships orders on Tuesdays.", scope: "workspace", status: "saved", memoryId: "workspace:doc1", category: "policies" },
       // Saving failed: it stays a suggestion the member can save.
       { id: expect.any(String), content: "Prefers short replies.", scope: "personal", status: "pending" },
     ]);

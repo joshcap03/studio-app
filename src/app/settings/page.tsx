@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { SettingsView } from "@/components/settings/settings-view";
 import { requirePageTenant } from "@/lib/tenant";
+import { brainMemories, listPromotions } from "@/lib/brain";
+import { previewEnabled } from "@/lib/flags";
 import { listMemories, memoryEnabled } from "@/lib/memory";
 import { getSettings, getUsage } from "@/lib/workspace";
 
@@ -10,13 +12,15 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const tenant = await requirePageTenant();
+  const brain = previewEnabled(tenant, "brain");
   const memories = memoryEnabled()
-    ? listMemories(tenant).catch((error) => {
+    ? (brain ? brainMemories(tenant) : listMemories(tenant)).catch((error) => {
         console.error("[settings] memory unavailable", error);
         return null;
       })
     : Promise.resolve(null);
-  const [settings, initialMemories, usage] = await Promise.all([getSettings(tenant), memories, getUsage(tenant)]);
+  const promotions = brain && memoryEnabled() ? listPromotions(tenant).catch(() => []) : Promise.resolve(null);
+  const [settings, initialMemories, usage, initialPromotions] = await Promise.all([getSettings(tenant), memories, getUsage(tenant), promotions]);
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
@@ -33,6 +37,7 @@ export default async function SettingsPage() {
         <SettingsView
           initialSettings={settings}
           initialMemories={initialMemories}
+          initialPromotions={initialPromotions}
           usage={usage}
           canEdit={tenant.workspace.role === "owner"}
           email={tenant.email}

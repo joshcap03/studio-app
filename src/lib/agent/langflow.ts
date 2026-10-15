@@ -1,4 +1,5 @@
 import { appForToolkit } from "@/lib/apps";
+import { toMemoryCategory } from "@/lib/types";
 import { interpretCalls, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
@@ -300,7 +301,12 @@ export function toolMemoryProposals(message: LangflowMessage): AgentEvent[] {
     const proposal = isRecord(result) && isRecord(result.memory_proposal) ? result.memory_proposal : undefined;
     const content = typeof proposal?.content === "string" ? proposal.content.replace(/\s+/g, " ").trim() : "";
     if (!content || events.some((e) => e.type === "memory-proposal" && e.content === content)) continue;
-    events.push({ type: "memory-proposal", content, scope: proposal?.scope === "personal" ? "personal" : "workspace" });
+    events.push({
+      type: "memory-proposal",
+      content,
+      scope: proposal?.scope === "personal" ? "personal" : "workspace",
+      category: toMemoryCategory(proposal?.category),
+    });
   }
   return events;
 }

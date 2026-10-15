@@ -52,6 +52,9 @@ const schema = z.object({
   LIMIT_CONCURRENT_RUNS: z.coerce.number().int().positive().default(2),
   // Agent runs per day across every workspace. Unset means no service-wide cap.
   LIMIT_RUNS_SERVICE_PER_DAY: z.coerce.number().int().positive().optional(),
+
+  // Accounts that see preview features: comma-separated sign-in emails. Unset means nobody.
+  PREVIEW_FEATURE_EMAILS: z.string().optional(),
 });
 
 const toolkitSchema = z.record(
@@ -87,6 +90,8 @@ export interface AppConfig {
   /** Long-term memory. Unset means the agent remembers nothing between conversations. */
   supermemory?: { apiKey: string; baseUrl: string };
   limits: { runsPerMinute: number; runsPerWorkspacePerDay: number; concurrentRuns: number; runsServicePerDay?: number };
+  /** Lowercased sign-in emails allowed to see preview features (see src/lib/flags.ts). */
+  previewEmails: Set<string>;
 }
 
 let cached: AppConfig | undefined;
@@ -145,6 +150,9 @@ export function getConfig(): AppConfig {
       concurrentRuns: env.LIMIT_CONCURRENT_RUNS,
       runsServicePerDay: env.LIMIT_RUNS_SERVICE_PER_DAY,
     },
+    previewEmails: new Set(
+      (env.PREVIEW_FEATURE_EMAILS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+    ),
   };
   return cached;
 }

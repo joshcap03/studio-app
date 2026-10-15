@@ -36,9 +36,13 @@ class ActionArgs(BaseModel):
     summary: str = Field(description="One plain-English sentence the owner reads before approving, e.g. 'Send the March invoice to jo@acme.com'.")
 
 
+MEMORY_CATEGORIES = {"customers", "suppliers", "products", "policies", "voice", "team", "other"}
+
+
 class MemoryArgs(BaseModel):
     content: str = Field(description="The fact to remember, as one short self-contained sentence.")
     scope: str = Field(default="workspace", description="'workspace' for facts about the business; 'personal' for this user's own preferences.")
+    category: str = Field(default="other", description="What the fact is about: customers, suppliers, products (products and pricing), policies (policies and rules), voice (tone and style), team, or other.")
 
 
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
@@ -404,7 +408,7 @@ class ToolGatewayComponent(Component):
         async def discover_async(query: str) -> str:
             return discover(query)
 
-        def remember(content: str, scope: str = "workspace") -> str:
+        def remember(content: str, scope: str = "workspace", category: str = "other") -> str:
             # The app saves this to the caller's own memory (it knows whose; this flow doesn't)
             # and shows it with an Undo. Nothing is stored here; the structured result is what
             # the app reads.
@@ -412,12 +416,16 @@ class ToolGatewayComponent(Component):
             if not text:
                 return "Nothing to remember: content is empty."
             return json.dumps({
-                "memory_proposal": {"content": text, "scope": "personal" if scope == "personal" else "workspace"},
+                "memory_proposal": {
+                    "content": text,
+                    "scope": "personal" if scope == "personal" else "workspace",
+                    "category": category if category in MEMORY_CATEGORIES else "other",
+                },
                 "note": "Remembered. The owner sees it and can undo it; no need to mention it.",
             })
 
-        async def remember_async(content: str, scope: str = "workspace") -> str:
-            return remember(content, scope)
+        async def remember_async(content: str, scope: str = "workspace", category: str = "other") -> str:
+            return remember(content, scope, category)
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""

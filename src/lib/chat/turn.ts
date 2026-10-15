@@ -10,6 +10,7 @@ import {
   type Artifact,
   type ChatMessage,
   type ConversationSummary,
+  type MemoryCategory,
   type MemoryProposal,
   type MessageStatus,
   type StreamEvent,
@@ -59,7 +60,11 @@ export interface TurnDeps {
    * Saves a fact the agent chose to remember, in the caller's own memory, and returns its
    * id. Without it, suggestions wait for the member to save them.
    */
-  remember?: (content: string, scope: MemoryProposal["scope"]) => Promise<string>;
+  remember?: (
+    content: string,
+    scope: MemoryProposal["scope"],
+    options: { category?: MemoryCategory; source: { conversationId: string; messageId: string } },
+  ) => Promise<string>;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -381,7 +386,13 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
             case "memory-proposal": {
               const text = event.content.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_LENGTH);
               if (!text || proposals.length >= MAX_PROPOSALS || proposals.some((p) => p.content === text)) break;
-              const proposal: MemoryProposal = { id: crypto.randomUUID(), content: text, scope: event.scope, status: "pending" };
+              const proposal: MemoryProposal = {
+                id: crypto.randomUUID(),
+                content: text,
+                scope: event.scope,
+                status: "pending",
+                ...(event.category ? { category: event.category } : {}),
+              };
               proposals.push(proposal);
               if (!deps.remember) {
                 send({ type: "memory-proposal", proposal });
@@ -390,7 +401,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               // Saved straight away (the member can undo it); the reply keeps streaming meanwhile.
               // If saving fails, it stays a suggestion the member can save themselves.
               remembering.push(
-                deps.remember(text, event.scope).then(
+                deps.remember(text, event.scope, { category: event.category, source: { conversationId, messageId: assistant.id } }).then(
                   (memoryId) => {
                     const saved: MemoryProposal = { ...proposal, status: "saved", memoryId };
                     proposals[proposals.findIndex((p) => p.id === proposal.id)] = saved;

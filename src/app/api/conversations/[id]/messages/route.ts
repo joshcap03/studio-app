@@ -74,7 +74,7 @@ export async function POST(request: NextRequest, { params }: Context) {
         store,
         adapter: getAgentAdapter(),
         context: await context,
-        remember: memoryEnabled() ? async (content, scope) => (await remember(tenant, content, scope)).id : undefined,
+        remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
         loadAttachment: (attachment) => readAttachment(tenant, attachment),
         loadSkill,

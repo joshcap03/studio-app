@@ -426,7 +426,7 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
           yield { type: "approval", summary: step.summary, app: step.app, details: step.details, state: { mock: true } };
           return;
         } else if (step.kind === "remember") {
-          yield { type: "memory-proposal", content: step.content, scope: "workspace" };
+          yield { type: "memory-proposal", content: step.content, scope: "workspace", category: "suppliers" };
         } else if (!streaming) {
           await wait(600 * pace, signal);
           yield { type: "message", text: step.text };

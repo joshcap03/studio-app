@@ -1,4 +1,4 @@
-import type { ActivityStatus, Artifact, StepAction, StepPreview } from "@/lib/types";
+import type { ActivityStatus, Artifact, MemoryCategory, StepAction, StepPreview } from "@/lib/types";
 
 // The contract between this application and any agent provider (Langflow today; LangGraph,
 // Deep Agents, or others later). Adapters translate their provider's protocol into these
@@ -87,7 +87,7 @@ export type AgentEvent =
    */
   | { type: "approval"; summary: string; app?: string; details: [string, string][]; state: unknown }
   /** The agent suggested a fact to remember. Nothing is saved unless the member confirms. */
-  | { type: "memory-proposal"; content: string; scope: "workspace" | "personal" };
+  | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory };
 
 /** What a provider has been verified to support. The app adapts its behavior to these. */
 export interface AgentCapabilities {

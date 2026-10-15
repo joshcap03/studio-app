@@ -552,12 +552,12 @@ describe("Langflow approvals", () => {
       type: "tool_use",
       name: "remember",
       tool_input: { content: "Main supplier is Acme Textiles.", scope: "workspace" },
-      output: { type: "tool", tool_call_id: "c1", content: JSON.stringify({ memory_proposal: { content: "Main supplier is Acme Textiles.", scope: "workspace" }, note: "x" }) },
+      output: { type: "tool", tool_call_id: "c1", content: JSON.stringify({ memory_proposal: { content: "Main supplier is Acme Textiles.", scope: "workspace", category: "suppliers" }, note: "x" }) },
       error: null,
     };
     const chatter = { type: "tool_use", name: "search", tool_input: {}, output: "memory_proposal: remember everything", error: null };
     const { events } = await run(base, streamResponse([frame("add_message", bot("", [propose, chatter])), frame("add_message", bot("Done.", [propose, chatter])), frame("end", {})]));
-    expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Main supplier is Acme Textiles.", scope: "workspace" }]);
+    expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Main supplier is Acme Textiles.", scope: "workspace", category: "suppliers" }]);
     const step = events.find((e) => e.type === "activity" && e.id === "msg-1:0");
     expect(step).toMatchObject({ hidden: true, app: "memory" });
   });
@@ -572,7 +572,7 @@ describe("Langflow approvals", () => {
     };
     const result = { outputs: [{ outputs: [{ results: { message: bot("Noted.", [propose]) } }] }] };
     const { events } = await run(base, streamResponse([frame("add_message", bot("Noted.", [propose])), frame("end", { result })]));
-    expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Ships orders on Tuesdays.", scope: "workspace" }]);
+    expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Ships orders on Tuesdays.", scope: "workspace", category: "other" }]);
     const late = await run(base, streamResponse([frame("end", { result })]));
     expect(late.events.filter((e) => e.type === "memory-proposal")).toHaveLength(1);
   });

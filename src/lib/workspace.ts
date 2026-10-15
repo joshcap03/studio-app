@@ -1,3 +1,4 @@
+import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
 import { recall } from "@/lib/memory";
@@ -102,7 +103,7 @@ export async function recordRun(tenant: Tenant): Promise<void> {
  * (the member's message) pulls in memories that match it.
  */
 export async function buildAgentContext(tenant: Tenant, query?: string): Promise<AgentTenantContext> {
-  const [settings, memories] = await Promise.all([getSettings(tenant), recall(tenant, query)]);
+  const [settings, memories] = await Promise.all([getSettings(tenant), recall(tenant, query, { pinned: previewEnabled(tenant, "brain") })]);
   return {
     workspaceId: tenant.workspace.id,
     workspaceName: settings.name,

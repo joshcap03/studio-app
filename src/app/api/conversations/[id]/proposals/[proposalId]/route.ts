@@ -42,7 +42,10 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (proposal.status === "saved") return jsonError(409, "This is already saved.");
       if (input.decision === "save") {
         const scope = input.scope ?? proposal.scope;
-        const memory = await remember(auth.value, proposal.content, scope);
+        const memory = await remember(auth.value, proposal.content, scope, {
+          category: proposal.category,
+          source: { conversationId: ids.data.id, messageId: message.id },
+        });
         updated = { ...proposal, scope, status: "saved", memoryId: memory.id };
       } else {
         updated = { ...proposal, status: "dismissed" };
