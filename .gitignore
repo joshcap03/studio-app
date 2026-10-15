@@ -1,3 +1,6 @@
+# Earlier local-only projects (never committed)
+archive/
+
 # Dependencies
 node_modules/
 

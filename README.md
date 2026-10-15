@@ -2,15 +2,12 @@
 
 A multi-tenant AI workspace for running a business. People sign up, create a workspace,
 connect their own apps, and chat with a shared agent that works with *their* business
-context, memory, and connections. Nothing about
-any one business is built into the app or the agent integration.
+context, memory, and connections. Nothing about any one business is built into the app or
+the agent integration.
 
 The agent runs separately (Langflow today). This app is the product around it: accounts,
 workspaces, conversations, streaming, execution activity, artifacts, memory, connected apps,
 limits, and the tenant isolation that keeps businesses apart.
-
-The previous projects (the NY sales-tax agent and the Vite prototype) are in
-[`archive/`](archive/), tagged `archive/sales-tax-agent-2026-10-12`.
 
 ## Run it locally
 

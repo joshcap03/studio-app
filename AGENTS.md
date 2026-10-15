@@ -4,9 +4,9 @@ This repository is **Studio**: a multi-tenant Next.js workspace where businesses
 shared AI agent (Langflow today) using their own context, memory, and connected apps. The
 agent runs separately; this app never reimplements agent reasoning.
 
-Earlier projects (the NY sales-tax agent and the Vite prototype) live in `archive/`, with
-their own `archive/AGENTS.md`. Don't modify `archive/` unless the task is about it. Its
-`data/`, `state/`, and `.env` hold real business data and secrets and stay gitignored.
+This repository is public. Never commit business data, secrets, real customer or member
+details, or anything specific to one business. A local `archive/` folder, if present, is
+gitignored and stays out of the repo.
 
 ## Commands
 
@@ -56,8 +56,8 @@ raw/technical text.
   service-role client to request paths. Every new table gets RLS policies and an isolation test.
 - Keep provider-specific logic inside its adapter. Declare capabilities honestly; don't
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
-- Never hardcode a business into agent or app logic; per-workspace
-  settings carry business specifics.
+- Never hardcode a business into agent or app logic; per-workspace settings carry
+  business specifics.
 - The flow is shared by every tenant: nothing in it may hold one tenant's connections or
   memory (per-member values arrive through tweaks), and no tool may run code in the
   Langflow server process.

@@ -24,8 +24,8 @@ describe("skill library", () => {
     }
   });
 
-  it("stays generic: no business names", () => {
-    expect(JSON.stringify(CATALOG).toLowerCase()).not.toMatch(/acme/);
+  it("stays generic: no links or addresses tied to one business", () => {
+    expect(JSON.stringify(CATALOG)).not.toMatch(/https?:\/\/|@/);
   });
 });
 
