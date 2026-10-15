@@ -419,7 +419,7 @@ function browserPage(name: string, result: unknown): Interpretation {
 }
 
 /**
- * Explicit progress markers printed by code the agent runs (see README, "Work markers"):
+ * Explicit progress markers printed by code the agent runs (see docs/development.md, "Work markers"):
  *   STEP <plain-language progress>
  *   ARTIFACT {"id","kind","title","url","description"?,"source"?}
  * Only lines that start with these exact markers count; nothing else in the output is

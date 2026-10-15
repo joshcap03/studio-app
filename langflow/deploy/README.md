@@ -140,4 +140,4 @@ Type the values in your shell; don't paste them into files in the repo.
 
 In Vercel (Production): `LANGFLOW_BASE_URL` (the https host, no trailing slash),
 `LANGFLOW_API_KEY`, `LANGFLOW_FLOW_ID` (the new id), `LANGFLOW_TWEAKS` (from step 4). Then
-run the smoke test in the root README.
+run the smoke test in docs/development.md.
