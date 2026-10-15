@@ -25,7 +25,7 @@ interface Leaf {
 }
 
 /** Rebuilds a reply's steps (tool steps and the agent's lines) in the order they happened. */
-function replyToSteps(leaves: Leaf[]): ActivityStep[] {
+function replyToSteps(leaves: Leaf[]): (ActivityStep & { returned?: number })[] {
   const lastTool = leaves.map((l) => l.type).lastIndexOf("tool_use");
   const calls: ToolCall[] = [];
   const order: ({ kind: "call"; index: number } | { kind: "note"; text: string })[] = [];
@@ -38,10 +38,13 @@ function replyToSteps(leaves: Leaf[]): ActivityStep[] {
     }
   });
   const byIndex = new Map(interpretCalls(calls).map((s) => [s.index, s]));
-  return order.flatMap((o, i): ActivityStep[] => {
+  return order.flatMap((o, i): (ActivityStep & { returned?: number })[] => {
     if (o.kind === "note") return [{ id: `n${i}`, label: o.text, status: "done", action: "note", app: "agent", startedAt: 0 }];
     const s = byIndex.get(o.index);
-    return s ? [{ id: `s${o.index}`, label: s.label, status: s.status, detail: s.detail, app: s.app, action: s.action, preview: s.preview, hidden: s.hidden, startedAt: 0 }] : [];
+    // How much the tool sent back, including any gateway call merged into this step.
+    const output = s ? calls[s.index]?.output : undefined;
+    const returned = typeof output === "string" ? output.length : JSON.stringify(output ?? "").length;
+    return s ? [{ id: `s${o.index}`, label: s.label, status: s.status, detail: s.detail, app: s.app, action: s.action, preview: s.preview, hidden: s.hidden, startedAt: 0, returned }] : [];
   });
 }
 
@@ -54,6 +57,7 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
     const messages = (await res.json()) as { sender?: string; content_blocks?: { contents?: Leaf[] }[] }[];
 
     const missing: string[] = [];
+    const unread: string[] = [];
     const technical: string[] = [];
     let checked = 0;
     for (const m of messages) {
@@ -67,6 +71,9 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
         // A step that returned something (or failed) must say so; one that returned nothing
         // at all (e.g. opening a browser) has nothing to report.
         if (!covered.has(s.id) && (s.preview || s.status === "failed")) missing.push(`${s.app}: ${s.label}`);
+        // A tool that sent back real data must leave a receipt; otherwise its result was
+        // dropped (e.g. an unrecognized response shape) and Results shows nothing.
+        if (s.status === "done" && !s.preview && (s.returned ?? 0) > 300) unread.push(`${s.app}: ${s.label}`);
         if (TECHNICAL.test(s.label) || (s.detail && TECHNICAL.test(s.detail))) technical.push(`${s.app} step: ${s.label} / ${s.detail ?? ""}`);
       }
       for (const f of findings) if (TECHNICAL.test(f.text)) technical.push(`${f.app} finding: ${f.text}`);
@@ -75,5 +82,6 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
     expect(checked).toBeGreaterThan(0);
     expect(technical, technical.join("\n")).toEqual([]);
     expect(missing, missing.join("\n")).toEqual([]);
+    expect(unread, unread.join("\n")).toEqual([]);
   }, 60_000);
 });

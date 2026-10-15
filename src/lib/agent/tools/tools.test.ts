@@ -117,6 +117,52 @@ describe("interpretCalls", () => {
     });
   });
 
+  it("reads a large result from Composio's data_preview sample, counting what it left out", () => {
+    const [step] = interpretCalls([
+      {
+        name: "composio_multi_execute_tool",
+        input: { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", arguments: { query: "newer_than:10d delay" } }], current_step: "Searching Gmail for delays" },
+        output: toolMessage({
+          successful: true,
+          error: null,
+          data: {
+            results: [
+              {
+                tool_slug: "GMAIL_FETCH_EMAILS",
+                response: {
+                  successful: true,
+                  data_preview: {
+                    messages: [
+                      { subject: "Clasp shipment delayed", sender: "Casting Co", display_url: "https://mail.google.com/mail/u/0/#inbox/1", labelIds: ["INBOX", "...2 more items"] },
+                      { subject: "Order question", sender: "A customer" },
+                      "...48 more items",
+                    ],
+                  },
+                },
+              },
+            ],
+            remote_file_info: { file_path: "/mnt/files/mex/x.json" },
+          },
+        }),
+        error: null,
+      },
+    ]);
+    expect(step).toMatchObject({ app: "gmail", status: "done", label: "Searching Gmail for delays" });
+    expect(step.preview).toMatchObject({ type: "items", total: 50, items: [{ primary: "Clasp shipment delayed" }, { primary: "Order question" }] });
+  });
+
+  it("drops the sample marker from generic lists too", () => {
+    const [step] = interpretCalls([
+      {
+        name: "SHOPIFY_GET_ORDERS_WITH_FILTERS",
+        input: {},
+        output: toolMessage({ successful: true, data_preview: { orders: [{ name: "#1042", status: "refunded" }, "...9 more items"] } }),
+        error: null,
+      },
+    ]);
+    expect(step.preview).toMatchObject({ type: "items", total: 10, items: [{ primary: "#1042" }] });
+  });
+
   it("uses the agent's current_step narration and never its thought", () => {
     const [step] = interpretCalls([
       {

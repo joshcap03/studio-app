@@ -9,6 +9,7 @@ import {
   isRecord,
   maybeJson,
   safeUrl,
+  splitSample,
   unwrapResult,
 } from "./sanitize";
 
@@ -480,14 +481,15 @@ function previewFor(slug: string, app: AppId, input: Record<string, unknown>, da
   if (Array.isArray(values) && values.every(Array.isArray)) return tablePreview(values as unknown[][], firstString(input, ["range", "sheet_name"]));
 
   if (app === "gmail" || app === "outlook") {
-    const messages = findArray(data, ["messages", "emails", "value"]);
-    if (messages) {
+    const found = findArray(data, ["messages", "emails", "value"]);
+    if (found) {
+      const { entries: messages, omitted } = splitSample(found);
       const items = messages.filter(isRecord).map((m) => ({
         primary: clip(firstString(m, ["subject", "Subject"]) ?? "(no subject)", 120),
         secondary: clip(firstString(m, ["sender", "from", "From"]) ?? "", 80) || undefined,
         url: safeUrl(m.display_url ?? m.webLink),
       }));
-      const { items: shown, total } = capList(items, MAX_ITEMS);
+      const { items: shown, total } = capList(items, MAX_ITEMS, omitted);
       return { type: "items", items: shown, total };
     }
     if (/_(SEND|REPLY|DRAFT)/.test(slug)) {
@@ -498,14 +500,14 @@ function previewFor(slug: string, app: AppId, input: Record<string, unknown>, da
   }
 
   // Generic lists of records (orders, products, events, files…).
-  const list = findArray(data, LIST_KEYS);
-  if (list && list.length > 0 && list.every(isRecord)) {
+  const { entries: list, omitted } = splitSample(findArray(data, LIST_KEYS) ?? []);
+  if (list.length > 0 && list.every(isRecord)) {
     const items = (list as Record<string, unknown>[]).map((r) => ({
       primary: clip(firstString(r, ["title", "name", "subject", "summary", "id"]) ?? "Item", 120),
       secondary: clip(firstString(r, ["summary", "snippet", "description", "status", "email", "date", "created_at", "updated_at"]) ?? "", 160) || undefined,
       url: safeUrl(r.url ?? r.webViewLink ?? r.htmlLink),
     }));
-    const { items: shown, total } = capList(items, MAX_ITEMS);
+    const { items: shown, total } = capList(items, MAX_ITEMS, omitted);
     return { type: "items", items: shown, total };
   }
   const sheetValues = findArray(data, ["values"]);
@@ -594,8 +596,9 @@ export function readablePreview(result: unknown): StepPreview | undefined {
     if (!text || /^[[{]/.test(text)) return undefined; // unparseable JSON-ish text: omit
     return textPreview(text);
   }
-  const list = Array.isArray(value) ? value : findArray(value, LIST_KEYS);
-  if (list && list.length === 0) return { type: "items", items: [], total: 0 };
+  const found = Array.isArray(value) ? value : findArray(value, LIST_KEYS);
+  const { entries: list, omitted } = found ? splitSample(found) : { entries: undefined, omitted: 0 };
+  if (list && list.length === 0 && omitted === 0) return { type: "items", items: [], total: 0 };
   if (list && list.length > 0) {
     const items = list.flatMap((entry) => {
       if (typeof entry === "string") return entry.trim() && !/^[[{]/.test(entry.trim()) ? [{ primary: clip(entry, 160) }] : [];
@@ -606,7 +609,7 @@ export function readablePreview(result: unknown): StepPreview | undefined {
       return [{ primary: clip(title ?? body!, 120), secondary: title && body ? clip(body, 220) : undefined }];
     });
     if (items.length === 0) return undefined;
-    const { items: shown, total } = capList(items, MAX_ITEMS);
+    const { items: shown, total } = capList(items, MAX_ITEMS, omitted);
     return { type: "items", items: shown, total };
   }
   if (isRecord(value)) {

@@ -81,10 +81,13 @@ export function unwrapResult(output: unknown): unknown {
   return value;
 }
 
-/** A Composio-style envelope ({ successful, data, error }) if the result is one. */
+/**
+ * A Composio-style envelope ({ successful, data, error }) if the result is one. When a
+ * response is too large, Composio sends a sample as `data_preview` instead of `data`.
+ */
 export function composioEnvelope(result: unknown): { successful: boolean; data: unknown; error: unknown } | null {
   if (isRecord(result) && typeof result.successful === "boolean") {
-    return { successful: result.successful, data: result.data, error: result.error };
+    return { successful: result.successful, data: result.data ?? result.data_preview, error: result.error };
   }
   return null;
 }
@@ -98,6 +101,20 @@ export function firstString(record: Record<string, unknown>, keys: string[]): st
 }
 
 /** Caps a preview's serialized size by trimming its list, keeping the true total. */
-export function capList<T>(items: T[], max: number): { items: T[]; total?: number } {
-  return items.length > max ? { items: items.slice(0, max), total: items.length } : { items };
+export function capList<T>(items: T[], max: number, omitted = 0): { items: T[]; total?: number } {
+  return items.length > max || omitted > 0 ? { items: items.slice(0, max), total: items.length + omitted } : { items };
+}
+
+/** Composio's stand-in for entries it left out of a sampled list ("...48 more items"). */
+const MORE_ITEMS = /^\.{3}\s*(\d+) more items?$/;
+
+/** A sampled list's real entries, and how many more the sample left out. */
+export function splitSample(list: unknown[]): { entries: unknown[]; omitted: number } {
+  let omitted = 0;
+  const entries = list.filter((entry) => {
+    const more = typeof entry === "string" ? MORE_ITEMS.exec(entry.trim()) : null;
+    if (more) omitted += Number(more[1]);
+    return !more;
+  });
+  return { entries, omitted };
 }
