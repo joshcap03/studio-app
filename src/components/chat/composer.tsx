@@ -46,8 +46,8 @@ interface Props {
   skills?: WorkspaceSkill[];
   /** Whether files can be attached (the agent can read them). */
   allowFiles?: boolean;
-  /** Why sending is paused, e.g. while the agent waits for an approval. */
-  blocked?: string;
+  /** Replaces the placeholder, e.g. while the agent waits for an approval. */
+  hint?: string;
 }
 
 const MAX_HEIGHT = 240;
@@ -67,7 +67,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     variant = "default",
     skills = [],
     allowFiles = false,
-    blocked,
+    hint,
   },
   ref,
 ) {
@@ -84,7 +84,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   // On touch devices Return inserts a newline; sending is done with the button.
   const coarse = useMedia("(pointer: coarse)");
   const uploading = files.some((f) => f.status === "uploading");
-  const canSend = (value.trim().length > 0 || skill !== null) && !running && !blocked && !uploading;
+  const hasDraft = value.trim().length > 0 || skill !== null;
+  // While the agent works, sending redirects it (the run stops and answers this instead).
+  const canSend = hasDraft && !uploading;
 
   // "/" at the start of an empty-ish message opens the skill menu, filtered by what follows.
   const matches = useMemo(() => {
@@ -329,7 +331,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         value={value}
         maxLength={MAX_MESSAGE_LENGTH}
         autoFocus={autoFocus}
-        placeholder={blocked ?? (skill ? "Add details (optional)" : placeholder)}
+        placeholder={skill ? "Add details (optional)" : (hint ?? placeholder)}
         onChange={(e) => update(e.target.value)}
         onKeyDown={onKeyDown}
         onPaste={(e) => {
@@ -348,7 +350,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           hero ? "min-h-[56px] py-1.5 text-[16px]" : "min-h-8 py-1 text-[15px]"
         }`}
       />
-      {running ? (
+      {running && !hasDraft ? (
         <Tooltip.Root>
           <Tooltip.Trigger asChild>
             <button
@@ -361,6 +363,20 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             </button>
           </Tooltip.Trigger>
           <TooltipContent label="Stop" shortcut="Esc" side="top" />
+        </Tooltip.Root>
+      ) : running ? (
+        <Tooltip.Root>
+          <Tooltip.Trigger asChild>
+            <button
+              type="submit"
+              disabled={!canSend}
+              aria-label="Send now and redirect the agent"
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-inverse text-on-inverse transition-[background-color,color,transform] duration-150 active:scale-90 disabled:bg-press disabled:text-fg-4"
+            >
+              <ArrowUp size={17} strokeWidth={2.25} />
+            </button>
+          </Tooltip.Trigger>
+          <TooltipContent label="Stop and send this instead" shortcut="Enter" side="top" />
         </Tooltip.Root>
       ) : (
         <button

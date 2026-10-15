@@ -41,7 +41,8 @@ export interface TurnSkill {
 }
 
 export type TurnRequest = { conversationId: string } & (
-  | { kind: "send"; text: string; skill?: TurnSkill; attachmentIds?: string[] }
+  /** `steer`: if the agent is still working here, stop it and answer this instead. */
+  | { kind: "send"; text: string; skill?: TurnSkill; attachmentIds?: string[]; steer?: boolean }
   | { kind: "retry" }
   /** Replace the latest member message and answer it again (keeping its skill and files). */
   | { kind: "edit"; messageId: string; text: string }
@@ -75,7 +76,13 @@ export interface TurnDeps {
   heartbeatMs?: number;
 }
 
-const globalRuns = globalThis as unknown as { __workspaceRuns?: Map<string, AbortController> };
+/** A run in progress on this server; `done` settles once its final state is saved. */
+interface ActiveRun {
+  controller: AbortController;
+  done: Promise<void>;
+}
+
+const globalRuns = globalThis as unknown as { __workspaceRuns?: Map<string, ActiveRun> };
 const activeRuns = (globalRuns.__workspaceRuns ??= new Map());
 
 export function titleFromMessage(text: string): string {
@@ -112,9 +119,9 @@ const MAX_PROPOSALS = 5;
  * the page leaves the agent working (its progress keeps being saved); only this stops it.
  */
 export function stopRun(workspaceId: string, conversationId: string): boolean {
-  const controller = activeRuns.get(`${workspaceId}:${conversationId}`);
-  if (!controller) return false;
-  controller.abort();
+  const run = activeRuns.get(`${workspaceId}:${conversationId}`);
+  if (!run) return false;
+  run.controller.abort();
   return true;
 }
 
@@ -123,7 +130,19 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   const { conversationId } = request;
   const runKey = `${store.scope.workspaceId}:${conversationId}`;
 
-  if (activeRuns.has(runKey)) throw new TurnError(409, "The agent is still working in this conversation.");
+  const steering = request.kind === "send" && request.steer === true;
+  /** The reply this message cut short by steering, whose progress the agent is told about. */
+  let interrupted: ChatMessage | null = null;
+  /** What the member declined by steering instead of answering a pending request. */
+  let declined: string | null = null;
+
+  const running = activeRuns.get(runKey);
+  if (running) {
+    if (!steering) throw new TurnError(409, "The agent is still working in this conversation.");
+    running.controller.abort();
+    await running.done;
+    if (activeRuns.has(runKey)) throw new TurnError(409, "The agent is still working in this conversation.");
+  }
 
   let conversation = await store.getConversation(conversationId);
   let existing: ChatMessage[] = conversation ? await store.listMessages(conversationId) : [];
@@ -131,7 +150,21 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   if (existing.at(-1)?.status === "streaming") {
     throw new TurnError(409, "The agent is still working in this conversation.");
   }
-  const pending = conversation ? await store.pendingApproval(conversationId) : null;
+  if (running && existing.at(-1)?.role === "assistant") interrupted = existing.at(-1)!;
+  let pending = conversation ? await store.pendingApproval(conversationId) : null;
+  if (pending && steering) {
+    // Writing instead of answering declines the request, and the agent hears why.
+    if (await store.settleApproval(pending.id, "pending", "declined")) {
+      await adapter.discard?.(pending.providerState).catch(() => undefined);
+      const paused = existing.find((m) => m.id === pending!.messageId);
+      if (paused) {
+        await store.updateMessage(paused.id, { status: "stopped" });
+        interrupted = { ...paused, status: "stopped" };
+      }
+      declined = pending.summary;
+    }
+    pending = null;
+  }
 
   let userMessage: ChatMessage | null = null;
   let prompt = "";
@@ -228,6 +261,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     }
     existing = [...existing, userMessage];
     prompt = request.skill ? renderSkillMessage(request.skill, request.text) : request.text;
+    if (interrupted) prompt = renderSteerMessage(interrupted, declined, prompt);
     promptMessageId = userMessage.id;
   }
   if (!conversation) throw new TurnError(404, "Conversation not found.");
@@ -268,7 +302,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   }
 
   const controller = new AbortController();
-  activeRuns.set(runKey, controller);
+  let finished!: () => void;
+  activeRuns.set(runKey, { controller, done: new Promise<void>((resolve) => (finished = resolve)) });
 
   const threadId = conversation.agentProvider === adapter.id ? conversation.agentThreadId : null;
   const summary: ConversationSummary = {
@@ -496,6 +531,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       } catch (e) {
         console.error("[turn] failed to save final state", e);
       }
+      finished();
       send({
         type: "end",
         message: { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, error },
@@ -515,6 +551,33 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       open = false;
     },
   });
+}
+
+const MAX_STEER_STEPS = 12;
+const MAX_STEER_TEXT = 1500;
+
+/**
+ * The message the agent gets when the member redirects it mid-run: what it had done before it
+ * was stopped (or what it was waiting on), then their new message. Only the member's own
+ * words are stored.
+ */
+export function renderSteerMessage(interrupted: ChatMessage, declined: string | null, message: string): string {
+  const lines = [
+    declined
+      ? `[I didn't approve your request ("${declined}") and wrote this instead. Don't do that action unless I ask again.]`
+      : "[I sent this while you were still working on my previous message, so I stopped you.]",
+  ];
+  const steps = interrupted.activity.filter((s) => s.status === "done" && !s.hidden && s.action !== "note").map((s) => s.label);
+  if (steps.length > 0) {
+    const shown = steps.slice(-MAX_STEER_STEPS);
+    lines.push(`Steps you had finished: ${shown.join("; ")}${steps.length > shown.length ? " (and earlier ones)" : ""}.`);
+  }
+  const partial = interrupted.content.trim();
+  if (partial) {
+    lines.push(`What you had written so far: ${partial.length > MAX_STEER_TEXT ? `${partial.slice(0, MAX_STEER_TEXT)}…` : partial}`);
+  }
+  lines.push("Use what's still relevant, and follow my new message:");
+  return `${lines.join("\n")}\n\n${message}`;
 }
 
 /** Drops the latest exchange from the provider's own memory before it is answered again. */

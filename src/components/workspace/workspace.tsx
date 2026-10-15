@@ -364,15 +364,18 @@ export function Workspace({
                 },
         );
       } finally {
-        controllers.current.delete(conversationId);
-        setRunState(conversationId, false);
+        // A redirect may have started the next run here already; that one owns the state.
+        if (controllers.current.get(conversationId) === controller) {
+          controllers.current.delete(conversationId);
+          setRunState(conversationId, false);
+        }
       }
     },
     [patchMessage, patchMessages, setRunState, skills, upsertConversation],
   );
 
   const sendTo = useCallback(
-    (conversationId: string, text: string, isNew: boolean, extras: SendExtras = NO_EXTRAS) => {
+    (conversationId: string, text: string, isNew: boolean, extras: SendExtras = NO_EXTRAS, steer = false) => {
       const { skill, attachments } = extras;
       const now = Date.now();
       const base = { conversationId, activity: [], artifacts: [], createdAt: now };
@@ -385,10 +388,18 @@ export function Workspace({
         status: "streaming",
         createdAt: now + 1,
       };
-      setThreads((all) => ({
-        ...all,
-        [conversationId]: { status: "ready", messages: [...(all[conversationId]?.messages ?? []), user, assistant] },
-      }));
+      setThreads((all) => {
+        let messages = all[conversationId]?.messages ?? [];
+        // Writing instead of answering the agent's request declines it.
+        if (steer && messages.at(-1)?.status === "awaiting") {
+          const paused = messages.at(-1)!;
+          messages = [
+            ...messages.slice(0, -1),
+            { ...paused, status: "stopped", approvals: paused.approvals?.map((a) => (a.status === "pending" ? { ...a, status: "declined" } : a)) },
+          ];
+        }
+        return { ...all, [conversationId]: { status: "ready", messages: [...messages, user, assistant] } };
+      });
       setConversations((list) => {
         const existing = list.find((c) => c.id === conversationId);
         const summary = existing
@@ -403,7 +414,7 @@ export function Workspace({
       const attachmentIds = attachments.map((a) => a.id);
       void runTurn(
         conversationId,
-        { kind: "send", text, skillId: skill?.id, ...(attachmentIds.length ? { attachmentIds } : {}) },
+        { kind: "send", text, skillId: skill?.id, ...(attachmentIds.length ? { attachmentIds } : {}), ...(steer ? { steer } : {}) },
         { user: user.id, assistant: assistant.id },
       );
     },
@@ -414,9 +425,10 @@ export function Workspace({
     (text: string, extras: Partial<SendExtras> = {}) => {
       const full: SendExtras = { skill: extras.skill ?? null, attachments: extras.attachments ?? [] };
       if (activeId) {
-        if (running.has(activeId)) return;
+        // Sending while the agent works (or waits for an approval) redirects it.
+        const awaitingHere = threadsRef.current[activeId]?.messages.at(-1)?.status === "awaiting";
         drafts.current.delete(activeId);
-        sendTo(activeId, text, false, full);
+        sendTo(activeId, text, false, full, running.has(activeId) || awaitingHere);
       } else {
         drafts.current.delete("new");
         sendTo(crypto.randomUUID(), text, true, full);
@@ -549,7 +561,7 @@ export function Workspace({
         if (cancelled || controllers.current.has(id)) return;
         try {
           const { messages, conversation } = await api.getConversation(id);
-          if (cancelled) return;
+          if (cancelled || controllers.current.has(id)) return;
           setThreads((all) => ({ ...all, [id]: { status: "ready", messages } }));
           if (!messages.some((m) => m.status === "streaming")) {
             upsertConversation(conversation);
@@ -843,10 +855,10 @@ export function Workspace({
                     onStop={stop}
                     skills={skills}
                     running={isRunning}
-                    placeholder="Reply…"
+                    placeholder={isRunning ? "Redirect the agent…" : "Reply…"}
                     autoFocus={desktop}
                     allowFiles={agent.attachments}
-                    blocked={awaiting ? "Approve or decline the agent's request above to continue" : undefined}
+                    hint={awaiting ? "Approve or decline above, or reply to change course" : undefined}
                   />
                   {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
                 </div>

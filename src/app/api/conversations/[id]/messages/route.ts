@@ -35,6 +35,8 @@ const body = z.discriminatedUnion("kind", [
       // instructions are loaded from the workspace below.
       skillId: z.union([z.uuid(), z.enum(BUILTIN_SKILL_IDS)]).optional(),
       attachmentIds: z.array(z.uuid()).max(MAX_ATTACHMENTS).optional(),
+      // Stop the agent if it's still working here (or decline its pending request) and answer this.
+      steer: z.boolean().optional(),
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
   z.object({ kind: z.literal("retry") }),
@@ -83,7 +85,7 @@ export async function POST(request: NextRequest, { params }: Context) {
         loadSkill,
       },
       input.kind === "send"
-        ? { conversationId: conversationId.data, kind: "send", text: input.text, skill: skill ?? undefined, attachmentIds: input.attachmentIds }
+        ? { conversationId: conversationId.data, kind: "send", text: input.text, skill: skill ?? undefined, attachmentIds: input.attachmentIds, steer: input.steer }
         : { conversationId: conversationId.data, ...input },
     );
     await recordRun(tenant);

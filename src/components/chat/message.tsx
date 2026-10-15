@@ -182,14 +182,19 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
       {message.status === "stopped" || message.status === "interrupted" ? (
         <div className="mt-2 flex items-center gap-1 text-[13px] text-fg-3">
           <span>{message.status === "stopped" ? "Stopped" : "This response was interrupted"}</span>
-          <span aria-hidden="true">·</span>
-          <button
-            type="button"
-            onClick={() => onRetry(message.id)}
-            className="rounded px-0.5 font-medium text-fg-2 underline-offset-2 hover:text-fg hover:underline"
-          >
-            Retry
-          </button>
+          {/* Retry answers the latest message again, so only the latest reply offers it. */}
+          {isLast ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={() => onRetry(message.id)}
+                className="rounded px-0.5 font-medium text-fg-2 underline-offset-2 hover:text-fg hover:underline"
+              >
+                Retry
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
 

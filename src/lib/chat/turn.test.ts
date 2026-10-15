@@ -271,6 +271,67 @@ describe("startTurn", () => {
     await stream.cancel();
   });
 
+  it("lets the member redirect a run: stops it, keeps its progress, and tells the agent", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const seen: AgentRunInput[] = [];
+    let release!: () => void;
+    const adapter: AgentAdapter = {
+      ...scripted([]),
+      async *run(input) {
+        seen.push(input);
+        if (seen.length > 1) {
+          yield { type: "text-delta", text: "Switching to invoices." };
+          return;
+        }
+        yield { type: "activity", id: "s1", label: "Searched your inbox", status: "done", app: "gmail" };
+        yield { type: "text-delta", text: "Looking at receipts" };
+        // Works until stopped.
+        await new Promise<void>((resolve) => {
+          release = resolve;
+          input.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      },
+    };
+    const deps = { store, adapter, context: context(scopeA), idleTimeoutMs: 5000, checkpointMs: 0 };
+    const reader = (await startTurn(deps, { conversationId: id, kind: "send", text: "find receipts" })).getReader();
+    const decoder = new TextDecoder();
+    let streamed = "";
+    while (!streamed.includes('"type":"text"')) streamed += decoder.decode((await reader.read()).value);
+    const first = (async () => {
+      while (!(await reader.read()).done) {
+        // drain until the stopped run closes its stream
+      }
+    })();
+
+    await expect(startTurn(deps, { conversationId: id, kind: "send", text: "actually invoices" })).rejects.toMatchObject({ status: 409 });
+    const second = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "actually invoices", steer: true }));
+    await first;
+    expect(release).toBeTypeOf("function");
+
+    const messages = await store.listMessages(id);
+    expect(messages.map((m) => [m.role, m.status, m.content])).toEqual([
+      ["user", "complete", "find receipts"],
+      ["assistant", "stopped", "Looking at receipts"],
+      ["user", "complete", "actually invoices"],
+      ["assistant", "complete", "Switching to invoices."],
+    ]);
+    expect(second.at(-1)).toMatchObject({ type: "end", message: { status: "complete" } });
+    expect(seen[1].message).toContain("Searched your inbox");
+    expect(seen[1].message).toContain("Looking at receipts");
+    expect(seen[1].message.endsWith("actually invoices")).toBe(true);
+  });
+
+  it("sends a steer as a plain message once the run has already finished", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const seen: AgentRunInput[] = [];
+    const deps = { store, adapter: scripted([{ type: "message", text: "ok" }], undefined, seen), context: context(scopeA), idleTimeoutMs: 1000 };
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "one" }));
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "two", steer: true }));
+    expect(seen[1].message).toBe("two");
+  });
+
   it("keeps tenants apart even when one guesses another's conversation id", async () => {
     const db = createMemoryDb();
     const storeA = createMemoryStore(scopeA, db);
@@ -398,6 +459,22 @@ describe("approvals", () => {
   it("holds new messages until the request is answered", async () => {
     const { id, deps } = await pause();
     await expect(startTurn(deps, { conversationId: id, kind: "send", text: "hello?" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("declines the pending request when the member writes instead, and tells the agent", async () => {
+    const seen: AgentRunInput[] = [];
+    const discarded: unknown[] = [];
+    const adapter = { ...pausing(seen), discard: async (state: unknown) => void discarded.push(state) };
+    const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), seen, adapter);
+    await collect(startTurn(deps, { conversationId: id, kind: "send", text: "Send it to Sam instead", steer: true }));
+    expect(discarded).toEqual([{ jobId: "job-1", requestId: "r-1" }]);
+    expect(await store.getApproval(approval.id)).toMatchObject({ status: "declined" });
+    const messages = await store.listMessages(id);
+    expect(messages.map((m) => m.status)).toEqual(["complete", "stopped", "complete", "awaiting"]); // the new reply asks again
+    expect(seen[1].resume).toBeUndefined();
+    expect(seen[1].message).toContain('"Send the reply to Jo"');
+    expect(seen[1].message).toContain("Found the thread");
+    await expect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" })).rejects.toMatchObject({ status: 409 });
   });
 
   it("marks a request expired when the provider can no longer continue it", async () => {

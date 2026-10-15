@@ -65,7 +65,7 @@ export async function uploadAttachment(file: File, signal?: AbortSignal): Promis
 }
 
 export type TurnBody =
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[] }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject" };
