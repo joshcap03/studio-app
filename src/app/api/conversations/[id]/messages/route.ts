@@ -7,6 +7,8 @@ import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import { getConfig } from "@/lib/config";
 import { getSkill } from "@/lib/skills";
+import { BUILTIN_SKILL_IDS } from "@/lib/skills/builtin";
+import { previewEnabled } from "@/lib/flags";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
 import { memoryEnabled, remember } from "@/lib/memory";
@@ -31,7 +33,7 @@ const body = z.discriminatedUnion("kind", [
       text: z.string().trim().max(MAX_MESSAGE_LENGTH),
       // A skill from the caller's workspace. Only its id comes from the request; the
       // instructions are loaded from the workspace below.
-      skillId: z.uuid().optional(),
+      skillId: z.union([z.uuid(), z.enum(BUILTIN_SKILL_IDS)]).optional(),
       attachmentIds: z.array(z.uuid()).max(MAX_ATTACHMENTS).optional(),
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
@@ -76,6 +78,7 @@ export async function POST(request: NextRequest, { params }: Context) {
         context: await context,
         remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
         idleTimeoutMs: getConfig().agent.idleTimeoutMs,
+        timelines: previewEnabled(tenant, "why"),
         loadAttachment: (attachment) => readAttachment(tenant, attachment),
         loadSkill,
       },

@@ -45,11 +45,32 @@ class MemoryArgs(BaseModel):
     category: str = Field(default="other", description="What the fact is about: customers, suppliers, products (products and pricing), policies (policies and rules), voice (tone and style), team, or other.")
 
 
+class TimelineEntryArgs(BaseModel):
+    when: str = Field(description="When it happened, from the record: ISO date or date-time, e.g. 2026-10-06.")
+    what: str = Field(description="What happened, in one plain sentence, e.g. 'Stripe refunded 4 orders ($612)'.")
+    app: str = Field(default="", description="The app's toolkit slug in lower case, e.g. stripe, shopify, gmail, googlecalendar.")
+    url: str = Field(default="", description="The record's https link exactly as a tool result returned it; empty if none.")
+
+
+class TimelineCauseArgs(BaseModel):
+    text: str = Field(description="One likely cause, in a plain sentence.")
+    entries: list[int] = Field(default_factory=list, description="Indexes into entries that support this cause.")
+
+
+class TimelineArgs(BaseModel):
+    question: str = Field(description="What is being explained, e.g. 'Why revenue dipped on Tue Oct 6'.")
+    entries: list[TimelineEntryArgs] = Field(description="Dated events found in the owner's apps, one per record.")
+    causes: list[TimelineCauseArgs] = Field(default_factory=list, description="Likely causes, most likely first.")
+
+
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
 DiscoverArgs.model_rebuild()
 ExecuteArgs.model_rebuild()
 ActionArgs.model_rebuild()
 MemoryArgs.model_rebuild()
+TimelineEntryArgs.model_rebuild()
+TimelineCauseArgs.model_rebuild()
+TimelineArgs.model_rebuild()
 
 
 def words(s):
@@ -427,9 +448,29 @@ class ToolGatewayComponent(Component):
         async def remember_async(content: str, scope: str = "workspace", category: str = "other") -> str:
             return remember(content, scope, category)
 
+        def report_timeline(question: str, entries: list, causes: list | None = None) -> str:
+            # Like remember, this changes nothing: the app reads the structured result, checks
+            # each link against what this run's tools returned, and shows it as a timeline.
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
+            rows = [plain(e) for e in (entries or [])][:80]
+            if not rows:
+                return "Nothing to report: entries is empty."
+            return json.dumps({
+                "timeline": {
+                    "question": " ".join(str(question or "").split())[:300],
+                    "entries": rows,
+                    "causes": [plain(c) for c in (causes or [])][:10],
+                },
+                "note": "Timeline shown to the owner. Now answer with the likely causes and what you couldn't check.",
+            })
+
+        async def report_timeline_async(question: str, entries: list, causes: list | None = None) -> str:
+            return report_timeline(question, entries, causes)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -461,5 +502,12 @@ class ToolGatewayComponent(Component):
                              "suppliers, standing preferences, or a correction to something you remembered. Call it on "
                              "your own whenever you learn one, without asking; the owner can undo it. Never one-off "
                              "results, links, or numbers that go stale, and nothing already in what you remember."),
+            ),
+            StructuredTool.from_function(
+                func=report_timeline, coroutine=report_timeline_async, name="report_timeline",
+                args_schema=TimelineArgs,
+                description=("Only when the request asks you to investigate why something happened: after reading the "
+                             "owner's apps, report the dated events you found, each with the record's link exactly as "
+                             "a tool returned it, and the likely causes. The owner sees it as a timeline. Changes nothing."),
             ),
         ]

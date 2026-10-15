@@ -9,6 +9,7 @@ import type {
   MemoryProposal,
   MessageSkill,
   MessageStatus,
+  Timeline,
 } from "@/lib/types";
 
 // The conversation persistence boundary, scoped to one tenant (workspace + user). Every
@@ -31,6 +32,7 @@ export interface MessagePatch {
   activity?: ActivityStep[];
   artifacts?: Artifact[];
   memoryProposals?: MemoryProposal[];
+  timeline?: Timeline | null;
   error?: string | null;
 }
 
@@ -98,6 +100,7 @@ interface MessageRow {
   activity: ActivityStep[];
   artifacts: Artifact[];
   memory_proposals: MemoryProposal[] | null;
+  timeline: Timeline | null;
   error: string | null;
   skill: MessageSkill | null;
   created_at: string;
@@ -132,7 +135,7 @@ const CONVERSATION_COLUMNS = "id, title, agent_provider, agent_thread_id, create
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
-  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, error, skill, created_at, updated_at, " +
+  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, error, skill, created_at, updated_at, " +
   "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS = "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at";
@@ -184,6 +187,7 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   artifacts: r.artifacts ?? [],
   approvals: (r.approvals ?? []).map(toApproval).sort((a, b) => a.createdAt - b.createdAt),
   memoryProposals: r.memory_proposals ?? [],
+  timeline: r.timeline ?? null,
   attachments: (r.attachments ?? []).map(toAttachment),
   error: r.error,
   skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
@@ -362,6 +366,7 @@ export function createStore(db: Db, scope: Scope): Store {
       if (patch.activity !== undefined) values.activity = patch.activity;
       if (patch.artifacts !== undefined) values.artifacts = patch.artifacts;
       if (patch.memoryProposals !== undefined) values.memory_proposals = patch.memoryProposals;
+      if (patch.timeline !== undefined) values.timeline = patch.timeline;
       if (patch.error !== undefined) values.error = patch.error;
       check(await messages().update(values).eq("id", id).eq("workspace_id", workspaceId).eq("user_id", userId));
     },

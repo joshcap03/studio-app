@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, toolTimelines, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -560,6 +560,20 @@ describe("Langflow approvals", () => {
     expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Main supplier is Acme Textiles.", scope: "workspace", category: "suppliers" }]);
     const step = events.find((e) => e.type === "activity" && e.id === "msg-1:0");
     expect(step).toMatchObject({ hidden: true, app: "memory" });
+  });
+
+  it("passes on a timeline only from structured report_timeline output", async () => {
+    const timeline = { question: "Why?", entries: [{ when: "2026-10-01", what: "Refund" }], causes: [] };
+    const tool = {
+      type: "tool_use",
+      name: "report_timeline",
+      tool_input: {},
+      output: { type: "tool", tool_call_id: "c9", content: JSON.stringify({ timeline, note: "x" }) },
+      error: null,
+    };
+    const chatter = { type: "tool_use", name: "search", tool_input: {}, output: "timeline: made up", error: null };
+    const message = bot("", [tool, chatter]) as never;
+    expect(toolTimelines(message)).toEqual([{ type: "timeline", timeline }]);
   });
 
   it("passes on a memory suggestion that only arrives in the job's result message", async () => {

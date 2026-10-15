@@ -292,6 +292,9 @@ export function Workspace({
               return { ...m, memoryProposals: known ? list.map((p) => (p.id === event.proposal.id ? event.proposal : p)) : [...list, event.proposal] };
             });
             break;
+          case "timeline":
+            patchMessage(conversationId, assistantId, (m) => ({ ...m, timeline: event.timeline }));
+            break;
           case "end":
             cancelAnimationFrame(frame);
             buffered = "";
@@ -580,7 +583,8 @@ export function Workspace({
 
   // The panel opens on its own once a running reply has found something worth showing.
   const latestReply = activeThread?.status === "ready" ? activeThread.messages.findLast((m) => m.role === "assistant") : undefined;
-  const latestHasFindings = latestReply?.status === "streaming" && collectFindings(latestReply).length > 0;
+  const latestHasFindings =
+    latestReply?.status === "streaming" && (collectFindings(latestReply).length > 0 || Boolean(latestReply.timeline));
   useEffect(() => {
     if (latestHasFindings && panelAuto.current) setPanelOpen(true);
   }, [latestHasFindings]);

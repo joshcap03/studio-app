@@ -1,5 +1,6 @@
 import type { Tenant } from "@/lib/tenant";
 import { MAX_SKILLS, type WorkspaceSkill } from "@/lib/types";
+import { builtinSkill } from "./builtin";
 import { catalogEntry } from "./catalog";
 
 // A workspace's skills. Reads and writes go through the tenant's RLS-bound client, filtered
@@ -51,6 +52,7 @@ export async function listSkills(tenant: Tenant): Promise<WorkspaceSkill[]> {
 }
 
 export async function getSkill(tenant: Tenant, id: string): Promise<WorkspaceSkill | null> {
+  if (id.startsWith("builtin:")) return builtinSkill(tenant, id);
   const row = check(
     await tenant.db.from("workspace_skills").select(COLUMNS).eq("id", id).eq("workspace_id", tenant.workspace.id).maybeSingle(),
   ) as SkillRow | null;

@@ -158,6 +158,8 @@ export interface ChatMessage {
   error?: string | null;
   /** User messages only: the skill attached to it, if any. */
   skill?: MessageSkill | null;
+  /** A "why?" investigation's timeline, as the agent reported it (see Timeline). */
+  timeline?: Timeline | null;
   createdAt: number;
 }
 
@@ -237,6 +239,7 @@ export type StreamEvent =
   | { type: "artifact"; artifact: Artifact }
   | { type: "approval"; approval: Approval }
   | { type: "memory-proposal"; proposal: MemoryProposal }
+  | { type: "timeline"; timeline: Timeline }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
 export const MAX_MESSAGE_LENGTH = 32_000;
@@ -299,3 +302,28 @@ export interface MemoryPromotion {
   mine: boolean;
   createdAt: number;
 }
+
+/** One dated event a "why?" investigation found while reading the member's apps. */
+export interface TimelineEntry {
+  /** When it happened, as the source record says (ISO date or date-time preferred). */
+  when: string;
+  what: string;
+  /** The app the record lives in (see src/lib/apps.ts). */
+  app?: string;
+  /** The record itself. Only kept when this run's tool results actually showed that link. */
+  url?: string;
+  /** False when the agent cited a link no tool result in this run returned. */
+  verified: boolean;
+}
+
+/** A "why?" investigation's findings: dated events across apps and the likely causes. */
+export interface Timeline {
+  question: string;
+  /** Oldest first. */
+  entries: TimelineEntry[];
+  /** Most likely first; `entries` are indexes into the list above. */
+  causes: { text: string; entries: number[] }[];
+}
+
+export const MAX_TIMELINE_ENTRIES = 40;
+export const MAX_TIMELINE_CAUSES = 5;

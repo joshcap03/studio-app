@@ -243,6 +243,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
       };
     case "load_skill":
       return { labels: { running: "Checking a playbook", done: "Checked a playbook" }, app: "agent", action: "read", hidden: true };
+    case "report_timeline":
+      // Shown as the Timeline in Results, not as a step.
+      return { labels: { running: "Putting the timeline together", done: "Put the timeline together" }, app: "agent", action: "note", hidden: true };
     case "remember":
     case "propose_memory":
       // What was remembered is shown on its own line under the reply, with an Undo.

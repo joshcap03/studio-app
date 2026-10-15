@@ -4,6 +4,7 @@ import { Workspace, type InitialThread } from "@/components/workspace/workspace"
 import { getAgentStatus } from "@/lib/agent";
 import { storeFor } from "@/lib/chat/store-for";
 import { listSkills } from "@/lib/skills";
+import { builtinSkills } from "@/lib/skills/builtin";
 import { requirePageTenant } from "@/lib/tenant";
 
 // One page serves "/" (new conversation) and "/c/<id>". After the first load the browser
@@ -29,11 +30,12 @@ export default async function WorkspacePage({
   }
 
   const store = storeFor(tenant);
-  const [conversations, conversation, skills] = await Promise.all([
+  const [conversations, conversation, workspaceSkills] = await Promise.all([
     store.listConversations(),
     conversationId ? store.getConversation(conversationId) : null,
     listSkills(tenant),
   ]);
+  const skills = [...builtinSkills(tenant), ...workspaceSkills];
   const requested = (await searchParams).skill;
   const initialSkillId = skills.find((s) => s.id === requested)?.id ?? null;
 

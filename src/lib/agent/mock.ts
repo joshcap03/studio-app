@@ -30,7 +30,8 @@ type Step =
   | { kind: "text"; text: string }
   | { kind: "error"; message: string }
   | { kind: "approval"; summary: string; app: string; details: [string, string][] }
-  | { kind: "remember"; content: string };
+  | { kind: "remember"; content: string }
+  | { kind: "timeline"; timeline: unknown };
 
 interface Scenario {
   match: RegExp;
@@ -38,6 +39,59 @@ interface Scenario {
 }
 
 const SCENARIOS: Scenario[] = [
+  {
+    // The built-in "Investigate why" skill. Its instructions mention email, so this goes first.
+    match: /Investigate why/,
+    steps: [
+      { kind: "note", text: "I'll check sales, payments, inventory, and email around that date." },
+      {
+        kind: "activity",
+        id: "orders",
+        running: "Reading orders in Shopify",
+        done: "Read orders in Shopify",
+        ms: 900,
+        app: "shopify",
+        action: "read",
+        preview: {
+          type: "items",
+          items: [
+            { primary: "Huggie hoops, gold: out of stock", secondary: "Since Oct 5", url: "https://shop.example/products/huggie-gold" },
+            { primary: "Order #1042 refunded", secondary: "$212", url: "https://shop.example/orders/1042" },
+          ],
+        },
+      },
+      {
+        kind: "activity",
+        id: "mail",
+        running: "Searching Gmail",
+        done: "Searched Gmail",
+        ms: 800,
+        app: "gmail",
+        action: "search",
+        preview: { type: "items", items: [{ primary: "Clasp shipment delayed a week", secondary: "Casting Co", url: "https://mail.example/thread/88" }] },
+      },
+      {
+        kind: "timeline",
+        timeline: {
+          question: "Why sales dipped on Tue Oct 6 (mock)",
+          entries: [
+            { when: "2026-10-05", what: "Huggie hoops (gold), the top seller, went out of stock", app: "shopify", url: "https://shop.example/products/huggie-gold" },
+            { when: "2026-10-04", what: "Casting Co said the clasp shipment is a week late", app: "gmail", url: "https://mail.example/thread/88" },
+            { when: "2026-10-06", what: "Order #1042 was refunded ($212)", app: "shopify", url: "https://shop.example/orders/1042" },
+            { when: "2026-10-06", what: "Weekend email campaign ended", app: "klaviyo", url: "https://mail.example/campaign/not-read-this-run" },
+          ],
+          causes: [
+            { text: "The best-selling huggies were out of stock after the clasp delay.", entries: [0, 1] },
+            { text: "A $212 refund landed the same day.", entries: [2] },
+          ],
+        },
+      },
+      {
+        kind: "text",
+        text: "This is a mock investigation. Most likely, the gold huggies (your top seller) were out of stock from Oct 5 because the clasp shipment slipped, and a $212 refund landed the same day. I couldn't check ad spend; no ads app is connected.",
+      },
+    ],
+  },
   {
     match: /\b(send|email|reply)\b/i,
     steps: [
@@ -425,6 +479,9 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "approval") {
           yield { type: "approval", summary: step.summary, app: step.app, details: step.details, state: { mock: true } };
           return;
+        } else if (step.kind === "timeline") {
+          await wait(500 * pace, signal);
+          yield { type: "timeline", timeline: step.timeline };
         } else if (step.kind === "remember") {
           yield { type: "memory-proposal", content: step.content, scope: "workspace", category: "suppliers" };
         } else if (!streaming) {

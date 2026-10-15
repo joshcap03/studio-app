@@ -311,6 +311,17 @@ export function toolMemoryProposals(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Timelines a "why?" investigation reported through report_timeline (validated by the turn). */
+export function toolTimelines(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    if (isRecord(result) && isRecord(result.timeline)) events.push({ type: "timeline", timeline: result.timeline });
+  }
+  return events;
+}
+
 /** The step of the tool call a run paused on, so the resumed call settles it. */
 interface PausedStep {
   /** The step's id (`<message key>:<call index>`). */
@@ -628,6 +639,14 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         let lastBot: LangflowMessage | undefined;
         const seenArtifacts = new Set<string>();
         const seenProposals = new Set<string>();
+        const seenTimelines = new Set<string>();
+        const newTimelines = (message: LangflowMessage) =>
+          toolTimelines(message).filter((t) => {
+            const key = JSON.stringify(t);
+            if (seenTimelines.has(key)) return false;
+            seenTimelines.add(key);
+            return true;
+          });
         // A resumed run reports the approved (or declined) call again, in a new bot message.
         // That call keeps the paused step's id, so it settles the step instead of adding one.
         let carriedFrom: string | undefined;
@@ -705,6 +724,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   yield a;
                 }
               }
+              yield* newTimelines(message);
               for (const p of toolMemoryProposals(message)) {
                 if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {
                   seenProposals.add(p.content);
@@ -748,6 +768,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               if (final) {
                 yield* activityFor(final, lastBot?.id ?? final.id ?? "message");
                 // A suggestion made right before the end may only arrive in the result message.
+                yield* newTimelines(final);
                 for (const p of toolMemoryProposals(final)) {
                   if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {
                     seenProposals.add(p.content);

@@ -531,6 +531,51 @@ describe("edits, files, and memory suggestions", () => {
     expect(end?.type === "end" && end.message.memoryProposals?.map((p) => p.status)).toEqual(["saved", "pending"]);
   });
 
+  it("keeps a why-timeline only for members who have it, linking only links this run saw", async () => {
+    const script = () =>
+      scripted([
+        {
+          type: "activity",
+          id: "a1",
+          label: "Read orders",
+          status: "done",
+          preview: { type: "items", items: [{ primary: "Order #1", url: "https://shop.example/orders/1" }] },
+        },
+        {
+          type: "timeline",
+          timeline: {
+            question: "Why?",
+            entries: [
+              { when: "2026-10-02", what: "Refund", url: "https://shop.example/orders/1" },
+              { when: "2026-10-01", what: "Invented", url: "https://shop.example/orders/2" },
+            ],
+            causes: [{ text: "Refunds", entries: [0] }],
+          },
+        },
+        { type: "message", text: "Done." },
+      ]);
+    const store = createMemoryStore(scopeA);
+    const on = crypto.randomUUID();
+    const events = await collect(
+      startTurn({ store, adapter: script(), context: context(scopeA), idleTimeoutMs: 1000, timelines: true }, { conversationId: on, kind: "send", text: "x" }),
+    );
+    const reply = (await store.listMessages(on))[1];
+    expect(reply.timeline).toEqual({
+      question: "Why?",
+      entries: [
+        { when: "2026-10-01", what: "Invented", verified: false },
+        { when: "2026-10-02", what: "Refund", url: "https://shop.example/orders/1", verified: true },
+      ],
+      causes: [{ text: "Refunds", entries: [1] }],
+    });
+    expect(events.some((e) => e.type === "timeline")).toBe(true);
+
+    const off = crypto.randomUUID();
+    const quiet = await collect(startTurn({ store, adapter: script(), context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: off, kind: "send", text: "x" }));
+    expect((await store.listMessages(off))[1].timeline ?? null).toBeNull();
+    expect(quiet.some((e) => e.type === "timeline")).toBe(false);
+  });
+
   it("keeps the agent's memory suggestions on the reply, pending, when there's no memory to save to", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

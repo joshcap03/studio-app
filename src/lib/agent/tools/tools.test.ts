@@ -22,6 +22,13 @@ const gateway = (tool_name: string, args: Record<string, unknown>, output: unkno
 });
 
 describe("interpretCalls", () => {
+  it("hides report_timeline: its timeline shows in Results, not as a step", () => {
+    const [step] = interpretCalls([
+      { name: "report_timeline", input: { question: "Why?", entries: [] }, output: JSON.stringify({ timeline: { entries: [] } }), error: null },
+    ]);
+    expect(step).toMatchObject({ hidden: true, status: "done" });
+  });
+
   it("merges a gateway call with the tool it invoked into one step", () => {
     const steps = interpretCalls([
       gateway("search", { query: "fine jewelry trends" }, "Title: A\nURL: https://a.example/x"),

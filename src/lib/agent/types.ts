@@ -87,7 +87,9 @@ export type AgentEvent =
    */
   | { type: "approval"; summary: string; app?: string; details: [string, string][]; state: unknown }
   /** The agent suggested a fact to remember. Nothing is saved unless the member confirms. */
-  | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory };
+  | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory }
+  /** A "why?" investigation's timeline, unvalidated; the turn checks it against this run's results. */
+  | { type: "timeline"; timeline: unknown };
 
 /** What a provider has been verified to support. The app adapts its behavior to these. */
 export interface AgentCapabilities {

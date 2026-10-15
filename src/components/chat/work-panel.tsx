@@ -2,7 +2,7 @@
 
 import { ArrowUpRight, ChevronRight, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, Timeline } from "@/lib/types";
 import { formatSeconds } from "./activity";
 import { AppGlyph } from "./app-glyph";
 import { findingsForReply, type Finding } from "./findings";
@@ -26,7 +26,7 @@ export function WorkPanel({
 }) {
   const groups = groupFindings(messages);
   const running = messages.find((m) => m.role === "assistant" && m.status === "streaming");
-  const count = groups.reduce((n, g) => n + g.findings.length, 0);
+  const count = groups.reduce((n, g) => n + g.findings.length + (g.timeline?.entries.length ?? 0), 0);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -78,6 +78,7 @@ export function WorkPanel({
               <h3 className="truncate px-2 pt-1 pb-1.5 text-[12px] text-fg-3" title={group.question}>
                 {group.question}
               </h3>
+              {group.timeline ? <TimelineView timeline={group.timeline} /> : null}
               <ol className="space-y-0.5">
                 {group.findings.map((finding) => (
                   <FindingRow key={finding.id} finding={finding} />
@@ -95,6 +96,7 @@ interface Group {
   replyId: string;
   question: string;
   findings: Finding[];
+  timeline?: Timeline | null;
 }
 
 /** Findings for one reply: what its steps found, then the files it made. */
@@ -111,9 +113,76 @@ function groupFindings(messages: ChatMessage[]): Group[] {
       continue;
     }
     const findings = collectFindings(m).map((f) => ({ ...f, id: `${m.id}:${f.id}` }));
-    if (findings.length > 0) groups.push({ replyId: m.id, question: question || "Earlier", findings });
+    if (findings.length > 0 || m.timeline) groups.push({ replyId: m.id, question: question || "Earlier", findings, timeline: m.timeline });
   }
   return groups;
+}
+
+/**
+ * A "why?" investigation: dated events across the member's apps, each linking to the record
+ * it came from when this run's tools returned that link, then the likely causes.
+ */
+function TimelineView({ timeline }: { timeline: Timeline }) {
+  return (
+    <div className="mb-3 rounded-xl border border-line bg-surface px-2 pt-2.5 pb-1 animate-fade-up">
+      <h4 className="px-2 text-[12px] font-medium text-fg-2">Timeline</h4>
+      <ol className="relative mt-1.5">
+        {timeline.entries.map((entry, i) => {
+          const body = (
+            <>
+              <AppGlyph app={entry.app} size={18} className="mt-px" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[11.5px] text-fg-3 tabular-nums">
+                  <span className="mr-1.5 text-fg-4">{i + 1}</span>
+                  {formatWhen(entry.when)}
+                </span>
+                <span className={entry.verified ? "text-fg" : "text-fg-2"}>{entry.what}</span>
+                {entry.verified ? null : <span className="block text-[11.5px] text-fg-4">No record linked</span>}
+              </span>
+              {entry.url ? <ArrowUpRight size={14} className="mt-0.5 shrink-0 text-fg-3" /> : null}
+            </>
+          );
+          const row = "flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-[13.5px] leading-snug";
+          return (
+            <li key={i}>
+              {entry.url ? (
+                <a href={entry.url} target="_blank" rel="noopener noreferrer" className={`${row} transition-colors hover:bg-hover`}>
+                  {body}
+                </a>
+              ) : (
+                <div className={row}>{body}</div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {timeline.causes.length > 0 ? (
+        <div className="mt-1 border-t border-line px-2 pt-2.5 pb-2">
+          <h4 className="text-[12px] font-medium text-fg-2">Likely causes</h4>
+          <ol className="mt-1.5 space-y-1.5">
+            {timeline.causes.map((cause, i) => (
+              <li key={i} className="text-[13.5px] leading-snug text-fg">
+                {cause.text}
+                {cause.entries.length > 0 ? (
+                  <span className="ml-1.5 text-[11.5px] text-fg-3 tabular-nums">({cause.entries.map((e) => e + 1).join(", ")})</span>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** "2026-10-06" → "Tue, Oct 6"; anything unparseable is shown as reported. */
+function formatWhen(when: string): string {
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(when);
+  const at = Date.parse(dateOnly ? `${when}T12:00:00` : when);
+  if (Number.isNaN(at)) return when;
+  const date = new Date(at);
+  const day = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return dateOnly ? day : `${day}, ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
 
 function FindingRow({ finding }: { finding: Finding }) {
