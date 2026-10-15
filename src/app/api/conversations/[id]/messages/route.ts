@@ -11,7 +11,7 @@ import { BUILTIN_SKILL_IDS } from "@/lib/skills/builtin";
 import { previewEnabled } from "@/lib/flags";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
-import { memoryEnabled, remember } from "@/lib/memory";
+import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
 import { buildAgentContext, checkRunLimits, recordRun } from "@/lib/workspace";
 
 // Starts a turn and streams it back as NDJSON (one StreamEvent per line). Creating the
@@ -60,7 +60,18 @@ export async function POST(request: NextRequest, { params }: Context) {
   try {
     // Context (settings and memory recall) loads alongside the limit and skill checks rather
     // than after them; it only reads, so a refused run just discards it.
-    const context = buildAgentContext(tenant, "text" in input ? input.text : undefined);
+    // Memory is searched with the member's recent messages, not just this one, so a follow-up
+    // recalls what the conversation is about rather than only the business's standing facts.
+    const store = storeFor(tenant);
+    const context = store
+      .listMessages(conversationId.data)
+      .then((messages) => {
+        const end = input.kind === "edit" ? messages.findIndex((m) => m.id === input.messageId) : -1;
+        const asks = (end < 0 ? messages : messages.slice(0, end)).filter((m) => m.role === "user").map((m) => m.content);
+        return "text" in input ? [...asks, input.text] : asks;
+      })
+      .catch(() => ("text" in input ? [input.text] : []))
+      .then((asks) => buildAgentContext(tenant, recallQuery(asks)));
     context.catch(() => undefined);
     const loadSkill = (id: string) => getSkill(tenant, id);
     const [limit, skill] = await Promise.all([
@@ -70,7 +81,6 @@ export async function POST(request: NextRequest, { params }: Context) {
     if (limit) return jsonError(429, limit, "rate_limited");
     if (skill === null) return jsonError(404, "Skill not found.");
 
-    const store = storeFor(tenant);
     // A conversation id that exists for another tenant fails here: the insert collides with
     // a row this tenant cannot see, and the database refuses it.
     const stream = await startTurn(

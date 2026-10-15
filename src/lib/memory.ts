@@ -224,6 +224,16 @@ interface SearchResponse {
 }
 
 /**
+ * What to search memory for on a turn: the member's last few messages, newest first. A short
+ * follow-up ("any that sell to resellers?") says nothing about the topic, so on its own it
+ * would only match the business's standing facts.
+ */
+export function recallQuery(asks: string[], count = 3): string | undefined {
+  const recent = asks.map((a) => a.trim()).filter(Boolean).slice(-count).reverse();
+  return recent.length ? recent.join("\n") : undefined;
+}
+
+/**
  * What the agent should know going into a reply: the standing profile of the business and
  * of this member, plus anything that matches the message. Never blocks the reply: if memory
  * is slow or down, the agent answers without it. With `pinned`, facts the members pinned come

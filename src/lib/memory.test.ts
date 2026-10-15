@@ -5,7 +5,7 @@ vi.mock("@/lib/config", () => ({
   getConfig: () => ({ supermemory: { apiKey: "sm_test", baseUrl: "https://sm.example" } }),
 }));
 
-const { forget, listMemories, namespaceFor, parseMemoryId, recall, remember, replaceMemory } = await import("./memory");
+const { forget, listMemories, namespaceFor, parseMemoryId, recall, recallQuery, remember, replaceMemory } = await import("./memory");
 
 const WS = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -148,6 +148,13 @@ describe("forget", () => {
       ["DELETE", `https://sm.example/ns/ws_${WS}/document`, { ids: ["w1"] }],
       ["DELETE", `https://sm.example/ns/ws_${WS}_u_${USER}/document`, { ids: ["p1"] }],
     ]);
+  });
+});
+
+describe("recallQuery", () => {
+  it("uses the member's last few messages, newest first", () => {
+    expect(recallQuery(["hi", "find t-shirt blanks", "  ", "any that sell to resellers?"], 2)).toBe("any that sell to resellers?\nfind t-shirt blanks");
+    expect(recallQuery([" "])).toBeUndefined();
   });
 });
 

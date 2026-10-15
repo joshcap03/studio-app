@@ -21,6 +21,8 @@ Reads LANGFLOW_BASE_URL and LANGFLOW_API_KEY from the environment. Does these th
      (Members' code runs in their own Composio workbench instead.)
   9. Turns on "Use Cached Server" for the remaining MCP nodes (shared services with one
      service key, like Browserbase), so their tools aren't re-listed on every run.
+ 10. Lets the Agent read at least the last 20 messages of the conversation, so it keeps
+     the topic of a longer chat instead of falling back on the business profile.
 Then prints the LANGFLOW_TWEAKS value the app needs.
 
 --copy saves the result as a new flow instead of changing this one. --strip-apps (with
@@ -36,6 +38,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.environ["LANGFLOW_BASE_URL"].rstrip("/")
 KEY = os.environ["LANGFLOW_API_KEY"]
+MIN_HISTORY = 20
 
 
 def call(method, path, body=None):
@@ -140,6 +143,11 @@ def main(argv):
             if isinstance(field, dict) and not field.get("value"):
                 field["value"] = True
                 print("caching MCP server tools:", n["data"]["id"])
+
+    history = agent["data"]["node"]["template"].get("n_messages")
+    if isinstance(history, dict) and int(history.get("value") or 0) < MIN_HISTORY:
+        history["value"] = MIN_HISTORY
+        print("agent now reads the last", MIN_HISTORY, "messages")
 
     load_skill = by_type("LoadSkill")
     if load_skill:
