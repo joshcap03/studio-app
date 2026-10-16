@@ -97,6 +97,8 @@ export type AgentEvent =
   | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory }
   /** An investigation's timeline, unvalidated; the turn checks it against this run's results. */
   | { type: "timeline"; timeline: unknown }
+  /** A chart, key numbers, or table an investigation reported, unvalidated. */
+  | { type: "visual"; visual: unknown }
   /** Multiple-choice questions for the member, unvalidated; the answer comes as their next message. */
   | { type: "questions"; questions: unknown };
 

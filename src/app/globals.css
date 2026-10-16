@@ -28,6 +28,11 @@
   --on-inverse: #fbfaf8;
   --shadow-composer: 0 1px 1px rgb(28 27 25 / 0.03), 0 2px 6px rgb(28 27 25 / 0.04), 0 12px 32px -12px rgb(28 27 25 / 0.08);
   --shadow-pop: 0 1px 2px rgb(28 27 25 / 0.06), 0 8px 28px -6px rgb(28 27 25 / 0.16);
+  /* Chart series, in order: brass first, then quieter hues that stay apart in both themes. */
+  --chart-1: #8a6d43;
+  --chart-2: #5b7a99;
+  --chart-3: #3d7a56;
+  --chart-4: #a3586b;
   color-scheme: light;
 }
 
@@ -55,6 +60,10 @@
     --on-inverse: #161615;
     --shadow-composer: 0 1px 1px rgb(0 0 0 / 0.2), 0 12px 32px -12px rgb(0 0 0 / 0.5);
     --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 28px -6px rgb(0 0 0 / 0.55);
+    --chart-1: #c9a978;
+    --chart-2: #8fb0d0;
+    --chart-3: #6fb08a;
+    --chart-4: #d48a9c;
     color-scheme: dark;
   }
 }
@@ -76,6 +85,10 @@
   --color-accent-soft: var(--accent-soft);
   --color-success: var(--success);
   --color-danger: var(--danger);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
   --color-danger-soft: var(--danger-soft);
   --color-inverse: var(--inverse);
   --color-on-inverse: var(--on-inverse);

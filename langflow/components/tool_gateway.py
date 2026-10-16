@@ -78,6 +78,44 @@ class TimelineArgs(BaseModel):
                                json_schema_extra={"items": TIMELINE_CAUSE_SCHEMA})
 
 
+VISUAL_SERIES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "What the series measures, e.g. 'Revenue' or '2025'."},
+        "values": {"type": "array", "items": {"type": "number"}, "description": "One number per label, in label order; null where unknown."},
+    },
+    "required": ["name", "values"],
+}
+VISUAL_STAT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "description": "What the number is, e.g. 'Orders this week'."},
+        "value": {"type": "string", "description": "The number as people say it, e.g. '$4,120' or '5 days'."},
+        "change": {"type": "string", "description": "Optional change against what, e.g. '-18% vs last week'."},
+        "tone": {"type": "string", "enum": ["good", "bad", "neutral"], "description": "Whether the change is good or bad news."},
+    },
+    "required": ["label", "value"],
+}
+
+
+class VisualArgs(BaseModel):
+    kind: str = Field(description=("chart (numbers across dates or categories), stats (2-6 key numbers), or table "
+                                   "(things compared side by side, e.g. options, bookings, people)."))
+    title: str = Field(description="What it shows, e.g. 'Daily revenue, Oct 1-14' or 'Trip bookings'.")
+    app: str = Field(default="", description="The app the data came from, as a lower-case toolkit slug (e.g. shopify), if one.")
+    chart: str = Field(default="bar", description="For kind=chart: bar or line (line for trends over time).")
+    unit: str = Field(default="", description="For kind=chart: the values' unit, e.g. '$', 'orders', '%'.")
+    labels: list[str] = Field(default_factory=list, description="For kind=chart: the x-axis labels (dates or categories), 2-31 of them.")
+    series: list[dict] = Field(default_factory=list, description=("For kind=chart: 1-4 series, each an object with keys "
+                                                                  "name and values (one number per label)."),
+                               json_schema_extra={"items": VISUAL_SERIES_SCHEMA})
+    items: list[dict] = Field(default_factory=list, description=("For kind=stats: 2-6 objects with keys label, value, "
+                                                                 "and optionally change and tone (good, bad, neutral)."),
+                              json_schema_extra={"items": VISUAL_STAT_SCHEMA})
+    columns: list[str] = Field(default_factory=list, description="For kind=table: 2-6 column headings.")
+    rows: list[list[str]] = Field(default_factory=list, description="For kind=table: up to 20 rows, one cell per column.")
+
+
 QUESTION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -112,6 +150,7 @@ ExecuteArgs.model_rebuild()
 ActionArgs.model_rebuild()
 MemoryArgs.model_rebuild()
 TimelineArgs.model_rebuild()
+VisualArgs.model_rebuild()
 AskArgs.model_rebuild()
 
 
@@ -521,6 +560,52 @@ class ToolGatewayComponent(Component):
         async def report_timeline_async(question: str, entries: list, causes: list | None = None) -> str:
             return report_timeline(question, entries, causes)
 
+        def report_visual(kind: str, title: str, app: str = "", chart: str = "bar", unit: str = "",
+                          labels: list | None = None, series: list | None = None, items: list | None = None,
+                          columns: list | None = None, rows: list | None = None) -> str:
+            # Like report_timeline, this changes nothing: the app validates the structured result
+            # and draws it in Results next to the timeline. Only numbers and text the tools returned.
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
+            def first(d, *names):
+                return next((d[n] for n in names if d.get(n) not in (None, "")), None)
+            kind = str(kind or "").strip().lower()
+            visual = {"kind": kind, "title": " ".join(str(title or "").split())[:200], "app": str(app or "").strip().lower()}
+            if kind == "chart":
+                labels = [str(x) for x in (labels or [])][:31]
+                lines = []
+                for raw in [plain(x) for x in (series or [])][:4]:
+                    values = first(raw, "values", "data", "points") or []
+                    lines.append({"name": str(first(raw, "name", "label") or ""), "values": list(values)[:len(labels)]})
+                if len(labels) < 2 or not lines or any(len(x["values"]) != len(labels) for x in lines):
+                    return ("Not shown: a chart needs 2+ labels and 1-4 series, each with one value per label. "
+                            "Call report_visual again.")
+                visual.update({"chart": "line" if str(chart).lower() == "line" else "bar", "unit": str(unit or "")[:12],
+                               "labels": labels, "series": lines})
+            elif kind == "stats":
+                stats = []
+                for raw in [plain(x) for x in (items or [])][:6]:
+                    stat = {"label": first(raw, "label", "name", "title"), "value": first(raw, "value", "number", "amount"),
+                            "change": first(raw, "change", "delta"), "tone": first(raw, "tone")}
+                    stats.append({k: str(v) for k, v in stat.items() if v is not None})
+                if not stats or not all(x.get("label") and x.get("value") for x in stats):
+                    return "Not shown: stats needs 1-6 items, each with label and value. Call report_visual again."
+                visual["items"] = stats
+            elif kind == "table":
+                columns = [str(c) for c in (columns or [])][:6]
+                table = [[str(c) for c in (r if isinstance(r, (list, tuple)) else [])][:len(columns)] for r in (rows or [])][:20]
+                if len(columns) < 2 or not table:
+                    return "Not shown: a table needs 2-6 columns and at least one row. Call report_visual again."
+                visual.update({"columns": columns, "rows": table})
+            else:
+                return "Not shown: kind must be chart, stats, or table."
+            return json.dumps({"visual": visual, "note": "Shown to the owner in Results; don't repeat it in your reply."})
+
+        async def report_visual_async(kind: str, title: str, app: str = "", chart: str = "bar", unit: str = "",
+                                      labels: list | None = None, series: list | None = None, items: list | None = None,
+                                      columns: list | None = None, rows: list | None = None) -> str:
+            return report_visual(kind, title, app, chart, unit, labels, series, items, columns, rows)
+
         def ask_user(questions: list) -> str:
             # Like remember, this changes nothing and doesn't wait: the app reads the structured
             # result and shows the questions as buttons under the reply. The owner's answer
@@ -546,7 +631,7 @@ class ToolGatewayComponent(Component):
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, ask_user"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, report_visual, ask_user"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -585,6 +670,14 @@ class ToolGatewayComponent(Component):
                 description=("Only when the request asks you to investigate something: after reading the owner's apps, "
                              "report the dated records you found, each with the record's link exactly as a tool returned "
                              "it, and, for a why question, the likely causes. The owner sees it as a timeline. Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=report_visual, coroutine=report_visual_async, name="report_visual",
+                args_schema=VisualArgs,
+                description=("Only when the request asks you to investigate something: after reading the owner's apps, "
+                             "show what you found as a chart (numbers over time or by category), key numbers, or a "
+                             "comparison table. Call it once per visual, only with numbers and facts a tool returned. "
+                             "Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=ask_user, coroutine=ask_user_async, name="ask_user",

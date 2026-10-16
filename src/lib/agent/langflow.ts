@@ -366,6 +366,17 @@ export function toolTimelines(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Charts, key numbers, and tables an investigation reported through report_visual. */
+export function toolVisuals(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    if (isRecord(result) && isRecord(result.visual)) events.push({ type: "visual", visual: result.visual });
+  }
+  return events;
+}
+
 /** Multiple-choice questions the agent asked through ask_user (validated by the turn). */
 export function toolQuestions(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -698,7 +709,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         const seenProposals = new Set<string>();
         const seenReports = new Set<string>();
         const newReports = (message: LangflowMessage) =>
-          [...toolTimelines(message), ...toolQuestions(message)].filter((t) => {
+          [...toolTimelines(message), ...toolVisuals(message), ...toolQuestions(message)].filter((t) => {
             const key = JSON.stringify(t);
             if (seenReports.has(key)) return false;
             seenReports.add(key);

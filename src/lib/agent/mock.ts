@@ -32,6 +32,7 @@ type Step =
   | { kind: "approval"; summary: string; app: string; details: [string, string][] }
   | { kind: "remember"; content: string }
   | { kind: "timeline"; timeline: unknown }
+  | { kind: "visual"; visual: unknown }
   | { kind: "questions"; questions: unknown };
 
 interface Scenario {
@@ -84,6 +85,48 @@ const SCENARIOS: Scenario[] = [
           causes: [
             { text: "The best-selling huggies were out of stock after the clasp delay.", entries: [0, 1] },
             { text: "A $212 refund landed the same day.", entries: [2] },
+          ],
+        },
+      },
+      {
+        kind: "visual",
+        visual: {
+          kind: "stats",
+          title: "Tue Oct 6 vs a usual Tuesday (mock)",
+          app: "shopify",
+          items: [
+            { label: "Revenue", value: "$1,840", change: "-38% vs avg", tone: "bad" },
+            { label: "Orders", value: "23", change: "-31% vs avg", tone: "bad" },
+            { label: "Refunds", value: "$212", change: "1 order", tone: "neutral" },
+            { label: "Top seller in stock", value: "No", change: "Since Oct 5", tone: "bad" },
+          ],
+        },
+      },
+      {
+        kind: "visual",
+        visual: {
+          kind: "chart",
+          title: "Daily revenue, Sep 30 - Oct 8 (mock)",
+          app: "shopify",
+          chart: "bar",
+          unit: "$",
+          labels: ["Sep 30", "Oct 1", "Oct 2", "Oct 3", "Oct 4", "Oct 5", "Oct 6", "Oct 7", "Oct 8"],
+          series: [
+            { name: "This week", values: [2980, 3120, 2870, 3310, 3050, 2210, 1840, 1990, 2060] },
+            { name: "Huggies (gold)", values: [910, 980, 870, 1020, 940, 120, 0, 0, 0] },
+          ],
+        },
+      },
+      {
+        kind: "visual",
+        visual: {
+          kind: "table",
+          title: "What changed around Oct 5 (mock)",
+          columns: ["Date", "App", "What"],
+          rows: [
+            ["Oct 4", "Gmail", "Clasp shipment a week late"],
+            ["Oct 5", "Shopify", "Gold huggies out of stock"],
+            ["Oct 6", "Shopify", "Order #1042 refunded ($212)"],
           ],
         },
       },
@@ -510,6 +553,9 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "timeline") {
           await wait(500 * pace, signal);
           yield { type: "timeline", timeline: step.timeline };
+        } else if (step.kind === "visual") {
+          await wait(400 * pace, signal);
+          yield { type: "visual", visual: step.visual };
         } else if (step.kind === "questions") {
           await wait(400 * pace, signal);
           yield { type: "questions", questions: step.questions };
