@@ -41,7 +41,10 @@ export function FeedbackButtons({
   );
 }
 
-/** Asks why the member rated a reply the way they did: quick reasons and an optional note. */
+/**
+ * Optionally asks why the member rated a reply the way they did: quick reasons and a note.
+ * The rating is already saved, so skipping is always fine.
+ */
 export function FeedbackReasons({
   feedback,
   onSave,
@@ -79,7 +82,10 @@ export function FeedbackReasons({
       }}
     >
       <div className="flex items-center justify-between gap-2 pl-1">
-        <p className="text-[13px] font-medium text-fg-2">{feedback.rating === "up" ? "What was good about it?" : "What went wrong?"}</p>
+        <p className="text-[13px] font-medium text-fg-2">
+          {feedback.rating === "up" ? "Thanks! What was good about it?" : "Thanks. What went wrong?"}{" "}
+          <span className="font-normal text-fg-4">Optional</span>
+        </p>
         <IconButton label="Close" side="bottom" onClick={onClose} className="size-7">
           <X size={14} />
         </IconButton>
@@ -110,7 +116,7 @@ export function FeedbackReasons({
         rows={2}
         value={note}
         maxLength={MAX_FEEDBACK_NOTE_LENGTH}
-        placeholder="Anything else? (optional)"
+        placeholder="Anything else?"
         onChange={(e) => setNote(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -121,13 +127,22 @@ export function FeedbackReasons({
         className="scroll-quiet mt-2.5 block w-full resize-none rounded-lg border border-line bg-transparent px-2.5 py-2 text-[14px] leading-[1.5] text-fg outline-none placeholder:text-fg-4 focus:border-line-strong"
       />
       <div className="mt-2 flex justify-end">
-        <button
-          type="submit"
-          disabled={!changed}
-          className="inline-flex h-8 items-center rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:bg-press disabled:text-fg-4"
-        >
-          Send feedback
-        </button>
+        {changed ? (
+          <button
+            type="submit"
+            className="inline-flex h-8 items-center rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90"
+          >
+            Send feedback
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 items-center rounded-lg px-3.5 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+          >
+            Skip
+          </button>
+        )}
       </div>
     </form>
   );
