@@ -18,6 +18,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Android shrinks the page above the keyboard, so `100dvh` stays the visible height.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#fbfaf8" },
     { media: "(prefers-color-scheme: dark)", color: "#161615" },
