@@ -17,6 +17,7 @@ export interface Finding {
 }
 
 const EMAIL_APPS = new Set(["gmail", "outlook"]);
+const NOT_CONNECTED = /^[^.]+ isn't connected\.$/;
 
 /**
  * Findings for one reply, in order. A free-form app answer is summarized by the line the
@@ -41,6 +42,8 @@ export function findingsForReply(steps: ActivityStep[], artifacts: Artifact[]): 
 
 export function findingFor(step: ActivityStep, agentSaid?: string): Finding | null {
   if (step.status === "failed") {
+    // An app that isn't connected is a fact about the setup, not something going wrong.
+    if (step.detail && NOT_CONNECTED.test(step.detail)) return { id: step.id, app: step.app, text: step.detail, tone: "normal", step };
     return { id: step.id, app: step.app, text: step.detail ? `Hit a snag: ${step.detail}` : step.label, tone: "problem", step };
   }
   const p = step.preview;

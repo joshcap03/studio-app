@@ -95,10 +95,11 @@ export function interpretCalls(calls: ToolCall[]): InterpretedStep[] {
     }
     // Match by content first: the gateway passes its arguments straight through, so the
     // inner call's input equals the gateway call's arguments. Then by exact tool name, then
-    // by a Composio slug the multi-execute ran. A gateway call that failed invoked nothing.
+    // by a Composio slug the multi-execute ran. A gateway call it turned away invoked nothing;
+    // one that reports the tool failed did run it.
     const live = (p: (typeof pending)[number]) => {
       const out = p.wrapper.output == null ? undefined : unwrapResult(p.wrapper.output);
-      return !(typeof out === "string" && gatewayFailure(out));
+      return !(typeof out === "string" && REJECTED_BY_GATEWAY.test(out.trim()));
     };
     const inputKey = stableJson(call.input);
     let owner = pending.findIndex((p) => live(p) && p.target === call.name && stableJson(p.args) === inputKey);
@@ -126,6 +127,9 @@ function stableJson(value: unknown): string {
   return JSON.stringify(sort(value ?? {}));
 }
 
+/** The gateway refused the call before running anything. */
+const REJECTED_BY_GATEWAY = /^"?(Unknown tool '|Invalid arguments for|Tool arguments must be|Approvals aren't available in this run)/;
+
 /** The gateway's own tools, which a person should never see named. */
 const GATEWAY_TOOLS = new Set(["execute_tool", "take_action", "discover_tools"]);
 
@@ -137,7 +141,8 @@ function invokes(target: string, next: ToolCall): boolean {
   return false;
 }
 
-function toStep(call: ToolCall, index: number): InterpretedStep {
+function toStep(original: ToolCall, index: number): InterpretedStep {
+  const call = original.name === "composio_multi_execute_tool" ? keepWhatWorked(original) : original;
   const input = isRecord(call.input) ? call.input : {};
   const result = call.output == null ? undefined : unwrapResult(call.output);
   // MCP results flag failures with isError rather than an error field.
@@ -181,6 +186,37 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
     artifacts: status === "done" ? interpretation.artifacts : undefined,
   };
 }
+
+/**
+ * Composio fails a whole batch when any one tool in it fails, but the failure still carries
+ * every tool's result. Keeps the ones that worked, so what they found is shown (and their
+ * links count), and drops tools that failed only because their app isn't connected: the
+ * agent says so in its answer, and nothing went wrong.
+ */
+function keepWhatWorked(call: ToolCall): ToolCall {
+  const texts = [call.error, call.output == null ? undefined : unwrapResult(call.output)];
+  for (const text of texts) {
+    if (typeof text !== "string" || !text.includes("{")) continue;
+    const envelope = composioEnvelope(maybeJson(text.slice(text.indexOf("{"))));
+    const data = isRecord(envelope?.data) ? envelope.data : undefined;
+    if (!envelope || envelope.successful || !data || !Array.isArray(data.results)) continue;
+    const results = data.results.filter(isRecord);
+    const errorOf = (r: Record<string, unknown>) =>
+      typeof r.error === "string" ? r.error : isRecord(r.response) && r.response.successful === false ? errorMessage(r.response.error) ?? "The tool reported a failure." : undefined;
+    const kept = results.filter((r) => !NOT_CONNECTED.test(errorOf(r) ?? ""));
+    // Every tool needed an app that isn't connected: say which, plainly.
+    if (kept.length === 0) return { ...call, output: null, error: errorOf(results[0]) ?? call.error };
+    const slugs = new Set(kept.map((r) => r.tool_slug));
+    const input = isRecord(call.input) && Array.isArray(call.input.tools)
+      ? { ...call.input, tools: call.input.tools.filter((t) => !isRecord(t) || slugs.has(t.tool_slug)) }
+      : call.input;
+    const failure = kept.map(errorOf).find(Boolean);
+    return { ...call, input, output: { successful: !failure, data: { ...data, results: kept }, error: failure ?? null }, error: null };
+  }
+  return call;
+}
+
+const NOT_CONNECTED = /no active connection found for toolkit/i;
 
 // ------------------------------------------------------------------------------------------
 // Interpreters
@@ -744,6 +780,8 @@ export function humanReason(raw: string): string {
     .replace(/\s*[{[][\s\S]*$/, "")
     .replace(/^(\w*(Error|Exception)):\s*/i, "")
     .trim();
+  const missing = /no active connection found for toolkit\(?s?\)? '([^']+)'/i.exec(reason);
+  if (missing) return `${appName(appForToolkit(missing[1]))} isn't connected.`;
   if (/\b(401|403)\b|unauthori[sz]ed|forbidden|not authenticated|invalid (api )?key|expired token/i.test(reason)) {
     return "The app isn't connected or needs to be re-authorized.";
   }
