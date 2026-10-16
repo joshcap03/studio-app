@@ -18,3 +18,13 @@ describe("Markdown citations", () => {
     expect(renderToStaticMarkup(<Markdown content="See [1]." />)).toContain("See [1].");
   });
 });
+
+describe("SourceList", () => {
+  it("lists only the sources the answer points to", async () => {
+    const { SourceList } = await import("./citation");
+    const two = { ...citation, n: 2, title: "Unused" };
+    const html = renderToStaticMarkup(<SourceList citations={[citation, two]} content="Rated 4.5 [1]." />);
+    expect(html).toContain("Reviews");
+    expect(html).not.toContain("Unused");
+  });
+});

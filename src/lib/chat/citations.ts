@@ -32,7 +32,7 @@ const rawSchema = z.object({
         }),
       ).optional().catch(undefined),
     )
-    .max(MAX_CITATIONS * 2),
+    .transform((sources) => sources.slice(0, MAX_CITATIONS * 2)),
 });
 
 /** Validates the agent's citations against what this run's tools returned. */
@@ -58,6 +58,13 @@ export function buildCitations(raw: unknown, evidence: Evidence[], seen: Set<str
   }
   if (out.size === 0) return null;
   return [...out.values()].sort((a, b) => a.n - b.n);
+}
+
+/** Citations from both lists, the first list's winning when they share a number. */
+export function mergeCitations(first: Citation[], second: Citation[]): Citation[] {
+  const byNumber = new Map(first.map((c) => [c.n, c]));
+  for (const c of second) if (!byNumber.has(c.n)) byNumber.set(c.n, c);
+  return [...byNumber.values()].sort((a, b) => a.n - b.n).slice(0, MAX_CITATIONS);
 }
 
 /** True when the quote appears in the text, ignoring case, spacing, markup and quote styles. */

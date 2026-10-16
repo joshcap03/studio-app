@@ -3,8 +3,9 @@ import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, 
 import { STALE_STREAM_MS, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
 import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
+import { isRecord } from "@/lib/agent/tools/sanitize";
 import { buildQuestions } from "./questions";
-import { buildCitations } from "./citations";
+import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
 import { buildVisual, withVisual } from "./visuals";
 import {
@@ -365,7 +366,12 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       const remembering: Promise<void>[] = [];
       let timeline: Timeline | null = assistant.timeline ?? null;
+      // Kept from before a pause for approval; this run's citations are added to them.
+      const earlierCitations: Citation[] = assistant.citations ?? [];
       let citations: Citation[] | null = assistant.citations ?? null;
+      // Every source the agent cited this run. It may call cite more than once (a few sources,
+      // then more as it writes); the citations are all of them, not just the latest call's.
+      const citedSources: unknown[] = [];
       // What this run's tools returned, by link. Held only for this turn, never sent or stored.
       const evidence = new Map<string, Evidence>();
       const seen = () => new Set([...linksSeen(activity, artifacts), ...evidence.keys()]);
@@ -489,8 +495,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               break;
             }
             case "citations": {
-              const built = buildCitations(event.citations, [...evidence.values()], seen());
-              if (built) {
+              const sources = isRecord(event.citations) && Array.isArray(event.citations.sources) ? event.citations.sources : [];
+              citedSources.push(...sources);
+              const built = mergeCitations(earlierCitations, buildCitations({ sources: citedSources }, [...evidence.values()], seen()) ?? []);
+              if (built.length > 0) {
                 citations = built;
                 send({ type: "citations", citations: built });
               }
