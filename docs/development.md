@@ -195,8 +195,12 @@ by, anyone else.
 
 ## Deploying (Vercel + Supabase Cloud)
 
-1. **Supabase.** Create a project, then `npx supabase link --project-ref <ref>` and
-   `npx supabase db push`. In the dashboard:
+1. **Supabase.** Create a project and a personal access token (Account → Access Tokens).
+   Production builds run `scripts/migrate-production.mjs`, which applies
+   `supabase/migrations` before `next build`, so a deploy never goes live ahead of its
+   schema and a failed migration fails the deploy. Keep migrations backward-compatible:
+   the previous deployment serves against the new schema until the build finishes. In the
+   dashboard:
    - Authentication → Sign In / Providers → Email: keep sign-ups on, turn **Confirm email** on.
    - Authentication → URL Configuration: Site URL = the app's production URL (the email
      links are built from it); add it under Redirect URLs too.
@@ -210,7 +214,7 @@ by, anyone else.
    copy the flow with `export_flow.py`, run `langflow/install.py` against it, and create the
    global variables it reads. Only the app should call this server.
 3. **Vercel.** Import the repo. Set the env vars from `.env.example` for Production:
-   Supabase URL + anon key, `AGENT_PROVIDER=langflow`, the `LANGFLOW_*` values (tweaks
+   Supabase URL + anon key, `SUPABASE_ACCESS_TOKEN`, `AGENT_PROVIDER=langflow`, the `LANGFLOW_*` values (tweaks
    from the installer), `COMPOSIO_*`, `SUPERMEMORY_API_KEY`, `AGENT_LIVE_WORKSPACES=*`, and
    **`LIMIT_RUNS_SERVICE_PER_DAY`** so open sign-ups can't run up the model bill. The chat
    route asks for 300 s (`maxDuration`), the Hobby ceiling; raise it on Pro.
