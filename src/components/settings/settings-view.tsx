@@ -15,14 +15,24 @@ interface Props {
   usage: UsageSummary;
   canEdit: boolean;
   email: string | null;
+  /** The member's personal guardrail, shown read-only; null when they don't have one. */
+  guardrail: string | null;
 }
 
 const input =
   "w-full rounded-xl border border-line bg-surface px-3.5 text-[14.5px] text-fg outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none disabled:bg-subtle/50 disabled:text-fg-2";
 
-export function SettingsView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, email }: Props) {
+export function SettingsView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, email, guardrail }: Props) {
   return (
     <div className="mt-10 space-y-14">
+      {guardrail ? (
+        <Section
+          title="Personal guardrail"
+          description="On. The agent follows these rules for you in every workspace, ahead of any other instructions. They can't be changed here."
+        >
+          <p className="rounded-xl border border-line bg-subtle/50 px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap text-fg-2">{guardrail}</p>
+        </Section>
+      ) : null}
       <BusinessSection initial={initialSettings} canEdit={canEdit} />
       {initialPromotions ? (
         <Section

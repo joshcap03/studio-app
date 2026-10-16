@@ -20,6 +20,13 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map(summary);
     },
+    async recentTitles(since, limit, except) {
+      return [...shared.conversations.values()]
+        .filter((c) => owns(c) && c.updatedAt >= since && c.id !== except)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, limit)
+        .map((c) => c.title);
+    },
     async getConversation(id) {
       const c = shared.conversations.get(id);
       return c && owns(c) ? strip(c) : null;

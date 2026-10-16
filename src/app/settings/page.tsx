@@ -5,7 +5,7 @@ import { requirePageTenant } from "@/lib/tenant";
 import { brainMemories, listPromotions } from "@/lib/brain";
 import { previewEnabled } from "@/lib/flags";
 import { listMemories, memoryEnabled } from "@/lib/memory";
-import { getSettings, getUsage } from "@/lib/workspace";
+import { getGuardrail, getSettings, getUsage } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -20,7 +20,13 @@ export default async function SettingsPage() {
       })
     : Promise.resolve(null);
   const promotions = brain && memoryEnabled() ? listPromotions(tenant).catch(() => []) : Promise.resolve(null);
-  const [settings, initialMemories, usage, initialPromotions] = await Promise.all([getSettings(tenant), memories, getUsage(tenant), promotions]);
+  const [settings, initialMemories, usage, initialPromotions, guardrail] = await Promise.all([
+    getSettings(tenant),
+    memories,
+    getUsage(tenant),
+    promotions,
+    getGuardrail(tenant),
+  ]);
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
@@ -41,6 +47,7 @@ export default async function SettingsPage() {
           usage={usage}
           canEdit={tenant.workspace.role === "owner"}
           email={tenant.email}
+          guardrail={guardrail}
         />
       </div>
     </main>

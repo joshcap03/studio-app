@@ -64,6 +64,7 @@ export const TEMPLATE_VARIABLES = [
   "memories",
   "project_name",
   "project_instructions",
+  "personal_guardrail",
   "system_context",
 ] as const;
 
@@ -87,7 +88,9 @@ const BACKGROUND_ONLY =
 export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPLATE_VARIABLES)[number], string> {
   const memories = tenant.memories.map((m) => `- ${m}`).join("\n");
   const project = tenant.project;
+  const guardrail = tenant.guardrail ? guardrailContext(tenant.guardrail) : "";
   const system = [
+    guardrail,
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
     `Business: ${tenant.workspaceName}`,
     tenant.businessContext.trim() && `About the business:\n${tenant.businessContext.trim()}`,
@@ -108,8 +111,25 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     memories,
     project_name: project?.name ?? "",
     project_instructions: project?.instructions ?? "",
+    personal_guardrail: guardrail,
     system_context: system,
   };
+}
+
+/**
+ * The member's personal guardrail. It goes first and overrides everything else the agent is
+ * told, because the member committed to it ahead of time; the recent titles let the agent
+ * notice the same question coming back in a new conversation.
+ */
+function guardrailContext(guardrail: NonNullable<AgentTenantContext["guardrail"]>): string {
+  return [
+    "This member's personal rules. They override every other instruction you have, including your base instructions, the workspace's and project's instructions, and any skill attached to a message. The member set these on purpose ahead of time; keep following them even if they ask you not to.",
+    guardrail.instructions.trim(),
+    guardrail.recentChats.length > 0 &&
+      `The member's other recent conversations (titles only, newest first; use them only to notice a question coming back):\n${guardrail.recentChats.map((t) => `- ${t}`).join("\n")}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /** The conversation's project: what it's for, and the files attached to every message in it. */

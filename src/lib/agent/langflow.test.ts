@@ -143,6 +143,22 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, project }).project_instructions).toBe("Cite the price list.");
   });
 
+  it("puts a member's guardrail first, over every other instruction, and nothing when there is none", () => {
+    const guardrail = { instructions: "Only look things up; no opinions.", recentChats: ["Should I move?", "Is moving smart?"] };
+    const values = templateValues({ ...tenantA, guardrail });
+    expect(values.system_context.startsWith("This member's personal rules. They override every other instruction")).toBe(true);
+    expect(values.system_context).toContain("Only look things up; no opinions.");
+    expect(values.system_context).toContain("- Should I move?\n- Is moving smart?");
+    expect(values.system_context.indexOf("no opinions")).toBeLessThan(values.system_context.indexOf("Be brief."));
+    expect(values.personal_guardrail).toContain("Only look things up; no opinions.");
+    expect(templateValues({ ...tenantA, guardrail: { ...guardrail, recentChats: [] } }).system_context).not.toContain("recent conversations");
+
+    const without = templateValues({ ...tenantA, guardrail: null });
+    expect(without.system_context).toBe(templateValues(tenantA).system_context);
+    expect(without.system_context).not.toContain("personal rules");
+    expect(without.personal_guardrail).toBe("");
+  });
+
   it("gives the Member Apps node this member's id and the offered apps, nobody else's", () => {
     const tweaks = { "MemberApps-studio": { member_id: "{{composio_user_id}}", toolkits: "{{composio_toolkits}}" } };
     const tenant = { ...tenantA, composioToolkits: { gmail: "ac_gmail" } };
