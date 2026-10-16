@@ -92,6 +92,13 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       const m = shared.messages.find((x) => x.id === id);
       if (m) Object.assign(m, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
     },
+    async setFeedback(conversationId, id, feedback) {
+      const c = shared.conversations.get(conversationId);
+      const m = shared.messages.find((x) => x.id === id && x.conversationId === conversationId && x.role === "assistant");
+      if (!c || !owns(c) || !m) return false;
+      m.feedback = feedback;
+      return true;
+    },
     async deleteMessage(id) {
       shared.messages = shared.messages.filter((m) => m.id !== id);
       shared.approvals = shared.approvals.filter((a) => a.messageId !== id);

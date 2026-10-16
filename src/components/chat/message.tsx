@@ -4,10 +4,11 @@ import { AlertCircle, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-re
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
-import { MAX_MESSAGE_LENGTH, type ChatMessage } from "@/lib/types";
+import { MAX_MESSAGE_LENGTH, type ChatMessage, type MessageFeedback } from "@/lib/types";
 import { ActivityLog } from "./activity";
 import { ArtifactCard } from "./artifact-card";
 import { AttachmentList } from "./attachments";
+import { FeedbackButtons, FeedbackReasons } from "./feedback";
 import { Markdown } from "./markdown";
 import { ApprovalCard, MemoryProposalCard, QuestionCard } from "./requests";
 
@@ -124,10 +125,31 @@ interface AssistantProps {
   onProposal?: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
   /** Present while the latest reply's questions can be answered; sends the answer as a message. */
   onAnswer?: (text: string) => void;
+  /** Rates this reply (null clears the rating). */
+  onFeedback?: (messageId: string, feedback: MessageFeedback | null) => void;
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal, onAnswer }: AssistantProps) {
+export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal, onAnswer, onFeedback }: AssistantProps) {
   const streaming = message.status === "streaming";
+  const feedback = message.feedback ?? null;
+  const [asking, setAsking] = useState<MessageFeedback["rating"] | null>(null);
+  const [thanked, setThanked] = useState(false);
+  useEffect(() => {
+    if (!thanked) return;
+    const timer = setTimeout(() => setThanked(false), 2500);
+    return () => clearTimeout(timer);
+  }, [thanked]);
+  const rate = (rating: MessageFeedback["rating"]) => {
+    if (!onFeedback) return;
+    setThanked(false);
+    if (feedback?.rating === rating) {
+      setAsking(null);
+      onFeedback(message.id, null);
+    } else {
+      setAsking(rating);
+      onFeedback(message.id, { rating, reasons: [] });
+    }
+  };
   const hasContent = message.content.trim().length > 0;
   // Show live progress until text arrives, and again whenever the agent starts a new step.
   const working = streaming && (!hasContent || message.activity.some((s) => s.status === "running"));
@@ -207,16 +229,35 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
       {!streaming && hasContent ? (
         <div
           className={`mt-2 -ml-1.5 flex items-center gap-0.5 transition-opacity duration-200 ${
-            isLast ? "opacity-100" : "opacity-0 group-hover/message:opacity-100 focus-within:opacity-100"
+            isLast || feedback || asking ? "opacity-100" : "opacity-0 group-hover/message:opacity-100 focus-within:opacity-100"
           }`}
         >
           <CopyButton text={message.content} />
+          {onFeedback ? <FeedbackButtons feedback={feedback} asking={asking} onRate={rate} /> : null}
           {isLast && message.status === "complete" ? (
             <IconButton label="Retry" side="bottom" onClick={() => onRetry(message.id)} className="size-7">
               <RotateCcw size={14} />
             </IconButton>
           ) : null}
+          {thanked ? (
+            <span role="status" className="ml-1.5 text-[13px] text-fg-3 animate-fade-up">
+              Thanks for the feedback
+            </span>
+          ) : null}
         </div>
+      ) : null}
+
+      {!streaming && asking && feedback?.rating === asking && onFeedback ? (
+        <FeedbackReasons
+          key={asking}
+          feedback={feedback}
+          onClose={() => setAsking(null)}
+          onSave={(next) => {
+            setAsking(null);
+            setThanked(true);
+            onFeedback(message.id, next);
+          }}
+        />
       ) : null}
     </article>
   );
