@@ -1,7 +1,9 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "@/lib/client/api";
+import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
 import type { Memory, MemoryPromotion, UsageSummary, WorkspaceSettings } from "@/lib/types";
 import { BusinessBrain } from "./business-brain";
 import { ConnectionsList } from "./connections-list";
@@ -51,6 +53,7 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
       <Section title="Connected apps" description="Apps the agent can use for you. It asks before changing anything, and only you can use your connections.">
         <ConnectionsList returnTo="/settings" />
       </Section>
+      <NotificationsSection />
       <Section title="Usage" description="Messages to the agent in this workspace today.">
         <div className="rounded-xl border border-line bg-surface px-4 py-4">
           <div className="flex items-baseline justify-between text-[14px]">
@@ -76,7 +79,7 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
           <span className="truncate text-fg-2">{email}</span>
           <button
             type="button"
-            onClick={() => void fetch("/api/auth/signout", { method: "POST" }).finally(() => window.location.assign("/login"))}
+            onClick={() => void api.signOut().finally(() => window.location.assign("/login"))}
             className="text-[13.5px] font-medium text-fg-2 hover:text-fg"
           >
             Sign out
@@ -84,6 +87,66 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
         </div>
       </Section>
     </div>
+  );
+}
+
+const PUSH_NOTES: Record<PushState, string> = {
+  unsupported: "This browser can't show notifications.",
+  "needs-install": "On iPhone, add Studio to your Home Screen first: tap Share, then Add to Home Screen, and open it from there.",
+  unavailable: "Notifications aren't set up on this server yet.",
+  denied: "Notifications are blocked for Studio. Allow them in this device's settings, then come back.",
+  off: "Get a notification when a task finishes or needs your OK while you're away.",
+  on: "You'll get a notification when a task finishes or needs your OK while you're away.",
+};
+
+function NotificationsSection() {
+  const [state, setState] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void pushState().then(setState, () => setState("unsupported"));
+  }, []);
+
+  async function toggle() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (state === "on") {
+        await disablePush();
+        setState("off");
+      } else {
+        setState(await enablePush());
+      }
+    } catch (e) {
+      setError((e as Error).message || "Couldn't change notifications. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const switchable = state === "on" || state === "off";
+  return (
+    <Section title="Notifications on this device">
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
+        <p className="text-[13.5px] text-fg-2">{state ? PUSH_NOTES[state] : "Checking…"}</p>
+        {switchable ? (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={state === "on"}
+            aria-label="Notifications on this device"
+            disabled={busy}
+            onClick={() => void toggle()}
+            className={`relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:opacity-60 ${state === "on" ? "bg-fg" : "bg-line-strong"}`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-surface shadow-sm transition-transform ${state === "on" ? "translate-x-4" : ""}`}
+            />
+          </button>
+        ) : null}
+      </div>
+      {error ? <p className="mt-2 text-[12.5px] text-danger">{error}</p> : null}
+    </Section>
   );
 }
 

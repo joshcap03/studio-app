@@ -217,3 +217,37 @@ describe("feedback over the API", () => {
     expect(cleared.messages[1].feedback).toBeNull();
   });
 });
+
+describe("notifications over the API", () => {
+  it("installs without a session: the manifest and service worker load signed out", async () => {
+    const manifest = await fetch(`${APP}/manifest.webmanifest`, { redirect: "manual" });
+    expect(manifest.status).toBe(200);
+    expect(await manifest.json()).toMatchObject({ name: "Studio", display: "standalone" });
+    expect((await fetch(`${APP}/sw.js`, { redirect: "manual" })).status).toBe(200);
+  });
+
+  it("saves and removes only the caller's own device", async () => {
+    const key = await alice.json("/api/push", "GET");
+    expect(key.status).toBe(200);
+    const { publicKey } = (await key.json()) as { publicKey: string | null };
+    if (!publicKey) return; // the QA server has no VAPID keys; nothing more to check
+    const endpoint = `https://push.example.test/${crypto.randomUUID()}`;
+    const device = { endpoint, keys: { p256dh: "k", auth: "a" } };
+    expect((await alice.json("/api/push", "POST", device)).status).toBe(200);
+    expect((await alice.json("/api/push", "POST", device)).status).toBe(200); // re-subscribing is fine
+    expect((await alice.json("/api/push", "POST", { ...device, endpoint: "http://push.example.test/x" })).status).toBe(400);
+    // Bob removing Alice's endpoint is a no-op under RLS.
+    expect((await bob.json("/api/push", "DELETE", { endpoint })).status).toBe(200);
+    expect((await alice.json("/api/push", "DELETE", { endpoint })).status).toBe(200);
+  });
+
+  it("refuses signed-out and cross-origin requests", async () => {
+    expect((await fetch(`${APP}/api/push`)).status).toBe(401);
+    const crossOrigin = await alice.request("/api/push", {
+      method: "POST",
+      headers: { Origin: "https://evil.example.test" },
+      body: JSON.stringify({ endpoint: "https://push.example.test/x", keys: { p256dh: "k", auth: "a" } }),
+    });
+    expect(crossOrigin.status).toBe(403);
+  });
+});

@@ -13,6 +13,7 @@ import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
+import { registerServiceWorker } from "@/lib/client/push";
 import type {
   AgentStatus,
   Attachment,
@@ -138,6 +139,8 @@ export function Workspace({
   const panelAuto = useRef(true);
 
   const controllers = useRef(new Map<string, AbortController>());
+  // Streams this tab let go of while the run kept going on the server (the app was hidden).
+  const detached = useRef(new WeakSet<AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
   const unsent = useRef(new Map<string, { text: string; extras: SendExtras }>());
   /** What each pending reply's message was sent with, keyed by its placeholder id. */
@@ -403,6 +406,17 @@ export function Workspace({
       } catch (error) {
         cancelAnimationFrame(frame);
         flush();
+        // The app was hidden (or the connection dropped) after the server took the run: it keeps
+        // going there. Show what the server has; a reply still running is followed until it ends.
+        if (detached.current.has(controller) || (started && !controller.signal.aborted && !(error instanceof ApiError))) {
+          const latest = await api.getConversation(conversationId).catch(() => null);
+          if (latest) {
+            setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages: latest.messages } }));
+            upsertConversation(latest.conversation);
+            return;
+          }
+          if (started) return;
+        }
         const aborted = controller.signal.aborted;
         if (!started && (body.kind === "decide" || body.kind === "edit") && error instanceof ApiError) {
           // The server refused (e.g. already answered elsewhere): show its state, not a guess.
@@ -646,6 +660,26 @@ export function Workspace({
     api.stopRun(id).catch(() => controllers.current.get(id)?.abort());
   }, [activeId]);
 
+  // The service worker shows notifications on devices where the member turned them on.
+  useEffect(() => {
+    void registerServiceWorker();
+  }, []);
+
+  // When the app is hidden (phone locked, app switched), let go of open streams. The runs
+  // keep going on the server, which notifies the member when one ends while they're away;
+  // coming back follows them from the saved state.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      for (const controller of controllers.current.values()) {
+        detached.current.add(controller);
+        controller.abort();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
   // Follow a run this tab didn't start (e.g. after a reload) until it finishes.
   const followingRemote = activeThread?.status === "ready" && activeThread.messages.some((m) => m.status === "streaming") && !controllers.current.has(activeId ?? "");
   useEffect(() => {
@@ -657,6 +691,7 @@ export function Workspace({
       while (!cancelled) {
         await new Promise((r) => setTimeout(r, 1500));
         if (cancelled || controllers.current.has(id)) return;
+        if (document.visibilityState === "hidden") continue;
         try {
           const { messages, conversation } = await api.getConversation(id);
           if (cancelled || controllers.current.has(id)) return;

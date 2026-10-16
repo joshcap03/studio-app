@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { z } from "zod";
 import { agentEnabledFor, getAgentAdapter } from "@/lib/agent";
 import { errorResponse, parseBody } from "@/lib/api";
@@ -9,9 +9,10 @@ import { getConfig } from "@/lib/config";
 import { getSkill } from "@/lib/skills";
 import { BUILTIN_SKILL_IDS } from "@/lib/skills/builtin";
 import { previewEnabled } from "@/lib/flags";
+import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { projectForRun } from "@/lib/projects";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
-import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
+import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH, type ChatMessage, type ConversationSummary } from "@/lib/types";
 import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
 import { buildAgentContext, claimRun } from "@/lib/workspace";
 
@@ -20,8 +21,9 @@ import { buildAgentContext, claimRun } from "@/lib/workspace";
 // workspace, user, and agent context all come from the session, never from the request.
 
 export const dynamic = "force-dynamic";
-// The run streams inside this request. On Vercel this is the most the Hobby plan allows;
-// raise it (up to 800) on Pro. A run cut off here shows as interrupted, with a retry.
+// The run streams inside this request, and keeps going (via after()) if the member closes
+// the app. On Vercel this is the most the Hobby plan allows; raise it (up to 800) on Pro. A
+// run cut off here shows as interrupted, with a retry.
 export const maxDuration = 300;
 
 type Context = { params: Promise<{ id: string }> };
@@ -91,6 +93,19 @@ export async function POST(request: NextRequest, { params }: Context) {
     if (skill === null) return jsonError(404, "Skill not found.");
     if (project === null) return jsonError(404, "Project not found.");
 
+    // The function stays alive until the run is over, even after the browser disconnects
+    // (a phone locked mid-run); a member who wasn't watching gets a notification.
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => (settle = resolve));
+    const onFinished = async (message: ChatMessage, conversation: ConversationSummary, { watched }: { watched: boolean }) => {
+      try {
+        const notification = watched || !pushEnabled() ? null : notificationFor(message, conversation);
+        if (notification) await notify(tenant, notification);
+      } finally {
+        settle();
+      }
+    };
+
     // A conversation id that exists for another tenant fails here: the insert collides with
     // a row this tenant cannot see, and the database refuses it.
     const stream = await startTurn(
@@ -106,6 +121,7 @@ export async function POST(request: NextRequest, { params }: Context) {
         timelines: previewEnabled(tenant, "why"),
         loadAttachment: (attachment) => readAttachment(tenant, attachment),
         loadSkill,
+        onFinished,
       },
       input.kind === "send"
         ? {
@@ -119,6 +135,7 @@ export async function POST(request: NextRequest, { params }: Context) {
           }
         : { conversationId: conversationId.data, ...input },
     );
+    after(() => settled);
     return new Response(stream, {
       headers: {
         "Content-Type": "application/x-ndjson; charset=utf-8",

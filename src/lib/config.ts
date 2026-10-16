@@ -58,6 +58,12 @@ const schema = z.object({
   // Agent runs per day across every workspace. Unset means no service-wide cap.
   LIMIT_RUNS_SERVICE_PER_DAY: z.coerce.number().int().positive().optional(),
 
+  // Web Push (VAPID) keys for notifications on members' devices. `npx web-push
+  // generate-vapid-keys` makes a pair. Unset means notifications are off.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().regex(/^(mailto:|https:)/, "must be a mailto: or https: URL").optional(),
+
   // Accounts that see preview features: comma-separated sign-in emails. Unset means nobody.
   PREVIEW_FEATURE_EMAILS: z.string().optional(),
 });
@@ -96,6 +102,8 @@ export interface AppConfig {
   supermemory?: { apiKey: string; baseUrl: string };
   /** Where reply ratings go as trace feedback. Unset means they aren't sent anywhere. */
   langsmith?: { apiKey: string; endpoint: string };
+  /** Push notifications. Unset means members can't turn them on. */
+  push?: { publicKey: string; privateKey: string; subject: string };
   limits: { runsPerMinute: number; runsPerWorkspacePerDay: number; concurrentRuns: number; runsServicePerDay?: number };
   /** Lowercased sign-in emails allowed to see preview features (see src/lib/flags.ts). */
   previewEmails: Set<string>;
@@ -152,6 +160,10 @@ export function getConfig(): AppConfig {
     composio,
     supermemory: env.SUPERMEMORY_API_KEY ? { apiKey: env.SUPERMEMORY_API_KEY, baseUrl: env.SUPERMEMORY_BASE_URL } : undefined,
     langsmith: env.LANGSMITH_API_KEY ? { apiKey: env.LANGSMITH_API_KEY, endpoint: env.LANGSMITH_ENDPOINT } : undefined,
+    push:
+      env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY
+        ? { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT ?? "mailto:notifications@example.com" }
+        : undefined,
     limits: {
       runsPerMinute: env.LIMIT_RUNS_PER_MINUTE,
       runsPerWorkspacePerDay: env.LIMIT_RUNS_PER_WORKSPACE_PER_DAY,
