@@ -11,7 +11,7 @@ import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { ProjectView } from "@/components/project/project-view";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
-import { isMac, useMedia } from "@/components/ui/use-media";
+import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
 import type {
@@ -155,6 +155,7 @@ export function Workspace({
   const search = useRef<HTMLInputElement>(null);
 
   const desktop = useMedia("(min-width: 768px)", true);
+  const keyboardHeight = useKeyboardHeight();
   const [mod, setMod] = useState("Ctrl+");
   useEffect(() => setMod(isMac() ? "⌘" : "Ctrl+"), []);
 
@@ -925,7 +926,7 @@ export function Workspace({
 
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={200}>
-      <div className="flex h-dvh overflow-hidden bg-bg">
+      <div className="flex h-dvh overflow-hidden bg-bg" style={keyboardHeight ? { height: keyboardHeight } : undefined}>
         {/* Mobile drawer backdrop */}
         <div
           aria-hidden="true"

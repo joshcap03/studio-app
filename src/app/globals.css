@@ -106,6 +106,8 @@
 html,
 body {
   height: 100%;
+  /* The page itself never rubber-bands; scrolling happens inside its panes. */
+  overscroll-behavior: none;
 }
 
 body {
