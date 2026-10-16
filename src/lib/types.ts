@@ -160,6 +160,8 @@ export interface ChatMessage {
   skill?: MessageSkill | null;
   /** An investigation's timeline, as the agent reported it (see Timeline). */
   timeline?: Timeline | null;
+  /** Sources the reply cites as [n], checked against this run's tool results. */
+  citations?: Citation[] | null;
   /** Multiple-choice questions the agent asked at the end of this reply. */
   questions?: Question[] | null;
   /** Assistant messages only: the member's thumbs up or down on this reply, and why. */
@@ -266,6 +268,7 @@ export type StreamEvent =
   | { type: "approval"; approval: Approval }
   | { type: "memory-proposal"; proposal: MemoryProposal }
   | { type: "timeline"; timeline: Timeline }
+  | { type: "citations"; citations: Citation[] }
   | { type: "questions"; questions: Question[] }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
@@ -329,6 +332,22 @@ export interface MemoryPromotion {
   mine: boolean;
   createdAt: number;
 }
+
+/**
+ * A numbered source the agent cited in its answer as [n]. Only kept when this run's tools
+ * returned that link; `quoteVerified` says whether the quoted passage was found in what the
+ * tool returned for it.
+ */
+export interface Citation {
+  n: number;
+  url: string;
+  quote: string;
+  quoteVerified: boolean;
+  title?: string;
+  app?: string;
+}
+
+export const MAX_CITATIONS = 30;
 
 /** One dated event a "why?" investigation found while reading the member's apps. */
 export interface TimelineEntry {

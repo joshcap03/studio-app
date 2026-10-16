@@ -289,6 +289,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "report_timeline":
       // Shown as the Timeline in Results, not as a step.
       return { labels: { running: "Putting the timeline together", done: "Put the timeline together" }, app: "agent", action: "note", hidden: true };
+    case "cite":
+      // Shown as numbered citations in the answer, not as a step.
+      return { labels: { running: "Checking sources", done: "Checked sources" }, app: "agent", action: "note", hidden: true };
     case "report_visual":
       // Drawn in Results next to the timeline, not shown as a step.
       return { labels: { running: "Drawing a chart", done: "Drew a chart" }, app: "agent", action: "note", hidden: true };
@@ -828,3 +831,5 @@ export function narrate(raw: string): string | undefined {
   return clip(text, 120);
 }
 
+
+export { evidenceFor, evidenceLinks, type Evidence } from "./evidence";

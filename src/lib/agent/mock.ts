@@ -1,5 +1,6 @@
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput } from "./types";
 import type { Artifact, StepAction, StepPreview } from "@/lib/types";
+import type { Evidence } from "./tools/evidence";
 
 // MOCK AGENT — for development only. Simulated responses, tool activity, and artifacts that
 // exercise exactly the same AgentAdapter interface as the real backend. Every mock reply is
@@ -33,14 +34,64 @@ type Step =
   | { kind: "remember"; content: string }
   | { kind: "timeline"; timeline: unknown }
   | { kind: "visual"; visual: unknown }
-  | { kind: "questions"; questions: unknown };
+  | { kind: "questions"; questions: unknown }
+  | { kind: "evidence"; items: Evidence[] }
+  | { kind: "citations"; citations: unknown };
 
 interface Scenario {
   match: RegExp;
   steps: Step[];
 }
 
+const CITE_PAGE = "https://reviews.example/acme-atelier";
+const CITE_JOBS = "https://acme-atelier.example/careers";
+
 const SCENARIOS: Scenario[] = [
+  {
+    // Numbered citations: two verified quotes, one link-only, and one link no tool returned.
+    match: /\b(cite|citations|sources)\b/i,
+    steps: [
+      { kind: "note", text: "Let me look up reviews and open roles (mock)." },
+      {
+        kind: "activity",
+        id: "web",
+        running: "Searching the web",
+        done: "Searched the web",
+        ms: 900,
+        app: "web",
+        action: "search",
+        preview: {
+          type: "sources",
+          items: [
+            { title: "Acme Atelier reviews", url: CITE_PAGE, domain: "reviews.example" },
+            { title: "Careers at Acme Atelier", url: CITE_JOBS, domain: "acme-atelier.example" },
+          ],
+        },
+      },
+      {
+        kind: "evidence",
+        items: [
+          { url: CITE_PAGE, app: "web", title: "Acme Atelier reviews", text: "Acme Atelier is rated 4.5 out of 5 from 9 reviews. 88% would recommend to a friend. Work/Life Balance 3.4" },
+          { url: CITE_JOBS, app: "web", title: "Careers at Acme Atelier", text: "We're hiring for 40 open roles in New York and London." },
+        ],
+      },
+      {
+        kind: "citations",
+        citations: {
+          sources: [
+            { n: 1, url: CITE_JOBS, quote: "40 open roles in New York and London" },
+            { n: 2, url: CITE_PAGE, quote: "rated 4.5 out of 5 from 9 reviews. 88% would recommend to a friend" },
+            { n: 3, url: CITE_PAGE, quote: "long hours and a fast pace" },
+            { n: 4, url: "https://never-read.example/post", quote: "made up" },
+          ],
+        },
+      },
+      {
+        kind: "text",
+        text: "This is a mock answer with citations. Acme Atelier lists about 40 open roles, mostly in New York and London [1]. Reviewers rate it 4.5/5 from 9 reviews, and 88% would recommend it [2]. Recurring complaints mention long hours [3] and pay [4].",
+      },
+    ],
+  },
   {
     // The built-in "Investigate" skill. Its instructions mention email, so this goes first.
     match: /Investigate what the user asks/,
@@ -553,6 +604,10 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "timeline") {
           await wait(500 * pace, signal);
           yield { type: "timeline", timeline: step.timeline };
+        } else if (step.kind === "evidence") {
+          yield { type: "evidence", items: step.items };
+        } else if (step.kind === "citations") {
+          yield { type: "citations", citations: step.citations };
         } else if (step.kind === "visual") {
           await wait(400 * pace, signal);
           yield { type: "visual", visual: step.visual };

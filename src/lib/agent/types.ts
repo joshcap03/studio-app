@@ -1,4 +1,5 @@
 import type { ActivityStatus, Artifact, MemoryCategory, StepAction, StepPreview } from "@/lib/types";
+import type { Evidence } from "@/lib/agent/tools/evidence";
 
 // The contract between this application and any agent provider (Langflow today; LangGraph,
 // Deep Agents, or others later). Adapters translate their provider's protocol into these
@@ -97,6 +98,10 @@ export type AgentEvent =
   | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory }
   /** An investigation's timeline, unvalidated; the turn checks it against this run's results. */
   | { type: "timeline"; timeline: unknown }
+  /** Sources the agent will cite as [n], unvalidated; the turn checks them against `evidence`. */
+  | { type: "citations"; citations: unknown }
+  /** Text this run's tools returned for a link. Server-side only: never sent or stored. */
+  | { type: "evidence"; items: Evidence[] }
   /** A chart, key numbers, or table an investigation reported, unvalidated. */
   | { type: "visual"; visual: unknown }
   /** Multiple-choice questions for the member, unvalidated; the answer comes as their next message. */
