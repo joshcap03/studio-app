@@ -708,7 +708,7 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=report_timeline, coroutine=report_timeline_async, name="report_timeline",
                 args_schema=TimelineArgs,
-                description=("Only when the request asks you to investigate something: after reading the owner's apps or the web, "
+                description=("Only when the request asks you to investigate something: after reading the owner's apps, "
                              "report the dated records you found, each with the record's link exactly as a tool returned "
                              "it, and, for a why question, the likely causes. The owner sees it as a timeline. Changes nothing."),
             ),
@@ -724,7 +724,7 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=report_visual, coroutine=report_visual_async, name="report_visual",
                 args_schema=VisualArgs,
-                description=("Only when the request asks you to investigate something: after reading the owner's apps or the web, "
+                description=("Only when the request asks you to investigate something: after reading the owner's apps, "
                              "show what you found as a chart (numbers over time or by category), key numbers, or a "
                              "comparison table. Call it once per visual, only with numbers and facts a tool returned. "
                              "Changes nothing."),
