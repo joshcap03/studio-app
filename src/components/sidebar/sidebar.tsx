@@ -8,7 +8,6 @@ import {
   FolderInput,
   FolderMinus,
   FolderOpen,
-  FolderPlus,
   LibraryBig,
   LogOut,
   MoreHorizontal,
@@ -181,60 +180,56 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
                 <Plus size={14} />
               </IconButton>
             </div>
+            {/* No full-width "New project" row: only the header's plus creates one, so it isn't hit by accident. */}
             <ul>
-              {projects.length === 0 ? (
-                <li>
-                  <button
-                    type="button"
-                    onClick={() => setCreating(true)}
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13.5px] text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+              {projects.map((p) => {
+                const inProject = conversations.filter((c) => c.projectId === p.id);
+                // The project on screen, or holding the open chat, shows its latest chats.
+                const open = p.id === activeProjectId || inProject.some((c) => c.id === activeId);
+                const shown = open ? inProject.slice(0, NESTED_CHATS) : [];
+                const current = inProject.find((c) => c.id === activeId);
+                if (current && !shown.includes(current)) shown.push(current);
+                return (
+                  <ProjectItem
+                    key={p.id}
+                    project={p}
+                    active={p.id === activeProjectId}
+                    running={inProject.some((c) => running.has(c.id))}
+                    onSelect={onSelectProject}
+                    onRename={onRenameProject}
+                    onDelete={() => setPendingProjectDelete(p)}
                   >
-                    <FolderPlus size={15} strokeWidth={1.75} />
-                    New project
-                  </button>
-                </li>
-              ) : (
-                projects.map((p) => {
-                  const inProject = conversations.filter((c) => c.projectId === p.id);
-                  // The project on screen, or holding the open chat, shows its latest chats.
-                  const open = p.id === activeProjectId || inProject.some((c) => c.id === activeId);
-                  const shown = open ? inProject.slice(0, NESTED_CHATS) : [];
-                  const current = inProject.find((c) => c.id === activeId);
-                  if (current && !shown.includes(current)) shown.push(current);
-                  return (
-                    <ProjectItem
-                      key={p.id}
-                      project={p}
-                      active={p.id === activeProjectId}
-                      running={inProject.some((c) => running.has(c.id))}
-                      onSelect={onSelectProject}
-                      onRename={onRenameProject}
-                      onDelete={() => setPendingProjectDelete(p)}
-                    >
-                      {shown.length > 0 ? (
-                        <ul className="ml-[17px] border-l border-line pl-1.5">
-                          {shown.map((c) => (
-                            <ConversationItem
-                              key={c.id}
-                              conversation={c}
-                              active={c.id === activeId}
-                              running={running.has(c.id)}
-                              onSelect={onSelect}
-                              onRename={onRename}
-                              onDelete={() => setPendingDelete(c)}
-                              canSaveSkill={workspace.role === "owner"}
-                              projects={projects}
-                              onMove={onMove}
-                            />
-                          ))}
-                        </ul>
-                      ) : null}
-                    </ProjectItem>
-                  );
-                })
-              )}
+                    {shown.length > 0 ? (
+                      <ul className="ml-[17px] border-l border-line pl-1.5">
+                        {shown.map((c) => (
+                          <ConversationItem
+                            key={c.id}
+                            conversation={c}
+                            active={c.id === activeId}
+                            running={running.has(c.id)}
+                            onSelect={onSelect}
+                            onRename={onRename}
+                            onDelete={() => setPendingDelete(c)}
+                            canSaveSkill={workspace.role === "owner"}
+                            projects={projects}
+                            onMove={onMove}
+                          />
+                        ))}
+                      </ul>
+                    ) : null}
+                  </ProjectItem>
+                );
+              })}
             </ul>
           </section>
+        )}
+        {query.trim() ? null : (
+          <div className="flex items-center pr-1 pb-1 pl-2.5">
+            <h2 className="flex-1 text-[11.5px] font-medium text-fg-3">Chats</h2>
+            <IconButton label="New chat" shortcut={`${mod}⇧O`} className="size-6!" onClick={onNew}>
+              <Plus size={14} />
+            </IconButton>
+          </div>
         )}
         {!hydrated ? null : groups.length === 0 ? (
           <p className="px-2.5 py-2 text-[13px] text-fg-3">
@@ -243,7 +238,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         ) : (
           groups.map((group) => (
             <section key={group.label} className="mb-4 last:mb-0">
-              <h2 className="px-2.5 pb-1 text-[11.5px] font-medium text-fg-3">{group.label}</h2>
+              <h2 className={`px-2.5 pb-1 text-[11.5px] font-medium ${query.trim() ? "text-fg-3" : "text-fg-4"}`}>{group.label}</h2>
               <ul>
                 {group.items.map((c) => (
                   <ConversationItem
