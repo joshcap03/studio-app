@@ -32,6 +32,9 @@ class WorkspaceContextComponent(Component):
     def build_prompt(self) -> Message:
         base = (self.base_prompt or "").strip()
         context = (self.workspace_context or "").strip()
-        text = f"{base}\n\n# THIS WORKSPACE\n\n{context}" if context else base
+        note = ("The owner's own business and what you know about them. Use it only for questions about "
+                "their business or life; a company or person they name that isn't here is someone else, "
+                "so look it up instead of answering about this business.")
+        text = f"{base}\n\n# THIS WORKSPACE\n\n{note}\n\n{context}" if context else base
         self.status = f"{len(context)} characters of workspace context" if context else "No workspace context"
         return Message(text=text)
