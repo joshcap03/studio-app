@@ -90,6 +90,11 @@ export interface TurnDeps {
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
   heartbeatMs?: number;
+  /**
+   * Called once the reply's final state is saved. `watched` is whether the browser was still
+   * listening when the run ended (so the member already saw the result). Errors are logged.
+   */
+  onFinished?: (message: ChatMessage, conversation: ConversationSummary, info: { watched: boolean }) => Promise<void> | void;
 }
 
 /** A run in progress on this server; `done` settles once its final state is saved. */
@@ -599,17 +604,20 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         console.error("[turn] failed to save final state", e);
       }
       finished();
-      send({
-        type: "end",
-        message: { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, error },
-        conversation: updated,
-      });
+      const watched = open;
+      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, error };
+      send({ type: "end", message: final, conversation: updated });
       if (open) {
         try {
           stream.close();
         } catch {
           // client already gone
         }
+      }
+      try {
+        await deps.onFinished?.(final, updated, { watched });
+      } catch (e) {
+        console.error("[turn] onFinished failed", e);
       }
     },
     cancel() {

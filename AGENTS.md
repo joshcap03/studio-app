@@ -42,6 +42,8 @@ raw/technical text.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
 - `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
+- `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
+  run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
 - `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
   Context, Member Apps for per-member Composio tools, Load Skill) and `install.py`, which
   backs up a flow and installs them.

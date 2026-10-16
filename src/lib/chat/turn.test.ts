@@ -757,3 +757,68 @@ describe("helpers", () => {
     expect(long.endsWith("…")).toBe(true);
   });
 });
+
+describe("when a run ends", () => {
+  it("reports the saved reply, watched while the browser is still reading", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const finished: { status: string; content: string; title: string; watched: boolean }[] = [];
+    await collect(
+      startTurn(
+        {
+          store,
+          adapter: scripted([{ type: "message", text: "All set" }]),
+          context: context(scopeA),
+          idleTimeoutMs: 1000,
+          onFinished: (message, conversation, { watched }) =>
+            void finished.push({ status: message.status, content: message.content, title: conversation.title, watched }),
+        },
+        { conversationId: id, kind: "send", text: "Book it" },
+      ),
+    );
+    expect(finished).toEqual([{ status: "complete", content: "All set", title: "Book it", watched: true }]);
+  });
+
+  it("reports unwatched once the browser has gone, and the run still finishes", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow: AgentAdapter = {
+      ...scripted([]),
+      async *run() {
+        await gate;
+        yield { type: "message", text: "Done while you were away" };
+      },
+    };
+    let report!: (r: { watched: boolean; status: string }) => void;
+    const reported = new Promise<{ watched: boolean; status: string }>((r) => (report = r));
+    const stream = await startTurn(
+      { store, adapter: slow, context: context(scopeA), idleTimeoutMs: 1000, onFinished: (m, _c, { watched }) => report({ watched, status: m.status }) },
+      { conversationId: id, kind: "send", text: "Go" },
+    );
+    const reader = stream.getReader();
+    await reader.read(); // the start event
+    await reader.cancel(); // the phone locks
+    release();
+    expect(await reported).toEqual({ watched: false, status: "complete" });
+    expect((await store.listMessages(id))[1]).toMatchObject({ status: "complete", content: "Done while you were away" });
+  });
+
+  it("isn't stopped by a failing hook", async () => {
+    const store = createMemoryStore(scopeA);
+    const events = await collect(
+      startTurn(
+        {
+          store,
+          adapter: scripted([{ type: "message", text: "ok" }]),
+          context: context(scopeA),
+          idleTimeoutMs: 1000,
+          onFinished: () => Promise.reject(new Error("push service down")),
+        },
+        { conversationId: crypto.randomUUID(), kind: "send", text: "Go" },
+      ),
+    );
+    expect(events.at(-1)?.type).toBe("end");
+  });
+});

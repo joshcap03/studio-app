@@ -1,4 +1,5 @@
 import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, StreamEvent } from "@/lib/types";
+import { disablePush } from "./push";
 
 // Browser-side calls to this application's own API. The browser never talks to the agent
 // backend directly and never holds credentials; the session cookie is httpOnly.
@@ -65,7 +66,11 @@ export const api = {
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
   deleteProjectFile: (projectId: string, fileId: string) => request<void>(`/api/projects/${projectId}/files/${fileId}`, { method: "DELETE" }),
   deleteAttachment: (id: string) => request<void>(`/api/attachments/${id}`, { method: "DELETE" }),
-  signOut: () => request<{ ok: true }>("/api/auth/signout", { method: "POST" }),
+  /** Stops notifications on this device first, so the next person on it doesn't get them. */
+  signOut: async () => {
+    await disablePush().catch(() => undefined);
+    return request<{ ok: true }>("/api/auth/signout", { method: "POST" });
+  },
 };
 
 async function upload<T>(path: string, file: File, signal?: AbortSignal): Promise<T> {

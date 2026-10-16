@@ -133,6 +133,17 @@ else {
 if (env.SUPERMEMORY_API_KEY) pass("SUPERMEMORY_API_KEY");
 else warn("SUPERMEMORY_API_KEY", "not set; the agent won't remember anything between conversations");
 
+// --- Push notifications ---
+if (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
+  pass("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY");
+  if (/^(mailto:|https:)/.test(env.VAPID_SUBJECT ?? "")) pass("VAPID_SUBJECT");
+  else warn("VAPID_SUBJECT", "not a mailto: or https: URL; push services may reject notifications");
+} else if (env.VAPID_PUBLIC_KEY || env.VAPID_PRIVATE_KEY) {
+  fail("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY", "only one of the pair is set");
+} else {
+  warn("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY", "not set; members can't turn on notifications (npx web-push generate-vapid-keys)");
+}
+
 // --- Access and limits ---
 if (!env.AGENT_LIVE_WORKSPACES) fail("AGENT_LIVE_WORKSPACES", 'not set; no workspace can use the live agent (use "*" once the flow is installed)');
 else if (env.AGENT_LIVE_WORKSPACES === "*") pass("AGENT_LIVE_WORKSPACES", "all workspaces");

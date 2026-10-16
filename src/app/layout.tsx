@@ -9,6 +9,9 @@ export const metadata: Metadata = {
   title: { default: "Studio", template: "%s · Studio" },
   description: "An AI agent that knows your business, works in your apps, and asks before it changes anything.",
   robots: { index: false, follow: false },
+  // Added to the home screen, Studio opens full screen like an app.
+  appleWebApp: { capable: true, title: "Studio", statusBarStyle: "default" },
+  icons: { apple: "/apple-touch-icon.png" },
 };
 
 export const viewport: Viewport = {
