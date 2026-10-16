@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, type AgentTenantContext } from "@/lib/agent/types";
 import { STALE_STREAM_MS, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
 import { renderSkillMessage } from "@/lib/skills/render";
+import { talksMachinery } from "@/lib/agent/tools";
 import { buildQuestions } from "./questions";
 import { buildTimeline, linksSeen } from "./timeline";
 import {
@@ -410,6 +411,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                 action: "note",
                 startedAt: at,
                 endedAt: at,
+                // A line about tools rather than the work never reaches the status line.
+                hidden: talksMachinery(event.text) || undefined,
               };
               activity.push(step);
               send({ type: "activity", step });

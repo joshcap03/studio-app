@@ -187,10 +187,16 @@ function toStep(call: ToolCall, index: number): InterpretedStep {
 
 function interpret(name: string, input: Record<string, unknown>, result: unknown): Interpretation {
   if (GATEWAY_TOOLS.has(name)) {
-    return { labels: { running: "Starting a tool", done: "Started a tool", failed: "A tool call didn't go through" }, app: "agent", action: "other", hidden: true };
+    // Shown on the status line while it runs, so it reads as the work, never the plumbing.
+    return { labels: { running: "Working on it", done: "Worked on it", failed: "A step didn't go through" }, app: "agent", action: "other", hidden: true };
   }
   if (PLUMBING.has(name)) {
-    return { labels: { running: "Looking for the right tool", done: "Found the right tool" }, app: "agent", action: "other", hidden: true };
+    return {
+      labels: { running: "Figuring out how to do this", done: "Figured out how to do this", failed: "Couldn't figure out how to do this" },
+      app: "agent",
+      action: "other",
+      hidden: true,
+    };
   }
   if (COMPOSIO_SLUG.test(name)) return composioTool(name, input, result);
   if (isKnownToolkit(name)) return composioTool(name.toUpperCase(), input, result);
@@ -706,6 +712,14 @@ function humanize(name: string): string {
 }
 
 /** A gateway's plain-text failure report, reduced to the reason a person needs. */
+/**
+ * True when the agent's progress line talks about its machinery ("The search tool isn't
+ * callable…") instead of the work. Such lines are kept but never shown while it works.
+ */
+export function talksMachinery(text: string): boolean {
+  return /\b(tools?|tool calls?|toolkits?|schemas?|callable|composio|mcp|discovery)\b/i.test(text);
+}
+
 export function gatewayFailure(text: string): string | undefined {
   const value = text.trim().replace(/^"|"$/g, "");
   const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(value);

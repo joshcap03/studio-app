@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interpretCalls, withoutRepeats, type ToolCall } from "./index";
+import { interpretCalls, withoutRepeats, type ToolCall, talksMachinery } from "./index";
 import { maskSecrets, safeUrl } from "./sanitize";
 
 // Fixtures are synthetic but shaped exactly like events captured from a live Langflow agent
@@ -58,7 +58,7 @@ describe("interpretCalls", () => {
       { name: "search_memory", input: { query: "vendors" }, output: "Casting house is Acme", error: null },
     ]);
     expect(steps.map((s) => [s.index, s.label, s.hidden ?? false])).toEqual([
-      [0, "Found the right tool", true],
+      [0, "Figured out how to do this", true],
       [1, "Checked what I know about “vendors”", false],
     ]);
     expect(steps[1].preview).toEqual({ type: "text", text: "Casting house is Acme", query: "vendors" });
@@ -72,6 +72,21 @@ describe("interpretCalls", () => {
   it("shows a running gateway call by its real tool before the inner call arrives", () => {
     const [step] = interpretCalls([{ name: "execute_tool", input: { tool_name: "GMAIL_FETCH_EMAILS", arguments: { query: "from:casting" } }, output: null, error: null }]);
     expect(step).toMatchObject({ app: "gmail", status: "running", label: "Checking Gmail" });
+  });
+
+  it("never names tools on the status line, even for hidden plumbing", () => {
+    const steps = interpretCalls([
+      { name: "execute_tool", input: {}, output: null, error: null },
+      { name: "discover_tools", input: {}, output: null, error: null },
+      { name: "composio_search_tools", input: { queries: [] }, output: null, error: null },
+    ]);
+    for (const step of steps) expect(step.label).not.toMatch(/\btools?\b/i);
+  });
+
+  it("tells progress lines about machinery from ones about the work", () => {
+    expect(talksMachinery("The search tool isn't callable directly, so I'll use discovery.")).toBe(true);
+    expect(talksMachinery("Shopify is available. Let me load the order-listing tool's details.")).toBe(true);
+    expect(talksMachinery("Let me look through your Granola notes for Franzi.")).toBe(false);
   });
 
   it("reads Gmail results through multi-execute and lists what was found", () => {
@@ -272,7 +287,7 @@ describe("interpretCalls", () => {
       gateway("composio_search_tools", { queries: [] }, { type: "tool", tool_call_id: "t", content: "Tool composio_search_tools timed out after 45s (tried twice). The service didn't respond; try another approach or tell the user." }),
       gateway("GMAIL_FETCH_EMAILS", {}, { type: "tool", tool_call_id: "u", content: "Tool GMAIL_FETCH_EMAILS failed: RuntimeError: Rate limited. Do not blindly retry writes." }),
     ]);
-    expect(timedOut).toMatchObject({ status: "failed", detail: "The service didn't respond within 45 seconds.", label: "Looking for the right tool didn't work" });
+    expect(timedOut).toMatchObject({ status: "failed", detail: "The service didn't respond within 45 seconds.", label: "Couldn't figure out how to do this" });
     expect(timedOut.hidden).toBeUndefined();
     expect(failed).toMatchObject({ status: "failed", app: "gmail", detail: "The app is rate-limiting requests right now." });
   });

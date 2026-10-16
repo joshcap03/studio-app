@@ -60,6 +60,20 @@ describe("buildTimeline", () => {
     expect(timeline?.entries.map((e) => e.app)).toEqual([undefined, expect.any(String)]);
   });
 
+  it("reads entries whose keys the model named its own way", () => {
+    const timeline = buildTimeline(
+      {
+        question: "Trip plans for December",
+        entries: [{ date: "2026-10-05", event: "Reservation request received", link: "https://mail.example/t/2" }],
+      },
+      seen,
+    );
+    expect(timeline?.entries).toEqual([
+      { when: "2026-10-05", what: "Reservation request received", url: "https://mail.example/t/2", verified: true },
+    ]);
+    expect(timeline?.causes).toEqual([]);
+  });
+
   it("returns nothing for empty or malformed timelines", () => {
     expect(buildTimeline({ entries: [] }, seen)).toBeNull();
     expect(buildTimeline({ entries: "nope" }, seen)).toBeNull();

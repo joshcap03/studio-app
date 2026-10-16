@@ -119,7 +119,7 @@ export function ActivityLog({ steps, running, onOpenPanel }: Props) {
       {open && (
         <ol className="mt-1.5 mb-1 ml-[5px] space-y-0.5 border-l border-line pl-3 animate-fade-in">
           {work.length === 0 ? (
-            <li className="py-1 pl-1 text-[12.5px] text-fg-3">Only internal steps (finding tools)</li>
+            <li className="py-1 pl-1 text-[12.5px] text-fg-3">Only behind-the-scenes steps</li>
           ) : (
             visible.map((step) =>
               step.action === "note" ? (

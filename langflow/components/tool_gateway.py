@@ -70,7 +70,9 @@ TIMELINE_CAUSE_SCHEMA = {
 
 class TimelineArgs(BaseModel):
     question: str = Field(description="What was investigated, e.g. 'Why revenue dipped on Tue Oct 6' or 'Trip plans for December'.")
-    entries: list[dict] = Field(description="Dated events found in the owner's apps, one per record.",
+    entries: list[dict] = Field(description=("Dated records found in the owner's apps, one per record, each an object "
+                                             "with keys when (ISO date), what (one sentence), app (toolkit slug), and "
+                                             "url (the record's link)."),
                                 json_schema_extra={"items": TIMELINE_ENTRY_SCHEMA})
     causes: list[dict] = Field(default_factory=list, description="For a why question, likely causes, most likely first. Empty otherwise.",
                                json_schema_extra={"items": TIMELINE_CAUSE_SCHEMA})
@@ -493,9 +495,20 @@ class ToolGatewayComponent(Component):
             # each link against what this run's tools returned, and shows it as a timeline.
             def plain(v):
                 return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
-            rows = [plain(e) for e in (entries or [])][:80]
+            # Models sometimes name the keys their own way (date, event, link); keep the record
+            # rather than dropping the whole timeline, and refuse rows with no date or text.
+            aliases = {"when": ("when", "date", "datetime", "time", "timestamp"),
+                       "what": ("what", "event", "title", "description", "summary", "text"),
+                       "url": ("url", "link", "href"), "app": ("app", "toolkit", "source")}
+            rows = []
+            for e in [plain(e) for e in (entries or [])][:80]:
+                row = {k: next((e[a] for a in names if e.get(a)), None) for k, names in aliases.items()}
+                rows.append({k: v for k, v in row.items() if v is not None})
             if not rows:
                 return "Nothing to report: entries is empty."
+            if not all(r.get("when") and r.get("what") for r in rows):
+                return ("Not shown: every entry needs 'when' (ISO date) and 'what' (one sentence), plus 'app' and "
+                        "'url' when known. Call report_timeline again with those keys.")
             return json.dumps({
                 "timeline": {
                     "question": " ".join(str(question or "").split())[:300],
