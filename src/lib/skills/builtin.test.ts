@@ -21,5 +21,6 @@ describe("built-in skills", () => {
     const why = builtinSkill(tenant("preview@example.test"), "builtin:why")!;
     expect(why.instructions).toMatch(/Never use take_action/);
     expect(why.instructions).toMatch(/report_timeline/);
+    expect(why.instructions).toMatch(/report_visual/);
   });
 });

@@ -102,6 +102,8 @@ export type AgentEvent =
   | { type: "citations"; citations: unknown }
   /** Text this run's tools returned for a link. Server-side only: never sent or stored. */
   | { type: "evidence"; items: Evidence[] }
+  /** A chart, key numbers, or table an investigation reported, unvalidated. */
+  | { type: "visual"; visual: unknown }
   /** Multiple-choice questions for the member, unvalidated; the answer comes as their next message. */
   | { type: "questions"; questions: unknown };
 

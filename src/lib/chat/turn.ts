@@ -6,6 +6,7 @@ import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { buildQuestions } from "./questions";
 import { buildCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
+import { buildVisual, withVisual } from "./visuals";
 import {
   ARTIFACT_KINDS,
   MAX_MEMORY_LENGTH,
@@ -83,7 +84,7 @@ export interface TurnDeps {
    * reply it will write. Returns why it was refused, or null to go ahead.
    */
   claim?: (replyId: string) => Promise<string | null>;
-  /** Whether this member gets "why?" timelines; when false they're dropped. */
+  /** Whether this member gets investigation timelines and visuals; when false they're dropped. */
   timelines?: boolean;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
@@ -459,8 +460,18 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               if (!deps.timelines) break;
               const built = buildTimeline(event.timeline, seen());
               if (built) {
-                timeline = built;
-                send({ type: "timeline", timeline: built });
+                // Keep any visuals reported before the timeline.
+                timeline = timeline?.visuals ? { ...built, visuals: timeline.visuals } : built;
+                send({ type: "timeline", timeline });
+              }
+              break;
+            }
+            case "visual": {
+              if (!deps.timelines) break;
+              const built = buildVisual(event.visual);
+              if (built) {
+                timeline = withVisual(timeline, built);
+                send({ type: "timeline", timeline });
               }
               break;
             }

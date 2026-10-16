@@ -377,6 +377,17 @@ export function toolCitations(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Charts, key numbers, and tables an investigation reported through report_visual. */
+export function toolVisuals(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    if (isRecord(result) && isRecord(result.visual)) events.push({ type: "visual", visual: result.visual });
+  }
+  return events;
+}
+
 /** What the message's tool calls returned for each link, for checking citations. */
 export function toolEvidence(message: LangflowMessage): AgentEvent[] {
   const items = evidenceFor(toCalls(message));
@@ -715,7 +726,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         const seenProposals = new Set<string>();
         const seenReports = new Set<string>();
         const newReports = (message: LangflowMessage) =>
-          [...toolTimelines(message), ...toolCitations(message), ...toolQuestions(message)].filter((t) => {
+          [...toolTimelines(message), ...toolVisuals(message), ...toolCitations(message), ...toolQuestions(message)].filter((t) => {
             const key = JSON.stringify(t);
             if (seenReports.has(key)) return false;
             seenReports.add(key);

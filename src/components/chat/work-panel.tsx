@@ -7,6 +7,7 @@ import { formatSeconds } from "./activity";
 import { AppGlyph } from "./app-glyph";
 import { findingsForReply, type Finding } from "./findings";
 import { StepPreview } from "./step-preview";
+import { VisualView } from "./visuals";
 
 /**
  * Everything the agent has found and made in this conversation, one line per discovery,
@@ -26,7 +27,7 @@ export function WorkPanel({
 }) {
   const groups = groupFindings(messages);
   const running = messages.find((m) => m.role === "assistant" && m.status === "streaming");
-  const count = groups.reduce((n, g) => n + g.findings.length + (g.timeline?.entries.length ?? 0), 0);
+  const count = groups.reduce((n, g) => n + g.findings.length + (g.timeline?.entries.length ?? 0) + (g.timeline?.visuals?.length ?? 0), 0);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -78,7 +79,10 @@ export function WorkPanel({
               <h3 className="truncate px-2 pt-1 pb-1.5 text-[12px] text-fg-3" title={group.question}>
                 {group.question}
               </h3>
-              {group.timeline ? <TimelineView timeline={group.timeline} /> : null}
+              {group.timeline?.visuals?.map((visual, i) => <VisualView key={i} visual={visual} />)}
+              {group.timeline && (group.timeline.entries.length > 0 || group.timeline.causes.length > 0) ? (
+                <TimelineView timeline={group.timeline} />
+              ) : null}
               <ol className="space-y-0.5">
                 {group.findings.map((finding) => (
                   <FindingRow key={finding.id} finding={finding} />
@@ -120,13 +124,14 @@ function groupFindings(messages: ChatMessage[]): Group[] {
 
 /**
  * An investigation: dated events across the member's apps, each linking to the record
- * it came from when this run's tools returned that link, then the likely causes.
+ * it came from when this run's tools returned that link, then the likely causes. Its
+ * charts, key numbers, and tables are drawn above it (see VisualView).
  */
 function TimelineView({ timeline }: { timeline: Timeline }) {
   return (
     <div className="mb-3 rounded-xl border border-line bg-surface px-2 pt-2.5 pb-1 animate-fade-up">
-      <h4 className="px-2 text-[12px] font-medium text-fg-2">Timeline</h4>
-      <ol className="relative mt-1.5">
+      {timeline.entries.length > 0 ? <h4 className="px-2 text-[12px] font-medium text-fg-2">Timeline</h4> : null}
+      <ol className="relative mt-1.5 empty:hidden">
         {timeline.entries.map((entry, i) => {
           const body = (
             <>
@@ -157,7 +162,7 @@ function TimelineView({ timeline }: { timeline: Timeline }) {
         })}
       </ol>
       {timeline.causes.length > 0 ? (
-        <div className="mt-1 border-t border-line px-2 pt-2.5 pb-2">
+        <div className={`px-2 pb-2 ${timeline.entries.length > 0 ? "mt-1 border-t border-line pt-2.5" : "pt-0.5"}`}>
           <h4 className="text-[12px] font-medium text-fg-2">Likely causes</h4>
           <ol className="mt-1.5 space-y-1.5">
             {timeline.causes.map((cause, i) => (
