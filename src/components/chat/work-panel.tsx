@@ -119,7 +119,7 @@ function groupFindings(messages: ChatMessage[]): Group[] {
 }
 
 /**
- * A "why?" investigation: dated events across the member's apps, each linking to the record
+ * An investigation: dated events across the member's apps, each linking to the record
  * it came from when this run's tools returned that link, then the likely causes.
  */
 function TimelineView({ timeline }: { timeline: Timeline }) {

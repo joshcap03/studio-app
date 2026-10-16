@@ -69,10 +69,10 @@ TIMELINE_CAUSE_SCHEMA = {
 
 
 class TimelineArgs(BaseModel):
-    question: str = Field(description="What is being explained, e.g. 'Why revenue dipped on Tue Oct 6'.")
+    question: str = Field(description="What was investigated, e.g. 'Why revenue dipped on Tue Oct 6' or 'Trip plans for December'.")
     entries: list[dict] = Field(description="Dated events found in the owner's apps, one per record.",
                                 json_schema_extra={"items": TIMELINE_ENTRY_SCHEMA})
-    causes: list[dict] = Field(default_factory=list, description="Likely causes, most likely first.",
+    causes: list[dict] = Field(default_factory=list, description="For a why question, likely causes, most likely first. Empty otherwise.",
                                json_schema_extra={"items": TIMELINE_CAUSE_SCHEMA})
 
 
@@ -502,7 +502,7 @@ class ToolGatewayComponent(Component):
                     "entries": rows,
                     "causes": [plain(c) for c in (causes or [])][:10],
                 },
-                "note": "Timeline shown to the owner. Now answer with the likely causes and what you couldn't check.",
+                "note": "Timeline shown to the owner. Now answer briefly (the likely causes, for a why question) and say what you couldn't check.",
             })
 
         async def report_timeline_async(question: str, entries: list, causes: list | None = None) -> str:
@@ -569,9 +569,9 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=report_timeline, coroutine=report_timeline_async, name="report_timeline",
                 args_schema=TimelineArgs,
-                description=("Only when the request asks you to investigate why something happened: after reading the "
-                             "owner's apps, report the dated events you found, each with the record's link exactly as "
-                             "a tool returned it, and the likely causes. The owner sees it as a timeline. Changes nothing."),
+                description=("Only when the request asks you to investigate something: after reading the owner's apps, "
+                             "report the dated records you found, each with the record's link exactly as a tool returned "
+                             "it, and, for a why question, the likely causes. The owner sees it as a timeline. Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=ask_user, coroutine=ask_user_async, name="ask_user",

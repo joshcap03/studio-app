@@ -41,8 +41,8 @@ interface Scenario {
 
 const SCENARIOS: Scenario[] = [
   {
-    // The built-in "Investigate why" skill. Its instructions mention email, so this goes first.
-    match: /Investigate why/,
+    // The built-in "Investigate" skill. Its instructions mention email, so this goes first.
+    match: /Investigate what the user asks/,
     steps: [
       { kind: "note", text: "I'll check sales, payments, inventory, and email around that date." },
       {
