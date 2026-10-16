@@ -216,6 +216,25 @@ describe("API tenant isolation", () => {
     expect((await alice.request(`/api/conversations/${inProject}`)).status).toBe(404);
   });
 
+  it("clears only the caller's own chat history", async () => {
+    // Clearing removes the caller's chats and no one else's.
+    const carol = await signUp("carol");
+    await carol.json("/api/workspaces", "POST", { name: "Carol Ceramics" });
+    const carolConv = crypto.randomUUID();
+    await (await carol.send(carolConv, "non-streaming carol")).body;
+
+    const bobCleared = await bob.json("/api/conversations", "DELETE");
+    expect(bobCleared.status).toBe(200);
+    expect((await alice.request(`/api/conversations/${aliceConv}`)).status).toBe(200);
+    expect((await carol.request(`/api/conversations/${carolConv}`)).status).toBe(200);
+
+    const cleared = await carol.json("/api/conversations", "DELETE");
+    expect(((await cleared.json()) as { deleted: number }).deleted).toBe(1);
+    expect((await carol.request(`/api/conversations/${carolConv}`)).status).toBe(404);
+    expect((await alice.request(`/api/conversations/${aliceConv}`)).status).toBe(200);
+    expect((await new Client().json("/api/conversations", "DELETE")).status).toBe(401);
+  });
+
   it("rejects unauthenticated and cross-origin requests", async () => {
     const anon = new Client();
     expect((await anon.json("/api/conversations", "GET")).status).toBe(401);

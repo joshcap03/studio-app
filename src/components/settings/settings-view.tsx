@@ -54,6 +54,7 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
         <ConnectionsList returnTo="/settings" />
       </Section>
       <NotificationsSection />
+      <ChatHistorySection />
       <Section title="Usage" description="Messages to the agent in this workspace today.">
         <div className="rounded-xl border border-line bg-surface px-4 py-4">
           <div className="flex items-baseline justify-between text-[14px]">
@@ -146,6 +147,62 @@ function NotificationsSection() {
         ) : null}
       </div>
       {error ? <p className="mt-2 text-[12.5px] text-danger">{error}</p> : null}
+    </Section>
+  );
+}
+
+function ChatHistorySection() {
+  const [state, setState] = useState<"idle" | "confirm" | "clearing" | "cleared">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function clear() {
+    setState("clearing");
+    setError(null);
+    try {
+      await api.clearConversations();
+      setState("cleared");
+    } catch (e) {
+      setState("confirm");
+      setError((e as Error).message || "Couldn't clear your chats. Try again.");
+    }
+  }
+
+  const button = "h-8 shrink-0 rounded-lg px-3 text-[13px] font-medium transition-opacity disabled:opacity-50";
+  return (
+    <Section title="Chat history">
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
+        <p className="text-[13.5px] text-fg-2">
+          {state === "cleared"
+            ? "Your chats in this workspace are cleared."
+            : state === "idle"
+              ? "Delete every chat you've had in this workspace, including chats in projects. Projects, their files, and memory stay."
+              : "Delete all your chats in this workspace? This can't be undone."}
+        </p>
+        {state === "idle" ? (
+          <button type="button" onClick={() => setState("confirm")} className={`${button} border border-line text-danger hover:bg-hover`}>
+            Clear history
+          </button>
+        ) : state === "cleared" ? null : (
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              disabled={state === "clearing"}
+              onClick={() => setState("idle")}
+              className={`${button} border border-line text-fg-2 hover:bg-hover`}
+            >
+              Cancel
+            </button>
+            <button type="button" disabled={state === "clearing"} onClick={() => void clear()} className={`${button} bg-danger text-on-inverse hover:opacity-90`}>
+              {state === "clearing" ? "Clearing…" : "Delete all"}
+            </button>
+          </div>
+        )}
+      </div>
+      {error ? (
+        <p role="alert" className="mt-2 text-[12.5px] text-danger">
+          {error}
+        </p>
+      ) : null}
     </Section>
   );
 }
