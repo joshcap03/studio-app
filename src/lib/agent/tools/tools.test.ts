@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interpretCalls, withoutRepeats, type ToolCall, talksMachinery } from "./index";
+import { interpretCalls, talksMachinery, withoutRepeats, type ToolCall } from "./index";
 import { maskSecrets, safeUrl } from "./sanitize";
 
 // Fixtures are synthetic but shaped exactly like events captured from a live Langflow agent
