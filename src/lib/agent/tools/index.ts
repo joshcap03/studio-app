@@ -711,7 +711,6 @@ function humanize(name: string): string {
   );
 }
 
-/** A gateway's plain-text failure report, reduced to the reason a person needs. */
 /**
  * True when the agent's progress line talks about its machinery ("The search tool isn't
  * callable…") instead of the work. Such lines are kept but never shown while it works.
@@ -720,6 +719,7 @@ export function talksMachinery(text: string): boolean {
   return /\b(tools?|tool calls?|toolkits?|schemas?|callable|composio|mcp|discovery)\b/i.test(text);
 }
 
+/** A gateway's plain-text failure report, reduced to the reason a person needs. */
 export function gatewayFailure(text: string): string | undefined {
   const value = text.trim().replace(/^"|"$/g, "");
   const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(value);

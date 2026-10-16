@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { findingsForReply } from "@/components/chat/findings";
-import { interpretCalls, type ToolCall } from "@/lib/agent/tools";
+import { interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
 import type { ActivityStep } from "@/lib/types";
 
 // Replays every tool call in a real Langflow flow's history through the same interpreter and
@@ -39,7 +39,7 @@ function replyToSteps(leaves: Leaf[]): (ActivityStep & { returned?: number })[] 
   });
   const byIndex = new Map(interpretCalls(calls).map((s) => [s.index, s]));
   return order.flatMap((o, i): (ActivityStep & { returned?: number })[] => {
-    if (o.kind === "note") return [{ id: `n${i}`, label: o.text, status: "done", action: "note", app: "agent", startedAt: 0 }];
+    if (o.kind === "note") return [{ id: `n${i}`, label: o.text, status: "done", action: "note", app: "agent", hidden: talksMachinery(o.text) || undefined, startedAt: 0 }];
     const s = byIndex.get(o.index);
     // How much the tool sent back, including any gateway call merged into this step.
     const output = s ? calls[s.index]?.output : undefined;
@@ -66,6 +66,9 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
       const findings = findingsForReply(steps, []);
       const covered = new Set(findings.map((f) => f.step?.id).filter(Boolean));
       for (const s of steps) {
+        // Hidden tool steps still drive the status line while they run; hidden notes never show.
+        const shown = !s.hidden || s.action !== "note";
+        if (shown && (TECHNICAL.test(s.label) || talksMachinery(s.label))) technical.push(`${s.app} status: ${s.label}`);
         if (s.hidden || s.action === "note" || s.status === "running") continue;
         checked++;
         // A step that returned something (or failed) must say so; one that returned nothing
