@@ -383,6 +383,9 @@ export function Workspace({
           case "timeline":
             patchMessage(conversationId, assistantId, (m) => ({ ...m, timeline: event.timeline }));
             break;
+          case "citations":
+            patchMessage(conversationId, assistantId, (m) => ({ ...m, citations: event.citations }));
+            break;
           case "questions":
             patchMessage(conversationId, assistantId, (m) => ({ ...m, questions: event.questions }));
             break;

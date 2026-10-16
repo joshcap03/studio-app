@@ -9,6 +9,7 @@ import { ActivityLog } from "./activity";
 import { ArtifactCard } from "./artifact-card";
 import { AttachmentList } from "./attachments";
 import { FeedbackButtons, FeedbackReasons } from "./feedback";
+import { SourceList } from "./citation";
 import { Markdown } from "./markdown";
 import { ApprovalCard, MemoryProposalCard, QuestionCard } from "./requests";
 
@@ -175,7 +176,8 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
 
       {hasContent ? (
         <div className={message.approvals?.length ? "mt-4" : undefined}>
-          <Markdown content={message.content} />
+          <Markdown content={message.content} citations={message.citations} />
+          {message.citations?.length && !streaming ? <SourceList citations={message.citations} /> : null}
         </div>
       ) : null}
 

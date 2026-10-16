@@ -1,11 +1,13 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
-import { memo } from "react";
+import { memo, useContext, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { useCopy } from "@/components/ui/use-copy";
+import type { Citation } from "@/lib/types";
+import { CitationCard, CitationChip, CitationContext } from "./citation";
 
 interface HastNode {
   type: string;
@@ -48,6 +50,25 @@ function CodeBlock({ node, children }: { node?: HastNode; children?: React.React
   );
 }
 
+/** The open citation's card goes right after the paragraph or list item that cites it. */
+function WithCitationCard({ node, children }: { node?: HastNode; children: React.ReactNode }) {
+  const state = useContext(CitationContext);
+  const open = state?.open != null && cites(node, state.open) ? state.citations.get(state.open) : undefined;
+  return (
+    <>
+      {children}
+      {open ? <CitationCard citation={open} /> : null}
+    </>
+  );
+}
+
+function cites(node: HastNode | undefined, n: number): boolean {
+  if (!node) return false;
+  if (node.tagName === "cite" && Number((node.properties as { dataN?: unknown } | undefined)?.dataN) === n) return true;
+  // A list item's own text only; nested lists show the card under their own items.
+  return (node.children ?? []).some((c) => c.tagName !== "ul" && c.tagName !== "ol" && cites(c, n));
+}
+
 const components: Components = {
   pre: ({ node, children }) => <CodeBlock node={node as HastNode | undefined}>{children}</CodeBlock>,
   a: ({ node: _node, href, children, ...props }) => (
@@ -55,6 +76,17 @@ const components: Components = {
       {children}
     </a>
   ),
+  p: ({ node, children, ...props }) => (
+    <WithCitationCard node={node as HastNode | undefined}>
+      <p {...props}>{children}</p>
+    </WithCitationCard>
+  ),
+  li: ({ node, children, ...props }) => (
+    <li {...props}>
+      <WithCitationCard node={node as HastNode | undefined}>{children}</WithCitationCard>
+    </li>
+  ),
+  cite: ({ node }) => <CitationChip n={Number((node?.properties as { dataN?: unknown } | undefined)?.dataN)} />,
   table: ({ node: _node, children, ...props }) => (
     <div className="table-wrap scroll-quiet">
       <table {...props}>{children}</table>
@@ -62,16 +94,63 @@ const components: Components = {
   ),
 };
 
+interface MdNode {
+  type: string;
+  value?: string;
+  children?: MdNode[];
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
+}
+
+/**
+ * Turns each [n] in the answer's text into a citation mark, but only for numbers the server
+ * verified. Any other [n] is the agent citing something that didn't hold up, so it's removed.
+ * Code is left alone. Only runs when the reply has citations.
+ */
+function remarkCitations(known: Set<number>) {
+  const marker = /\s?\[(\d{1,2})\]/g;
+  const visit = (node: MdNode) => {
+    if (!node.children) return;
+    node.children = node.children.flatMap((child): MdNode[] => {
+      if (child.type !== "text" || !child.value?.includes("[")) {
+        visit(child);
+        return [child];
+      }
+      const out: MdNode[] = [];
+      let last = 0;
+      for (const match of child.value.matchAll(marker)) {
+        const n = Number(match[1]);
+        out.push({ type: "text", value: child.value.slice(last, match.index) });
+        if (known.has(n)) out.push({ type: "citation", data: { hName: "cite", hProperties: { dataN: n } } });
+        last = match.index! + match[0].length;
+      }
+      out.push({ type: "text", value: child.value.slice(last) });
+      return out.filter((n) => n.type !== "text" || n.value);
+    });
+  };
+  return () => (tree: MdNode) => visit(tree);
+}
+
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [[rehypeHighlight, { detect: false }]] as never;
 
 /** Renders assistant markdown. Raw HTML in the source is ignored, and unsafe URLs are dropped. */
-export const Markdown = memo(function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({ content, citations }: { content: string; citations?: Citation[] | null }) {
+  const [open, setOpen] = useState<number | null>(null);
+  const byNumber = useMemo(() => new Map((citations ?? []).map((c) => [c.n, c])), [citations]);
+  const plugins = useMemo(
+    () => (byNumber.size > 0 ? [remarkGfm, remarkCitations(new Set(byNumber.keys()))] : remarkPlugins),
+    [byNumber],
+  );
+  const state = useMemo(() => ({ citations: byNumber, open, setOpen }), [byNumber, open]);
   return (
-    <div className="prose-lj">
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
-        {content}
-      </ReactMarkdown>
-    </div>
+    <CitationContext.Provider value={state}>
+      <div className="prose-lj">
+        <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={components}>
+          {content}
+        </ReactMarkdown>
+      </div>
+    </CitationContext.Provider>
   );
 });
+
+

@@ -78,6 +78,22 @@ class TimelineArgs(BaseModel):
                                json_schema_extra={"items": TIMELINE_CAUSE_SCHEMA})
 
 
+CITATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "n": {"type": "integer", "description": "The citation number you'll write as [n] in your answer, starting at 1."},
+        "url": {"type": "string", "description": "The source's https link exactly as a tool result returned it."},
+        "quote": {"type": "string", "description": "A short passage (a phrase or sentence, under 300 characters) copied word for word from that tool result, containing the fact."},
+    },
+    "required": ["n", "url", "quote"],
+}
+
+
+class CiteArgs(BaseModel):
+    sources: list[dict] = Field(description="One entry per fact you'll cite, numbered from 1. Reuse a number for the same passage.",
+                                json_schema_extra={"items": CITATION_SCHEMA, "minItems": 1, "maxItems": 30})
+
+
 QUESTION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -112,6 +128,7 @@ ExecuteArgs.model_rebuild()
 ActionArgs.model_rebuild()
 MemoryArgs.model_rebuild()
 TimelineArgs.model_rebuild()
+CiteArgs.model_rebuild()
 AskArgs.model_rebuild()
 
 
@@ -521,6 +538,33 @@ class ToolGatewayComponent(Component):
         async def report_timeline_async(question: str, entries: list, causes: list | None = None) -> str:
             return report_timeline(question, entries, causes)
 
+        def cite(sources: list) -> str:
+            # Like report_timeline, this changes nothing: the app checks each link and quote
+            # against what this run's tools returned and shows the ones that hold up as
+            # numbered citations in the answer.
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
+            aliases = {"n": ("n", "number", "id", "index"), "url": ("url", "link", "href"),
+                       "quote": ("quote", "text", "excerpt", "passage", "snippet")}
+            rows = []
+            for e in [plain(e) for e in (sources or [])][:60]:
+                row = {k: next((e[a] for a in names if e.get(a) not in (None, "")), None) for k, names in aliases.items()}
+                rows.append({k: v for k, v in row.items() if v is not None})
+            if not rows:
+                return "Nothing to cite: sources is empty."
+            if not all(r.get("n") is not None and r.get("url") and r.get("quote") for r in rows):
+                return ("Not shown: every source needs 'n' (its number), 'url' (the link exactly as a tool returned it) and "
+                        "'quote' (a short passage copied word for word from that result). Call cite again with those keys.")
+            return json.dumps({
+                "citations": {"sources": rows},
+                "note": ("Now write your answer. Put [n] right after the sentence or figure each source supports, "
+                         "e.g. 'Rated 4.5/5 from 9 reviews [2].' Don't add a list of sources or links at the end: "
+                         "the owner sees them under your answer."),
+            })
+
+        async def cite_async(sources: list) -> str:
+            return cite(sources)
+
         def ask_user(questions: list) -> str:
             # Like remember, this changes nothing and doesn't wait: the app reads the structured
             # result and shows the questions as buttons under the reply. The owner's answer
@@ -546,7 +590,7 @@ class ToolGatewayComponent(Component):
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, ask_user"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, cite, ask_user"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -585,6 +629,15 @@ class ToolGatewayComponent(Component):
                 description=("Only when the request asks you to investigate something: after reading the owner's apps, "
                              "report the dated records you found, each with the record's link exactly as a tool returned "
                              "it, and, for a why question, the likely causes. The owner sees it as a timeline. Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=cite, coroutine=cite_async, name="cite",
+                args_schema=CiteArgs,
+                description=("Before writing an answer that states facts you got from tool results (web pages, emails, "
+                             "files, records), list the sources you'll cite: a number, the link exactly as the tool "
+                             "returned it, and a short passage copied word for word from that result. Then write [n] "
+                             "after each fact in your answer. The owner sees numbered citations they can check. "
+                             "Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=ask_user, coroutine=ask_user_async, name="ask_user",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findingsForReply } from "@/components/chat/findings";
-import { interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
+import { evidenceFor, interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
+import { linksSeen } from "@/lib/chat/timeline";
 import type { ActivityStep } from "@/lib/types";
 
 // Replays every tool call in a real Langflow flow's history through the same interpreter and
@@ -59,6 +60,7 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
     const missing: string[] = [];
     const unread: string[] = [];
     const technical: string[] = [];
+    const uncitable: string[] = [];
     let checked = 0;
     for (const m of messages) {
       if (m.sender !== "Machine") continue;
@@ -80,11 +82,17 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
         if (TECHNICAL.test(s.label) || (s.detail && TECHNICAL.test(s.detail))) technical.push(`${s.app} step: ${s.label} / ${s.detail ?? ""}`);
       }
       for (const f of findings) if (TECHNICAL.test(f.text)) technical.push(`${f.app} finding: ${f.text}`);
+      // Every link a tool returned must come with that result's text, or the agent can't cite
+      // it with a checkable quote (src/lib/chat/citations.ts).
+      const leaves = (m.content_blocks ?? []).flatMap((b) => b.contents ?? []).filter((l) => l.type === "tool_use");
+      const evidence = new Set(evidenceFor(leaves.map((l) => ({ name: l.name ?? "tool", input: l.tool_input ?? l.input ?? {}, output: l.output, error: l.error }))).map((e) => e.url));
+      for (const url of linksSeen(steps, [])) if (!evidence.has(url)) uncitable.push(url);
     }
 
     expect(checked).toBeGreaterThan(0);
     expect(technical, technical.join("\n")).toEqual([]);
     expect(missing, missing.join("\n")).toEqual([]);
     expect(unread, unread.join("\n")).toEqual([]);
+    expect(uncitable, uncitable.join("\n")).toEqual([]);
   }, 60_000);
 });

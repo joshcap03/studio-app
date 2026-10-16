@@ -1,6 +1,6 @@
 import { appForToolkit } from "@/lib/apps";
 import { toMemoryCategory } from "@/lib/types";
-import { interpretCalls, type ToolCall } from "./tools";
+import { evidenceFor, interpretCalls, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
@@ -366,6 +366,23 @@ export function toolTimelines(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Sources the agent reported through cite (validated by the turn against the evidence). */
+export function toolCitations(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    if (isRecord(result) && isRecord(result.citations)) events.push({ type: "citations", citations: result.citations });
+  }
+  return events;
+}
+
+/** What the message's tool calls returned for each link, for checking citations. */
+export function toolEvidence(message: LangflowMessage): AgentEvent[] {
+  const items = evidenceFor(toCalls(message));
+  return items.length > 0 ? [{ type: "evidence", items }] : [];
+}
+
 /** Multiple-choice questions the agent asked through ask_user (validated by the turn). */
 export function toolQuestions(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -698,12 +715,20 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         const seenProposals = new Set<string>();
         const seenReports = new Set<string>();
         const newReports = (message: LangflowMessage) =>
-          [...toolTimelines(message), ...toolQuestions(message)].filter((t) => {
+          [...toolTimelines(message), ...toolCitations(message), ...toolQuestions(message)].filter((t) => {
             const key = JSON.stringify(t);
             if (seenReports.has(key)) return false;
             seenReports.add(key);
             return true;
           });
+        // Evidence only grows as tools return; send what's new for each link.
+        const evidenceSize = new Map<string, number>();
+        const newEvidence = (message: LangflowMessage): AgentEvent[] => {
+          const items = toolEvidence(message).flatMap((e) => (e.type === "evidence" ? e.items : []));
+          const fresh = items.filter((i) => (evidenceSize.get(i.url) ?? -1) < i.text.length);
+          for (const i of fresh) evidenceSize.set(i.url, i.text.length);
+          return fresh.length > 0 ? [{ type: "evidence", items: fresh }] : [];
+        };
         // A resumed run reports the approved (or declined) call again, in a new bot message.
         // That call keeps the paused step's id, so it settles the step instead of adding one.
         let carriedFrom: string | undefined;
@@ -783,6 +808,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   yield a;
                 }
               }
+              yield* newEvidence(message);
               yield* newReports(message);
               for (const p of toolMemoryProposals(message)) {
                 if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {
@@ -827,6 +853,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               if (final) {
                 yield* activityFor(final, lastBot?.id ?? final.id ?? "message");
                 // A suggestion made right before the end may only arrive in the result message.
+                yield* newEvidence(final);
                 yield* newReports(final);
                 for (const p of toolMemoryProposals(final)) {
                   if (p.type === "memory-proposal" && !seenProposals.has(p.content)) {

@@ -2,8 +2,9 @@ import { z } from "zod";
 import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, type AgentTenantContext } from "@/lib/agent/types";
 import { STALE_STREAM_MS, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
 import { renderSkillMessage } from "@/lib/skills/render";
-import { talksMachinery } from "@/lib/agent/tools";
+import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { buildQuestions } from "./questions";
+import { buildCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
 import {
   ARTIFACT_KINDS,
@@ -18,6 +19,7 @@ import {
   type MessageStatus,
   type StreamEvent,
   type Question,
+  type Citation,
   type Timeline,
 } from "@/lib/types";
 
@@ -357,6 +359,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       const remembering: Promise<void>[] = [];
       let timeline: Timeline | null = assistant.timeline ?? null;
+      let citations: Citation[] | null = assistant.citations ?? null;
+      // What this run's tools returned, by link. Held only for this turn, never sent or stored.
+      const evidence = new Map<string, Evidence>();
+      const seen = () => new Set([...linksSeen(activity, artifacts), ...evidence.keys()]);
       let questions: Question[] | null = assistant.questions ?? null;
       let status: MessageStatus = "complete";
       let error: string | null = null;
@@ -366,7 +372,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const checkpoint = () => {
         lastCheckpoint = Date.now();
         saving = saving
-          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, questions }))
+          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, citations, questions }))
           .catch((e) => console.error("[turn] checkpoint failed", e));
       };
       const heartbeat = setInterval(() => {
@@ -451,10 +457,22 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
             }
             case "timeline": {
               if (!deps.timelines) break;
-              const built = buildTimeline(event.timeline, linksSeen(activity, artifacts));
+              const built = buildTimeline(event.timeline, seen());
               if (built) {
                 timeline = built;
                 send({ type: "timeline", timeline: built });
+              }
+              break;
+            }
+            case "evidence": {
+              for (const item of event.items) evidence.set(item.url, item);
+              break;
+            }
+            case "citations": {
+              const built = buildCitations(event.citations, [...evidence.values()], seen());
+              if (built) {
+                citations = built;
+                send({ type: "citations", citations: built });
               }
               break;
             }
@@ -560,7 +578,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await saving;
       let updated = summary;
       try {
-        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, questions, error });
+        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, error });
         updated = await store.touchConversation(conversationId);
       } catch (e) {
         console.error("[turn] failed to save final state", e);
@@ -568,7 +586,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       finished();
       send({
         type: "end",
-        message: { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, questions, error },
+        message: { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, error },
         conversation: updated,
       });
       if (open) {
