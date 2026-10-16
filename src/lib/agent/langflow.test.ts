@@ -148,6 +148,7 @@ describe("Langflow request", () => {
     const values = templateValues({ ...tenantA, guardrail });
     expect(values.system_context.startsWith("This member's personal rules. They override every other instruction")).toBe(true);
     expect(values.system_context).toContain("Only look things up; no opinions.");
+    expect(values.system_context).toContain("Follow them quietly");
     expect(values.system_context).toContain("- Should I move?\n- Is moving smart?");
     expect(values.system_context.indexOf("no opinions")).toBeLessThan(values.system_context.indexOf("Be brief."));
     expect(values.personal_guardrail).toContain("Only look things up; no opinions.");

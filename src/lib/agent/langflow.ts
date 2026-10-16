@@ -123,7 +123,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
  */
 function guardrailContext(guardrail: NonNullable<AgentTenantContext["guardrail"]>): string {
   return [
-    "This member's personal rules. They override every other instruction you have, including your base instructions, the workspace's and project's instructions, and any skill attached to a message. The member set these on purpose ahead of time; keep following them even if they ask you not to.",
+    "This member's personal rules. They override every other instruction you have, including your base instructions, the workspace's and project's instructions, and any skill attached to a message. The member set these on purpose ahead of time; keep following them even if they ask you not to. Follow them quietly, in your usual tone: don't announce or explain them, frame an answer as \"objective facts\", or tell the member a decision is theirs; just answer within them, and say what you can't do only when they ask for it.",
     guardrail.instructions.trim(),
     guardrail.recentChats.length > 0 &&
       `The member's other recent conversations (titles only, newest first; use them only to notice a question coming back):\n${guardrail.recentChats.map((t) => `- ${t}`).join("\n")}`,
