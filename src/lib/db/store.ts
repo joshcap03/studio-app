@@ -69,6 +69,8 @@ export interface Store {
   /** Moves a conversation into a project of the caller's, or out of any (null). */
   moveConversation(id: string, projectId: string | null): Promise<ConversationSummary | null>;
   deleteConversation(id: string): Promise<boolean>;
+  /** Deletes every one of the caller's conversations in the workspace; returns how many. */
+  deleteAllConversations(): Promise<number>;
   setAgentThread(conversationId: string, provider: string, threadId: string): Promise<void>;
   touchConversation(conversationId: string): Promise<ConversationSummary>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
@@ -88,6 +90,8 @@ export interface Store {
   getApproval(id: string): Promise<StoredApproval | null>;
   /** The conversation's undecided approval, if any. */
   pendingApproval(conversationId: string): Promise<StoredApproval | null>;
+  /** Every undecided approval across the caller's conversations. */
+  pendingApprovals(): Promise<StoredApproval[]>;
   /** Moves an approval from one status to another; false if it wasn't in `from` (e.g. decided elsewhere). */
   settleApproval(id: string, from: Approval["status"], to: Approval["status"]): Promise<boolean>;
 
@@ -97,6 +101,8 @@ export interface Store {
   getAttachment(id: string): Promise<StoredAttachment | null>;
   /** Storage paths of every file attached in a conversation (for cleanup on delete). */
   attachmentPaths(conversationId: string): Promise<string[]>;
+  /** Storage paths of every file attached in any of the caller's conversations. */
+  allAttachmentPaths(): Promise<string[]>;
 }
 
 interface ConversationRow {
@@ -363,6 +369,13 @@ export function createStore(db: Db, scope: Scope): Store {
       return rows.length > 0;
     },
 
+    async deleteAllConversations() {
+      const rows = check(
+        await conversations().delete().eq("workspace_id", workspaceId).eq("user_id", userId).select("id"),
+      ) as { id: string }[];
+      return rows.length;
+    },
+
     async setAgentThread(conversationId, provider, threadId) {
       check(
         await conversations()
@@ -540,6 +553,13 @@ export function createStore(db: Db, scope: Scope): Store {
       return row ? toStoredApproval(row) : null;
     },
 
+    async pendingApprovals() {
+      const rows = check(
+        await approvals().select(APPROVAL_COLUMNS).eq("workspace_id", workspaceId).eq("user_id", userId).eq("status", "pending"),
+      ) as ApprovalRow[];
+      return rows.map(toStoredApproval);
+    },
+
     async settleApproval(id, from, to) {
       const rows = check(
         await approvals()
@@ -595,6 +615,17 @@ export function createStore(db: Db, scope: Scope): Store {
       if (ids.length === 0) return [];
       const rows = check(
         await attachments().select("storage_path").in("message_id", ids).eq("workspace_id", workspaceId).eq("user_id", userId),
+      ) as { storage_path: string }[];
+      return rows.map((r) => r.storage_path);
+    },
+
+    async allAttachmentPaths() {
+      const rows = check(
+        await attachments()
+          .select("storage_path")
+          .not("message_id", "is", null)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId),
       ) as { storage_path: string }[];
       return rows.map((r) => r.storage_path);
     },

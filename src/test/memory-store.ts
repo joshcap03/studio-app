@@ -57,6 +57,12 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       shared.messages = shared.messages.filter((m) => m.conversationId !== id);
       return true;
     },
+    async deleteAllConversations() {
+      const ids = new Set([...shared.conversations.values()].filter(owns).map((c) => c.id));
+      for (const id of ids) shared.conversations.delete(id);
+      shared.messages = shared.messages.filter((m) => !ids.has(m.conversationId));
+      return ids.size;
+    },
     async setAgentThread(id, provider, threadId) {
       const c = shared.conversations.get(id);
       if (c && owns(c)) Object.assign(c, { agentProvider: provider, agentThreadId: threadId });
@@ -142,6 +148,9 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       const a = shared.approvals.find((x) => x.conversationId === conversationId && x.status === "pending" && owns(x));
       return a ? stripScope(a) : null;
     },
+    async pendingApprovals() {
+      return shared.approvals.filter((x) => x.status === "pending" && owns(x)).map(stripScope);
+    },
     async settleApproval(id, from, to) {
       const a = shared.approvals.find((x) => x.id === id && owns(x) && x.status === from);
       if (!a) return false;
@@ -167,6 +176,9 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
     async attachmentPaths(conversationId) {
       const ids = new Set(shared.messages.filter((m) => m.conversationId === conversationId).map((m) => m.id));
       return shared.attachments.filter((a) => owns(a) && a.messageId && ids.has(a.messageId)).map((a) => a.storagePath);
+    },
+    async allAttachmentPaths() {
+      return shared.attachments.filter((a) => owns(a) && a.messageId).map((a) => a.storagePath);
     },
   };
 }
