@@ -22,6 +22,11 @@ export interface AgentTenantContext {
   memories: string[];
   /** The member's project this conversation is in, if any. Its files arrive as attachments. */
   project?: { name: string; instructions: string; files: string[] } | null;
+  /**
+   * The member's personal guardrail, if they have one: rules that override every other
+   * instruction, plus titles of their recent conversations so repeated questions can be noticed.
+   */
+  guardrail?: { instructions: string; recentChats: string[] } | null;
 }
 
 /** A file the member attached to the message being answered. */

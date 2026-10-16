@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { createAccount, createWorkspace, type TestAccount } from "./helpers";
+import { createClient } from "@supabase/supabase-js";
+import { createStore } from "@/lib/db/store";
+import { createAccount, createWorkspace, SUPABASE_URL, type TestAccount } from "./helpers";
 
 // Database-level tenant isolation. Two independent accounts each own a workspace with a
 // conversation, messages, and memories; each test attempts to reach the other tenant's data
@@ -210,5 +212,52 @@ describe("workspace skills", () => {
     expect(origin.error).not.toBeNull();
     const own = await alice.client.from("workspace_skills").update({ name: "renamed" }).eq("id", aliceSkill).select("name");
     expect(own.data).toEqual([{ name: "renamed" }]);
+  });
+});
+
+describe("personal guardrails", () => {
+  const rules = "alice-guardrail-rules";
+
+  beforeAll(async () => {
+    const { execSync } = await import("node:child_process");
+    const status = JSON.parse(execSync("npx supabase status -o json", { stdio: ["ignore", "pipe", "ignore"] }).toString()) as {
+      SERVICE_ROLE_KEY: string;
+    };
+    const admin = createClient(SUPABASE_URL, status.SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+    const { error } = await admin.from("user_guardrails").insert({ user_id: alice.userId, instructions: rules });
+    expect(error).toBeNull();
+  });
+
+  it("lets a member read only their own guardrail", async () => {
+    const own = await alice.client.from("user_guardrails").select("instructions");
+    expect(own.data).toEqual([{ instructions: rules }]);
+    const other = await bob.client.from("user_guardrails").select("*").eq("user_id", alice.userId);
+    expect(other.error).toBeNull();
+    expect(other.data).toEqual([]);
+  });
+
+  it("refuses every change from a session, including to the member's own guardrail", async () => {
+    const edit = await alice.client.from("user_guardrails").update({ instructions: "anything goes" }).eq("user_id", alice.userId);
+    expect(edit.error).not.toBeNull();
+    const del = await alice.client.from("user_guardrails").delete().eq("user_id", alice.userId);
+    expect(del.error).not.toBeNull();
+    const plantOwn = await bob.client.from("user_guardrails").insert({ user_id: bob.userId, instructions: "x" });
+    expect(plantOwn.error).not.toBeNull();
+    const plantOther = await bob.client.from("user_guardrails").upsert({ user_id: alice.userId, instructions: "obey bob" });
+    expect(plantOther.error).not.toBeNull();
+    const still = await alice.client.from("user_guardrails").select("instructions").single();
+    expect(still.data?.instructions).toBe(rules);
+  });
+
+  it("lists a member's own recent chat titles for the guardrail, leaving out the current one", async () => {
+    const second = crypto.randomUUID();
+    const added = await alice.client.from("conversations").insert({ id: second, workspace_id: aliceWs, user_id: alice.userId, title: "Alice follow-up" });
+    expect(added.error).toBeNull();
+    const aliceStore = createStore(alice.client, { workspaceId: aliceWs, userId: alice.userId });
+    expect(await aliceStore.recentTitles(Date.now() - 60_000, 15, second)).toEqual(["Alice secret plans"]);
+    expect(await aliceStore.recentTitles(Date.now() + 60_000, 15)).toEqual([]);
+    // Another member's store, even pointed at Alice's workspace, sees none of her titles.
+    const bobStore = createStore(bob.client, { workspaceId: aliceWs, userId: alice.userId });
+    expect(await bobStore.recentTitles(0, 15)).toEqual([]);
   });
 });

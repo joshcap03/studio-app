@@ -1,3 +1,4 @@
+import { storeFor } from "@/lib/chat/store-for";
 import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
@@ -27,6 +28,28 @@ export async function getSettings(tenant: Tenant): Promise<WorkspaceSettings> {
     businessContext: row.business_context,
     agentInstructions: row.agent_instructions,
   };
+}
+
+/**
+ * The caller's personal guardrail, or null. Members can read their own and never change it:
+ * it's set and removed only with admin access to the database (see the user_guardrails migration).
+ */
+export async function getGuardrail(tenant: Tenant): Promise<string | null> {
+  const row = check(
+    await tenant.db.from("user_guardrails").select("instructions").eq("user_id", tenant.userId).maybeSingle(),
+  ) as { instructions: string } | null;
+  return row?.instructions.trim() || null;
+}
+
+// How much of the member's recent history a guardrail run sees, to notice a question coming back.
+const RECENT_CHATS = 15;
+const RECENT_CHATS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function guardrailForRun(tenant: Tenant, conversationId?: string): Promise<AgentTenantContext["guardrail"]> {
+  const instructions = await getGuardrail(tenant);
+  if (!instructions) return null;
+  const recentChats = await storeFor(tenant).recentTitles(Date.now() - RECENT_CHATS_WINDOW_MS, RECENT_CHATS, conversationId);
+  return { instructions, recentChats };
 }
 
 export async function updateSettings(tenant: Tenant, patch: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
@@ -108,10 +131,15 @@ export async function claimRun(tenant: Tenant, replyId?: string): Promise<string
  * Everything the agent may know about this tenant for one run. Built fresh per run from
  * the caller's own session, so it can only ever contain this workspace's settings, this
  * workspace's shared memory, and this member's personal memory and connection id. `query`
- * (the member's message) pulls in memories that match it.
+ * (the member's message) pulls in memories that match it. `conversationId` is the conversation
+ * being answered, left out of the recent chats a guardrail run sees.
  */
-export async function buildAgentContext(tenant: Tenant, query?: string): Promise<AgentTenantContext> {
-  const [settings, memories] = await Promise.all([getSettings(tenant), recall(tenant, query, { pinned: previewEnabled(tenant, "brain") })]);
+export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string): Promise<AgentTenantContext> {
+  const [settings, memories, guardrail] = await Promise.all([
+    getSettings(tenant),
+    recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
+    guardrailForRun(tenant, conversationId),
+  ]);
   return {
     workspaceId: tenant.workspace.id,
     workspaceName: settings.name,
@@ -121,5 +149,6 @@ export async function buildAgentContext(tenant: Tenant, query?: string): Promise
     businessContext: settings.businessContext,
     agentInstructions: settings.agentInstructions,
     memories,
+    guardrail,
   };
 }

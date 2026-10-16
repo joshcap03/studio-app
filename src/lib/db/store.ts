@@ -58,6 +58,8 @@ export interface Store {
   listConversations(query?: string): Promise<ConversationSummary[]>;
   /** The conversations in one project (searching covers every conversation). */
   listProjectConversations(projectId: string): Promise<ConversationSummary[]>;
+  /** Titles of the caller's conversations active since `since` (ms), newest first, leaving out `except`. */
+  recentTitles(since: number, limit: number, except?: string): Promise<string[]>;
   getConversation(id: string): Promise<Conversation | null>;
   createConversation(input: { id: string; title: string; projectId?: string | null }): Promise<Conversation>;
   renameConversation(id: string, title: string): Promise<ConversationSummary | null>;
@@ -280,6 +282,17 @@ export function createStore(db: Db, scope: Scope): Store {
           .limit(500),
       ) as ConversationRow[];
       return rows.map(toSummary);
+    },
+
+    async recentTitles(since, limit, except) {
+      let query = conversations()
+        .select("id, title")
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", userId)
+        .gte("updated_at", new Date(since).toISOString());
+      if (except) query = query.neq("id", except);
+      const rows = check(await query.order("updated_at", { ascending: false }).limit(limit)) as { title: string }[];
+      return rows.map((r) => r.title);
     },
 
     async getConversation(id) {

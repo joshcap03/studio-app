@@ -74,7 +74,7 @@ export async function POST(request: NextRequest, { params }: Context) {
         return "text" in input ? [...asks, input.text] : asks;
       })
       .catch(() => ("text" in input ? [input.text] : []))
-      .then((asks) => buildAgentContext(tenant, recallQuery(asks)));
+      .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId.data));
     context.catch(() => undefined);
     const adapter = getAgentAdapter();
     const loadSkill = (id: string) => getSkill(tenant, id);
