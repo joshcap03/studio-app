@@ -1,4 +1,4 @@
-import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, Project, ProjectSummary, StreamEvent } from "@/lib/types";
+import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, StreamEvent } from "@/lib/types";
 
 // Browser-side calls to this application's own API. The browser never talks to the agent
 // backend directly and never holds credentials; the session cookie is httpOnly.
@@ -51,6 +51,11 @@ export const api = {
     request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {
       method: "POST",
       body: JSON.stringify({ decision }),
+    }),
+  rateMessage: (conversationId: string, messageId: string, feedback: MessageFeedback | null) =>
+    request<{ feedback: MessageFeedback | null }>(`/api/conversations/${conversationId}/messages/${messageId}/feedback`, {
+      method: "PUT",
+      body: JSON.stringify({ feedback }),
     }),
   listProjects: () => request<{ projects: ProjectSummary[] }>("/api/projects"),
   getProject: (id: string, signal?: AbortSignal) => request<{ project: Project }>(`/api/projects/${id}`, { signal }),

@@ -162,6 +162,8 @@ export interface ChatMessage {
   timeline?: Timeline | null;
   /** Multiple-choice questions the agent asked at the end of this reply. */
   questions?: Question[] | null;
+  /** Assistant messages only: the member's thumbs up or down on this reply, and why. */
+  feedback?: MessageFeedback | null;
   createdAt: number;
 }
 
@@ -365,6 +367,21 @@ export interface Question {
   /** More than one option can be picked. */
   multiSelect: boolean;
 }
+
+/** A member's rating of one reply. Reasons come from FEEDBACK_REASONS for that rating. */
+export interface MessageFeedback {
+  rating: "up" | "down";
+  reasons: string[];
+  /** What else they said, in their words. */
+  note?: string;
+}
+
+export const FEEDBACK_REASONS = {
+  up: ["Accurate", "Saved me time", "Clear", "Did what I asked"],
+  down: ["Wrong or made up", "Didn't do what I asked", "Too long", "Missed context", "Too slow"],
+} as const satisfies Record<MessageFeedback["rating"], readonly string[]>;
+
+export const MAX_FEEDBACK_NOTE_LENGTH = 1000;
 
 export const MAX_QUESTIONS = 3;
 export const MAX_QUESTION_OPTIONS = 4;

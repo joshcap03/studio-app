@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   ConversationSummary,
   MemoryProposal,
+  MessageFeedback,
   MessageSkill,
   MessageStatus,
   Question,
@@ -71,6 +72,8 @@ export interface Store {
   listMessages(conversationId: string): Promise<ChatMessage[]>;
   insertMessage(message: Omit<ChatMessage, "createdAt">): Promise<ChatMessage>;
   updateMessage(id: string, patch: MessagePatch): Promise<void>;
+  /** Records the member's rating of one of their replies (null clears it). False if no such reply. */
+  setFeedback(conversationId: string, id: string, feedback: MessageFeedback | null): Promise<boolean>;
   deleteMessage(id: string): Promise<void>;
   /** Deletes every message that comes after `messageId` in its conversation. */
   deleteMessagesAfter(conversationId: string, messageId: string): Promise<void>;
@@ -111,6 +114,7 @@ interface MessageRow {
   memory_proposals: MemoryProposal[] | null;
   timeline: Timeline | null;
   questions: Question[] | null;
+  feedback: MessageFeedback | null;
   error: string | null;
   skill: MessageSkill | null;
   created_at: string;
@@ -145,7 +149,7 @@ const CONVERSATION_COLUMNS = "id, title, project_id, agent_provider, agent_threa
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
-  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, questions, error, skill, created_at, updated_at, " +
+  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, questions, feedback, error, skill, created_at, updated_at, " +
   "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS = "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at";
@@ -200,6 +204,7 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   memoryProposals: r.memory_proposals ?? [],
   timeline: r.timeline ?? null,
   questions: r.questions ?? null,
+  feedback: r.feedback ?? null,
   attachments: (r.attachments ?? []).map(toAttachment),
   error: r.error,
   skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
@@ -419,6 +424,21 @@ export function createStore(db: Db, scope: Scope): Store {
       if (patch.questions !== undefined) values.questions = patch.questions;
       if (patch.error !== undefined) values.error = patch.error;
       check(await messages().update(values).eq("id", id).eq("workspace_id", workspaceId).eq("user_id", userId));
+    },
+
+    async setFeedback(conversationId, id, feedback) {
+      // Not a content change, so updated_at stays put.
+      const rows = check(
+        await messages()
+          .update({ feedback })
+          .eq("id", id)
+          .eq("conversation_id", conversationId)
+          .eq("role", "assistant")
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .select("id"),
+      ) as { id: string }[];
+      return rows.length > 0;
     },
 
     async deleteMessage(id) {

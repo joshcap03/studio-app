@@ -2,7 +2,7 @@
 
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, MessageFeedback } from "@/lib/types";
 import { AssistantMessage, UserMessage } from "./message";
 
 const STICK_THRESHOLD = 64;
@@ -17,6 +17,7 @@ interface Props {
   onProposal: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
   /** Sends the member's answer to the agent's questions as their next message. */
   onAnswer: (text: string) => void;
+  onFeedback: (messageId: string, feedback: MessageFeedback | null) => void;
   onOpenPanel?: (messageId: string) => void;
   /** Changes whenever the user sends, to pull the view back to the latest message. */
   sendCount: number;
@@ -27,7 +28,7 @@ interface Props {
  * The scrolling message list. Follows new output while the reader is at the bottom, and
  * leaves the scroll position alone once they scroll up to read earlier messages.
  */
-export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onOpenPanel, sendCount, footer }: Props) {
+export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onFeedback, onOpenPanel, sendCount, footer }: Props) {
   const lastUserId = messages.findLast((m) => m.role === "user")?.id;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -90,6 +91,7 @@ export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposa
                     onDecide={!running && index === messages.length - 1 ? onDecide : undefined}
                     onProposal={onProposal}
                     onAnswer={!running && index === messages.length - 1 ? onAnswer : undefined}
+                    onFeedback={message.id.startsWith("pending-") ? undefined : onFeedback}
                   />
                 )}
               </div>

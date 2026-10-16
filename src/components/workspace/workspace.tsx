@@ -19,6 +19,7 @@ import type {
   ChatMessage,
   ConversationSummary,
   MemoryProposal,
+  MessageFeedback,
   MessageSkill,
   Project,
   ProjectSummary,
@@ -584,6 +585,22 @@ export function Workspace({
     [activeId, patchMessage],
   );
 
+  /** Rates a reply right away; puts the old rating back if saving fails. */
+  const rateMessage = useCallback(
+    (messageId: string, feedback: MessageFeedback | null) => {
+      if (!activeId) return;
+      const conversationId = activeId;
+      const previous = threadsRef.current[conversationId]?.messages.find((m) => m.id === messageId)?.feedback ?? null;
+      const put = (value: MessageFeedback | null) => patchMessage(conversationId, messageId, (m) => ({ ...m, feedback: value }));
+      put(feedback);
+      api.rateMessage(conversationId, messageId, feedback).catch((error: unknown) => {
+        put(previous);
+        setNotice(error instanceof ApiError ? error.message : "Couldn't save your feedback. Try again.");
+      });
+    },
+    [activeId, patchMessage],
+  );
+
   const retry = useCallback(
     (messageId: string) => {
       if (!activeId || running.has(activeId)) return;
@@ -1047,6 +1064,7 @@ export function Workspace({
               onDecide={decide}
               onProposal={answerProposal}
               onAnswer={send}
+              onFeedback={rateMessage}
               onOpenPanel={openPanel}
               sendCount={sendCount}
               footer={

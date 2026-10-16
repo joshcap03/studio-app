@@ -192,3 +192,28 @@ describe("edits and memory suggestions over the API", () => {
   });
 
 });
+
+describe("feedback over the API", () => {
+  it("rates only the caller's replies, with known reasons", async () => {
+    const conv = crypto.randomUUID();
+    await alice.turn(conv, { kind: "send", text: "non-streaming help with operations" });
+    const loaded = (await (await alice.json(`/api/conversations/${conv}`, "GET")).json()) as { messages: { id: string }[] };
+    const [question, reply] = loaded.messages.map((m) => m.id);
+    const rate = (who: Client, id: string, feedback: unknown) => who.json(`/api/conversations/${conv}/messages/${id}/feedback`, "PUT", { feedback });
+
+    expect((await rate(bob, reply, { rating: "up", reasons: [] })).status).toBe(404);
+    expect((await rate(alice, question, { rating: "up", reasons: [] })).status).toBe(404);
+    expect((await rate(alice, reply, { rating: "down", reasons: ["Not a reason"] })).status).toBe(400);
+    expect((await rate(alice, reply, { rating: "up", reasons: ["Too long"] })).status).toBe(400);
+
+    const saved = await rate(alice, reply, { rating: "down", reasons: ["Too long", "Too long"], note: "  Shorter please  " });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ feedback: { rating: "down", reasons: ["Too long"], note: "Shorter please" } });
+    const after = (await (await alice.json(`/api/conversations/${conv}`, "GET")).json()) as { messages: { feedback: unknown }[] };
+    expect(after.messages[1].feedback).toEqual({ rating: "down", reasons: ["Too long"], note: "Shorter please" });
+
+    expect((await rate(alice, reply, null)).status).toBe(200);
+    const cleared = (await (await alice.json(`/api/conversations/${conv}`, "GET")).json()) as { messages: { feedback: unknown }[] };
+    expect(cleared.messages[1].feedback).toBeNull();
+  });
+});
