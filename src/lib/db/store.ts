@@ -76,6 +76,10 @@ export interface Store {
   updateMessage(id: string, patch: MessagePatch): Promise<void>;
   /** Records the member's rating of one of their replies (null clears it). False if no such reply. */
   setFeedback(conversationId: string, id: string, feedback: MessageFeedback | null): Promise<boolean>;
+  /** Records the provider's trace id for the run that wrote a reply (server-side only). */
+  setTrace(id: string, traceId: string): Promise<void>;
+  /** A reply's current rating and trace id, for sending the rating to tracing. Null if no such reply. */
+  ratedReply(conversationId: string, id: string): Promise<{ feedback: MessageFeedback | null; traceId: string | null } | null>;
   deleteMessage(id: string): Promise<void>;
   /** Deletes every message that comes after `messageId` in its conversation. */
   deleteMessagesAfter(conversationId: string, messageId: string): Promise<void>;
@@ -444,6 +448,31 @@ export function createStore(db: Db, scope: Scope): Store {
           .select("id"),
       ) as { id: string }[];
       return rows.length > 0;
+    },
+
+    async setTrace(id, traceId) {
+      check(
+        await messages()
+          .update({ trace_id: traceId })
+          .eq("id", id)
+          .eq("role", "assistant")
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId),
+      );
+    },
+
+    async ratedReply(conversationId, id) {
+      const row = check(
+        await messages()
+          .select("feedback, trace_id")
+          .eq("id", id)
+          .eq("conversation_id", conversationId)
+          .eq("role", "assistant")
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .maybeSingle(),
+      ) as { feedback: MessageFeedback | null; trace_id: string | null } | null;
+      return row ? { feedback: row.feedback ?? null, traceId: row.trace_id } : null;
     },
 
     async deleteMessage(id) {

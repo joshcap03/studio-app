@@ -201,6 +201,11 @@ describe("Langflow streaming", () => {
     expect(events.some((e) => e.type === "message")).toBe(false);
   });
 
+  it("reports the job id as the run's trace id (Langflow traces a background job under it)", async () => {
+    const { events } = await run(base, streamResponse([frame("end", end("Hi"))]));
+    expect(events.filter((e) => e.type === "trace")).toEqual([{ type: "trace", traceId: JOB }]);
+  });
+
   it("uses the bot message when the flow doesn't stream tokens (verified echo-flow shape)", async () => {
     const { events } = await run(base, streamResponse([frame("add_message", user("Hello")), frame("add_message", bot("Hello")), frame("end", end("Hello"))]));
     expect(events.filter((e) => e.type === "message")).toEqual([{ type: "message", text: "Hello" }]);
@@ -447,6 +452,8 @@ describe("Langflow approvals", () => {
     const read = calls.find((c) => c.url.endsWith("/events"));
     expect((read!.init.headers as Record<string, string>)["Last-Event-ID"]).toBe("12");
     expect(events.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("")).toContain("Sent it to Jo");
+    // The resumed job is the same run, so the reply keeps the same trace.
+    expect(events.filter((e) => e.type === "trace")).toEqual([{ type: "trace", traceId: JOB }]);
   });
 
   it("says the reply was lost when the job is gone after the stream drops", async () => {

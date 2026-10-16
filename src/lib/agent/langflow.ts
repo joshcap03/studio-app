@@ -27,6 +27,8 @@ import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, typ
 //   Approvals come from the Agent's tool-approval middleware: tools whose metadata carries
 //   approval_actions (the Studio Tool Gateway's take_action) pause before running.
 //   Per-request global variables: X-LANGFLOW-GLOBAL-VAR-{NAME} headers.
+//   Tracing: a background job's graph runs under its job_id (resumes included), and Langflow's
+//   LangSmith tracer opens the root run with that id, so the job id is the trace id.
 //   Optional trusted end-user header (LANGFLOW_SERVING_END_USER_HEADER on the Langflow
 //   server) scopes Langflow's own chat memory to "<end_user>::<session_id>".
 //
@@ -705,6 +707,8 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         if (typeof job?.job_id !== "string") throw new AgentError("The agent service returned an unreadable response.");
         jobId = job.job_id;
       }
+
+      yield { type: "trace", traceId: jobId };
 
       // Stop means stop: cancel the job on the Langflow side, not just stop reading it.
       const onAbort = () => void stopJob(jobId);
