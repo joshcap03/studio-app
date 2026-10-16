@@ -348,7 +348,25 @@ export interface Timeline {
   entries: TimelineEntry[];
   /** Most likely first; `entries` are indexes into the list above. */
   causes: { text: string; entries: number[] }[];
+  /** Charts, key numbers, and tables the agent drew from what it read, in reported order. */
+  visuals?: Visual[];
 }
+
+/** One graphic an investigation reported through report_visual (see src/lib/chat/visuals.ts). */
+export type Visual = { title: string; app?: string } & (
+  | {
+      kind: "chart";
+      chart: "bar" | "line";
+      unit: string;
+      labels: string[];
+      /** One value per label; null where the agent had no number. */
+      series: { name: string; values: (number | null)[] }[];
+    }
+  | { kind: "stats"; items: { label: string; value: string; change?: string; tone?: "good" | "bad" | "neutral" }[] }
+  | { kind: "table"; columns: string[]; rows: string[][] }
+);
+
+export const MAX_VISUALS = 6;
 
 export const MAX_TIMELINE_ENTRIES = 40;
 export const MAX_TIMELINE_CAUSES = 5;
