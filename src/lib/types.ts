@@ -158,7 +158,7 @@ export interface ChatMessage {
   error?: string | null;
   /** User messages only: the skill attached to it, if any. */
   skill?: MessageSkill | null;
-  /** A "why?" investigation's timeline, as the agent reported it (see Timeline). */
+  /** An investigation's timeline, as the agent reported it (see Timeline). */
   timeline?: Timeline | null;
   /** Multiple-choice questions the agent asked at the end of this reply. */
   questions?: Question[] | null;
@@ -341,7 +341,7 @@ export interface TimelineEntry {
   verified: boolean;
 }
 
-/** A "why?" investigation's findings: dated events across apps and the likely causes. */
+/** An investigation's findings: dated events across apps and the likely causes. */
 export interface Timeline {
   question: string;
   /** Oldest first. */

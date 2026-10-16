@@ -10,7 +10,7 @@ import {
   type TimelineEntry,
 } from "@/lib/types";
 
-// A "why?" investigation's timeline, as the agent reported it through its report_timeline
+// An investigation's timeline, as the agent reported it through its report_timeline
 // tool. The agent's links are only trusted when this run's own tool results returned them:
 // anything else is kept as a claim, marked unverified, with no link.
 

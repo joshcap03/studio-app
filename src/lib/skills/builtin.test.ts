@@ -10,7 +10,7 @@ const { builtinSkill, builtinSkills } = await import("./builtin");
 const tenant = (email: string) => ({ email }) as unknown as Tenant;
 
 describe("built-in skills", () => {
-  it("offers Investigate why only to accounts with the preview", () => {
+  it("offers Investigate only to accounts with the preview", () => {
     expect(builtinSkills(tenant("preview@example.test")).map((s) => s.id)).toEqual(["builtin:why"]);
     expect(builtinSkills(tenant("someone@example.test"))).toEqual([]);
     expect(builtinSkill(tenant("someone@example.test"), "builtin:why")).toBeNull();
