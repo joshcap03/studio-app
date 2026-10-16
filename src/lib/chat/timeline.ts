@@ -16,16 +16,30 @@ import {
 
 const text = (max: number) => z.string().transform((s) => s.replace(/\s+/g, " ").trim().slice(0, max));
 
+// Models sometimes name an entry's keys their own way (date, event, link); read those too.
+const ALIASES = {
+  when: ["when", "date", "datetime", "time", "timestamp"],
+  what: ["what", "event", "title", "description", "summary", "text"],
+  url: ["url", "link", "href"],
+  app: ["app", "toolkit", "source"],
+} as const;
+
+function normalizeEntry(e: unknown): unknown {
+  if (!e || typeof e !== "object") return e;
+  const r = e as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(ALIASES).map(([key, names]) => [key, names.map((n) => r[n]).find((v) => v != null && v !== "")]));
+}
+
 const rawSchema = z.object({
   question: text(300).default(""),
   entries: z
     .array(
-      z.object({
+      z.preprocess(normalizeEntry, z.object({
         when: text(40),
         what: text(300),
         app: z.string().regex(/^[a-z0-9_]{1,40}$/).optional().catch(undefined),
         url: z.string().optional().catch(undefined),
-      }),
+      })),
     )
     .max(MAX_TIMELINE_ENTRIES * 2),
   causes: z
