@@ -85,6 +85,18 @@ describe("startTurn", () => {
     expect(await store.getConversation(id)).toMatchObject({ title: "Hi", agentProvider: "scripted", agentThreadId: "t-1" });
   });
 
+  it("keeps the run's trace id with the reply, out of what the browser gets", async () => {
+    const db = createMemoryDb();
+    const store = createMemoryStore(scopeA, db);
+    const id = crypto.randomUUID();
+    const adapter = scripted([{ type: "trace", traceId: "job-1" }, { type: "message", text: "Done" }]);
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "Hi" }));
+    const reply = (await store.listMessages(id))[1];
+    expect(await store.ratedReply(id, reply.id)).toEqual({ feedback: null, traceId: "job-1" });
+    expect(JSON.stringify(events)).not.toContain("job-1");
+    expect(await createMemoryStore(scopeB, db).ratedReply(id, reply.id)).toBeNull();
+  });
+
   it("gives the adapter the caller's tenant context, thread id, and prior turns", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

@@ -64,6 +64,7 @@ Do these in order. `APP_URL` is the production URL (e.g. `https://studio.example
   | `COMPOSIO_API_KEY` | Composio project key (`ak_…`) |
   | `COMPOSIO_TOOLKITS` | JSON of offered apps → auth config ids |
   | `SUPERMEMORY_API_KEY` | Supermemory key |
+  | `LANGSMITH_API_KEY` | optional; the key of the LangSmith workspace Langflow traces to. Reply ratings then show on each run's trace as `user_rating` feedback |
   | `AGENT_LIVE_WORKSPACES` | `*` |
   | `LIMIT_RUNS_SERVICE_PER_DAY` | daily cap across all workspaces, e.g. `500` |
   | `LIMIT_RUNS_PER_MINUTE`, `LIMIT_RUNS_PER_WORKSPACE_PER_DAY`, `LIMIT_CONCURRENT_RUNS` | optional; defaults are in `.env.example` |

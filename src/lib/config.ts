@@ -47,6 +47,11 @@ const schema = z.object({
   SUPERMEMORY_API_KEY: z.string().optional(),
   SUPERMEMORY_BASE_URL: z.url().default("https://api.supermemory.ai"),
 
+  // The agent's LangSmith tracing. With a key, members' reply ratings are attached to the
+  // run's trace as feedback. Unset means ratings stay in the app only.
+  LANGSMITH_API_KEY: z.string().optional(),
+  LANGSMITH_ENDPOINT: z.url().default("https://api.smith.langchain.com"),
+
   LIMIT_RUNS_PER_MINUTE: z.coerce.number().int().positive().default(10),
   LIMIT_RUNS_PER_WORKSPACE_PER_DAY: z.coerce.number().int().positive().default(200),
   LIMIT_CONCURRENT_RUNS: z.coerce.number().int().positive().default(2),
@@ -89,6 +94,8 @@ export interface AppConfig {
   composio?: { apiKey: string; toolkits: ToolkitConfig[] };
   /** Long-term memory. Unset means the agent remembers nothing between conversations. */
   supermemory?: { apiKey: string; baseUrl: string };
+  /** Where reply ratings go as trace feedback. Unset means they aren't sent anywhere. */
+  langsmith?: { apiKey: string; endpoint: string };
   limits: { runsPerMinute: number; runsPerWorkspacePerDay: number; concurrentRuns: number; runsServicePerDay?: number };
   /** Lowercased sign-in emails allowed to see preview features (see src/lib/flags.ts). */
   previewEmails: Set<string>;
@@ -144,6 +151,7 @@ export function getConfig(): AppConfig {
     },
     composio,
     supermemory: env.SUPERMEMORY_API_KEY ? { apiKey: env.SUPERMEMORY_API_KEY, baseUrl: env.SUPERMEMORY_BASE_URL } : undefined,
+    langsmith: env.LANGSMITH_API_KEY ? { apiKey: env.LANGSMITH_API_KEY, endpoint: env.LANGSMITH_ENDPOINT } : undefined,
     limits: {
       runsPerMinute: env.LIMIT_RUNS_PER_MINUTE,
       runsPerWorkspacePerDay: env.LIMIT_RUNS_PER_WORKSPACE_PER_DAY,

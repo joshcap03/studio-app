@@ -99,6 +99,17 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       m.feedback = feedback;
       return true;
     },
+    async setTrace(id, traceId) {
+      const m = shared.messages.find((x) => x.id === id && x.role === "assistant");
+      const c = m && shared.conversations.get(m.conversationId);
+      if (c && owns(c)) shared.traces.set(id, traceId);
+    },
+    async ratedReply(conversationId, id) {
+      const c = shared.conversations.get(conversationId);
+      const m = shared.messages.find((x) => x.id === id && x.conversationId === conversationId && x.role === "assistant");
+      if (!c || !owns(c) || !m) return null;
+      return { feedback: m.feedback ?? null, traceId: shared.traces.get(id) ?? null };
+    },
     async deleteMessage(id) {
       shared.messages = shared.messages.filter((m) => m.id !== id);
       shared.approvals = shared.approvals.filter((a) => a.messageId !== id);
@@ -167,8 +178,10 @@ export interface MemoryDb {
   messages: ChatMessage[];
   approvals: (StoredApproval & Scope)[];
   attachments: MemoryAttachment[];
+  /** Trace ids by reply id, kept apart like the server-only column. */
+  traces: Map<string, string>;
 }
-export const createMemoryDb = (): MemoryDb => ({ conversations: new Map(), messages: [], approvals: [], attachments: [] });
+export const createMemoryDb = (): MemoryDb => ({ conversations: new Map(), messages: [], approvals: [], attachments: [], traces: new Map() });
 const stripScope = ({ workspaceId: _w, userId: _u, ...a }: StoredApproval & Scope): StoredApproval => ({ ...a });
 const summary = ({ id, title, projectId, createdAt, updatedAt }: Row) => ({ id, title, projectId, createdAt, updatedAt });
 const strip = ({ workspaceId: _w, userId: _u, ...c }: Row): Conversation => ({ ...c });

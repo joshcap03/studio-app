@@ -54,3 +54,22 @@ describe("reply feedback", () => {
     expect((await alice.client.from("messages").update({ feedback: ["up"] }).eq("id", reply)).error).not.toBeNull();
   });
 });
+
+describe("reply trace ids", () => {
+  it("are kept for the member's own replies only, and can't be set by anyone else", async () => {
+    const own = await alice.client.from("messages").update({ trace_id: "trace-1" }).eq("id", reply).select("trace_id");
+    expect(own.error).toBeNull();
+    expect(own.data).toEqual([{ trace_id: "trace-1" }]);
+    for (const other of [teammate, bob]) {
+      expect((await other.client.from("messages").select("trace_id").eq("id", reply)).data).toEqual([]);
+      const update = await other.client.from("messages").update({ trace_id: "trace-2" }).eq("id", reply).select("id");
+      expect(update.data ?? []).toEqual([]);
+    }
+    expect((await alice.client.from("messages").select("trace_id").eq("id", reply).single()).data?.trace_id).toBe("trace-1");
+  });
+
+  it("belong only to replies, and stay short", async () => {
+    expect((await alice.client.from("messages").update({ trace_id: "trace-1" }).eq("id", question)).error).not.toBeNull();
+    expect((await alice.client.from("messages").update({ trace_id: "x".repeat(101) }).eq("id", reply)).error).not.toBeNull();
+  });
+});

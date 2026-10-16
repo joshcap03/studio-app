@@ -1,7 +1,9 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
+import { getConfig } from "@/lib/config";
+import { syncRating } from "@/lib/langsmith";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { FEEDBACK_REASONS, MAX_FEEDBACK_NOTE_LENGTH, type MessageFeedback } from "@/lib/types";
 
@@ -30,8 +32,12 @@ export async function PUT(request: NextRequest, { params }: Context) {
     ? { rating: input.feedback.rating, reasons: [...new Set(input.feedback.reasons)], ...(input.feedback.note ? { note: input.feedback.note } : {}) }
     : null;
   try {
-    const found = await storeFor(auth.value).setFeedback(ids.data.id, ids.data.messageId, feedback);
+    const store = storeFor(auth.value);
+    const found = await store.setFeedback(ids.data.id, ids.data.messageId, feedback);
     if (!found) return jsonError(404, "Message not found.");
+    // Also onto the run's trace, for evals. The member's rating is saved either way.
+    const langsmith = getConfig().langsmith;
+    if (langsmith) after(() => syncRating(store, ids.data.id, ids.data.messageId, langsmith).catch((e) => console.error("[feedback] couldn't send the rating to LangSmith", e)));
     return NextResponse.json({ feedback });
   } catch (error) {
     return errorResponse(error);

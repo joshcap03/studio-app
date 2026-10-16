@@ -68,6 +68,11 @@ export interface AgentRunInput {
 export type AgentEvent =
   /** The provider assigned (or confirmed) the thread id for this conversation. */
   | { type: "thread"; threadId: string }
+  /**
+   * This run's id in the provider's tracing, when it's verified to be traced under it. The app
+   * keeps it with the reply so the member's rating of the reply can be attached to the trace.
+   */
+  | { type: "trace"; traceId: string }
   /** Incremental assistant text. */
   | { type: "text-delta"; text: string }
   /** The full assistant text at once. Replaces any prior text. */

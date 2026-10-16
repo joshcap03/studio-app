@@ -393,6 +393,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                 await store.setAgentThread(conversationId, adapter.id, event.threadId);
               }
               break;
+            case "trace":
+              // Best effort: a reply without one just can't be linked to its trace.
+              await store.setTrace(assistant.id, event.traceId.slice(0, 100)).catch((e) => console.error("[turn] couldn't save the trace id", e));
+              break;
             case "text-delta":
               content += event.text;
               send({ type: "text", delta: event.text });
