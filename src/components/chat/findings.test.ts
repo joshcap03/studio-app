@@ -43,6 +43,11 @@ describe("findings", () => {
       text: "Hit a snag: The app isn't connected or needs to be re-authorized.",
       tone: "problem",
     });
+    // An app that simply isn't connected isn't a snag.
+    expect(findingFor(step({ status: "failed", detail: "Google Calendar isn't connected." }))).toMatchObject({
+      text: "Google Calendar isn't connected.",
+      tone: "normal",
+    });
     expect(findingFor(step({ app: "granola", preview: { type: "text", query: "Franzi", text: '<requestedrange timerange="custom"> raw' } }))?.text).toBe(
       "Looked through Granola for “Franzi”",
     );

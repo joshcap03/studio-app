@@ -132,6 +132,54 @@ describe("interpretCalls", () => {
     });
   });
 
+  it("keeps what worked when one tool in a batch fails because its app isn't connected", () => {
+    const input = {
+      tools: [
+        { tool_slug: "GMAIL_FETCH_EMAILS", arguments: { query: "Ski trip" } },
+        { tool_slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: { q: "Ski trip" } },
+      ],
+    };
+    const failure = `MCP tool 'COMPOSIO_MULTI_EXECUTE_TOOL' failed: ${JSON.stringify({
+      successful: false,
+      data: {
+        results: [
+          {
+            response: { successful: true, data: { messages: [{ subject: "Reservation Confirmation", sender: "Resort", display_url: "https://mail.google.com/mail/u/0/#inbox/1" }] } },
+            tool_slug: "GMAIL_FETCH_EMAILS",
+            index: 0,
+          },
+          {
+            error: "No active connection found for toolkit(s) 'googlecalendar' in this session. To fix this, call COMPOSIO_MANAGE_CONNECTIONS with toolkits=['googlecalendar'].",
+            tool_slug: "GOOGLECALENDAR_EVENTS_LIST",
+            index: 1,
+          },
+        ],
+        success_count: 1,
+        error_count: 1,
+      },
+      error: "1 out of 2 tools failed",
+    })}`;
+    const steps = interpretCalls([
+      gateway("composio_multi_execute_tool", input, { content: `Tool composio_multi_execute_tool failed: ValueError: ${failure}`, type: "tool", tool_call_id: "t" }),
+      { name: "composio_multi_execute_tool", input, output: null, error: failure },
+    ]);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ app: "gmail", status: "done", label: "Checked Gmail" });
+    expect(steps[0].detail).toBeUndefined();
+    expect(steps[0].preview).toMatchObject({ type: "items", items: [{ primary: "Reservation Confirmation", url: "https://mail.google.com/mail/u/0/#inbox/1" }] });
+  });
+
+  it("says plainly which app isn't connected when that's all that failed", () => {
+    const input = { tools: [{ tool_slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: { q: "Ski trip" } }] };
+    const failure = `MCP tool 'COMPOSIO_MULTI_EXECUTE_TOOL' failed: ${JSON.stringify({
+      successful: false,
+      data: { results: [{ error: "No active connection found for toolkit(s) 'googlecalendar' in this session.", tool_slug: "GOOGLECALENDAR_EVENTS_LIST", index: 0 }] },
+      error: "1 out of 1 tools failed",
+    })}`;
+    const [step] = interpretCalls([{ name: "composio_multi_execute_tool", input, output: null, error: failure }]);
+    expect(step).toMatchObject({ status: "failed", detail: "Google Calendar isn't connected." });
+  });
+
   it("reads a large result from Composio's data_preview sample, counting what it left out", () => {
     const [step] = interpretCalls([
       {
