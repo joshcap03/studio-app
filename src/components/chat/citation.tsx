@@ -78,13 +78,16 @@ export function CitationCard({ citation }: { citation: Citation }) {
   );
 }
 
-/** The numbered sources under an answer. */
-export function SourceList({ citations }: { citations: Citation[] }) {
+/** The numbered sources under an answer: only the ones the answer actually points to. */
+export function SourceList({ citations, content }: { citations: Citation[]; content: string }) {
+  const used = new Set([...content.matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])));
+  const shown = citations.filter((c) => used.has(c.n));
+  if (shown.length === 0) return null;
   return (
     <section aria-label="Sources" className="mt-4">
       <h4 className="mb-1 text-[12px] text-fg-3">Sources</h4>
       <ol>
-        {citations.map((c) => (
+        {shown.map((c) => (
           <li key={c.n}>
             <a
               href={sourceHref(c)}

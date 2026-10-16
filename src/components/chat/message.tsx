@@ -177,7 +177,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
       {hasContent ? (
         <div className={message.approvals?.length ? "mt-4" : undefined}>
           <Markdown content={message.content} citations={message.citations} />
-          {message.citations?.length && !streaming ? <SourceList citations={message.citations} /> : null}
+          {message.citations?.length && !streaming ? <SourceList citations={message.citations} content={message.content} /> : null}
         </div>
       ) : null}
 

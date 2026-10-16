@@ -692,6 +692,24 @@ describe("edits, files, and memory suggestions", () => {
     expect(quiet.some((e) => e.type === "timeline")).toBe(false);
   });
 
+  it("keeps citations from every cite call in a run, not just the last", async () => {
+    const page = "https://news.example/raise";
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const adapter = scripted([
+      { type: "evidence", items: [{ url: page, app: "web", title: "Raise", text: "Grew from 4 to 45 partners. Building the Reasoning Engine." }] },
+      { type: "citations", citations: { sources: [{ n: 1, url: page, quote: "Grew from 4 to 45 partners" }] } },
+      { type: "citations", citations: { sources: [{ n: 2, url: page, quote: "Building the Reasoning Engine" }, { n: 1, url: page, quote: "a later duplicate" }] } },
+      { type: "message", text: "It grew fast [1] and is building an engine [2]." },
+    ]);
+    await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "x" }));
+    const reply = (await store.listMessages(id))[1];
+    expect(reply.citations?.map((c) => [c.n, c.quote, c.quoteVerified])).toEqual([
+      [1, "Grew from 4 to 45 partners", true],
+      [2, "Building the Reasoning Engine", true],
+    ]);
+  });
+
   it("keeps the agent's questions on the reply, validated, even with no text", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
