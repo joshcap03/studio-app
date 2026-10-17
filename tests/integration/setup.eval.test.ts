@@ -117,7 +117,7 @@ function fill(form: UiForm): { values: FormValues; attachResume: boolean } {
       case "long_text":
         if (f.prefill) values[f.id] = f.prefill;
         else if (/\bpay\b|salary|compensation/i.test(f.label)) values[f.id] = "$150k";
-        else if (/location|where/i.test(f.label)) values[f.id] = "Remote, US";
+        else if (/location|where|\bcit(y|ies)\b/i.test(f.label)) values[f.id] = "Remote, US";
         else if (/break/i.test(f.label)) values[f.id] = "Crypto, agencies";
         else if (f.required) values[f.id] = "Nothing more to add.";
         break;
