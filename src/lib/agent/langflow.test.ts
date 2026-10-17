@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -154,6 +154,7 @@ describe("Langflow request", () => {
           contents: [
             { type: "tool_use", name: "update_plan", output: JSON.stringify({ plan_update: { steps: [{ text: "a", status: "todo" }] } }) },
             { type: "tool_use", name: "save_record", output: { record: { collection: "applications", key: "k" } } },
+            { type: "tool_use", name: "report_run", output: { run_report: { outcome: "nothing_new", summary: "" } } },
             { type: "tool_use", name: "web_search", output: { results: [] } },
             { type: "tool_use", name: "save_record", output: { record: { collection: "x", key: "y" } }, error: true },
           ],
@@ -163,6 +164,7 @@ describe("Langflow request", () => {
     expect(toolTaskUpdates(message as never)).toEqual([
       { type: "plan-update", plan: [{ text: "a", status: "todo" }] },
       { type: "record", record: { collection: "applications", key: "k" } },
+      { type: "run-report", report: { outcome: "nothing_new", summary: "" } },
     ]);
   });
 
@@ -349,6 +351,41 @@ describe("Langflow streaming", () => {
     const message = bot(intro + "All clear.", [{ type: "text", text: intro }, { type: "tool_use", name: "search", tool_input: {}, output: { results: [] }, error: null }]);
     const { events } = await run({ ...base, stream: false }, streamResponse([frame("add_message", message), frame("end", { build_duration: 1 })]));
     expect(events).toContainEqual({ type: "message", text: "All clear." });
+  });
+
+  it("keeps an answer written before a cite call as the answer, not an opening line", async () => {
+    const answer = "Acme Atelier's listed address is 12 Example St, New York [1].";
+    const cite = { type: "tool_use", name: "cite", tool_input: { sources: [{ n: 1, url: "https://acme.example/", quote: "12 Example St" }] }, output: "ok", error: null };
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: answer }),
+        frame("add_message", bot(answer, [{ type: "text", text: answer }, cite])),
+        frame("end", end(answer)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note")).toEqual([]);
+    const text = events
+      .filter((e): e is Extract<AgentEvent, { type: "text-delta" }> => e.type === "text-delta")
+      .map((e) => e.text)
+      .join("");
+    expect(text).toBe(answer);
+  });
+
+  it("finds opening lines only before work, for every reporting tool and in any shape", () => {
+    const intro = { type: "text", text: "Let me check." };
+    const answer = { type: "text", text: "Here's what I found." };
+    const work = { type: "tool_use", name: "search", tool_input: {} };
+    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "remember", "propose_memory"]) {
+      const direct = { type: "tool_use", name, tool_input: {} };
+      const viaGateway = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: name, arguments: {} } };
+      expect(openingLineIndexes([intro, work, answer, direct])).toEqual([0]);
+      expect(openingLineIndexes([intro, work, answer, viaGateway, direct])).toEqual([0]);
+    }
+    // Long or multi-paragraph text is the answer even when work follows.
+    expect(openingLineIndexes([{ type: "text", text: "word ".repeat(80) }, work])).toEqual([]);
+    expect(openingLineIndexes([{ type: "text", text: "First.\n\nSecond." }, work])).toEqual([]);
+    expect(leadingNotes(bot("", [answer, { type: "tool_use", name: "remember", tool_input: {} }]))).toEqual([]);
   });
 
   it("reports a failed tool call", async () => {

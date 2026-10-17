@@ -1,7 +1,7 @@
 import webpush from "web-push";
 import { getConfig } from "@/lib/config";
 import type { Session } from "@/lib/tenant-core";
-import type { ChatMessage, ConversationSummary } from "@/lib/types";
+import type { ChatMessage, ConversationSummary, RunReport } from "@/lib/types";
 
 // Notifications on the devices where a member turned them on (Web Push). Subscriptions are
 // read and pruned with the member's own session, so RLS keeps everyone's devices apart.
@@ -63,13 +63,16 @@ export function excerpt(markdown: string, max = EXCERPT): string {
  * What to tell the member about a run that ended while they weren't watching, or null when
  * there's nothing to say (they stopped it themselves).
  */
-export function notificationFor(message: ChatMessage, conversation: ConversationSummary): PushNotification | null {
+export function notificationFor(message: ChatMessage, conversation: ConversationSummary, report?: RunReport | null): PushNotification | null {
   const url = `/c/${conversation.id}`;
   const tag = `conversation:${conversation.id}`;
   const title = conversation.title || "Studio";
   switch (message.status) {
     case "complete":
-      return { title, body: excerpt(message.content) || "Studio finished.", url, tag };
+      // A task's run that found nothing new stays quiet; one that needs the member says so.
+      if (report?.outcome === "nothing_new") return null;
+      if (report?.outcome === "needs_you") return { title: "Needs you", body: excerpt(report.summary || message.content) || title, url, tag };
+      return { title, body: excerpt(report?.summary || message.content) || "Studio finished.", url, tag };
     case "awaiting": {
       const pending = message.approvals?.find((a) => a.status === "pending");
       return { title: "Needs your OK", body: excerpt(pending?.summary ?? title), url, tag };

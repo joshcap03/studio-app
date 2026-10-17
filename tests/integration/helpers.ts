@@ -34,15 +34,20 @@ export async function createWorkspace(account: TestAccount, name: string): Promi
 }
 
 /**
- * Adds an account to a workspace as a plain member. The app has no invite flow yet, so this
- * goes through the local stack's admin key (tests only; never on a request path).
+ * The local stack's service_role client, for setting up what the app has no flow for and for
+ * calling the worker's service_role-only functions (tests only; never on a request path).
  */
-export async function addMember(account: TestAccount, workspaceId: string): Promise<void> {
+export async function serviceClient(): Promise<SupabaseClient> {
   const { execSync } = await import("node:child_process");
   const status = JSON.parse(execSync("npx supabase status -o json", { stdio: ["ignore", "pipe", "ignore"] }).toString()) as {
     SERVICE_ROLE_KEY: string;
   };
-  const admin = createClient(SUPABASE_URL, status.SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  return createClient(SUPABASE_URL, status.SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+}
+
+/** Adds an account to a workspace as a plain member. The app has no invite flow yet. */
+export async function addMember(account: TestAccount, workspaceId: string): Promise<void> {
+  const admin = await serviceClient();
   const { error } = await admin
     .from("workspace_members")
     .insert({ workspace_id: workspaceId, user_id: account.userId, role: "member", composio_user_id: `test_${crypto.randomUUID()}` });

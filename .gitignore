@@ -42,3 +42,6 @@ langflow/backup-*.json
 # Vercel CLI link
 .vercel
 __pycache__/
+
+# Trigger.dev CLI build output
+.trigger

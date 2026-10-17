@@ -253,6 +253,11 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "exa_search":
     case "search_web":
       return webSearch(input, result);
+    case "get_contents":
+    case "exa_get_contents":
+    case "crawling":
+    case "crawling_exa":
+      return webRead(input, result);
     case "search_memory":
     case "list_memories":
     case "listmemories":
@@ -298,6 +303,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "ask_user":
       // The questions are shown under the reply as choices to click.
       return { labels: { running: "Writing a question for you", done: "Asked you a question" }, app: "agent", action: "note", hidden: true };
+    case "report_run":
+      // Decides whether the member is notified; the reply itself says how it went.
+      return { labels: { running: "Wrapping up", done: "Wrapped up" }, app: "agent", action: "note", hidden: true };
     case "update_plan":
       return planUpdate(input);
     case "save_record":
@@ -307,6 +315,8 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
       // What was remembered is shown on its own line under the reply, with an Undo.
       return { labels: { running: "Noting something to remember", done: "Remembered something" }, app: "memory", action: "remember", hidden: true };
   }
+  // Any other tool that sends back a list of web results ({ url, title, text }) read the web.
+  if (sourcesPreview(result) && isRecord(unwrapResult(result))) return webRead(input, result);
   const words = humanize(name);
   return { labels: { running: `Using ${words}`, done: `Used ${words}` }, app: "agent", action: "other" };
 }
@@ -423,6 +433,21 @@ function webSearch(input: Record<string, unknown>, result: unknown): Interpretat
     app: "web",
     action: "search",
     preview: sourcesPreview(result),
+  };
+}
+
+/** Reading pages by link (e.g. Exa's get_contents): named by the site, or how many pages. */
+function webRead(input: Record<string, unknown>, result: unknown): Interpretation {
+  const asked = ["ids", "urls", "url", "id"].flatMap((k) => (Array.isArray(input[k]) ? input[k] : [input[k]])).map(safeUrl).filter((u): u is string => !!u);
+  const preview = sourcesPreview(result);
+  const urls = asked.length > 0 ? asked : preview?.type === "sources" ? preview.items.map((i) => i.url) : [];
+  const domains = [...new Set(urls.map(domainOf))];
+  const what = domains.length === 1 ? domains[0] : urls.length > 1 ? `${urls.length} pages` : "a page";
+  return {
+    labels: { running: `Reading ${what}`, done: `Read ${what}`, failed: `Couldn't read ${what}` },
+    app: "web",
+    action: "read",
+    preview,
   };
 }
 
@@ -790,6 +815,27 @@ function humanize(name: string): string {
  */
 export function talksMachinery(text: string): boolean {
   return /\b(tools?|tool calls?|toolkits?|schemas?|callable|composio|mcp|discovery)\b/i.test(text);
+}
+
+/** Tools that report on the answer (its sources, charts, questions, what to remember) rather than do the work. */
+const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "remember", "propose_memory"]);
+
+/**
+ * Whether a call only reports on the answer. Text the agent writes before such a call is
+ * the answer itself (agents often answer, then cite or remember), never an opening line.
+ */
+export function reportsOnAnswer(name: string, input: unknown): boolean {
+  if (REPORTING_TOOLS.has(name)) return true;
+  return GATEWAY_TOOLS.has(name) && isRecord(input) && typeof input.tool_name === "string" && REPORTING_TOOLS.has(input.tool_name);
+}
+
+/** Longest text treated as an opening line ("Let me check your emails") rather than the answer. */
+export const OPENING_LINE_MAX = 280;
+
+/** Whether text the agent wrote before a tool call reads as an opening line: short, one paragraph. */
+export function opensWork(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length > 0 && trimmed.length <= OPENING_LINE_MAX && !trimmed.includes("\n\n");
 }
 
 /** A gateway's plain-text failure report, reduced to the reason a person needs. */

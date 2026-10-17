@@ -251,3 +251,54 @@ export async function markTaskRan(tenant: Tenant, taskId: string, at = new Date(
       .eq("user_id", tenant.userId),
   );
 }
+
+export async function getRun(tenant: Tenant, runId: string): Promise<TaskRun | null> {
+  const row = check(
+    await runs(tenant)
+      .select(RUN_COLUMNS)
+      .eq("id", runId)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .maybeSingle(),
+  ) as RunRow | null;
+  return row ? toRun(row) : null;
+}
+
+/** Moves a queued run to running. False when it was already started (or isn't queued). */
+export async function beginRun(tenant: Tenant, runId: string): Promise<boolean> {
+  const rows = check(
+    await runs(tenant)
+      .update({ status: "running", updated_at: new Date().toISOString() })
+      .eq("id", runId)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .eq("status", "queued")
+      .select("id"),
+  ) as { id: string }[];
+  return rows.length > 0;
+}
+
+/** Whether the member asked to stop this run (from any device or server). */
+export async function runStopRequested(tenant: Tenant, runId: string): Promise<boolean> {
+  return (await getRun(tenant, runId))?.cancelRequestedAt != null;
+}
+
+/**
+ * Asks the run in progress in a task's conversation to stop, wherever it's running: the
+ * process running it sees the request on its next heartbeat. Does nothing for a conversation
+ * that isn't a task's.
+ */
+export async function requestStop(tenant: Tenant, conversationId: string): Promise<void> {
+  const task = await getTaskForConversation(tenant, conversationId);
+  if (!task) return;
+  const now = new Date().toISOString();
+  check(
+    await runs(tenant)
+      .update({ cancel_requested_at: now, updated_at: now })
+      .eq("task_id", task.id)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .eq("status", "running")
+      .is("cancel_requested_at", null),
+  );
+}

@@ -257,6 +257,30 @@ describe("startTurn", () => {
     expect(assistant.content.length).toBeGreaterThan(0);
   });
 
+  it("stops when a stop is requested from elsewhere, checked on the heartbeat", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    let requested = false;
+    let asked = 0;
+    const stream = await startTurn(
+      {
+        store,
+        adapter: createMockAdapter({ streaming: true, pace: 1 }),
+        context: context(scopeA),
+        idleTimeoutMs: 5000,
+        heartbeatMs: 10,
+        shouldStop: async () => (asked++, requested),
+      },
+      { conversationId: id, kind: "send", text: "help with operations" },
+    );
+    await stream.cancel(); // no one watching, as in the worker
+    for (let i = 0; i < 100 && asked === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect((await store.listMessages(id))[1].status).toBe("streaming");
+    requested = true;
+    for (let i = 0; i < 100 && (await store.listMessages(id))[1]?.status === "streaming"; i++) await new Promise((r) => setTimeout(r, 20));
+    expect((await store.listMessages(id))[1].status).toBe("stopped");
+  });
+
   it("keeps working after the browser disconnects, and saves the full reply", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
@@ -675,6 +699,21 @@ describe("edits, files, and memory suggestions", () => {
     expect(records).toHaveLength(25);
     expect(records[0][1]).toEqual({ messageId: reply.id });
     expect(asked.origin).toEqual({ kind: "task", taskId: "t1", title: "Job hunt", runId: null });
+  });
+
+  it("passes the agent's run report to onFinished, ignoring malformed ones", async () => {
+    const reports: unknown[] = [];
+    for (const report of [{ outcome: "nothing_new", summary: "  No   replies " }, { outcome: "bogus" }]) {
+      const store = createMemoryStore(scopeA);
+      const adapter = scripted([{ type: "run-report", report }, { type: "message", text: "Checked." }]);
+      await collect(
+        startTurn(
+          { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, onFinished: (_m, _c, info) => void reports.push(info.report) },
+          { conversationId: crypto.randomUUID(), kind: "send", text: "x" },
+        ),
+      );
+    }
+    expect(reports).toEqual([{ outcome: "nothing_new", summary: "No replies" }, null]);
   });
 
   it("drops plan and tracker reports when nothing can save them", async () => {

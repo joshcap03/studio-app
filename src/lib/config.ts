@@ -55,6 +55,8 @@ const schema = z.object({
   LIMIT_RUNS_PER_MINUTE: z.coerce.number().int().positive().default(10),
   LIMIT_RUNS_PER_WORKSPACE_PER_DAY: z.coerce.number().int().positive().default(200),
   LIMIT_CONCURRENT_RUNS: z.coerce.number().int().positive().default(2),
+  // Task runs (scheduled or "Run now") per workspace per day, counted apart from chat.
+  LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY: z.coerce.number().int().positive().default(50),
   // Agent runs per day across every workspace. Unset means no service-wide cap.
   LIMIT_RUNS_SERVICE_PER_DAY: z.coerce.number().int().positive().optional(),
 
@@ -104,7 +106,13 @@ export interface AppConfig {
   langsmith?: { apiKey: string; endpoint: string };
   /** Push notifications. Unset means members can't turn them on. */
   push?: { publicKey: string; privateKey: string; subject: string };
-  limits: { runsPerMinute: number; runsPerWorkspacePerDay: number; concurrentRuns: number; runsServicePerDay?: number };
+  limits: {
+    runsPerMinute: number;
+    runsPerWorkspacePerDay: number;
+    concurrentRuns: number;
+    runsServicePerDay?: number;
+    taskRunsPerWorkspacePerDay: number;
+  };
   /** Lowercased sign-in emails allowed to see preview features (see src/lib/flags.ts). */
   previewEmails: Set<string>;
 }
@@ -169,6 +177,7 @@ export function getConfig(): AppConfig {
       runsPerWorkspacePerDay: env.LIMIT_RUNS_PER_WORKSPACE_PER_DAY,
       concurrentRuns: env.LIMIT_CONCURRENT_RUNS,
       runsServicePerDay: env.LIMIT_RUNS_SERVICE_PER_DAY,
+      taskRunsPerWorkspacePerDay: env.LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY,
     },
     previewEmails: new Set(
       (env.PREVIEW_FEATURE_EMAILS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),

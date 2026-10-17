@@ -41,7 +41,7 @@ export function evidenceFor(calls: ToolCall[]): Evidence[] {
   for (const call of calls) {
     const input = isRecord(call.input) ? call.input : {};
     if (call.name === "navigate") page = safeUrl(input.url) ?? page;
-    const app = appFor(call.name);
+    const app = appFor(call.name, call.output);
     for (const value of resultsOf(call)) {
       // A browser page's text belongs to the page it was read from.
       if (PAGE_TOOLS.has(call.name) && page) {
@@ -115,9 +115,12 @@ function allText(value: unknown, depth = 0): string {
   return parts.filter(Boolean).join("\n").slice(0, MAX_TEXT);
 }
 
-function appFor(name: string): AppId {
+function appFor(name: string, output: unknown): AppId {
   if (SEARCH_TOOLS.has(name)) return "web";
   if (PAGE_TOOLS.has(name) || name === "navigate") return "browser";
   if (COMPOSIO_SLUG.test(name) || isKnownToolkit(name)) return appForToolkit(name);
+  // Any other tool that returns a list of web results (e.g. Exa's get_contents) read the web.
+  const result = output == null ? undefined : maybeJson(unwrapResult(output));
+  if (isRecord(result) && Array.isArray(result.results) && result.results.some((r) => isRecord(r) && safeUrl(r.url))) return "web";
   return "agent";
 }

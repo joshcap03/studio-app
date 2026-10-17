@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 // every import under src/lib, type-only ones included, from each entry point.
 
 const src = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const ENTRIES = ["lib/chat/run.ts", "lib/tenant-core.ts"];
+const ENTRIES = ["lib/chat/run.ts", "lib/tenant-core.ts", "lib/tasks/run-task.ts", "lib/tasks/schedule.ts"];
 
 const IMPORT = /(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\sfrom\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
 

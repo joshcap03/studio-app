@@ -19,6 +19,8 @@ gitignored and stays out of the repo.
 - `npm run test:integration`: needs local Supabase; API tests also need `qa:serve`;
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
   with those, `job-search.eval.test.ts` evals the Job search template on the real model.
+- `npx trigger.dev dev`: runs the background worker locally (needs a Trigger.dev login and
+  `TRIGGER_PROJECT_REF`); it deploys from GitHub Actions after each Vercel production deploy.
 
 Verify before handoff: typecheck, test, build, and the integration suite when touching data
 access, auth, or the agent boundary. For UI changes, drive the flow on the QA server.
@@ -49,6 +51,7 @@ raw/technical text.
 - `src/lib/tasks/`: long-horizon tasks (a goal, a plan, a schedule, a linked conversation) and
   their runs (`index.ts`), the agent's tracker of records per collection (`records.ts`), and
   request validation (`schema.ts`). Private to each member; the API is the "tasks" preview.
+  `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike.
 - `src/lib/agent/`: provider-neutral interface (`types.ts`), `langflow.ts`, `mock.ts`, registry `index.ts`.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
   `run.ts` builds its deps from a tenant (`buildTurnDeps`), free of Next.js so a worker can run turns;
@@ -57,6 +60,9 @@ raw/technical text.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
+- `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
+  tasks every two minutes; `run-task.ts` runs each as its member. `lib/elevated.ts` is the only
+  code with the Supabase secret key.
 - `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
   Context, Member Apps for per-member Composio tools, Load Skill) and `install.py`, which
   backs up a flow and installs them.
@@ -69,6 +75,11 @@ raw/technical text.
   accept a workspace or user id from a URL, body, or unverified cookie.
 - Query Supabase only through the user's session client so RLS applies; don't add a
   service-role client to request paths. Every new table gets RLS policies and an isolation test.
+  The one exception is the background worker: `trigger/lib/elevated.ts`, and nothing else, holds
+  `SUPABASE_SECRET_KEY`, only to call the service_role-only `worker_*` functions and to open a
+  short-lived session as a task's member (magic link + verify, checked to be that member, signed
+  out with local scope). The admin client never touches tables; everything after runs as the
+  member under RLS. `src/lib/elevated-guard.test.ts` enforces this.
 - Keep provider-specific logic inside its adapter. Declare capabilities honestly; don't
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
 - Never hardcode a tenant, template, or use case into agent or app logic. Templates are

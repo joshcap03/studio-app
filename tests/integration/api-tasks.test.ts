@@ -242,8 +242,10 @@ describe("running a task", () => {
       expect(task.plan.map((s) => s.status)).toEqual(["done", "doing", "todo"]);
       expect(task.lastRunAt).not.toBeNull();
 
-      const runs = ((await (await alice.api.json(`/api/tasks/${taskId}/runs`, "GET")).json()) as { runs: { id: string; status: string }[] }).runs;
-      expect(runs.find((r) => r.id === runId)?.status).toBe("done");
+      const runs = ((await (await alice.api.json(`/api/tasks/${taskId}/runs`, "GET")).json()) as {
+        runs: { id: string; status: string; reason: string | null }[];
+      }).runs;
+      expect(runs.find((r) => r.id === runId)).toMatchObject({ status: "done", reason: "update" });
 
       const tracked = ((await (await alice.api.json("/api/records?collection=applications", "GET")).json()) as {
         records: { key: string; taskId: string | null }[];
@@ -299,4 +301,25 @@ describe("applying a template", () => {
     expect(tasks.error).toBeNull();
     expect(tasks.data).toEqual([]);
   });
+});
+
+describe("a quiet task run", () => {
+  it("records that it found nothing new", async () => {
+    const created = await alice.api.json("/api/tasks", "POST", { title: "Inbox watch", instructions: "Check for replies; report if nothing new." });
+    const taskId = ((await created.json()) as { task: { id: string } }).task.id;
+    try {
+      const started = await alice.api.json(`/api/tasks/${taskId}/run`, "POST");
+      expect(started.status).toBe(202);
+      const { runId } = (await started.json()) as { runId: string };
+      let run: { status: string; reason: string | null } | undefined;
+      for (let i = 0; i < 60 && run?.status !== "done"; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const runs = ((await (await alice.api.json(`/api/tasks/${taskId}/runs`, "GET")).json()) as { runs: { id: string; status: string; reason: string | null }[] }).runs;
+        run = runs.find((r) => r.id === runId);
+      }
+      expect(run).toMatchObject({ status: "done", reason: "nothing_new" });
+    } finally {
+      await alice.api.json(`/api/tasks/${taskId}`, "DELETE");
+    }
+  }, 60_000);
 });
