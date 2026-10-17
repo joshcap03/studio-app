@@ -26,7 +26,7 @@ stale and don't help the next run.
   Method: <data> → <source and how to fetch it>. Limits: <what the source can't give>.
   Example: Method: product catalog → fetch_shopify_products("example-store.com")
   from the workbooks helpers (public Shopify feed). Limits: no stock counts or costs.
-  The owner confirms it before it's kept.
+  It's saved straight away; the owner can undo it.
 - For other sources, include the endpoint or the Composio tool slugs
   that worked."""
 

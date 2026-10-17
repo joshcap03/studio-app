@@ -16,7 +16,7 @@ function context(scope: { workspaceId: string; userId: string }): AgentTenantCon
     userId: scope.userId,
     composioUserId: `composio-${scope.userId}`,
     composioToolkits: {},
-    businessContext: `context for ${scope.workspaceId}`,
+    profile: `context for ${scope.workspaceId}`,
     agentInstructions: "",
     memories: [],
   };

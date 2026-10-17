@@ -67,7 +67,7 @@ beforeAll(async () => {
   alice = await signUp("alice");
   bob = await signUp("bob");
 
-  const a = await alice.json("/api/workspaces", "POST", { name: "Alice Atelier", businessContext: "rings" });
+  const a = await alice.json("/api/workspaces", "POST", { name: "Alice Atelier", profile: "rings" });
   expect(a.status).toBe(201);
   aliceWs = ((await a.json()) as { workspaceId: string }).workspaceId;
   const b = await bob.json("/api/workspaces", "POST", { name: "Bob Bakery" });
@@ -121,7 +121,7 @@ describe("API tenant isolation", () => {
     const list = (await (await bob.json("/api/conversations", "GET", undefined, { lj_ws: aliceWs })).json()) as { conversations: unknown[] };
     expect(list.conversations).toEqual([]);
     const settings = (await (await bob.json("/api/workspace/settings", "GET", undefined, { lj_ws: aliceWs })).json()) as {
-      settings: { name: string; businessContext: string };
+      settings: { name: string; profile: string };
     };
     expect(settings.settings.name).toBe("Bob Bakery");
     if (aliceMemoryId) {
@@ -138,13 +138,50 @@ describe("API tenant isolation", () => {
 
   it("refuses to delete or change another tenant's memory and settings", async () => {
     if (aliceMemoryId) expect((await bob.json(`/api/workspace/memories/${encodeURIComponent(aliceMemoryId)}`, "DELETE")).status).toBe(404);
-    await bob.json("/api/workspace/settings", "PATCH", { businessContext: "overwritten by bob" }, { lj_ws: aliceWs });
-    const aliceSettings = (await (await alice.json("/api/workspace/settings", "GET")).json()) as { settings: { businessContext: string } };
-    expect(aliceSettings.settings.businessContext).toBe("rings");
+    await bob.json("/api/workspace/settings", "PATCH", { profile: "overwritten by bob" }, { lj_ws: aliceWs });
+    const aliceSettings = (await (await alice.json("/api/workspace/settings", "GET")).json()) as { settings: { profile: string } };
+    expect(aliceSettings.settings.profile).toBe("rings");
     if (aliceMemoryId) {
       const aliceMemories = (await (await alice.json("/api/workspace/memories", "GET")).json()) as { memories: { id: string }[] };
       expect(aliceMemories.memories.map((m) => m.id)).toContain(aliceMemoryId);
     }
+  });
+
+  it("applies templates only to the caller's own workspace, without overwriting", async () => {
+    // Dave applying with a forged cookie lands in his own workspace, never Alice's.
+    const dave = await signUp("dave");
+    expect((await dave.json("/api/workspaces", "POST", { name: "Dave Desk" })).status).toBe(201);
+    const applied = await dave.json("/api/workspace/template", "POST", { templateId: "job-search" }, { lj_ws: aliceWs });
+    expect(applied.status).toBe(200);
+    const aliceSettings = (await (await alice.json("/api/workspace/settings", "GET")).json()) as {
+      settings: { templateId: string | null; agentInstructions: string };
+    };
+    expect(aliceSettings.settings.templateId).toBeNull();
+    const daveSettings = (await (await dave.json("/api/workspace/settings", "GET")).json()) as {
+      settings: { templateId: string | null; agentInstructions: string };
+    };
+    expect(daveSettings.settings.templateId).toBe("job-search");
+    expect(daveSettings.settings.agentInstructions).toContain("job tracker");
+
+    // Applying again adds nothing; the owner's own instructions are never replaced.
+    await dave.json("/api/workspace/settings", "PATCH", { agentInstructions: "dave's own rules" });
+    const again = (await (await dave.json("/api/workspace/template", "POST", { templateId: "job-search" })).json()) as {
+      addedSkills: number;
+      settings: { agentInstructions: string };
+    };
+    expect(again.addedSkills).toBe(0);
+    expect(again.settings.agentInstructions).toBe("dave's own rules");
+    const aliceSkills = (await (await alice.json("/api/workspace/skills", "GET")).json()) as { skills: { catalogId: string | null }[] };
+    expect(aliceSkills.skills.map((s) => s.catalogId)).not.toContain("find-roles");
+    expect((await dave.json("/api/workspace/template", "POST", { templateId: "nope" })).status).toBe(400);
+  });
+
+  it("creates a workspace from a template", async () => {
+    const carol = await signUp("carol");
+    const res = await carol.json("/api/workspaces", "POST", { name: "Carol search", templateId: "job-search" });
+    expect(res.status).toBe(201);
+    const skills = (await (await carol.json("/api/workspace/skills", "GET")).json()) as { skills: { catalogId: string | null }[] };
+    expect(skills.skills.map((s) => s.catalogId)).toContain("find-roles");
   });
 
   it("keeps skills inside their workspace", async () => {

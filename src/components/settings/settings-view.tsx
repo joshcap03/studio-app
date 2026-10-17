@@ -2,8 +2,10 @@
 
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { appName } from "@/lib/apps";
 import { api } from "@/lib/client/api";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
+import { TEMPLATES, templateById } from "@/lib/templates";
 import type { Memory, MemoryPromotion, UsageSummary, WorkspaceSettings } from "@/lib/types";
 import { BusinessBrain } from "./business-brain";
 import { ConnectionsList } from "./connections-list";
@@ -12,7 +14,7 @@ interface Props {
   initialSettings: WorkspaceSettings;
   /** null when memory isn't available (not set up, or couldn't be reached). */
   initialMemories: Memory[] | null;
-  /** Set (possibly empty) only when Business Brain is on for this account. */
+  /** Set (possibly empty) only when the Brain is on for this account. */
   initialPromotions: MemoryPromotion[] | null;
   usage: UsageSummary;
   canEdit: boolean;
@@ -35,11 +37,11 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
           <p className="rounded-xl border border-line bg-subtle/50 px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap text-fg-2">{guardrail}</p>
         </Section>
       ) : null}
-      <BusinessSection initial={initialSettings} canEdit={canEdit} />
+      <AgentSection initial={initialSettings} canEdit={canEdit} />
       {initialPromotions ? (
         <Section
-          title="Business Brain"
-          description="Everything the agent knows about the business and you, by topic. It saves facts as you talk; edit, pin, or remove them here. Share a personal fact and the owner can make it part of the workspace."
+          title="Brain"
+          description="Everything the agent knows about you and this workspace, by topic. It saves facts as you talk; edit, pin, or remove them here. Share a personal fact and the owner can make it part of the workspace."
         >
           {initialMemories === null ? (
             <p className="text-[13.5px] text-fg-3">Memory isn't available right now.</p>
@@ -217,12 +219,13 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function BusinessSection({ initial, canEdit }: { initial: WorkspaceSettings; canEdit: boolean }) {
+function AgentSection({ initial, canEdit }: { initial: WorkspaceSettings; canEdit: boolean }) {
   const [saved, setSaved] = useState(initial);
   const [draft, setDraft] = useState(initial);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
-  const dirty = draft.name !== saved.name || draft.businessContext !== saved.businessContext || draft.agentInstructions !== saved.agentInstructions;
+  const dirty = draft.name !== saved.name || draft.profile !== saved.profile || draft.agentInstructions !== saved.agentInstructions;
+  const template = templateById(saved.templateId);
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -246,10 +249,20 @@ function BusinessSection({ initial, canEdit }: { initial: WorkspaceSettings; can
 
   return (
     <Section
-      title="Business"
+      title="Agent"
       description={canEdit ? "The agent reads this before every conversation." : "Only the workspace owner can change these."}
     >
-      <form onSubmit={save} className="space-y-5">
+      {canEdit ? (
+        <TemplatePicker
+          current={saved.templateId}
+          onApplied={(settings) => {
+            setSaved(settings);
+            // Keep unsaved edits; take the instructions the template filled in.
+            setDraft((d) => ({ ...d, templateId: settings.templateId, agentInstructions: d.agentInstructions || settings.agentInstructions }));
+          }}
+        />
+      ) : null}
+      <form onSubmit={save} className="mt-5 space-y-5">
         <div>
           <label htmlFor="name" className="text-[13px] font-medium text-fg-2">
             Name
@@ -265,16 +278,16 @@ function BusinessSection({ initial, canEdit }: { initial: WorkspaceSettings; can
         </div>
         <div>
           <label htmlFor="context" className="text-[13px] font-medium text-fg-2">
-            About the business
+            What this agent is for
           </label>
           <textarea
             id="context"
             disabled={!canEdit}
             rows={5}
             maxLength={8000}
-            value={draft.businessContext}
-            onChange={(e) => setDraft({ ...draft, businessContext: e.target.value })}
-            placeholder="What you sell, who your customers are, how you work…"
+            value={draft.profile}
+            onChange={(e) => setDraft({ ...draft, profile: e.target.value })}
+            placeholder={template?.profilePrompt ?? "Who you are, what you want this agent to help with, and anything it should always keep in mind."}
             className={`mt-1.5 resize-y py-3 leading-relaxed ${input}`}
           />
         </div>
@@ -309,6 +322,76 @@ function BusinessSection({ initial, canEdit }: { initial: WorkspaceSettings; can
         ) : null}
       </form>
     </Section>
+  );
+}
+
+function TemplatePicker({ current, onApplied }: { current: string | null; onApplied: (settings: WorkspaceSettings) => void }) {
+  const [choice, setChoice] = useState(current ?? TEMPLATES[0].id);
+  const [status, setStatus] = useState<"idle" | "applying" | "error">("idle");
+  const [message, setMessage] = useState<string | null>(null);
+  const chosen = templateById(choice);
+
+  async function apply() {
+    setStatus("applying");
+    setMessage(null);
+    const res = await fetch("/api/workspace/template", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: choice }),
+    });
+    const body = (await res.json().catch(() => null)) as { settings?: WorkspaceSettings; addedSkills?: number; error?: string } | null;
+    if (!res.ok || !body?.settings) {
+      setStatus("error");
+      setMessage(body?.error ?? "Couldn't apply the template. Try again.");
+      return;
+    }
+    onApplied(body.settings);
+    setStatus("idle");
+    const added = body.addedSkills ?? 0;
+    setMessage(added > 0 ? `Applied. Added ${added} skill${added === 1 ? "" : "s"}.` : "Applied. Nothing new to add.");
+  }
+
+  return (
+    <div className="rounded-xl border border-line bg-surface px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <label htmlFor="template" className="text-[13px] font-medium text-fg-2">
+          Template
+        </label>
+        <select
+          id="template"
+          value={choice}
+          onChange={(e) => {
+            setChoice(e.target.value);
+            setMessage(null);
+          }}
+          className="h-8 rounded-lg border border-line bg-surface px-2 text-[13.5px] text-fg outline-none focus:border-line-strong"
+        >
+          {TEMPLATES.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+              {t.id === current ? " (current)" : ""}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => void apply()}
+          disabled={status === "applying"}
+          className="h-8 rounded-lg border border-line px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover disabled:opacity-50"
+        >
+          {status === "applying" ? "Applying…" : "Apply"}
+        </button>
+        <span role="status" className={`text-[12.5px] ${status === "error" ? "text-danger" : "text-fg-3"}`}>
+          {message}
+        </span>
+      </div>
+      {chosen ? (
+        <p className="mt-2 text-[12.5px] leading-snug text-fg-3">
+          {chosen.description} Adds its skills and fills in instructions if they&apos;re empty; never overwrites what you wrote.
+          {chosen.apps.length > 0 ? ` Works best with ${chosen.apps.map(appName).join(", ")}.` : ""}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -354,7 +437,7 @@ function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner
   return (
     <Section
       title="Memory"
-      description="What the agent knows about you and the business. It saves things as you talk, and you can add or remove them here. Workspace memories are shared with members; “Only me” memories are private."
+      description="What the agent knows about you and this workspace. It saves things as you talk, and you can add or remove them here. Workspace memories are shared with members; “Only me” memories are private."
     >
       {initial === null ? (
         <p className="text-[13.5px] text-fg-3">Memory isn't available right now.</p>

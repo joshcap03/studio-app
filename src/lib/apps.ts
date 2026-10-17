@@ -1,4 +1,4 @@
-// Apps the agent can work in, as shown to the business owner. Shared by the server (tool
+// Apps the agent can work in, as shown to the member. Shared by the server (tool
 // interpretation) and the browser (glyphs). Unknown apps fall back to a generic entry.
 
 export const APPS = {

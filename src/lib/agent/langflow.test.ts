@@ -11,7 +11,7 @@ const tenantA: AgentTenantContext = {
   userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   composioUserId: "lj_alice",
   composioToolkits: {},
-  businessContext: "Handmade rings.",
+  profile: "Handmade rings.",
   agentInstructions: "Be brief.",
   memories: ["Fiscal year starts in February"],
 };
@@ -21,7 +21,7 @@ const tenantB: AgentTenantContext = {
   workspaceName: "Bob Bakery",
   userId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   composioUserId: "lj_bob",
-  businessContext: "Sourdough.",
+  profile: "Sourdough.",
   memories: [],
 };
 
@@ -128,8 +128,17 @@ describe("Langflow request", () => {
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Handmade rings.");
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Fiscal year starts in February");
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Be brief.");
-    expect(body.tweaks["Agent-x"].system_prompt).toMatch(/current conversation decides the topic.*Don't narrow a search or answer by the business's location/);
+    expect(body.tweaks["Agent-x"].system_prompt).toMatch(/current conversation decides the topic.*Don't narrow a search or answer by the location/);
     expect(fillTemplate({ k: "{{unknown}}" }, {})).toEqual({ k: "{{unknown}}" });
+  });
+
+  it("describes the workspace by what the agent is for, not as a business", () => {
+    const values = templateValues(tenantA);
+    expect(values.system_context).toContain("Workspace: Alice Atelier");
+    expect(values.system_context).toContain("What this agent is for:\nHandmade rings.");
+    expect(values.system_context).not.toMatch(/business/i);
+    expect(values.agent_profile).toBe("Handmade rings.");
+    expect(values.business_context).toBe("Handmade rings.");
   });
 
   it("adds the conversation's project to the agent's context, and nothing when there is none", () => {

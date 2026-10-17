@@ -7,7 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Studio",
     short_name: "Studio",
-    description: "An AI agent that knows your business, works in your apps, and asks before it changes anything.",
+    description: "An AI agent you shape for any job: it learns what you need, works in your apps, and asks before it changes anything.",
     start_url: "/",
     scope: "/",
     display: "standalone",

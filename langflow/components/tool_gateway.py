@@ -41,8 +41,8 @@ MEMORY_CATEGORIES = {"customers", "suppliers", "products", "policies", "voice", 
 
 class MemoryArgs(BaseModel):
     content: str = Field(description="The fact to remember, as one short self-contained sentence.")
-    scope: str = Field(default="workspace", description="'workspace' for facts about the business; 'personal' for this user's own preferences.")
-    category: str = Field(default="other", description="What the fact is about: customers, suppliers, products (products and pricing), policies (policies and rules), voice (tone and style), team, or other.")
+    scope: str = Field(default="workspace", description="'workspace' for facts about what this workspace is for (its work, people, and goals); 'personal' for this user's own preferences.")
+    category: str = Field(default="other", description="What the fact is about: customers (people and contacts), suppliers (companies and organizations), products (work, offerings, and pricing), policies (rules and standing preferences), voice (tone and style), team, or other.")
 
 
 # Nested argument shapes are plain JSON schema rather than nested models: LangChain rebuilds
@@ -700,8 +700,8 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=remember, coroutine=remember_async, name="remember",
                 args_schema=MemoryArgs,
-                description=("Remember a lasting fact for future conversations: how the business works, people and "
-                             "suppliers, standing preferences, or a correction to something you remembered. Call it on "
+                description=("Remember a lasting fact for future conversations: how the owner works, their goals, the people and "
+                             "organizations they deal with, standing preferences, or a correction to something you remembered. Call it on "
                              "your own whenever you learn one, without asking; the owner can undo it. Never one-off "
                              "results, links, or numbers that go stale, and nothing already in what you remember."),
             ),

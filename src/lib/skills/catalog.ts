@@ -3,8 +3,8 @@ import type { AppId } from "@/lib/apps";
 // The library of ready-made skills a workspace can add. Adding one copies it into the
 // workspace (see src/lib/skills/index.ts), where the owner can adapt it; the agent only ever
 // sees the workspace's copy, and only on a message it's attached to. Entries stay generic:
-// business specifics come from each workspace's own settings and memory, never from here.
-// Anything that would contact a customer or move money produces drafts, not sends.
+// specifics come from each workspace's own profile and memory, never from here. Anything
+// that would contact someone, submit something, or move money produces drafts, not sends.
 
 export interface CatalogEntry {
   id: string;
@@ -16,10 +16,76 @@ export interface CatalogEntry {
   instructions: string;
 }
 
-export const CATALOG_CATEGORIES = ["Customers", "Sales", "Inventory", "Finance", "Operations", "Marketing"] as const;
+export const CATALOG_CATEGORIES = ["Job search", "Customers", "Sales", "Inventory", "Finance", "Operations", "Marketing"] as const;
 export type CatalogCategory = (typeof CATALOG_CATEGORIES)[number];
 
 export const CATALOG: CatalogEntry[] = [
+  {
+    id: "find-roles",
+    name: "Find matching roles",
+    description: "Searches for open roles that fit the profile and shortlists the best ones.",
+    category: "Job search",
+    apps: ["web", "sheets"],
+    instructions: `Find open roles that fit the target in the agent profile (roles, seniority, locations, pay floor, must-haves, deal-breakers). Ask about anything essential that's missing.
+1. Search job boards and company career pages on the web. Prefer the company's own posting over aggregators.
+2. Skip roles already in the job tracker and any that hit a deal-breaker.
+3. Score each remaining role 1–5 against the profile, with one line on why.
+4. Add the roles scoring 3 or more to the job tracker: company, title, location, pay if listed, link, score, status "discovered".
+5. Reply with the top 5, best first, each with its link. Do not apply to anything.`,
+  },
+  {
+    id: "research-company",
+    name: "Research a company",
+    description: "A short brief on a company and team before you apply or reach out.",
+    category: "Job search",
+    apps: ["web"],
+    instructions: `Research the company the user names (and the role, if they give one).
+- What they do, who buys it, how they make money, size, funding or financials, and recent news from the last 6 months.
+- The team the role sits in and the likely hiring manager, from public sources only.
+- Why the user's background (from the profile and their files) fits, and the gaps to address.
+- Two or three specific, non-generic things to mention in an application or first message.
+Cite every source. Keep it to one page.`,
+  },
+  {
+    id: "tailor-application",
+    name: "Tailor an application",
+    description: "Résumé bullets and a cover letter tailored to one role, as drafts.",
+    category: "Job search",
+    apps: ["docs", "web"],
+    instructions: `Tailor the user's application to the role they point to.
+1. Read the posting and pull out the 5 requirements that matter most.
+2. Using only facts from the user's résumé, files, and memory, rewrite their résumé bullets to show those requirements. Never invent experience, titles, dates, or numbers; ask instead.
+3. Draft a cover letter under 250 words: why this company, the two most relevant wins, and a clear close.
+4. Save both as a document draft and reply with a link and a list of what changed.
+Do not submit anything.`,
+  },
+  {
+    id: "outreach-drafts",
+    name: "Draft outreach",
+    description: "Finds the right people for a role and drafts short, personal first messages.",
+    category: "Job search",
+    apps: ["web", "gmail"],
+    instructions: `Draft outreach for the role or company the user names.
+1. Find 1–3 relevant people (the hiring manager, someone on the team, or a recruiter) using a connected prospecting app (such as Clay or Unify) if there is one, otherwise public web sources. Never guess email addresses; use only ones a source verifies.
+2. For each, draft a first message under 120 words: one specific reason you're writing to them, one relevant result of the user's, and one easy ask.
+3. Draft one follow-up for 5 business days later if there's no reply.
+4. Save as drafts. Sending needs the user's approval for each message.
+Reply with who you found, why each, and the drafts.`,
+  },
+  {
+    id: "interview-prep",
+    name: "Interview prep",
+    description: "A prep pack for an upcoming interview: company, questions, and your stories.",
+    category: "Job search",
+    apps: ["calendar", "web", "docs"],
+    instructions: `Prepare the user for the interview they name (their next one on the calendar if they don't say).
+1. Who they're meeting: role and public background of each interviewer, if known.
+2. The company: a short brief and anything that changed recently.
+3. The 10 questions they're most likely to be asked for this role and stage, with what a strong answer covers.
+4. Matching stories from their experience in STAR form, using only facts from their files and memory; mark gaps where they need a story.
+5. Five sharp questions for them to ask.
+Save it as a document and reply with the link and the three things to practise most.`,
+  },
   {
     id: "weekly-sales-report",
     name: "Weekly sales report",
@@ -65,7 +131,7 @@ export const CATALOG: CatalogEntry[] = [
     apps: ["gmail", "outlook"],
     instructions: `Draft replies to customer emails (the ones the user points to, or unanswered ones from the last 2 days).
 - Read each whole thread first, and check order history if the customer mentions an order.
-- Match the tone in the business context; if none is given, be warm, brief, and specific.
+- Match the tone in the agent profile; if none is given, be warm, brief, and specific.
 - Answer the actual question in the first two sentences. Offer one clear next step.
 - Never promise refunds, discounts, or dates the business hasn't confirmed; say a person will follow up.
 - Save replies as drafts; do not send. Reply with a list of the drafts created.`,
@@ -78,7 +144,7 @@ export const CATALOG: CatalogEntry[] = [
     apps: ["shopify", "gmail"],
     instructions: `1. Find customers whose first order was in the period the user names (the last 7 days if they don't say).
 2. For each, note what they bought.
-3. Draft a short, personal thank-you email mentioning their purchase. No discount codes unless the business context provides one.
+3. Draft a short, personal thank-you email mentioning their purchase. No discount codes unless the agent profile provides one.
 4. Save as drafts; do not send.
 5. Reply with how many drafts were created and who they're for.`,
   },
@@ -91,7 +157,7 @@ export const CATALOG: CatalogEntry[] = [
     instructions: `1. Find unpaid invoices overdue by at least 7 days (or what the user asks for).
 2. Group them by customer, with invoice numbers, amounts, and due dates quoted exactly.
 3. Draft one reminder per customer: friendly under 14 days overdue, firm after, and suggest a call after 30.
-4. Never threaten fees or collections unless the business context says to. Save as drafts; do not send.
+4. Never threaten fees or collections unless the agent profile says to. Save as drafts; do not send.
 5. Reply with a table of customers, totals owed, and which drafts were created.`,
   },
   {
@@ -172,7 +238,7 @@ export const CATALOG: CatalogEntry[] = [
     category: "Marketing",
     apps: ["shopify"],
     instructions: `Write descriptions for the products the user names (or products with missing or very short descriptions).
-- Follow the voice in the business context. Lead with what the product is for, then materials, size, and care.
+- Follow the voice in the agent profile. Lead with what the product is for, then materials, size, and care.
 - Keep each under 120 words. Don't invent facts; ask about anything you can't find.
 - Do not update the store. Reply with the drafts, one per product.`,
   },

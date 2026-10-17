@@ -314,7 +314,7 @@ describe("interpretCalls", () => {
     const [step] = interpretCalls([
       { name: "list_documents", input: { limit: 10 }, output: { content: [{ type: "text", text: JSON.stringify(docs) }], isError: false }, error: null },
     ]);
-    expect(step.label).toBe("Checked what I know about your business");
+    expect(step.label).toBe("Checked what I know about you");
     expect(step.preview).toEqual({
       type: "items",
       items: [

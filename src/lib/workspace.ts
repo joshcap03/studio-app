@@ -19,14 +19,15 @@ export async function getSettings(tenant: Tenant): Promise<WorkspaceSettings> {
   const row = check(
     await tenant.db
       .from("workspace_settings")
-      .select("business_context, agent_instructions")
+      .select("business_context, agent_instructions, template_id")
       .eq("workspace_id", tenant.workspace.id)
       .single(),
-  ) as { business_context: string; agent_instructions: string };
+  ) as { business_context: string; agent_instructions: string; template_id: string | null };
   return {
     name: tenant.workspace.name,
-    businessContext: row.business_context,
+    profile: row.business_context,
     agentInstructions: row.agent_instructions,
+    templateId: row.template_id,
   };
 }
 
@@ -58,8 +59,9 @@ export async function updateSettings(tenant: Tenant, patch: Partial<WorkspaceSet
     check(await tenant.db.from("workspaces").update({ name: patch.name }).eq("id", tenant.workspace.id));
     tenant.workspace = { ...tenant.workspace, name: patch.name };
   }
-  const values: Record<string, string> = {};
-  if (patch.businessContext !== undefined) values.business_context = patch.businessContext;
+  const values: Record<string, string | null> = {};
+  if (patch.profile !== undefined) values.business_context = patch.profile;
+  if (patch.templateId !== undefined) values.template_id = patch.templateId;
   if (patch.agentInstructions !== undefined) values.agent_instructions = patch.agentInstructions;
   if (Object.keys(values).length > 0) {
     check(
@@ -146,7 +148,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     userId: tenant.userId,
     composioUserId: tenant.composioUserId,
     composioToolkits: Object.fromEntries((getConfig().composio?.toolkits ?? []).map((t) => [t.slug, t.authConfigId])),
-    businessContext: settings.businessContext,
+    profile: settings.profile,
     agentInstructions: settings.agentInstructions,
     memories,
     guardrail,
