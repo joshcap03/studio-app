@@ -182,6 +182,8 @@ describe("loose agent output", () => {
     [{ every: "weekday", at: "8am" }, { every: "weekdays", at: "08:00" }],
     [{ every: "weekly", weekday: "Monday", at: "09:00", extra: true }, { every: "week", at: "09:00", weekday: 1 }],
     [{ every: "weekly", day: "monday", at: "09:00" }, { every: "week", at: "09:00", weekday: 1 }],
+    [{ every: "monday", at: "09:00" }, { every: "week", at: "09:00", weekday: 1 }],
+    [{ every: "Fridays", at: "17:00" }, { every: "week", at: "17:00", weekday: 5 }],
   ])("reads the schedule %j", (raw, expected) => {
     expect(scheduleFrom(raw)).toEqual(expected);
   });

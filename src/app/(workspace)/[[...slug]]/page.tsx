@@ -7,7 +7,7 @@ import { storeFor } from "@/lib/chat/store-for";
 import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
-import { templateById } from "@/lib/templates";
+import { templateById, setupSteps, type AgentTemplate } from "@/lib/templates";
 import { requirePageTenant } from "@/lib/tenant";
 import type { SetupSummary } from "@/lib/types";
 import { getSettings } from "@/lib/workspace";
@@ -16,6 +16,8 @@ import { getSettings } from "@/lib/workspace";
 // switches conversations in place, without a server round trip per navigation.
 
 export const dynamic = "force-dynamic";
+
+const setupStepCount = (template: AgentTemplate | undefined) => (template ? setupSteps(template).length : 0);
 
 export default async function WorkspacePage({
   params,
@@ -61,7 +63,7 @@ export default async function WorkspacePage({
           status: settings.setup?.status ?? "not_started",
           conversationId: settings.setup?.conversationId ?? null,
           done: settings.setup?.plan.filter((s) => s.status === "done").length ?? 0,
-          total: settings.setup?.plan.length || templateById(settings.templateId)?.setup.steps.length || 0,
+          total: settings.setup?.plan.length || setupStepCount(templateById(settings.templateId)),
         }
       : null;
 

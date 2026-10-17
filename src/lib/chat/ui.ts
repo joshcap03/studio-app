@@ -225,6 +225,10 @@ export function scheduleFrom(raw: unknown): unknown {
   if (isRecord(raw)) {
     const every = line(raw.every, 20).toLowerCase();
     const kind = ({ daily: "day", weekday: "weekdays", weekly: "week", hourly: "hours" } as Record<string, string>)[every] ?? every;
+    // A weekday as `every` ({every: "monday"}) means once a week on that day.
+    const everyDay = every.length >= 3 ? WEEKDAYS.findIndex((d) => d.startsWith(every.replace(/s$/, "").slice(0, 3))) : -1;
+    if (everyDay >= 0 && raw.weekday === undefined && raw.day === undefined && raw.day_of_week === undefined)
+      return { every: "week", at: clock(raw.at), weekday: everyDay };
     const named = raw.weekday ?? raw.day ?? raw.day_of_week;
     const day = line(named, 20).toLowerCase().slice(0, 3);
     const weekday = typeof named === "string" && day ? WEEKDAYS.findIndex((d) => d.startsWith(day)) : named;
