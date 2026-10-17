@@ -10,6 +10,8 @@ import {
   MAX_LIST_ITEMS,
   MAX_LIST_PARTS,
   MAX_PROPOSED_ITEMS,
+  MAX_VERDICT_ITEMS,
+  MAX_VERDICT_REASONS,
   type AgentProposal,
   type ProposedSkill,
   type ProposedTask,
@@ -18,6 +20,7 @@ import {
   type UiForm,
   type UiListPart,
   type UiOption,
+  type UiVerdictItem,
 } from "@/lib/types";
 
 // Cards the agent asked to show through its show_form and propose_agent tools. Neither tool
@@ -69,7 +72,7 @@ function options(raw: unknown): UiOption[] {
   return out.slice(0, 8);
 }
 
-const KINDS = ["choice", "multi_choice", "text", "long_text", "file", "list", "connect"] as const;
+const KINDS = ["choice", "multi_choice", "text", "long_text", "file", "list", "connect", "rank", "scale", "verdict"] as const;
 const KIND_ALIASES: Record<string, (typeof KINDS)[number]> = {
   select: "choice",
   radio: "choice",
@@ -87,7 +90,48 @@ const KIND_ALIASES: Record<string, (typeof KINDS)[number]> = {
   repeat: "list",
   entries: "list",
   apps: "connect",
+  order: "rank",
+  ranking: "rank",
+  sort: "rank",
+  slider: "scale",
+  rating: "scale",
+  range: "scale",
+  judge: "verdict",
+  review: "verdict",
+  keep_pass: "verdict",
+  samples: "verdict",
 };
+
+/** An http(s) link, or nothing. */
+function link(raw: unknown): string {
+  const s = line(raw, 1000);
+  try {
+    const url = new URL(s);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function verdictItems(raw: unknown): UiVerdictItem[] {
+  const seen = new Set<string>();
+  const out: UiVerdictItem[] = [];
+  for (const i of list(raw)) {
+    const r = isRecord(i) ? i : { title: i };
+    const title = line(r.title ?? r.label ?? r.name, 160);
+    if (!title) continue;
+    const body = para(r.body ?? r.description ?? r.summary ?? r.why, 600);
+    const href = link(r.link ?? r.url ?? r.href);
+    const rec = isRecord(r.record) ? r.record : r;
+    const collection = line(rec.collection, 40);
+    const key = line(rec.key, 500);
+    let id = slug(line(r.id, 40)) || slug(title) || "item";
+    for (let n = 2; seen.has(id); n += 1) id = `${id.replace(/_\d+$/, "")}_${n}`;
+    seen.add(id);
+    out.push({ id, title, ...(body ? { body } : {}), ...(href ? { link: href } : {}), ...(collection && key ? { record: { collection, key } } : {}) });
+  }
+  return out.slice(0, MAX_VERDICT_ITEMS);
+}
 
 const LONG_PARTS = new Set(["long", "long_text", "longtext", "paragraph", "textarea"]);
 
@@ -113,7 +157,39 @@ function field(raw: unknown): Draft<UiField> | null {
       if (opts.length < 2) return null;
       const labels = new Set(opts.map((o) => o.label));
       const prefill = (Array.isArray(prefillRaw) ? prefillRaw : [prefillRaw]).map((p) => line(p, 80)).filter((p) => labels.has(p));
-      return { ...base, kind, options: opts, ...(prefill.length ? { prefill: kind === "choice" ? prefill.slice(0, 1) : prefill } : {}) };
+      const allowOther = raw.allow_other === true || raw.allowOther === true || raw.other === true;
+      return {
+        ...base,
+        kind,
+        options: opts,
+        ...(prefill.length ? { prefill: kind === "choice" ? prefill.slice(0, 1) : prefill } : {}),
+        ...(allowOther ? { allowOther } : {}),
+      };
+    }
+    case "rank": {
+      const opts = options(raw.options ?? raw.choices ?? raw.items);
+      if (opts.length < 2) return null;
+      const labels = new Set(opts.map((o) => o.label));
+      const order = [...new Set(list(prefillRaw).map((p) => line(p, 80)).filter((p) => labels.has(p)))];
+      // A full order the agent drafted; anything short of that keeps the options' own order.
+      return { ...base, kind, options: opts, ...(order.length === opts.length ? { prefill: order } : {}), required: false };
+    }
+    case "scale": {
+      const steps = Math.max(3, Math.min(count(raw.steps ?? raw.max, 5, 7), 7));
+      const low = line(raw.low ?? raw.min_label ?? raw.minLabel ?? raw.left, 60);
+      const high = line(raw.high ?? raw.max_label ?? raw.maxLabel ?? raw.right, 60);
+      if (!low || !high) return null;
+      const n = typeof prefillRaw === "number" ? Math.round(prefillRaw) : Number.parseInt(String(prefillRaw ?? ""), 10);
+      return { ...base, kind, steps, low, high, ...(n >= 1 && n <= steps ? { prefill: n } : {}) };
+    }
+    case "verdict": {
+      const items = verdictItems(raw.items ?? raw.results ?? raw.options);
+      if (items.length === 0) return null;
+      const reasons = list(raw.reasons ?? raw.pass_reasons ?? raw.passReasons)
+        .map((r) => line(r, 60))
+        .filter((r, i, all) => r && all.findIndex((o) => o.toLowerCase() === r.toLowerCase()) === i)
+        .slice(0, MAX_VERDICT_REASONS);
+      return { ...base, kind, items, reasons };
     }
     case "text":
     case "long_text": {

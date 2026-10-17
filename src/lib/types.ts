@@ -486,9 +486,30 @@ export interface UiListPart {
   long: boolean;
 }
 
+/** One result the member judges in a verdict field, e.g. a role the agent found. */
+export interface UiVerdictItem {
+  id: string;
+  title: string;
+  body?: string;
+  /** An http(s) link to the thing itself. */
+  link?: string;
+  /** The tracker row it is, so a verdict can be tied back to it. */
+  record?: { collection: string; key: string };
+}
+
+/** The member's call on one verdict item. */
+export type Verdict = "keep" | "pass";
+
 export type UiField = FieldBase &
   (
-    | { kind: "choice" | "multi_choice"; options: UiOption[]; prefill?: string[] }
+    /** `allowOther`: a "Something else" tile that takes the member's own words. */
+    | { kind: "choice" | "multi_choice"; options: UiOption[]; prefill?: string[]; allowOther?: boolean }
+    /** Options the member puts in order, most important first; `prefill` is the agent's order. */
+    | { kind: "rank"; options: UiOption[]; prefill?: string[] }
+    /** A point on a 1..steps scale between two labelled ends. */
+    | { kind: "scale"; steps: number; low: string; high: string; prefill?: number }
+    /** Results the member keeps or passes on, a pass with a reason (from `reasons`, or their own). */
+    | { kind: "verdict"; items: UiVerdictItem[]; reasons: string[] }
     | { kind: "text" | "long_text"; placeholder?: string; prefill?: string }
     /** Files the member drops in; `accept` holds extensions from ATTACHMENT_TYPES; `keep` puts them on the agent's shelf. */
     | { kind: "file"; accept: string[]; max: number; keep: boolean }
@@ -564,6 +585,8 @@ export const MAX_LIST_ITEMS = 8;
 export const MAX_LIST_PARTS = 5;
 export const MAX_FORM_FILES = 5;
 export const MAX_PROPOSED_ITEMS = 8;
+export const MAX_VERDICT_ITEMS = 8;
+export const MAX_VERDICT_REASONS = 6;
 
 /** A member's rating of one reply. Reasons come from FEEDBACK_REASONS for that rating. */
 export interface MessageFeedback {
