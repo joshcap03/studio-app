@@ -133,6 +133,7 @@ function taskContext(task: NonNullable<AgentTenantContext["task"]>): string {
     task.instructions.trim() && `Task brief:\n${task.instructions.trim()}`,
     plan ? `Plan so far:\n${plan}` : "There's no plan yet. If the task has several steps, write one with update_plan.",
     "Keep the plan current with update_plan whenever a step starts, finishes, gets blocked, or needs the member.",
+    "When this run's work is done, call report_run once: nothing_new if you found nothing worth their attention, update if there's something to read, needs_you if they must decide or act. They're only notified for update and needs_you.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -456,6 +457,7 @@ export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
     if (!isRecord(result)) continue;
     if (isRecord(result.plan_update)) events.push({ type: "plan-update", plan: result.plan_update.steps });
     if (isRecord(result.record)) events.push({ type: "record", record: result.record });
+    if (isRecord(result.run_report)) events.push({ type: "run-report", report: result.run_report });
   }
   return events;
 }

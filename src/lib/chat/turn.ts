@@ -19,6 +19,8 @@ import {
   type MemoryCategory,
   type MemoryProposal,
   type MessageOrigin,
+  RUN_OUTCOMES,
+  type RunReport,
   type MessageStatus,
   type StreamEvent,
   type Question,
@@ -113,7 +115,11 @@ export interface TurnDeps {
    * Called once the reply's final state is saved. `watched` is whether the browser was still
    * listening when the run ended (so the member already saw the result). Errors are logged.
    */
-  onFinished?: (message: ChatMessage, conversation: ConversationSummary, info: { watched: boolean }) => Promise<void> | void;
+  onFinished?: (
+    message: ChatMessage,
+    conversation: ConversationSummary,
+    info: { watched: boolean; report?: RunReport | null },
+  ) => Promise<void> | void;
 }
 
 /** A run in progress on this server; `done` settles once its final state is saved. */
@@ -388,6 +394,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       const remembering: Promise<void>[] = [];
       let records = 0;
+      let report: RunReport | null = null;
       let timeline: Timeline | null = assistant.timeline ?? null;
       // Kept from before a pause for approval; this run's citations are added to them.
       const earlierCitations: Citation[] = assistant.citations ?? [];
@@ -535,6 +542,12 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               }
               break;
             }
+            case "run-report": {
+              const raw = isRecord(event.report) ? event.report : {};
+              const outcome = RUN_OUTCOMES.find((o) => o === raw.outcome);
+              if (outcome) report = { outcome, summary: typeof raw.summary === "string" ? raw.summary.replace(/\s+/g, " ").trim().slice(0, 300) : "" };
+              break;
+            }
             case "plan-update": {
               if (!deps.savePlan) break;
               remembering.push(deps.savePlan(event.plan).then(noop, (e) => console.error("[turn] couldn't save the plan", e)));
@@ -659,7 +672,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         }
       }
       try {
-        await deps.onFinished?.(final, updated, { watched });
+        await deps.onFinished?.(final, updated, { watched, report });
       } catch (e) {
         console.error("[turn] onFinished failed", e);
       }

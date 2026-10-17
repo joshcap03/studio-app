@@ -47,12 +47,12 @@ export async function POST(request: NextRequest, { params }: Context) {
     const { deps, request: turn } = await buildTurnDeps(tenant, {
       conversationId,
       input: { kind: "task", taskId: task.id, runId },
-      onFinished: async (message) => {
+      onFinished: async (message, _conversation, { report }) => {
         try {
           if (runId) {
             // A run waiting on the member's approval isn't over: approving continues it.
             const status = message.status === "complete" ? "done" : message.status === "awaiting" ? "running" : "failed";
-            const reason = message.status === "complete" ? null : message.status === "awaiting" ? "waiting_on_you" : message.status;
+            const reason = message.status === "complete" ? (report?.outcome ?? null) : message.status === "awaiting" ? "waiting_on_you" : message.status;
             await settleRun(tenant, runId, { status, reason, messageId: message.id });
           }
           await markTaskRan(tenant, task.id);

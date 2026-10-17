@@ -154,6 +154,7 @@ describe("Langflow request", () => {
           contents: [
             { type: "tool_use", name: "update_plan", output: JSON.stringify({ plan_update: { steps: [{ text: "a", status: "todo" }] } }) },
             { type: "tool_use", name: "save_record", output: { record: { collection: "applications", key: "k" } } },
+            { type: "tool_use", name: "report_run", output: { run_report: { outcome: "nothing_new", summary: "" } } },
             { type: "tool_use", name: "web_search", output: { results: [] } },
             { type: "tool_use", name: "save_record", output: { record: { collection: "x", key: "y" } }, error: true },
           ],
@@ -163,6 +164,7 @@ describe("Langflow request", () => {
     expect(toolTaskUpdates(message as never)).toEqual([
       { type: "plan-update", plan: [{ text: "a", status: "todo" }] },
       { type: "record", record: { collection: "applications", key: "k" } },
+      { type: "run-report", report: { outcome: "nothing_new", summary: "" } },
     ]);
   });
 
