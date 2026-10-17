@@ -149,7 +149,7 @@ describe("loose agent output", () => {
             type: "list",
             label: "Stories",
             item_label: "Story",
-            parts: [
+            item_fields: [
               { key: "title", label: "Title", type: "short" },
               { key: "situation", label: "Situation", type: "long" },
             ],
@@ -184,6 +184,27 @@ describe("loose agent output", () => {
     [{ every: "weekly", day: "monday", at: "09:00" }, { every: "week", at: "09:00", weekday: 1 }],
   ])("reads the schedule %j", (raw, expected) => {
     expect(scheduleFrom(raw)).toEqual(expected);
+  });
+
+  it("takes connect fields with one app each", () => {
+    const block = buildUiBlock({
+      form: {
+        title: "Connect your apps",
+        fields: [
+          { name: "gmail", label: "Gmail", type: "connect", app: "gmail" },
+          { name: "clay", label: "Clay", type: "connect", apps: "clay" },
+          { name: "calendar", label: "Calendar", type: "connect", app: "googlecalendar" },
+          { key: "hunter", label: "Hunter", type: "connect" },
+          { key: "nope", label: "Nope", type: "connect" },
+        ],
+      },
+    });
+    expect((block as UiForm).fields).toMatchObject([
+      { kind: "connect", apps: ["gmail"] },
+      { kind: "connect", apps: ["clay"] },
+      { kind: "connect", apps: ["calendar"] },
+      { kind: "connect", apps: ["hunter"] },
+    ]);
   });
 
   it("switches on a template task named only by its id, under that task's title", () => {

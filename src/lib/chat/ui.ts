@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { APPS } from "@/lib/apps";
+import { APPS, appForToolkit } from "@/lib/apps";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { TEMPLATES } from "@/lib/templates";
@@ -129,7 +129,7 @@ function field(raw: unknown): Draft<UiField> | null {
     }
     case "list": {
       const parts = ids<UiListPart>(
-        list(raw.parts ?? raw.fields)
+        list(raw.parts ?? raw.fields ?? raw.item_fields ?? raw.itemFields)
           .map((p): Draft<UiListPart> | null =>
             typeof p === "string"
               ? { label: line(p, 60), long: false }
@@ -158,7 +158,12 @@ function field(raw: unknown): Draft<UiField> | null {
       return { ...base, kind, parts, itemLabel, max, ...(prefill.length ? { prefill } : {}) };
     }
     case "connect": {
-      const apps = [...new Set(list(raw.apps).map((a) => line(a, 30).toLowerCase()))].filter((a) => a in APPS).slice(0, 6);
+      // One app per field ({app: "gmail"}, or just the field's name) is as common as a list, and
+      // Composio's toolkit names ("googlecalendar") as common as app ids.
+      const strings = (v: unknown) => (Array.isArray(v) ? v : typeof v === "string" ? [v] : []);
+      let named = [raw.apps, raw.app, raw.toolkit].flatMap(strings);
+      if (named.length === 0) named = [raw.id, raw.name, raw.key].flatMap(strings);
+      const apps = [...new Set(named.map((a) => line(a, 30).toLowerCase()).map((a) => (a in APPS ? a : appForToolkit(a))))].filter((a) => a in APPS).slice(0, 6);
       return apps.length ? { ...base, kind, apps, required: false } : null;
     }
   }

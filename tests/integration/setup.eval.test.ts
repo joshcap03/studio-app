@@ -293,4 +293,29 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     );
     expect(wrote).toEqual([]);
   });
+
+  it("shows every card the agent sent whole: no field, prefill, task, or schedule dropped", () => {
+    const lost: string[] = [];
+    for (const e of turns.flatMap((x) => x.events)) {
+      if (e.type !== "ui") continue;
+      const raw = e.block as { form?: { title?: string; fields?: Record<string, unknown>[] }; proposal?: { tasks?: Record<string, unknown>[] } };
+      const block = buildUiBlock(e.block);
+      if (raw.form) {
+        const fields = block?.kind === "form" ? block.fields : [];
+        (raw.form.fields ?? []).forEach((f, i) => {
+          const kept = fields.find((x) => x.label === String(f.label ?? "").trim());
+          if (!kept) lost.push(`form "${raw.form!.title}" field ${i}: ${JSON.stringify(f).slice(0, 200)}`);
+          else if ((f.prefill ?? f.value ?? f.items) != null && !("prefill" in kept && kept.prefill))
+            lost.push(`form "${raw.form!.title}" prefill of "${kept.label}": ${JSON.stringify(f).slice(0, 200)}`);
+        });
+      } else if (raw.proposal) {
+        const tasks = block?.kind === "proposal" ? block.tasks : [];
+        (raw.proposal.tasks ?? []).forEach((t, i) => {
+          if (!tasks[i]) lost.push(`proposed task ${i}: ${JSON.stringify(t).slice(0, 200)}`);
+          else if (t.schedule != null && tasks[i].schedule === null) lost.push(`schedule of "${tasks[i].title}": ${JSON.stringify(t.schedule)}`);
+        });
+      }
+    }
+    expect(lost).toEqual([]);
+  });
 });
