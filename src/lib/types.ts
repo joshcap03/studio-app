@@ -589,6 +589,8 @@ export type UiResponse =
       picks: ProposalPicks;
       /** `skipped`: picked items that couldn't be applied (not the owner, a preview off, memory not set up). */
       applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number };
+      /** The tasks it switched on or created, in the proposal's order, so the first can run right away. */
+      taskIds?: string[];
     };
 
 export const MAX_UI_BLOCKS = 2;

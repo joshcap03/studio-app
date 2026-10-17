@@ -145,7 +145,7 @@ describe("ui card answers", () => {
     const edited = `ui-cards-edited-${tag}`;
     const res = await alice.api.json(url(proposalId), "POST", { action: "apply", picks, edits: { instructions: edited }, timezone: "America/New_York" });
     expect(res.status, await res.clone().text()).toBe(200);
-    const { response } = (await res.json()) as { response: { applied: unknown; picks: unknown } };
+    const { response } = (await res.json()) as { response: { applied: unknown; picks: unknown; taskIds?: string[] } };
     expect(response.applied).toEqual({ settings: true, skills: 0, tasks: 1, memories: 0, skipped: 0 });
     // Only what took effect: the memory picks are empty when memory isn't set up locally.
     expect(response.picks).toEqual({ profile: false, instructions: true, skills: [], tasks: [0], memories: [] });
@@ -153,8 +153,10 @@ describe("ui card answers", () => {
     const settings = ((await (await alice.api.json("/api/workspace/settings", "GET")).json()) as { settings: { profile: string; agentInstructions: string } }).settings;
     expect(settings.agentInstructions).toBe(edited);
     expect(settings.profile).not.toBe(proposal.profile);
-    const tasks = ((await (await alice.api.json("/api/tasks", "GET")).json()) as { tasks: { title: string; status: string }[] }).tasks.filter((t) => t.title.includes(tag));
+    const tasks = ((await (await alice.api.json("/api/tasks", "GET")).json()) as { tasks: { id: string; title: string; status: string }[] }).tasks.filter((t) => t.title.includes(tag));
     expect(tasks).toEqual([expect.objectContaining({ title: `UI cards ${tag} kept`, status: "active" })]);
+    // The applied task's id comes back, so "Do the first one now" can run it.
+    expect(response.taskIds).toEqual([tasks[0].id]);
 
     expect((await alice.api.json(url(proposalId), "POST", { action: "apply", picks })).status).toBe(409);
     const stored = await alice.db.from("messages").select("ui_response").eq("conversation_id", conversation).single();

@@ -19,6 +19,8 @@ interface Props {
   onAnswer: (text: string, extras?: { attachments: Attachment[] }) => void;
   /** Records what the member did with a card under a reply (a form sent, a proposal applied). */
   onUiResponse: (messageId: string, blockId: string, response: UiResponse) => void;
+  /** Runs a task now and opens its conversation (a proposal's "Do the first one now"). */
+  onRunTask?: (taskId: string) => Promise<void>;
   onFeedback: (messageId: string, feedback: MessageFeedback | null) => void;
   onOpenPanel?: (messageId: string) => void;
   /** Changes whenever the user sends, to pull the view back to the latest message. */
@@ -30,7 +32,7 @@ interface Props {
  * The scrolling message list. Follows new output while the reader is at the bottom, and
  * leaves the scroll position alone once they scroll up to read earlier messages.
  */
-export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onFeedback, onOpenPanel, sendCount, footer }: Props) {
+export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onRunTask, onFeedback, onOpenPanel, sendCount, footer }: Props) {
   const lastUserId = messages.findLast((m) => m.role === "user")?.id;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -94,6 +96,7 @@ export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposa
                     onProposal={onProposal}
                     onAnswer={!running && index === messages.length - 1 ? onAnswer : undefined}
                     onUiResponse={onUiResponse}
+                    onRunTask={onRunTask}
                     onFeedback={message.id.startsWith("pending-") ? undefined : onFeedback}
                   />
                 )}

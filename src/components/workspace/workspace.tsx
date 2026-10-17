@@ -364,6 +364,15 @@ export function Workspace({
     [navigate],
   );
 
+  /** A task's run started from a card (the first win after setup): run it, then follow it there. */
+  const runTaskNow = useCallback(
+    async (taskId: string) => {
+      const { conversationId } = await api.runTask(taskId);
+      openTaskConversation(conversationId);
+    },
+    [openTaskConversation],
+  );
+
   // ---------------------------------------------------------------------------------------
   // Running turns
 
@@ -1228,6 +1237,7 @@ export function Workspace({
               onProposal={answerProposal}
               onAnswer={send}
               onUiResponse={recordUiResponse}
+              onRunTask={runTaskNow}
               onFeedback={rateMessage}
               onOpenPanel={openPanel}
               sendCount={sendCount}

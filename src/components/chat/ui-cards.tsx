@@ -27,9 +27,11 @@ export interface UiCardsProps {
   onResponse?: (messageId: string, blockId: string, response: UiResponse) => void;
   /** Whether the reply is finished, so a proposal can be applied. */
   settled: boolean;
+  /** Runs a task now and opens its conversation; throws with a message the card can show. */
+  onRunTask?: (taskId: string) => Promise<void>;
 }
 
-export function UiCards({ blocks, responses, conversationId, messageId, onAnswer, onResponse, settled }: UiCardsProps) {
+export function UiCards({ blocks, responses, conversationId, messageId, onAnswer, onResponse, settled, onRunTask }: UiCardsProps) {
   return (
     <>
       {blocks.map((block) =>
@@ -50,6 +52,7 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             proposal={block}
             response={responses?.[block.id]}
             canApply={settled && Boolean(onResponse)}
+            onRunTask={onRunTask}
             onApply={async (picks, edits) => {
               const { response } = await api.answerUi(conversationId, block.id, {
                 action: "apply",
@@ -804,12 +807,13 @@ interface ProposalProps {
   response?: UiResponse;
   canApply: boolean;
   onApply: (picks: ProposalPicks, edits: { profile?: string; instructions?: string }) => Promise<void>;
+  onRunTask?: UiCardsProps["onRunTask"];
 }
 
 const every = (n: number) => Array.from({ length: n }, (_, i) => i);
 
 /** The agent's suggested setup for itself. Nothing changes until the member applies it. */
-export function ProposalCard({ proposal, response, canApply, onApply }: ProposalProps) {
+export function ProposalCard({ proposal, response, canApply, onApply, onRunTask }: ProposalProps) {
   const [picks, setPicks] = useState<ProposalPicks>(() => ({
     profile: proposal.profile !== undefined,
     instructions: proposal.instructions !== undefined,
@@ -933,10 +937,15 @@ export function ProposalCard({ proposal, response, canApply, onApply }: Proposal
         )}
       </div>
       {applied ? (
-        <p className="flex items-center gap-1.5 border-t border-line px-4 py-2 text-[12.5px] text-success">
-          <Check size={13} />
-          {appliedText(applied.applied)}
-        </p>
+        <div className="border-t border-line">
+          <p className="flex items-center gap-1.5 px-4 py-2 text-[12.5px] text-success">
+            <Check size={13} className="settle-check" />
+            {appliedText(applied.applied)}
+          </p>
+          {applied.taskIds?.length && onRunTask ? (
+            <FirstRun taskId={applied.taskIds[0]} title={proposal.tasks[applied.picks.tasks[0]]?.title} onRun={onRunTask} />
+          ) : null}
+        </div>
       ) : live ? (
         <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
           <span className={`mr-auto pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? "Nothing changes until you apply."}</span>
@@ -947,6 +956,34 @@ export function ProposalCard({ proposal, response, canApply, onApply }: Proposal
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** The first win: the agent does its first task now, while the member is still here to see it. */
+function FirstRun({ taskId, title, onRun }: { taskId: string; title?: string; onRun: (taskId: string) => Promise<void> }) {
+  const [state, setState] = useState<"idle" | "starting" | "started">("idle");
+  const [error, setError] = useState<string | null>(null);
+  async function run() {
+    setState("starting");
+    setError(null);
+    try {
+      await onRun(taskId);
+      setState("started");
+    } catch (e) {
+      setState("idle");
+      setError(e instanceof ApiError ? e.message : "Couldn't start it. Try again.");
+    }
+  }
+  return (
+    <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5 animate-fade-in">
+      <span className={`mr-auto min-w-0 truncate pl-1 text-[12.5px] ${error ? "text-danger" : "text-fg-3"}`}>
+        {error ?? (state === "started" ? "Started. It's running in its own chat." : title ? `First up: ${title}` : "See it work on the real thing.")}
+      </span>
+      <button type="button" onClick={() => void run()} disabled={state !== "idle"} className={primary}>
+        {state === "starting" ? <span className="spinner size-3.5" aria-hidden="true" /> : state === "started" ? <Check size={14} /> : <Sparkles size={14} />}
+        {state === "started" ? "Started" : "Do the first one now"}
+      </button>
+    </div>
   );
 }
 
