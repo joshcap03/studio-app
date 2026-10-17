@@ -9,8 +9,6 @@ import { CATALOG } from "./catalog";
 
 export const SETUP_SKILL_ID = "builtin:setup";
 export const SETUP_SKILL_NAME = "Set up this agent";
-/** What the member's opening message says when they start (or rerun) setup. */
-export const SETUP_KICKOFF = "Let's set you up.";
 
 const RULES = `Set this agent up with the owner, as a short interview, so it works the way they need from here on.
 - Go through the steps below in order, one step per reply. Each reply is a sentence or two, then one show_form (ask_user for a single quick choice), and then stop: their answers arrive as their next message.
