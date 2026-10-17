@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { evidenceFor } from "./evidence";
 import { interpretCalls, talksMachinery, withoutRepeats, type ToolCall } from "./index";
 import { maskSecrets, safeUrl } from "./sanitize";
 
@@ -22,6 +23,37 @@ const gateway = (tool_name: string, args: Record<string, unknown>, output: unkno
 });
 
 describe("interpretCalls", () => {
+  it("reads pages by link (Exa get_contents) as a web read, with sources and evidence", () => {
+    const page = { url: "https://acme.example/press/launch", id: "https://acme.example/press/launch", title: "Acme launches", published_date: null, author: null, image: null, text: "Acme opened a second studio in March." };
+    const calls: ToolCall[] = [
+      { name: "get_contents", input: { ids: [page.url] }, output: { results: [page] }, error: null },
+      gateway("get_contents", { ids: [page.url] }, toolMessage({ results: [page] })),
+    ];
+    for (const call of calls) {
+      const [step] = interpretCalls([call]);
+      expect(step).toMatchObject({
+        label: "Read acme.example",
+        status: "done",
+        app: "web",
+        preview: { type: "sources", items: [{ title: "Acme launches", url: page.url, domain: "acme.example" }] },
+      });
+      expect(evidenceFor([call])).toEqual([expect.objectContaining({ url: page.url, app: "web", text: expect.stringContaining("second studio in March") })]);
+    }
+  });
+
+  it("treats any other tool that returns a list of web results the same way", () => {
+    const results = [
+      { url: "https://a.example/1", title: "One", text: "First page." },
+      { url: "https://b.example/2", title: "Two", text: "Second page." },
+    ];
+    const call: ToolCall = { name: "find_similar", input: { url: "https://acme.example/" }, output: { results }, error: null };
+    const [step] = interpretCalls([call]);
+    expect(step).toMatchObject({ label: "Read acme.example", app: "web", preview: { type: "sources", items: [{ url: results[0].url }, { url: results[1].url }] } });
+    const [noInput] = interpretCalls([{ ...call, input: {} }]);
+    expect(noInput.label).toBe("Read 2 pages");
+    expect(evidenceFor([call]).map((e) => e.app)).toEqual(["web", "web"]);
+  });
+
   it("hides report_timeline: its timeline shows in Results, not as a step", () => {
     const [step] = interpretCalls([
       { name: "report_timeline", input: { question: "Why?", entries: [] }, output: JSON.stringify({ timeline: { entries: [] } }), error: null },

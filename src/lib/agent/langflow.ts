@@ -1,6 +1,6 @@
 import { appForToolkit } from "@/lib/apps";
 import { toMemoryCategory } from "@/lib/types";
-import { evidenceFor, interpretCalls, type ToolCall } from "./tools";
+import { evidenceFor, interpretCalls, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
@@ -286,8 +286,8 @@ interface LangflowMessage {
  * "Agent Steps" block holding them in `contents` (v1 streams, and a background job's final
  * message), and, while a background job runs, the entries themselves as the blocks.
  */
-function leaves(message: LangflowMessage): { type?: string; text?: unknown }[] {
-  const out: { type?: string; text?: unknown }[] = [];
+function leaves(message: LangflowMessage): { type?: string; text?: unknown; name?: string | null; tool_input?: unknown; input?: unknown }[] {
+  const out: { type?: string; text?: unknown; name?: string | null; tool_input?: unknown; input?: unknown }[] = [];
   for (const block of message.content_blocks ?? []) {
     if (!block || typeof block !== "object") continue;
     if (block.contents?.length) {
@@ -565,17 +565,20 @@ export function friendlyError(detail: string): string {
   return `The agent ran into a problem: ${short(detail, 300)}`;
 }
 
-/** Longest text treated as a possible opening line before it is released as the answer. */
-const NOTE_MAX = 280;
+/**
+ * Which entries of a reply are the agent's opening lines: short text followed by a tool call
+ * that does work. Text followed only by calls that report on the answer (cite, remember, …)
+ * is the answer itself, and long text never reads as an opening line.
+ */
+export function openingLineIndexes(entries: { type?: string; text?: unknown; name?: string | null; tool_input?: unknown; input?: unknown }[]): number[] {
+  const lastWork = entries.findLastIndex((l) => l.type === "tool_use" && !reportsOnAnswer(l.name ?? "tool", l.tool_input ?? l.input));
+  return entries.flatMap((l, i) => (i < lastWork && l.type === "text" && typeof l.text === "string" && opensWork(l.text) ? [i] : []));
+}
 
-/** Text blocks that come before a tool call in a bot message: the agent's opening lines. */
+/** The agent's opening lines in a bot message. */
 export function leadingNotes(message: LangflowMessage): string[] {
   const all = leaves(message);
-  const lastTool = all.map((l) => l.type).lastIndexOf("tool_use");
-  return all
-    .slice(0, Math.max(0, lastTool))
-    .filter((l) => l.type === "text" && typeof l.text === "string" && l.text.trim())
-    .map((l) => (l.text as string).trim());
+  return openingLineIndexes(all).map((i) => (all[i].text as string).trim());
 }
 
 /** Langflow prefixes the final text with any opening lines; strip them from the answer. */
@@ -844,7 +847,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   yield { type: "text-delta", text: chunk };
                 } else {
                   pending += chunk;
-                  if (pending.length > NOTE_MAX || pending.includes("\n\n")) {
+                  if (pending.length > OPENING_LINE_MAX || pending.includes("\n\n")) {
                     releasing = true;
                     shownText += pending;
                     yield { type: "text-delta", text: pending };
@@ -856,10 +859,17 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               const message = data as LangflowMessage;
               if (!isBot(message)) continue;
               lastBot = message;
-              const calls = toolUses(message).length;
-              if (calls > toolCount) {
-                toolCount = calls;
-                if (pending.trim()) {
+              const uses = toolUses(message);
+              if (uses.length > toolCount) {
+                const fresh = uses.slice(toolCount);
+                toolCount = uses.length;
+                // Text before a call that only cites or remembers is the answer, not an opening line.
+                if (fresh.every((t) => reportsOnAnswer(t.name ?? "tool", t.tool_input ?? t.input))) {
+                  if (pending) {
+                    shownText += pending;
+                    yield { type: "text-delta", text: pending };
+                  }
+                } else if (pending.trim()) {
                   notes.push(pending.trim());
                   yield { type: "note", text: pending.trim() };
                 }
