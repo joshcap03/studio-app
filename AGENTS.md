@@ -17,7 +17,8 @@ gitignored and stays out of the repo.
   Create throwaway accounts (`*@example.test`); never use real credentials.
 - `npm run typecheck`, `npm test`, `npm run build`
 - `npm run test:integration`: needs local Supabase; API tests also need `qa:serve`;
-  Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`.
+  Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
+  with those, `job-search.eval.test.ts` evals the Job search template on the real model.
 
 Verify before handoff: typecheck, test, build, and the integration suite when touching data
 access, auth, or the agent boundary. For UI changes, drive the flow on the QA server.
@@ -38,7 +39,8 @@ raw/technical text.
   `workspace_settings.business_context`), usage/limits, and the per-run agent context.
 - `src/lib/templates/`: built-in starting points (Job search, Small business, Blank). Applying
   one (`apply.ts`) copies instructions and library skills into the workspace without
-  overwriting anything; suggested apps are shown, never connected automatically.
+  overwriting anything, and (with the "tasks" preview) gives the member the template's tasks,
+  paused; suggested apps are shown, never connected automatically.
 - `src/lib/memory.ts`: long-term memory in Supermemory, namespaced per workspace and per member
   from the session. The flow must not have its own memory connection.
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the

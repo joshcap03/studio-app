@@ -113,7 +113,12 @@ function nextRunAt(schedule: TaskSchedule | null, timezone: string, status: Agen
   return schedule && status === "active" ? nextRun(schedule, timezone, new Date()).toISOString() : null;
 }
 
-export async function createTask(tenant: Tenant, draft: TaskDraft & { templateTaskId?: string | null }): Promise<AgentTask> {
+/** Creates a task, active unless `status` says otherwise (a template's tasks start paused). */
+export async function createTask(
+  tenant: Tenant,
+  draft: TaskDraft & { templateTaskId?: string | null; status?: "active" | "paused" },
+): Promise<AgentTask> {
+  const status = draft.status ?? "active";
   const { count, error } = await tasks(tenant)
     .select("id", { count: "exact", head: true })
     .eq("workspace_id", tenant.workspace.id)
@@ -131,7 +136,8 @@ export async function createTask(tenant: Tenant, draft: TaskDraft & { templateTa
       timezone: draft.timezone,
       plan: draft.plan,
       conversation_id: draft.conversationId,
-      next_run_at: nextRunAt(draft.schedule, draft.timezone, "active"),
+      status,
+      next_run_at: nextRunAt(draft.schedule, draft.timezone, status),
       template_task_id: draft.templateTaskId ?? null,
     })
     .select(COLUMNS)

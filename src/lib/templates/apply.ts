@@ -1,4 +1,6 @@
+import { previewEnabled } from "@/lib/flags";
 import { addFromCatalog, listSkills } from "@/lib/skills";
+import { createTask, listTasks } from "@/lib/tasks";
 import type { Tenant } from "@/lib/tenant";
 import { MAX_SKILLS } from "@/lib/types";
 import { getSettings, updateSettings } from "@/lib/workspace";
@@ -7,10 +9,16 @@ import { templateById } from "./index";
 /**
  * Applies a built-in template to the tenant's workspace: records it, fills in the agent's
  * instructions if the workspace has none, and copies in its library skills that aren't there
- * yet. Never overwrites anything the owner wrote, so applying twice changes nothing.
+ * yet. With the "tasks" preview on, it also gives the member applying it the template's
+ * tasks, paused so nothing runs until they turn each on. Never overwrites anything the owner
+ * wrote, and tasks are keyed by their template id, so applying twice changes nothing.
  * Owner-only (updateSettings and the skill writes check).
  */
-export async function applyTemplate(tenant: Tenant, templateId: string): Promise<{ addedSkills: number }> {
+export async function applyTemplate(
+  tenant: Tenant,
+  templateId: string,
+  options: { timezone?: string } = {},
+): Promise<{ addedSkills: number; addedTasks: number }> {
   const template = templateById(templateId);
   if (!template) throw Object.assign(new Error("That template doesn't exist."), { status: 404 });
   const settings = await getSettings(tenant);
@@ -34,5 +42,41 @@ export async function applyTemplate(tenant: Tenant, templateId: string): Promise
     room -= 1;
     addedSkills += 1;
   }
-  return { addedSkills };
+  const addedTasks = previewEnabled(tenant, "tasks") ? await seedTasks(tenant, template.tasks, options.timezone ?? "UTC") : 0;
+  return { addedSkills, addedTasks };
+}
+
+/** Creates the template's tasks the member doesn't have yet, paused. */
+async function seedTasks(
+  tenant: Tenant,
+  tasks: NonNullable<ReturnType<typeof templateById>>["tasks"],
+  timezone: string,
+): Promise<number> {
+  if (tasks.length === 0) return 0;
+  const [mine, skills] = await Promise.all([listTasks(tenant), listSkills(tenant)]);
+  const have = new Set(mine.map((t) => t.templateTaskId));
+  let added = 0;
+  for (const task of tasks) {
+    if (have.has(task.id)) continue;
+    try {
+      await createTask(tenant, {
+        title: task.title,
+        instructions: task.instructions,
+        // The workspace's copy of the skill; none if the owner removed it or it didn't fit.
+        skillId: (task.skill && skills.find((s) => s.catalogId === task.skill)?.id) || null,
+        schedule: task.schedule,
+        timezone,
+        plan: [],
+        conversationId: null,
+        templateTaskId: task.id,
+        status: "paused",
+      });
+    } catch (error) {
+      // Set up meanwhile by another tab, or the member is at their task limit.
+      if ((error as { status?: number }).status === 409) continue;
+      throw error;
+    }
+    added += 1;
+  }
+  return added;
 }

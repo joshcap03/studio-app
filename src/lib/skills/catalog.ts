@@ -25,12 +25,12 @@ export const CATALOG: CatalogEntry[] = [
     name: "Find matching roles",
     description: "Searches for open roles that fit the profile and shortlists the best ones.",
     category: "Job search",
-    apps: ["web", "sheets"],
+    apps: ["web", "apollo", "tracker", "sheets"],
     instructions: `Find open roles that fit the target in the agent profile (roles, seniority, locations, pay floor, must-haves, deal-breakers). Ask about anything essential that's missing.
-1. Search job boards and company career pages on the web. Prefer the company's own posting over aggregators.
-2. Skip roles already in the job tracker and any that hit a deal-breaker.
+1. Search job boards and company career pages on the web; if Apollo is connected, its job postings for target companies help too. Prefer the company's own posting over aggregators.
+2. Skip roles already in the job tracker (same link) and any that hit a deal-breaker.
 3. Score each remaining role 1–5 against the profile, with one line on why.
-4. Add the roles scoring 3 or more to the job tracker: company, title, location, pay if listed, link, score, status "discovered".
+4. Track the roles scoring 3 or more. With a Studio tracker: save_record, collection "applications", key = the posting's link, title "Company — Role", status "discovered", fields for location, pay if listed, score, and why. Otherwise add them to the "Job search tracker" Google Sheet.
 5. Reply with the top 5, best first, each with its link. Do not apply to anything.`,
   },
   {
@@ -51,25 +51,28 @@ Cite every source. Keep it to one page.`,
     name: "Tailor an application",
     description: "Résumé bullets and a cover letter tailored to one role, as drafts.",
     category: "Job search",
-    apps: ["docs", "web"],
+    apps: ["docs", "web", "tracker"],
     instructions: `Tailor the user's application to the role they point to.
 1. Read the posting and pull out the 5 requirements that matter most.
 2. Using only facts from the user's résumé, files, and memory, rewrite their résumé bullets to show those requirements. Never invent experience, titles, dates, or numbers; ask instead.
 3. Draft a cover letter under 250 words: why this company, the two most relevant wins, and a clear close.
 4. Save both as a document draft and reply with a link and a list of what changed.
-Do not submit anything.`,
+5. In the job tracker, set the role's next step (with a Studio tracker, save_record on its "applications" row, same key).
+Do not submit anything: submitting an application always waits for the user's approval.`,
   },
   {
     id: "outreach-drafts",
     name: "Draft outreach",
     description: "Finds the right people for a role and drafts short, personal first messages.",
     category: "Job search",
-    apps: ["web", "gmail"],
+    apps: ["apollo", "clay", "hunter", "gmail", "web"],
     instructions: `Draft outreach for the role or company the user names.
-1. Find 1–3 relevant people (the hiring manager, someone on the team, or a recruiter) using a connected prospecting app (such as Clay or Unify) if there is one, otherwise public web sources. Never guess email addresses; use only ones a source verifies.
-2. For each, draft a first message under 120 words: one specific reason you're writing to them, one relevant result of the user's, and one easy ask.
-3. Draft one follow-up for 5 business days later if there's no reply.
-4. Save as drafts. Sending needs the user's approval for each message.
+1. Find 1–3 relevant people (the hiring manager, someone on the team, or a recruiter) with Apollo or Clay if one is connected, otherwise public web sources. Unify isn't available; if the user asks for it, say so and offer these instead.
+2. Get each person's email from Apollo, then verify it with Hunter (or a public source) before using it. Never guess an address.
+3. For each, draft a first message under 120 words: one specific reason you're writing to them, one relevant result of the user's, and one easy ask.
+4. Draft one follow-up for 5 business days later if there's no reply.
+5. Track each person: with a Studio tracker, save_record in "contacts" (key = their email or profile link, status "drafted", fields for company, role, and the application's link) and set the role's "applications" row to status "outreach". Otherwise use the "Job search tracker" sheet.
+6. Save the messages as Gmail drafts, or as an Apollo sequence if the user prefers. Sending an email, adding someone to a sequence, and activating a sequence each wait for the user's approval.
 Reply with who you found, why each, and the drafts.`,
   },
   {
@@ -77,14 +80,14 @@ Reply with who you found, why each, and the drafts.`,
     name: "Interview prep",
     description: "A prep pack for an upcoming interview: company, questions, and your stories.",
     category: "Job search",
-    apps: ["calendar", "web", "docs"],
+    apps: ["calendar", "web", "docs", "tracker"],
     instructions: `Prepare the user for the interview they name (their next one on the calendar if they don't say).
 1. Who they're meeting: role and public background of each interviewer, if known.
 2. The company: a short brief and anything that changed recently.
 3. The 10 questions they're most likely to be asked for this role and stage, with what a strong answer covers.
 4. Matching stories from their experience in STAR form, using only facts from their files and memory; mark gaps where they need a story.
 5. Five sharp questions for them to ask.
-Save it as a document and reply with the link and the three things to practise most.`,
+Save it as a document and reply with the link and the three things to practise most. With a Studio tracker, set the role's "applications" row to "interviewing" with save_record (same key) if it isn't already.`,
   },
   {
     id: "weekly-sales-report",

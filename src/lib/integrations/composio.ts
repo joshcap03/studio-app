@@ -35,13 +35,24 @@ const DEFAULT_APPS: { slug: string; name: string; description: string; authConfi
   { slug: "notion", name: "Notion", description: "Search your docs and keep them current" },
 ];
 
-export async function listConnections(composioUserId: string): Promise<ConnectionsState> {
+/**
+ * The caller's connections: the offered apps, then any toolkits in `suggested` (Composio
+ * slugs the workspace's template recommends), then anything else they connected.
+ */
+export async function listConnections(composioUserId: string, suggested: string[] = []): Promise<ConnectionsState> {
   const config = getConfig().composio;
   const sdk = composio();
   if (!config || !sdk) return { configured: false, toolkits: [] };
 
   const accounts = await sdk.connectedAccounts.list({ userIds: [composioUserId] });
-  const apps = config.toolkits.length > 0 ? config.toolkits : DEFAULT_APPS;
+  type Offered = { slug: string; name: string; description?: string; authConfigId?: string };
+  const base: Offered[] = config.toolkits.length > 0 ? config.toolkits : DEFAULT_APPS;
+  // Suggested apps outside the offered list connect through the tool-router path below,
+  // like apps connected in chat. Apps without Composio-managed auth (API-key apps such as
+  // Apollo or Hunter) get a Composio-hosted form there that takes the member's key, so the
+  // key goes to Composio and never through Studio.
+  const extra = [...new Set(suggested)].filter((slug) => !base.some((t) => t.slug === slug)).map((slug): Offered => ({ slug, name: slug }));
+  const apps = [...base, ...extra];
   const offered = apps.map<ToolkitConnection>((t) => {
     // A pinned auth config must match; a default app counts however it was connected.
     const matches = accounts.items.filter(
@@ -56,7 +67,13 @@ export async function listConnections(composioUserId: string): Promise<Connectio
       connectionId: best?.id,
     };
   });
-  await Promise.all(offered.map(async (t) => (t.logo = (await toolkitInfo(sdk, t.slug)).logo)));
+  await Promise.all(
+    offered.map(async (t, i) => {
+      const info = await toolkitInfo(sdk, t.slug);
+      t.logo = info.logo;
+      if (i >= base.length) t.name = info.name;
+    }),
+  );
   // Apps are dynamic: the agent can connect any app in chat, so also list what this member
   // connected that isn't in the offered list. Default apps connect through the tool-router
   // path in createConnectLink, since they aren't in config.toolkits.

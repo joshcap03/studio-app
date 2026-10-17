@@ -31,7 +31,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, profile: about, templateId }),
+      body: JSON.stringify({ name, profile: about, templateId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     setPending(false);
@@ -153,7 +153,8 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
           </p>
           {suggested.length > 0 ? (
             <p className="mt-3 text-[13px] text-fg-3">
-              Useful for {template.name.toLowerCase()}: <span className="text-fg-2">{suggested.map(appName).join(", ")}</span>.
+              Useful for {template.name.toLowerCase()}: <span className="text-fg-2">{suggested.map(appName).join(", ")}</span>
+              {template.optionalApps?.length ? <>, and optionally {template.optionalApps.map(appName).join(", ")}</> : null}.
             </p>
           ) : null}
           <div className="mt-6">

@@ -257,3 +257,46 @@ describe("running a task", () => {
     }
   }, 60_000);
 });
+
+describe("applying a template", () => {
+  const JOB_TASKS = ["find-new-roles", "check-replies", "weekly-pipeline-review", "interview-prep"];
+  type Seeded = { id: string; templateTaskId: string | null; status: string; nextRunAt: number | null; timezone: string; skillId: string | null };
+  const seeded = async (m: Member) =>
+    ((await (await m.api.json("/api/tasks", "GET")).json()) as { tasks: Seeded[] }).tasks.filter((t) => JOB_TASKS.includes(t.templateTaskId ?? ""));
+
+  it("gives a preview member the template's tasks, paused, once", async () => {
+    for (const t of await seeded(alice)) await alice.api.json(`/api/tasks/${t.id}`, "DELETE");
+    try {
+      const first = await alice.api.json("/api/workspace/template", "POST", { templateId: "job-search", timezone: "America/New_York" });
+      expect(first.status, await first.clone().text()).toBe(200);
+      expect(((await first.json()) as { addedTasks: number }).addedTasks).toBe(JOB_TASKS.length);
+      const tasks = await seeded(alice);
+      expect(tasks.map((t) => t.templateTaskId).sort()).toEqual([...JOB_TASKS].sort());
+      for (const t of tasks) expect(t).toMatchObject({ status: "paused", nextRunAt: null, timezone: "America/New_York" });
+      // The task's skill is the workspace's copy of the library skill.
+      const findRoles = tasks.find((t) => t.templateTaskId === "find-new-roles")!;
+      const skill = await alice.db.from("workspace_skills").select("catalog_id").eq("id", findRoles.skillId!).single();
+      expect(skill.data?.catalog_id).toBe("find-roles");
+
+      const again = await alice.api.json("/api/workspace/template", "POST", { templateId: "job-search" });
+      expect(((await again.json()) as { addedTasks: number }).addedTasks).toBe(0);
+      expect((await seeded(alice)).length).toBe(JOB_TASKS.length);
+      // Nobody else gets them.
+      expect((await seeded(bob)).length).toBe(0);
+    } finally {
+      for (const t of await seeded(alice)) await alice.api.json(`/api/tasks/${t.id}`, "DELETE");
+    }
+  });
+
+  it("adds skills but no tasks for a member without the preview", async () => {
+    const outsider = await member(`tasks-outsider-${crypto.randomUUID().slice(0, 8)}@example.test`, `pw-${crypto.randomUUID()}`);
+    const res = await outsider.api.json("/api/workspaces", "POST", { name: "Job hunt", templateId: "job-search", timezone: "Europe/London" });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const workspaceId = ((await res.json()) as { workspaceId: string }).workspaceId;
+    const skills = await outsider.db.from("workspace_skills").select("catalog_id").eq("workspace_id", workspaceId);
+    expect(skills.data?.map((s) => s.catalog_id)).toContain("find-roles");
+    const tasks = await outsider.db.from("agent_tasks").select("id").eq("workspace_id", workspaceId);
+    expect(tasks.error).toBeNull();
+    expect(tasks.data).toEqual([]);
+  });
+});
