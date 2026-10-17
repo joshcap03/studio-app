@@ -303,6 +303,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "ask_user":
       // The questions are shown under the reply as choices to click.
       return { labels: { running: "Writing a question for you", done: "Asked you a question" }, app: "agent", action: "note", hidden: true };
+    case "report_run":
+      // Decides whether the member is notified; the reply itself says how it went.
+      return { labels: { running: "Wrapping up", done: "Wrapped up" }, app: "agent", action: "note", hidden: true };
     case "update_plan":
       return planUpdate(input);
     case "save_record":

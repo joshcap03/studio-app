@@ -84,9 +84,9 @@ export async function buildTurnDeps(
   if (project === null) throw new TurnError(404, "Project not found.");
 
   // A member who wasn't watching when the run ended gets a notification.
-  const finished = async (message: ChatMessage, conversation: ConversationSummary, info: { watched: boolean }) => {
+  const finished: NonNullable<TurnDeps["onFinished"]> = async (message, conversation, info) => {
     try {
-      const notification = info.watched || !pushEnabled() ? null : notificationFor(message, conversation);
+      const notification = info.watched || !pushEnabled() ? null : notificationFor(message, conversation, info.report);
       if (notification) await notify(tenant, notification);
     } finally {
       await onFinished?.(message, conversation, info);

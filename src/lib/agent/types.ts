@@ -121,7 +121,9 @@ export type AgentEvent =
   /** The task's plan as the agent rewrote it, unvalidated; saved only in a task's conversation. */
   | { type: "plan-update"; plan: unknown }
   /** A tracker row the agent added or updated (upserted by collection and key), unvalidated. */
-  | { type: "record"; record: unknown };
+  | { type: "record"; record: unknown }
+  /** How a task's run went (nothing new, an update, or needs the member), unvalidated. */
+  | { type: "run-report"; report: unknown };
 
 /** What a provider has been verified to support. The app adapts its behavior to these. */
 export interface AgentCapabilities {
