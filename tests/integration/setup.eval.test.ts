@@ -1,20 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
 import { createLangflowAdapter, type LangflowConfig } from "@/lib/agent/langflow";
 import type { AgentAttachment, AgentEvent, AgentTenantContext } from "@/lib/agent/types";
 import { buildQuestions } from "@/lib/chat/questions";
 import { buildUiBlock } from "@/lib/chat/ui";
 import { formAnswerText, type FormValues } from "@/lib/chat/ui-answer";
 import { renderSkillMessage } from "@/lib/skills/render";
-import { SETUP_KICKOFF, setupSkill } from "@/lib/skills/setup";
+import { setupSkill } from "@/lib/skills/setup";
 import { planFromAgent } from "@/lib/tasks/agent";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { templateById } from "@/lib/templates";
 import type { AgentProposal, UiForm } from "@/lib/types";
 
 // Eval of the Job search setup interview against a live flow with a real model (LANGFLOW_TEST_*
-// env), sent the way the app sends it: the first message carries the "Set up this agent"
-// skill, later ones are the member's form answers, and the run's context (setup checklist,
-// tracker, agent files, memory) is kept up to date between turns the way the app keeps it.
+// env), sent the way the app sends it: the first message is the "Set up this agent" skill
+// with no text of its own, later ones are the member's form answers, and the run's context
+// (setup checklist, tracker, agent files, memory) is kept up to date between turns the way
+// the app keeps it.
 // A scripted member answers whatever card the agent shows. The checks look at the cards and
 // structured events, not at the model's wording (apart from the greeting).
 //
@@ -210,10 +212,16 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     return send(text, opts.resume);
   }
 
+  // SETUP_EVAL_LOG=<path> writes the transcript there, for seeing what the model did.
+  afterAll(() => {
+    const log = process.env.SETUP_EVAL_LOG;
+    if (log) writeFileSync(log, JSON.stringify(turns.map(({ events, ...rest }) => ({ ...rest, events: events.filter((e) => e.type !== "text-delta") })), null, 2));
+  });
+
   const describeTurn = (turn: Turn) => `reply: ${turn.reply.slice(0, 600)}\nevents: ${turn.events.map((e) => e.type).join(", ")}`;
 
   it("opens with a greeting and a form, not a wall of prose", { timeout: 300_000 }, async () => {
-    const first = await send(renderSkillMessage(setupSkill("job-search"), SETUP_KICKOFF));
+    const first = await send(renderSkillMessage(setupSkill("job-search"), ""));
     expect(first.form, describeTurn(first)).not.toBeNull();
     expect(first.reply.trimStart(), describeTurn(first)).toMatch(/^Hey!/);
     expect(first.reply.length, describeTurn(first)).toBeLessThan(700);
