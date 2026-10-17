@@ -212,9 +212,10 @@ FORM_FIELD_SCHEMA = {
         "steps": {"type": "integer", "description": "For scale: how many points, 3-7 (default 5)."},
         "low": {"type": "string", "description": "For scale: what the first point means, e.g. 'Ask me first'."},
         "high": {"type": "string", "description": "For scale: what the last point means, e.g. 'Just do it'."},
-        "items": {"type": "array", "description": ("For verdict: 1-8 real results, each an object with title, body (one or two "
-                                                   "lines on why it might fit), link (its URL, if it has one), and record "
-                                                   "({collection, key}) when it's a tracker row."),
+        "items": {"type": "array", "description": ("For verdict: 1-8 real results in ONE field, each an object with title, body "
+                                                   "(one or two lines on why it might fit), link (its URL, if it has one), and "
+                                                   "record ({collection, key}) when it's a tracker row. The card adds the Keep "
+                                                   "and Pass buttons itself; don't list them."),
                   "items": {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"}, "link": {"type": "string"},
                                                              "record": {"type": "object", "properties": {"collection": {"type": "string"}, "key": {"type": "string"}}}},
                             "required": ["title"]}},

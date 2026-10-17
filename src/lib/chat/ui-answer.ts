@@ -43,8 +43,10 @@ export function formAnswerText(form: UiForm, values: FormValues): string {
       const calls = v as Record<string, string>[];
       const lines = f.items.flatMap((item) => {
         const call = calls.find((x) => x.id === item.id);
-        if (call?.verdict === "keep") return [`- Kept: ${item.title}`];
-        if (call?.verdict === "pass") return [`- Passed: ${item.title}${call.reason?.trim() ? ` (${call.reason.trim()})` : ""}`];
+        // The link rides along, so the agent's next turn can see where each result came from.
+        const where = item.link ? ` <${item.link}>` : "";
+        if (call?.verdict === "keep") return [`- Kept: ${item.title}${where}`];
+        if (call?.verdict === "pass") return [`- Passed: ${item.title}${where}${call.reason?.trim() ? ` (${call.reason.trim()})` : ""}`];
         return [];
       });
       if (!lines.length) continue;

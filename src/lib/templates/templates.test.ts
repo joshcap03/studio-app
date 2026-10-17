@@ -17,8 +17,11 @@ describe("templates", () => {
 
   it("each ship a setup interview that asks through the reusable cards and ends in a proposal", () => {
     for (const t of TEMPLATES) {
-      const steps = t.setup.steps;
+      const steps = [...(t.setup.before ?? []), ...t.setup.steps];
       expect(t.setup.intro.trim(), t.id).not.toBe("");
+      // One-tap answers to "What's the one thing you most want me to do?" (ask_user takes 2-4).
+      expect(t.setup.jobs.length, t.id).toBeGreaterThanOrEqual(2);
+      expect(t.setup.jobs.length, t.id).toBeLessThanOrEqual(4);
       expect(steps.length, t.id).toBeGreaterThanOrEqual(2);
       expect(new Set(steps.map((s) => s.id)).size, t.id).toBe(steps.length);
       for (const s of steps) {

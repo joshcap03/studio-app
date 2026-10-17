@@ -184,6 +184,11 @@ describe("loose agent output", () => {
     [{ every: "weekly", day: "monday", at: "09:00" }, { every: "week", at: "09:00", weekday: 1 }],
     [{ every: "monday", at: "09:00" }, { every: "week", at: "09:00", weekday: 1 }],
     [{ every: "Fridays", at: "17:00" }, { every: "week", at: "17:00", weekday: 5 }],
+    ["Weekdays, morning", { every: "weekdays", at: "08:00" }],
+    [{ on_demand: true }, null],
+    [{ every: "on demand" }, null],
+    ["On demand", null],
+    ["Every Monday in the evening", { every: "week", at: "18:00", weekday: 1 }],
   ])("reads the schedule %j", (raw, expected) => {
     expect(scheduleFrom(raw)).toEqual(expected);
   });
@@ -299,9 +304,41 @@ describe("react-first fields", () => {
         "What matters most (most important first): 1. Remote; 2. Pay; 3. Seniority",
         "How hands-on: 2 of 7 (1 = Ask me first, 7 = Just do it)",
         "Would you go for these?:",
-        "- Kept: Senior Designer · Acme",
+        "- Kept: Senior Designer · Acme <https://example.com/1>",
         "- Passed: Designer II · Beta (Too junior)",
       ].join("\n"),
     );
+  });
+});
+
+describe("loose verdicts and notes", () => {
+  it("gathers one-result verdict fields with Keep/Pass options into one field, and keeps notes in the intro", () => {
+    const form = buildUiBlock(
+      {
+        form: {
+          title: "Examples to judge",
+          intro: "Judge each one.",
+          fields: [
+            { type: "note", name: "n", label: "Heads up", value: "These are made up." },
+            { type: "verdict", name: "ex1", label: "Senior PM · Acme, remote, $190k", options: ["Keep", "Pass"], required: true, reasons: ["Too junior"] },
+            { kind: "text", label: "Anything else?" },
+            { type: "verdict", name: "ex2", label: "Product Lead · Beta, hybrid", options: ["Keep", "Pass"], reasons: ["Not remote"] },
+            { type: "verdict_reasons", name: "why", label: "Likely reasons to pass", items: ["Agency role", "not remote"] },
+          ],
+        },
+      },
+      "g",
+    ) as UiForm;
+    expect(form.intro).toBe("Judge each one.\n\nThese are made up.");
+    expect(form.fields.map((f) => f.kind)).toEqual(["verdict", "text"]);
+    expect(form.fields[0]).toMatchObject({
+      label: "Keep or pass on each",
+      required: true,
+      reasons: ["Too junior", "Agency role", "not remote"],
+      items: [
+        { id: "senior_pm_acme_remote_190k", title: "Senior PM · Acme, remote, $190k" },
+        { id: "product_lead_beta_hybrid", title: "Product Lead · Beta, hybrid" },
+      ],
+    });
   });
 });

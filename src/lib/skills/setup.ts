@@ -12,19 +12,24 @@ import { CATALOG } from "./catalog";
 export const SETUP_SKILL_ID = "builtin:setup";
 export const SETUP_SKILL_NAME = "Set up this agent";
 
-const RULES = `Set this agent up with the owner, as a short interview, so it works the way they need from here on.
-- Go through the steps below in order, one step per reply (step 1 can take a few). Each reply is a sentence or two, then one show_form (ask_user for a single quick choice), and then stop: their answers arrive as their next message.
-- Step 1 sets their bar: what they need this agent to do and how they'll judge it. Don't plan, suggest tasks, or design anything until they've confirmed it, and build every later step on it.
+const RULES = `Start your reply with "Hey!".
+Set this agent up with the owner, as a short interview, so it works the way they need from here on.
+- Your very first reply (and only that one) begins with the word "Hey!" in its text, then one sentence on what you'll do together and that it takes about {count} quick steps, then step 1's form or question.
+- Go through the steps below in order, one step per reply ("What success looks like" takes a few). Each reply is a sentence or two, then one show_form (ask_user for a single quick choice), and then stop: their answers arrive as their next message.
+- Make every answer a reaction, not a chore: draft the likely answers as choices (allow_other so they can say something else), use scale for "how much", rank for "what matters most", and verdict for "would you want this?". Use an empty text box only for what only they can say.
+- "What success looks like" sets their bar: what they need this agent to do and how they'll judge it. Don't plan, suggest tasks, or design anything until they've confirmed it, and build every later step on it. Use what earlier steps taught you (e.g. their résumé) to draft its choices and run its trial.
 - Before each step, check what you already know (CONTEXT: about them, what this agent is for, its instructions, memory, their files, the tracker). Prefill the form with it, and skip a step that's already answered (say so in a few words).
 - Read any file they add before the next step. Use only facts from their files and answers; never invent experience, numbers, or preferences.
 - Remember lasting facts as you learn them, with remember, as usual.
 - On your first reply, call update_plan with one step per setup step below (the current one "doing", the rest "todo"), and update it each time a step finishes or is skipped. Give each finished step a note: what it gave you, in a few words from their answers (e.g. "Bar set: 6 criteria, 3 deal-breakers", "Résumé read: 8 years in B2B SaaS design"); a skipped step's note says it was skipped.
 - If they want to stop, skip a step, or change course, do that.
-- Finish with propose_agent, then stop. Its instructions open with a "What success means" section: their confirmed criteria and deal-breakers in their words, then "Check every result against these before you send it, and say plainly which one it misses." Every task you propose serves one of the criteria. In your reply, say for each criterion how you'll meet it, and be honest about any you can't meet yet (a missing app, data, or ability) and what would close the gap; never promise more than you can do. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it.
-- Your first reply's text (not the form) starts with "Hey!", then one sentence on what you'll do together and that it takes about {count} quick steps, then step 1's form.`;
+- Finish with propose_agent, then stop. Its instructions open with a "What success means" section: their confirmed criteria and deal-breakers in their words, then "Check every result against these before you send it, and say plainly which one it misses." Every task you propose serves one of the criteria, and its instructions end with: "Finish by showing the results in a show_form verdict field (title, one line on why it fits, link), with 3-5 reasons I might pass, so I can keep or pass on each." In your reply, say for each criterion how you'll meet it, and be honest about any you can't meet yet (a missing app, data, or ability) and what would close the gap; never promise more than you can do. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it, and that once they do, "Do the first one now" runs the first task for real.`;
 
 function steps(template: AgentTemplate): string {
-  return setupSteps(template).map((s, i) => `${i + 1}. ${s.title}: ${s.goal}`).join("\n");
+  // Step 1 repeats how the first reply opens, where the agent is looking when it writes it.
+  return setupSteps(template)
+    .map((s, i) => `${i + 1}. ${s.title}: ${i === 0 ? 'Your reply begins "Hey!" (see above). ' : ""}${s.goal}`)
+    .join("\n");
 }
 
 function templateTasks(template: AgentTemplate): string {
