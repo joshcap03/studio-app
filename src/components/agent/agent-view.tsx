@@ -387,6 +387,7 @@ function AgentSection({ initial, canEdit, onSaved }: { initial: WorkspaceSetting
 
   return (
     <Section title="Setup">
+      {canEdit ? <SetupInterview setup={saved.setup} /> : null}
       {canEdit ? (
         <TemplatePicker
           current={saved.templateId}
@@ -431,6 +432,32 @@ function AgentSection({ initial, canEdit, onSaved }: { initial: WorkspaceSetting
         {canEdit ? <SaveRow dirty={dirty} status={status} error={error} label="Save changes" /> : null}
       </form>
     </Section>
+  );
+}
+
+/** Where the setup interview stands, with a way to pick it up or run it again. */
+function SetupInterview({ setup }: { setup: WorkspaceSettings["setup"] }) {
+  const done = setup?.plan.filter((s) => s.status === "done").length ?? 0;
+  const status =
+    setup?.status === "done"
+      ? "Done. Run it again any time to rethink how this agent works for you."
+      : setup?.status === "in_progress"
+        ? `In progress${setup.plan.length ? `: ${done} of ${setup.plan.length} steps done` : ""}.`
+        : "A short interview: the agent asks what it needs, then suggests how it'll work for you.";
+  const resume = setup?.status === "in_progress" && setup.conversationId;
+  return (
+    <div className="mb-5 flex items-center gap-3 rounded-xl border border-line px-3.5 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-medium text-fg">Setup interview</p>
+        <p className="text-[12.5px] leading-[1.45] text-fg-3">{status}</p>
+      </div>
+      <a
+        href={resume ? `/c/${setup.conversationId}` : "/?setup=new"}
+        className="inline-flex h-8 shrink-0 items-center rounded-lg border border-line px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg"
+      >
+        {resume ? "Continue" : setup?.status === "done" ? "Run again" : "Start"}
+      </a>
+    </div>
   );
 }
 

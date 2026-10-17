@@ -5,6 +5,8 @@ import { errorResponse, parseBody } from "@/lib/api";
 import { buildTurnDeps } from "@/lib/chat/run";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import { BUILTIN_SKILL_IDS } from "@/lib/skills/builtin";
+import { SETUP_SKILL_ID } from "@/lib/skills/setup";
+import { getSetup, updateSetup } from "@/lib/setup-state";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
 
@@ -68,6 +70,14 @@ export async function POST(request: NextRequest, { params }: Context) {
     // A conversation id that exists for another tenant fails here: the insert collides with
     // a row this tenant cannot see, and the database refuses it.
     const stream = await startTurn(deps, turn);
+    if (input.kind === "send" && input.skillId === SETUP_SKILL_ID) {
+      // The owner started (or restarted) the agent's setup here: this conversation holds it now.
+      const current = await getSetup(tenant).catch(() => null);
+      const fresh = current?.conversationId !== conversationId.data;
+      await updateSetup(tenant, { status: "in_progress", conversationId: conversationId.data, ...(fresh ? { plan: [] } : {}) }).catch((e) =>
+        console.error("[setup] couldn't record the setup's start", e),
+      );
+    }
     after(() => settled);
     return new Response(stream, {
       headers: {

@@ -49,7 +49,10 @@ raw/technical text.
 - `src/lib/templates/`: built-in starting points (Job search, Small business, Blank). Applying
   one (`apply.ts`) copies instructions and library skills into the workspace without
   overwriting anything, and (with the "tasks" preview) gives the member the template's tasks,
-  paused; suggested apps are shown, never connected automatically.
+  paused; suggested apps are shown, never connected automatically. Every template ships a
+  `setup` interview: steps the built-in `builtin:setup` skill (`src/lib/skills/setup.ts`)
+  runs with the reusable cards, ending in a `propose_agent` the owner applies. Its state is
+  `workspace_settings.setup` (`src/lib/setup-state.ts`).
 - `src/lib/memory.ts`: long-term memory in Supermemory, namespaced from the session: `ws_<workspace>`
   for an agent's shared facts, `u_<user>` for the person's own (shared by all their agents). Old
   per-workspace personal namespaces move into `u_<user>` on first use. The flow must not have its

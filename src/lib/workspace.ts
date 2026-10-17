@@ -4,8 +4,10 @@ import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
 import { recall } from "@/lib/memory";
 import { taskContextFor } from "@/lib/tasks/agent";
+import { listRecords } from "@/lib/tasks/records";
+import { templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
-import type { UsageSummary, WorkspaceSettings } from "@/lib/types";
+import type { AgentSetup, UsageSummary, WorkspaceSettings } from "@/lib/types";
 
 // Workspace-level data: settings, usage, and the per-run agent context. All reads and writes
 // go through the tenant's RLS-bound client and are filtered by the tenant's workspace id.
@@ -20,15 +22,16 @@ export async function getSettings(tenant: Tenant): Promise<WorkspaceSettings> {
   const row = check(
     await tenant.db
       .from("workspace_settings")
-      .select("business_context, agent_instructions, template_id")
+      .select("business_context, agent_instructions, template_id, setup")
       .eq("workspace_id", tenant.workspace.id)
       .single(),
-  ) as { business_context: string; agent_instructions: string; template_id: string | null };
+  ) as { business_context: string; agent_instructions: string; template_id: string | null; setup: AgentSetup | null };
   return {
     name: tenant.workspace.name,
     profile: row.business_context,
     agentInstructions: row.agent_instructions,
     templateId: row.template_id,
+    setup: row.setup ?? null,
   };
 }
 
@@ -170,5 +173,23 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     memories,
     guardrail,
     ...tasks,
+    setup: conversationId && settings.setup?.conversationId === conversationId ? { plan: settings.setup.plan } : null,
+    notes: previewEnabled(tenant, "tasks") ? await notesFor(tenant, settings.templateId) : undefined,
   };
+}
+
+/** How many reference rows (e.g. stories) the agent sees in every chat, per collection. */
+const NOTES_PER_COLLECTION = 12;
+
+/** The template's reference collections, with fields; a run goes ahead without them on error. */
+async function notesFor(tenant: Tenant, templateId: string | null): Promise<AgentTenantContext["notes"]> {
+  const collections = templateById(templateId)?.contextCollections ?? [];
+  if (collections.length === 0) return undefined;
+  try {
+    const lists = await Promise.all(collections.map((c) => listRecords(tenant, c)));
+    return lists.flatMap((rows) => rows.slice(0, NOTES_PER_COLLECTION).map((r) => ({ collection: r.collection, title: r.title || r.key, fields: r.fields })));
+  } catch (e) {
+    console.error("[context] couldn't load reference notes", e);
+    return undefined;
+  }
 }

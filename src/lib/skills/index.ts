@@ -2,6 +2,7 @@ import type { Tenant } from "@/lib/tenant-core";
 import { MAX_SKILLS, type WorkspaceSkill } from "@/lib/types";
 import { builtinSkill } from "./builtin";
 import { catalogEntry } from "./catalog";
+import { SETUP_SKILL_ID, setupSkill } from "./setup";
 
 // A workspace's skills. Reads and writes go through the tenant's RLS-bound client, filtered
 // by the tenant's workspace; the database also refuses writes from anyone but an owner.
@@ -52,6 +53,13 @@ export async function listSkills(tenant: Tenant): Promise<WorkspaceSkill[]> {
 }
 
 export async function getSkill(tenant: Tenant, id: string): Promise<WorkspaceSkill | null> {
+  if (id === SETUP_SKILL_ID) {
+    // Every agent has its setup interview, with steps from the template it started from.
+    const row = check(
+      await tenant.db.from("workspace_settings").select("template_id").eq("workspace_id", tenant.workspace.id).maybeSingle(),
+    ) as { template_id: string | null } | null;
+    return setupSkill(row?.template_id);
+  }
   if (id.startsWith("builtin:")) return builtinSkill(tenant, id);
   const row = check(
     await tenant.db.from("workspace_skills").select(COLUMNS).eq("id", id).eq("workspace_id", tenant.workspace.id).maybeSingle(),

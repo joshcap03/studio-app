@@ -1,8 +1,8 @@
 "use client";
 
-import { CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowRight, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 import { forwardRef, useEffect } from "react";
-import type { WorkspaceSkill } from "@/lib/types";
+import type { SetupSummary, WorkspaceSkill } from "@/lib/types";
 import { Composer, type ComposerHandle, type MessageExtras } from "./composer";
 
 interface Suggestion {
@@ -32,6 +32,11 @@ interface Props {
   canManageSkills: boolean;
   allowFiles: boolean;
   footnote: React.ReactNode;
+  /** The owner's setup, while it isn't done or set aside: offered above the composer. */
+  setup?: SetupSummary | null;
+  agentName?: string;
+  onSetup?: () => void;
+  onSkipSetup?: () => void;
 }
 
 const chip =
@@ -39,7 +44,7 @@ const chip =
 const SHOWN_SKILLS = 5;
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, onSetup, onSkipSetup },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
@@ -70,6 +75,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
       </div>
 
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
+        {setup && onSetup ? <SetupBanner setup={setup} agentName={agentName} onSetup={onSetup} onSkip={onSkipSetup} /> : null}
         <div className="animate-fade-up [animation-delay:60ms]">
           <Composer
             ref={composerRef}
@@ -115,3 +121,39 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
     </div>
   );
 });
+
+/** Offers the agent's setup interview until it's done: start it, pick it up again, or not now. */
+function SetupBanner({ setup, agentName, onSetup, onSkip }: { setup: SetupSummary; agentName?: string; onSetup: () => void; onSkip?: () => void }) {
+  const started = setup.status === "in_progress";
+  const name = agentName?.trim() || "this agent";
+  return (
+    <section aria-label="Set up this agent" className="mb-3 flex items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3 animate-fade-up">
+      <Sparkles size={17} className="shrink-0 text-accent" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-medium text-fg">{started ? `Finish setting up ${name}` : `Set up ${name}`}</p>
+        <p className="text-[12.5px] leading-[1.45] text-fg-3">
+          {started && setup.total > 0
+            ? `${setup.done} of ${setup.total} steps done`
+            : `A few quick questions${setup.total ? ` (${setup.total} steps)` : ""} so it works the way you need.`}
+        </p>
+      </div>
+      {onSkip ? (
+        <button
+          type="button"
+          onClick={onSkip}
+          className="inline-flex h-8 shrink-0 items-center rounded-lg px-2.5 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+        >
+          Not now
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={onSetup}
+        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-inverse px-3 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90"
+      >
+        {started ? "Continue" : "Start"}
+        <ArrowRight size={14} />
+      </button>
+    </section>
+  );
+}

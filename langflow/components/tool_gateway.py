@@ -887,8 +887,8 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=update_plan, coroutine=update_plan_async, name="update_plan",
                 args_schema=PlanArgs,
-                description=("Only in a conversation that works on a task (see CONTEXT): write or update the "
-                             "task's plan, the whole list of steps each time. Call it when you make a plan and whenever "
+                description=("Only in a conversation that works on a task or is this agent's setup interview (see "
+                             "CONTEXT): write or update its plan or checklist, the whole list of steps each time. Call it when you make a plan and whenever "
                              "a step starts, finishes, gets blocked, or needs the owner. Saved for the owner; changes "
                              "nothing in their accounts."),
             ),

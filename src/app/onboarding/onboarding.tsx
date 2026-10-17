@@ -14,7 +14,7 @@ const STEPS: { id: Step | "chat"; label: string }[] = [
   { id: "you", label: "You" },
   { id: "workspace", label: "Your agent" },
   { id: "connect", label: "Connect apps" },
-  { id: "chat", label: "Start chatting" },
+  { id: "chat", label: "Set it up" },
 ];
 
 interface Props {
@@ -241,14 +241,15 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel }: P
             <ConnectionsList returnTo="/onboarding" />
           </div>
           <div className="mt-8 flex items-center gap-4">
+            {/* The agent's setup interview opens next; it asks for anything it still needs. */}
             <a
-              href="/"
+              href="/?setup=1"
               className="flex h-10 items-center gap-2 rounded-xl bg-inverse px-4 text-[14px] font-medium text-on-inverse transition-opacity hover:opacity-90"
             >
-              Start chatting
+              Set up your agent
               <ArrowRight size={15} />
             </a>
-            <span className="text-[12.5px] text-fg-3">You can skip this and connect apps anytime.</span>
+            <span className="text-[12.5px] text-fg-3">You can skip this and connect apps anytime, or during setup.</span>
           </div>
         </div>
       )}
