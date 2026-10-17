@@ -2,7 +2,6 @@ import { agentEnabledFor } from "@/lib/agent";
 import { buildTurnDeps } from "@/lib/chat/run";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
-import { previewEnabled } from "@/lib/flags";
 import type { Tenant } from "@/lib/tenant-core";
 import { appendRun, beginRun, getRun, getTask, markTaskRan, runStopRequested, settleRun, updateTask } from "./index";
 import type { AgentTask, RunStatus } from "./types";
@@ -100,7 +99,7 @@ export async function runClaimedTask(tenant: Tenant, claimed: { taskId: string; 
   const task = await getTask(tenant, claimed.taskId);
   if (!task) return { status: "skipped", reason: "gone" };
   if (task.status !== "active") return skip(task.status);
-  if (!previewEnabled(tenant, "tasks") || !agentEnabledFor(tenant.workspace.id)) return skip("agent_unavailable");
+  if (!agentEnabledFor(tenant.workspace.id)) return skip("agent_unavailable");
 
   if (task.conversationId) {
     const store = storeFor(tenant);

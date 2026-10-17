@@ -154,12 +154,10 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
     guardrailForRun(tenant, conversationId),
     // A run goes ahead without its task context rather than failing over it.
-    previewEnabled(tenant, "tasks")
-      ? taskContextFor(tenant, conversationId).catch((e) => {
-          console.error("[context] couldn't load the task and tracker", e);
-          return {};
-        })
-      : Promise.resolve({}),
+    taskContextFor(tenant, conversationId).catch((e) => {
+      console.error("[context] couldn't load the task and tracker", e);
+      return {};
+    }),
   ]);
   return {
     workspaceId: tenant.workspace.id,
@@ -174,7 +172,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     guardrail,
     ...tasks,
     setup: conversationId && settings.setup?.conversationId === conversationId ? { plan: settings.setup.plan } : null,
-    notes: previewEnabled(tenant, "tasks") ? await notesFor(tenant, settings.templateId) : undefined,
+    notes: await notesFor(tenant, settings.templateId),
   };
 }
 

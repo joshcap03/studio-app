@@ -52,7 +52,6 @@ interface Props {
   onDeleteProject: (id: string) => void;
   onMove: (conversationId: string, projectId: string | null) => void;
   /** Whether to show Tasks (a preview feature), and whether a Tasks page is open. */
-  showTasks: boolean;
   tasksActive: boolean;
   onSelectTasks: () => void;
 }
@@ -79,7 +78,6 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
     onRenameProject,
     onDeleteProject,
     onMove,
-    showTasks,
     tasksActive,
     onSelectTasks,
   },
@@ -148,21 +146,19 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
             {mod}⇧O
           </kbd>
         </button>
-        {showTasks ? (
-          <a
-            href="/tasks"
-            aria-current={tasksActive ? "page" : undefined}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-              e.preventDefault();
-              onSelectTasks();
-            }}
-            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press aria-[current=page]:bg-press"
-          >
-            <ListChecks size={16} strokeWidth={1.75} className="text-fg-2" />
-            Tasks
-          </a>
-        ) : null}
+        <a
+          href="/tasks"
+          aria-current={tasksActive ? "page" : undefined}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+            e.preventDefault();
+            onSelectTasks();
+          }}
+          className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press aria-[current=page]:bg-press"
+        >
+          <ListChecks size={16} strokeWidth={1.75} className="text-fg-2" />
+          Tasks
+        </a>
         <div className="relative">
           <Search size={15} strokeWidth={1.75} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-fg-3" />
           <input

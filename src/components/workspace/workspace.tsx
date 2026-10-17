@@ -78,7 +78,6 @@ interface Props {
   /** A skill to attach on load (from "Use" on the skills page). */
   initialSkillId: string | null;
   /** Whether this member sees Tasks (a preview feature). */
-  tasksEnabled: boolean;
   /** The owner's setup interview for this agent; null for other members. */
   setup: SetupSummary | null;
 }
@@ -125,7 +124,6 @@ export function Workspace({
   email,
   skills,
   initialSkillId,
-  tasksEnabled,
   setup: initialSetup,
 }: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
@@ -135,7 +133,7 @@ export function Workspace({
   /** The project page on screen (not the project of an open conversation). */
   const activeProjectId = activeId ? null : projectIdFrom(pathname);
   /** The Tasks page on screen: "list", or the id of the open task. */
-  const activeTask = tasksEnabled ? taskPathFrom(pathname) : null;
+  const activeTask = taskPathFrom(pathname);
   const [taskTitle, setTaskTitle] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1061,7 +1059,6 @@ export function Workspace({
             onRenameProject={renameProject}
             onDeleteProject={removeProject}
             onMove={moveConversation}
-            showTasks={tasksEnabled}
             tasksActive={activeTask !== null}
             onSelectTasks={() => navigate("/tasks")}
           />
