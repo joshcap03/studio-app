@@ -61,6 +61,8 @@ export const TEMPLATE_VARIABLES = [
   "user_id",
   "composio_user_id",
   "composio_toolkits",
+  "agent_profile",
+  // Older name for agent_profile, kept so existing LANGFLOW_TWEAKS templates keep working.
   "business_context",
   "agent_instructions",
   "memories",
@@ -81,11 +83,11 @@ export function langflowSessionId(tenant: AgentTenantContext, conversationId: st
   return `${tenant.workspaceId}.${tenant.composioUserId}.${conversationId}`;
 }
 
-// The profile and memories describe the business in general. Without this, a follow-up in a
-// conversation about something new gets answered for what the business usually sells, and
-// searches get narrowed to the business's city or niche though the owner never asked for that.
+// The profile and memories describe the workspace in general. Without this, a follow-up in a
+// conversation about something new gets answered for the workspace's usual work, and searches
+// get narrowed to its city or niche though the owner never asked for that.
 const BACKGROUND_ONLY =
-  "Use the above as background only. The current conversation decides the topic: if the owner asks about something other than the business's usual products or work, stay on what they asked about, including in follow-ups that don't repeat it. Don't narrow a search or answer by the business's location, niche, or other details above unless the owner asked for that; if one would clearly change the answer, mention it as an option instead.";
+  "Use the above as background only. The current conversation decides the topic: if the owner asks about something other than this workspace's usual work, stay on what they asked about, including in follow-ups that don't repeat it. Don't narrow a search or answer by the location, niche, or other details above unless the owner asked for that; if one would clearly change the answer, mention it as an option instead.";
 
 export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPLATE_VARIABLES)[number], string> {
   const memories = tenant.memories.map((m) => `- ${m}`).join("\n");
@@ -94,11 +96,11 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   const system = [
     guardrail,
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
-    `Business: ${tenant.workspaceName}`,
-    tenant.businessContext.trim() && `About the business:\n${tenant.businessContext.trim()}`,
+    `Workspace: ${tenant.workspaceName}`,
+    tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
     project && projectContext(project),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
-    (tenant.businessContext.trim() || memories) && BACKGROUND_ONLY,
+    (tenant.profile.trim() || memories) && BACKGROUND_ONLY,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -108,7 +110,8 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     user_id: tenant.userId,
     composio_user_id: tenant.composioUserId,
     composio_toolkits: JSON.stringify(tenant.composioToolkits),
-    business_context: tenant.businessContext,
+    agent_profile: tenant.profile,
+    business_context: tenant.profile,
     agent_instructions: tenant.agentInstructions,
     memories,
     project_name: project?.name ?? "",

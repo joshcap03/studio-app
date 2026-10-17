@@ -130,13 +130,14 @@ exchange from the session's stored messages.
    tenant-specific values from each request, never from hard-coded component settings:
    - `LANGFLOW_TWEAKS` maps per-run values onto component fields. Placeholders:
      `workspace_id`, `workspace_name`, `user_id`, `composio_user_id`, `composio_toolkits`
-     (JSON `{slug: auth config id}`), `business_context`,
+     (JSON `{slug: auth config id}`), `agent_profile` (alias `business_context`),
      `agent_instructions`, `memories`, `system_context`, and `files` (a value of exactly
      `"{{files}}"` becomes the uploaded file paths; without it, attachments are off).
      Runs also send `X-LANGFLOW-GLOBAL-VAR-*` headers, but Langflow 1.12 ignores them for
      background jobs, so anything the flow must read goes through tweaks.
-   - Business specifics live in each workspace's settings and memory. The base prompt in
-     Workspace Context and the skills must not name a business.
+   - Workspace specifics (a business, a job search, anything) live in each workspace's
+     settings and memory. The base prompt in Workspace Context and the skills must not name
+     a business, person, or use case.
    - Only then set `AGENT_LIVE_WORKSPACES=*`. Until the flow is tenant-aware, keep it to the
      workspace ids the flow was built for.
 4. Session ids are always `<workspace_id>.<member composio id>.<conversation_id>`, so

@@ -15,8 +15,8 @@ export interface AgentTenantContext {
   composioUserId: string;
   /** Apps offered for connection: toolkit slug → auth config id. Empty when none are configured. */
   composioToolkits: Record<string, string>;
-  /** Workspace-configured description of the business. */
-  businessContext: string;
+  /** Workspace-configured agent profile: who the agent works for and what it's for. */
+  profile: string;
   /** Workspace-configured instructions for the agent. */
   agentInstructions: string;
   /** What memory recalls for this run: workspace and personal facts, most relevant first, size-capped. */

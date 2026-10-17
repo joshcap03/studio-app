@@ -15,7 +15,7 @@ const COPY: Record<Mode, { title: string; subtitle: string; submit: string; swit
   },
   signup: {
     title: "Create your account",
-    subtitle: "An AI agent that knows your business and works in the apps you already use.",
+    subtitle: "An AI agent you shape for any job, working in the apps you already use.",
     submit: "Create account",
     switchText: "Already have an account?",
     switchAction: "Sign in",
@@ -110,7 +110,7 @@ export function AuthForm({ destination, initialMode, notice }: { destination: st
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className={`mt-1.5 ${field}`}
-            placeholder="you@business.com"
+            placeholder="you@example.com"
           />
         </div>
         {mode !== "forgot" && (

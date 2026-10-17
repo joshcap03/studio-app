@@ -17,7 +17,7 @@ const tenant = (n: string): AgentTenantContext => ({
   userId: crypto.randomUUID(),
   composioUserId: `lj_${n}`,
   composioToolkits: {},
-  businessContext: "",
+  profile: "",
   agentInstructions: "",
   memories: [],
 });

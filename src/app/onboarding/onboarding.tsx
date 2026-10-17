@@ -3,17 +3,20 @@
 import { ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { ConnectionsList } from "@/components/settings/connections-list";
+import { appName } from "@/lib/apps";
+import { DEFAULT_TEMPLATE_ID, TEMPLATES, templateById } from "@/lib/templates";
 
 type Step = "workspace" | "connect";
 
 const STEPS: { id: Step | "chat"; label: string }[] = [
-  { id: "workspace", label: "Workspace" },
+  { id: "workspace", label: "Your agent" },
   { id: "connect", label: "Connect apps" },
   { id: "chat", label: "Start chatting" },
 ];
 
 export function Onboarding({ initialStep, workspaceName, canCancel }: { initialStep: Step; workspaceName: string | null; canCancel: boolean }) {
   const [step, setStep] = useState<Step>(initialStep);
+  const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [name, setName] = useState("");
   const [about, setAbout] = useState("");
   const [created, setCreated] = useState(workspaceName);
@@ -28,7 +31,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, businessContext: about }),
+      body: JSON.stringify({ name, profile: about, templateId }),
     });
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     setPending(false);
@@ -41,6 +44,8 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
   }
 
   const current = STEPS.findIndex((s) => s.id === step);
+  const template = templateById(templateId) ?? TEMPLATES[0];
+  const suggested = created && step === "connect" ? template.apps : [];
 
   return (
     <div className="mt-10">
@@ -62,11 +67,38 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
 
       {step === "workspace" ? (
         <form onSubmit={createWorkspace} className="mt-8 animate-fade-up" noValidate>
-          <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">Set up your workspace</h1>
-          <p className="mt-1.5 text-[14px] text-fg-3">A few details so the agent knows who it&apos;s working for.</p>
+          <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">Set up your agent</h1>
+          <p className="mt-1.5 text-[14px] text-fg-3">Pick a starting point. You can change everything later in Settings.</p>
 
-          <label htmlFor="ws-name" className="mt-8 block text-[13px] font-medium text-fg-2">
-            Business name
+          <fieldset className="mt-7">
+            <legend className="text-[13px] font-medium text-fg-2">Start from</legend>
+            <div className="mt-1.5 grid gap-2">
+              {TEMPLATES.map((t) => (
+                <label
+                  key={t.id}
+                  className={`flex cursor-pointer gap-3 rounded-xl border px-3.5 py-3 transition-colors ${
+                    t.id === templateId ? "border-line-strong bg-subtle" : "border-line bg-surface hover:bg-subtle/60"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="template"
+                    value={t.id}
+                    checked={t.id === templateId}
+                    onChange={() => setTemplateId(t.id)}
+                    className="mt-1 accent-current"
+                  />
+                  <span>
+                    <span className="block text-[14px] font-medium text-fg">{t.name}</span>
+                    <span className="mt-0.5 block text-[13px] leading-snug text-fg-3">{t.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          <label htmlFor="ws-name" className="mt-6 block text-[13px] font-medium text-fg-2">
+            Workspace name
           </label>
           <input
             id="ws-name"
@@ -74,12 +106,12 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
             maxLength={80}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Acme Studio"
+            placeholder={template.id === "job-search" ? "My job search" : template.id === "small-business" ? "Acme Studio" : "My agent"}
             className="mt-1.5 h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-[15px] outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
           />
 
           <label htmlFor="ws-about" className="mt-5 block text-[13px] font-medium text-fg-2">
-            What does the business do? <span className="font-normal text-fg-3">Optional</span>
+            What is this agent for? <span className="font-normal text-fg-3">Optional</span>
           </label>
           <textarea
             id="ws-about"
@@ -87,7 +119,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
             maxLength={8000}
             value={about}
             onChange={(e) => setAbout(e.target.value)}
-            placeholder="What you sell, who buys it, and the tools you run on. For example: we sell handmade candles on Shopify and wholesale to about 20 shops…"
+            placeholder={template.profilePrompt}
             className="mt-1.5 w-full resize-none rounded-xl border border-line bg-surface px-3.5 py-3 text-[14.5px] leading-relaxed outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
           />
           <p className="mt-1.5 text-[12.5px] text-fg-3">The agent reads this before every conversation. You can edit it anytime in Settings.</p>
@@ -116,9 +148,14 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
         <div className="mt-8 animate-fade-up">
           <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">Connect your apps</h1>
           <p className="mt-1.5 text-[14px] text-fg-3">
-            Give the agent access to the tools {created ? <span className="text-fg-2">{created}</span> : "your business"} runs on. It
+            Give the agent access to the apps it should work in{created ? <> for <span className="text-fg-2">{created}</span></> : null}. It
             asks before sending, changing, or deleting anything, and only you can use your connections.
           </p>
+          {suggested.length > 0 ? (
+            <p className="mt-3 text-[13px] text-fg-3">
+              Useful for {template.name.toLowerCase()}: <span className="text-fg-2">{suggested.map(appName).join(", ")}</span>.
+            </p>
+          ) : null}
           <div className="mt-6">
             <ConnectionsList returnTo="/onboarding" />
           </div>

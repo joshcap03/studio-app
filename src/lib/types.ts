@@ -109,7 +109,7 @@ export interface MemoryProposal {
   category?: MemoryCategory;
 }
 
-/** How Business Brain groups facts. The agent picks one when it saves; members can change it. */
+/** How the Brain groups facts. The agent picks one when it saves; members can change it. */
 export const MEMORY_CATEGORIES = [
   "customers",
   "suppliers",
@@ -122,10 +122,11 @@ export const MEMORY_CATEGORIES = [
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
 export const MEMORY_CATEGORY_LABELS: Record<MemoryCategory, string> = {
-  customers: "Customers",
-  suppliers: "Suppliers",
-  products: "Products & pricing",
-  policies: "Policies & rules",
+  // Stored keys predate generic workspaces; only the labels changed.
+  customers: "People & contacts",
+  suppliers: "Organizations",
+  products: "Work & offerings",
+  policies: "Rules & preferences",
   voice: "Voice & style",
   team: "Team",
   other: "Other",
@@ -214,14 +215,17 @@ export interface WorkspaceSummary {
 
 export interface WorkspaceSettings {
   name: string;
-  businessContext: string;
+  /** What this agent is for: who it works for and what they want from it. */
+  profile: string;
   agentInstructions: string;
+  /** The built-in template (src/lib/templates) the workspace started from or last applied. */
+  templateId: string | null;
 }
 
 export interface Memory {
   id: string;
   content: string;
-  /** "workspace": shared business memory. "personal": visible only to its owner. */
+  /** "workspace": shared workspace memory. "personal": visible only to its owner. */
   scope: "workspace" | "personal";
   createdAt: number;
   mine: boolean;

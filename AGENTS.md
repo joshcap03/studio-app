@@ -1,7 +1,8 @@
 # Repository guide
 
-This repository is **Studio**: a multi-tenant Next.js workspace where businesses chat with a
-shared AI agent (Langflow today) using their own context, memory, and connected apps. The
+This repository is **Studio**: a multi-tenant Next.js workspace where people chat with a
+shared AI agent (Langflow today) that they shape for any job (running a business, a job
+search, a project) with their own profile, instructions, skills, memory, and connected apps. The
 agent runs separately; this app never reimplements agent reasoning.
 
 This repository is public. Never commit business data, secrets, real customer or member
@@ -32,7 +33,11 @@ raw/technical text.
 - `supabase/migrations/`: schema, RLS policies, RPCs. Append new migrations; never edit applied ones.
 - `src/lib/tenant.ts`: session → user → active workspace (membership-checked). The only source of identity.
 - `src/lib/db/store.ts`: conversation persistence, scoped to one workspace + user.
-- `src/lib/workspace.ts`: settings, usage/limits, and the per-run agent context.
+- `src/lib/workspace.ts`: settings (the agent profile, "what this agent is for", is stored in
+  `workspace_settings.business_context`), usage/limits, and the per-run agent context.
+- `src/lib/templates/`: built-in starting points (Job search, Small business, Blank). Applying
+  one (`apply.ts`) copies instructions and library skills into the workspace without
+  overwriting anything; suggested apps are shown, never connected automatically.
 - `src/lib/memory.ts`: long-term memory in Supermemory, namespaced per workspace and per member
   from the session. The flow must not have its own memory connection.
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
@@ -58,8 +63,9 @@ raw/technical text.
   service-role client to request paths. Every new table gets RLS policies and an isolation test.
 - Keep provider-specific logic inside its adapter. Declare capabilities honestly; don't
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
-- Never hardcode a business into agent or app logic; per-workspace settings carry
-  business specifics.
+- Never hardcode a tenant, template, or use case into agent or app logic. Templates are
+  generic, public starting points copied into a workspace; per-workspace settings and copies
+  carry the specifics.
 - The flow is shared by every tenant: nothing in it may hold one tenant's connections or
   memory (per-member values arrive through tweaks), and no tool may run code in the
   Langflow server process.

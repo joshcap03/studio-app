@@ -7,7 +7,7 @@ import { getSettings, updateSettings } from "@/lib/workspace";
 
 const patch = z.object({
   name: z.string().trim().min(1, "Name your workspace.").max(80).optional(),
-  businessContext: z.string().trim().max(MAX_CONTEXT_LENGTH).optional(),
+  profile: z.string().trim().max(MAX_CONTEXT_LENGTH).optional(),
   agentInstructions: z.string().trim().max(MAX_CONTEXT_LENGTH).optional(),
 });
 

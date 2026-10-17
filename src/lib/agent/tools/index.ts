@@ -13,7 +13,7 @@ import {
   unwrapResult,
 } from "./sanitize";
 
-// Tool interpretation: turns raw tool calls into steps a business owner can follow, in plain
+// Tool interpretation: turns raw tool calls into steps a non-technical person can follow, in plain
 // language, with the app each step worked in and a receipt of what it actually did.
 //
 // Provider-neutral: adapters hand over normalized calls ({ name, input, output, error }) in
@@ -424,7 +424,7 @@ function webSearch(input: Record<string, unknown>, result: unknown): Interpretat
 
 function memoryRead(input: Record<string, unknown>, result: unknown): Interpretation {
   const query = firstString(input, ["query", "q", "search"]);
-  const about = query ? `“${clip(query, 60)}”` : "your business";
+  const about = query ? `“${clip(query, 60)}”` : "you";
   return {
     labels: { running: `Checking what I know about ${about}`, done: `Checked what I know about ${about}` },
     app: "memory",

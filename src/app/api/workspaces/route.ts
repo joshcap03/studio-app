@@ -2,11 +2,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { ACTIVE_WORKSPACE_COOKIE, authorizeSession, jsonError, resolveTenant } from "@/lib/tenant";
+import { applyTemplate } from "@/lib/templates/apply";
+import { templateById } from "@/lib/templates";
 import { MAX_CONTEXT_LENGTH } from "@/lib/types";
 
 const create = z.object({
   name: z.string().trim().min(1, "Name your workspace.").max(80),
-  businessContext: z.string().trim().max(MAX_CONTEXT_LENGTH).default(""),
+  profile: z.string().trim().max(MAX_CONTEXT_LENGTH).default(""),
+  templateId: z
+    .string()
+    .refine((id) => templateById(id) !== undefined, "That template doesn't exist.")
+    .optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -24,11 +30,15 @@ export async function POST(request: NextRequest) {
   try {
     const { data, error } = await auth.value.db.rpc("create_workspace", {
       p_name: input.name,
-      p_business_context: input.businessContext,
+      p_business_context: input.profile,
     });
     if (error) {
       if (error.hint === "workspace_limit") return jsonError(409, "You've reached the limit of 3 workspaces.");
       throw error;
+    }
+    if (input.templateId) {
+      const tenant = await resolveTenant(auth.value, data as string);
+      if (tenant) await applyTemplate(tenant, input.templateId);
     }
     const response = NextResponse.json({ workspaceId: data as string }, { status: 201 });
     response.cookies.set(ACTIVE_WORKSPACE_COOKIE, data as string, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 365 });
