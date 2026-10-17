@@ -8,6 +8,7 @@ import { listRecords } from "@/lib/tasks/records";
 import { templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import { barScore, recentPasses } from "@/lib/verdicts";
 
 // Workspace-level data: settings, usage, and the per-run agent context. All reads and writes
 // go through the tenant's RLS-bound client and are filtered by the tenant's workspace id.
@@ -149,7 +150,7 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
  * being answered, left out of the recent chats a guardrail run sees.
  */
 export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string): Promise<AgentTenantContext> {
-  const [settings, memories, guardrail, tasks] = await Promise.all([
+  const [settings, memories, guardrail, tasks, bar] = await Promise.all([
     getSettings(tenant),
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
     guardrailForRun(tenant, conversationId),
@@ -158,6 +159,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
       console.error("[context] couldn't load the task and tracker", e);
       return {};
     }),
+    barFor(tenant),
   ]);
   return {
     workspaceId: tenant.workspace.id,
@@ -173,7 +175,19 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     ...tasks,
     setup: conversationId && settings.setup?.conversationId === conversationId ? { plan: settings.setup.plan } : null,
     notes: await notesFor(tenant, settings.templateId),
+    bar,
   };
+}
+
+/** The member's bar in practice (see src/lib/verdicts.ts); a run goes ahead without it on error. */
+async function barFor(tenant: Tenant): Promise<AgentTenantContext["bar"]> {
+  try {
+    const [score, passes] = await Promise.all([barScore(tenant), recentPasses(tenant)]);
+    return score.judged ? { ...score, passes } : undefined;
+  } catch (e) {
+    console.error("[context] couldn't load the member's verdicts", e);
+    return undefined;
+  }
 }
 
 /** How many reference rows (e.g. stories) the agent sees in every chat, per collection. */

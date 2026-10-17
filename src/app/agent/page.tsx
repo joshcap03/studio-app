@@ -7,6 +7,7 @@ import { requirePageTenant } from "@/lib/tenant";
 import { brainMemories, listPromotions } from "@/lib/brain";
 import { previewEnabled } from "@/lib/flags";
 import { listMemories, memoryEnabled } from "@/lib/memory";
+import { barScore, describeScore } from "@/lib/verdicts";
 import { getSettings, getUsage } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Agent" };
@@ -22,12 +23,13 @@ export default async function AgentPage() {
       })
     : Promise.resolve(null);
   const promotions = brain && memoryEnabled() ? listPromotions(tenant).catch(() => []) : Promise.resolve(null);
-  const [settings, initialMemories, usage, initialPromotions, files] = await Promise.all([
+  const [settings, initialMemories, usage, initialPromotions, files, score] = await Promise.all([
     getSettings(tenant),
     memories,
     getUsage(tenant),
     promotions,
     listAgentFiles(tenant),
+    barScore(tenant).then(describeScore, () => null),
   ]);
 
   return (
@@ -48,6 +50,7 @@ export default async function AgentPage() {
           canEdit={tenant.workspace.role === "owner"}
           initialFiles={files}
           allowFiles={getAgentAdapter().capabilities.attachments}
+          score={score}
         />
       </div>
     </main>

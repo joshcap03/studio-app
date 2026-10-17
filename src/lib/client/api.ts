@@ -1,6 +1,7 @@
 import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
 import type { AgentRecord, AgentTask, PlanStep, TaskRun } from "@/lib/tasks/types";
+import type { VerdictCall } from "@/lib/verdicts";
 import { disablePush } from "./push";
 
 /** What a member sets on a task; the server fills in the rest. */
@@ -73,7 +74,7 @@ export const api = {
     conversationId: string,
     blockId: string,
     body:
-      | { action: "submit"; keepFiles?: string[] }
+      | { action: "submit"; keepFiles?: string[]; verdicts?: VerdictCall[] }
       | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string },
   ) =>
     request<{ response: UiResponse }>(`/api/conversations/${conversationId}/ui/${blockId}`, {
@@ -95,7 +96,7 @@ export const api = {
   deleteAgentFile: (id: string) => request<void>(`/api/agent/files/${id}`, { method: "DELETE" }),
   deleteAttachment: (id: string) => request<void>(`/api/attachments/${id}`, { method: "DELETE" }),
   listTasks: (signal?: AbortSignal) => request<{ tasks: AgentTask[] }>("/api/tasks", { signal }),
-  getTask: (id: string, signal?: AbortSignal) => request<{ task: AgentTask }>(`/api/tasks/${id}`, { signal }),
+  getTask: (id: string, signal?: AbortSignal) => request<{ task: AgentTask; score?: string | null }>(`/api/tasks/${id}`, { signal }),
   createTask: (draft: TaskFields) => request<{ task: AgentTask }>("/api/tasks", { method: "POST", body: JSON.stringify(draft) }),
   updateTask: (id: string, patch: Partial<TaskFields> & { status?: AgentTask["status"]; plan?: PlanStep[] }) =>
     request<{ task: AgentTask }>(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),

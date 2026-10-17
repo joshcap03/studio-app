@@ -31,6 +31,8 @@ interface Props {
   initialFiles: Attachment[];
   /** Whether the agent can read files. */
   allowFiles: boolean;
+  /** What the caller kept of the results they judged lately ("4 of 5 kept this past week"). */
+  score?: string | null;
 }
 
 async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
@@ -45,7 +47,7 @@ async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<Workspa
 }
 
 // Everything about the active agent: who it is, what it knows, and how much it's used.
-export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles }: Props) {
+export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles, score }: Props) {
   const [settings, setSettings] = useState(initialSettings);
   return (
     <>
@@ -53,6 +55,12 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
       <p className="mt-1 text-[14px] text-fg-3">
         {canEdit ? "What this agent is for and how it works. It reads this before every conversation." : "Only the owner can change this agent."}
       </p>
+      {score ? (
+        <p className="mt-3 flex items-center gap-2 text-[13px] text-fg-2">
+          <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />
+          Your bar: {score}
+        </p>
+      ) : null}
       <div className="mt-10 space-y-14">
         <AgentSection initial={settings} canEdit={canEdit} onSaved={setSettings} />
         {allowFiles || initialFiles.length > 0 ? <FilesSection initial={initialFiles} allowFiles={allowFiles} /> : null}

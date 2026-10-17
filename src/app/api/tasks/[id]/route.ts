@@ -4,6 +4,7 @@ import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { deleteTask, getTask, updateTask } from "@/lib/tasks";
 import { patchTaskBody } from "@/lib/tasks/schema";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
+import { barScore, describeScore } from "@/lib/verdicts";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -15,7 +16,9 @@ export async function GET(request: NextRequest, { params }: Context) {
   try {
     const task = await getTask(auth.value, id.data);
     if (!task) return jsonError(404, "Task not found.");
-    return NextResponse.json({ task }, noStore);
+    // What the member kept of this task's results lately; the page shows it as a quiet line.
+    const score = await barScore(auth.value, { taskId: task.id }).then(describeScore, () => null);
+    return NextResponse.json({ task, score }, noStore);
   } catch (error) {
     return errorResponse(error);
   }
