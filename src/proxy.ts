@@ -25,13 +25,22 @@ export async function proxy(request: NextRequest) {
   const { data } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  if (data.user || PUBLIC_PATHS.some((p) => path.startsWith(p))) return response;
+  if (data.user || PUBLIC_PATHS.some((p) => path.startsWith(p)) || isWorkerRunStart(request)) return response;
 
   if (path.startsWith("/api/")) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   const login = new URL("/login", request.url);
   const next = path + request.nextUrl.search;
   if (next !== "/") login.searchParams.set("next", next);
   return NextResponse.redirect(login);
+}
+
+// The background worker starting a queued task run carries the member's access token instead
+// of a cookie. Only that one route takes a token, and it verifies it with Supabase Auth itself
+// (src/app/api/tasks/[id]/runs/[runId]/route.ts); nothing else gets past without a session.
+const WORKER_RUN_START = /^\/api\/tasks\/[0-9a-f-]{36}\/runs\/[0-9a-f-]{36}$/i;
+
+function isWorkerRunStart(request: NextRequest): boolean {
+  return request.method === "POST" && WORKER_RUN_START.test(request.nextUrl.pathname) && /^Bearer\s+\S+$/i.test(request.headers.get("authorization") ?? "");
 }
 
 export const config = {

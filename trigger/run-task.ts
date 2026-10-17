@@ -1,11 +1,10 @@
 import { logger, task } from "@trigger.dev/sdk";
-import { runClaimedTask } from "@/lib/tasks/run-task";
-import { resolveTenant } from "@/lib/tenant-core";
 import { asMember, MemberUnavailable, SignInRateLimited } from "./lib/elevated";
 
-// Runs one claimed run of a member's task, as that member: everything here goes through their
-// own session under RLS, the same code as "Run now". A run that pauses for the member's
-// approval ends here; they approve in the app, which continues it.
+// Starts one claimed run of a member's task. The worker only signs in as the task's member;
+// the app runs the task (POST /api/tasks/<id>/runs/<run>), as them under RLS and with its own
+// settings and keys, exactly like "Run now". So the worker needs no agent or app keys. A run
+// that pauses for the member's approval ends here; they approve in the app, which continues it.
 
 export interface RunTaskPayload {
   runId: string;
@@ -17,25 +16,40 @@ export interface RunTaskPayload {
 }
 
 const MAX_DEFERRALS = 5;
+// The app's runs stop at its function limit (300s); give the answer a little longer to arrive.
+const APP_TIMEOUT_MS = 320_000;
+
+function appUrl(): string {
+  const value = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (!value) throw new Error("APP_URL is not set");
+  return value;
+}
+
+/** Asks the app to run the claimed run as the member; resolves with how it ended. */
+async function startInApp(payload: RunTaskPayload, accessToken: string): Promise<{ status: string; reason: string | null }> {
+  const url = `${appUrl()}/api/tasks/${payload.taskId}/runs/${payload.runId}?workspace=${payload.workspaceId}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(APP_TIMEOUT_MS),
+  });
+  if (res.status === 404) return { status: "skipped", reason: "not_found" };
+  if (!res.ok) throw new Error(`The app couldn't start run ${payload.runId}: ${res.status}`);
+  return (await res.json()) as { status: string; reason: string | null };
+}
 
 export const runTask = task({
   id: "run-task",
   // Never retried blindly: the agent may have done work. A run that can't start is recorded as such.
   retry: { maxAttempts: 1 },
   queue: { concurrencyLimit: 10 },
+  maxDuration: 600,
   run: async (payload: RunTaskPayload) => {
     try {
-      return await asMember(payload.userId, async (session) => {
-        // Membership is checked again under RLS: a member who left the workspace gets no run.
-        const tenant = await resolveTenant(session, payload.workspaceId);
-        if (!tenant || tenant.workspace.id !== payload.workspaceId) {
-          logger.warn("member no longer in the task's workspace", { runId: payload.runId });
-          return { status: "skipped", reason: "not_a_member" };
-        }
-        const outcome = await runClaimedTask(tenant, { taskId: payload.taskId, runId: payload.runId });
-        logger.info("run settled", { runId: payload.runId, ...outcome });
-        return outcome;
-      });
+      // The session stays open until the app answers, so the run's queries keep a live sign-in.
+      const outcome = await asMember(payload.userId, (accessToken) => startInApp(payload, accessToken));
+      logger.info("run settled", { runId: payload.runId, ...outcome });
+      return outcome;
     } catch (error) {
       if (error instanceof SignInRateLimited && (payload.deferred ?? 0) < MAX_DEFERRALS) {
         // The run is still queued; try again shortly with a fresh sign-in.

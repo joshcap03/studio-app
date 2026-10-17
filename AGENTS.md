@@ -61,8 +61,10 @@ raw/technical text.
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
-  tasks every two minutes; `run-task.ts` runs each as its member. `lib/elevated.ts` is the only
-  code with the Supabase secret key.
+  tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
+  it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
+  worker holds only the Supabase keys and `APP_URL`. `lib/elevated.ts` is the only code with
+  the Supabase secret key.
 - `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
   Context, Member Apps for per-member Composio tools, Load Skill) and `install.py`, which
   backs up a flow and installs them.
@@ -79,7 +81,10 @@ raw/technical text.
   `SUPABASE_SECRET_KEY`, only to call the service_role-only `worker_*` functions and to open a
   short-lived session as a task's member (magic link + verify, checked to be that member, signed
   out with local scope). The admin client never touches tables; everything after runs as the
-  member under RLS. `src/lib/elevated-guard.test.ts` enforces this.
+  member under RLS. `src/lib/elevated-guard.test.ts` enforces this. That session's access token
+  goes only to `POST /api/tasks/<id>/runs/<run>`, the one route that accepts a bearer token
+  (verified with Supabase Auth; `src/proxy.ts` lets only that route through without a cookie).
+  Every other route takes cookie sessions only.
 - Keep provider-specific logic inside its adapter. Declare capabilities honestly; don't
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
 - Never hardcode a tenant, template, or use case into agent or app logic. Templates are

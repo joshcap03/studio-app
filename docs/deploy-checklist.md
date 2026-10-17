@@ -123,31 +123,26 @@ gitignored; still delete the pulled file when done.
 
 The worker (`trigger/`) runs members' scheduled tasks. Every two minutes `dispatch-due-tasks`
 claims due tasks and starts a `run-task` for each, which signs in as the task's member and
-runs the turn exactly as "Run now" does. Until this step is done nothing runs on a schedule;
+asks the app to run it exactly as "Run now" does. Until this step is done nothing runs on a schedule;
 the rest of the app (including "Run now") works without it.
 
 - [ ] Create a project at cloud.trigger.dev (e.g. "studio-worker"). Copy its ref (`proj_…`,
       Project settings).
 - [ ] Supabase → Project Settings → API Keys → **Secret keys** → create one named
       `trigger-worker` (so it can be rotated on its own). It goes **only** into Trigger.dev.
-- [ ] Build the worker's env from the app's production env:
+- [ ] Trigger.dev → the project → Environment Variables → **Production** → add these four
+      (turn on **Secret value**). The worker only signs in as each task's member and asks the
+      app to run the task, so it needs none of the agent's keys:
 
-  ```sh
-  npx vercel env pull .env.worker.local --environment=production
-  # edit .env.worker.local: delete SUPABASE_ACCESS_TOKEN, add SUPABASE_SECRET_KEY=<the trigger-worker key>
-  node --env-file=.env.worker.local scripts/check-deploy-env.mjs --worker
-  ```
+  | Variable | Value |
+  |---|---|
+  | `NEXT_PUBLIC_SUPABASE_URL` | same as Vercel |
+  | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | same as Vercel |
+  | `SUPABASE_SECRET_KEY` | the `trigger-worker` key (never in Vercel) |
+  | `APP_URL` | the production URL, e.g. `https://studio-business.vercel.app` |
 
-  The worker needs: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-  `SUPABASE_SECRET_KEY`, `AGENT_PROVIDER`, `LANGFLOW_BASE_URL`, `LANGFLOW_API_KEY`,
-  `LANGFLOW_FLOW_ID`, `LANGFLOW_TWEAKS` (and `LANGFLOW_STREAM` / `LANGFLOW_END_USER_HEADER`
-  if the app sets them), `AGENT_LIVE_WORKSPACES`, `COMPOSIO_API_KEY` (and `COMPOSIO_TOOLKITS`
-  if set), `SUPERMEMORY_API_KEY`, `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`
-  (so a paused or finished run notifies the member), `PREVIEW_FEATURE_EMAILS` (tasks are a
-  preview), and the `LIMIT_*` values. Sensitive Vercel variables come down empty; fill those in
-  by hand.
-- [ ] Trigger.dev → the project → Environment Variables → **Production** → add them (paste
-      the file's lines). Then `rm .env.worker.local`.
+  To check them first: put the four in `.env.worker.local`, run
+  `node --env-file=.env.worker.local scripts/check-deploy-env.mjs --worker`, then delete the file.
 - [ ] Trigger.dev → Account → Personal Access Tokens → create one. GitHub → repo → Settings
       → Secrets and variables → Actions: secret `TRIGGER_ACCESS_TOKEN` = that token;
       variable `TRIGGER_PROJECT_REF` = the `proj_…` ref.
