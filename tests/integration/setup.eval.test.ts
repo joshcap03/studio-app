@@ -101,6 +101,18 @@ const resumeFile = (): AgentAttachment => ({
   read: async () => new Blob([RESUME], { type: "text/plain" }),
 });
 
+/**
+ * The member's bar, as a crisp answer to each part of the success step. Words from it showing
+ * up in the proposal's instructions mean the agent carried the bar through.
+ */
+const BAR: [RegExp, string][] = [
+  [/one thing|most want/i, "Find senior product design roles that actually fit me, so I only spend time applying to good ones."],
+  [/perfect|what do you get|when\b/i, "Every weekday by 9am: 3 to 5 new roles, each with the link, the pay, and one line on why it fits."],
+  [/judge|great|okay/i, "I'd apply to at least 3 of every 5 you send. Remote in the US only, $180k base or more, B2B SaaS, posted in the last 3 days, never one I've already seen."],
+  [/stop using|hate/i, "Roles below senior, the same role twice, or anything that isn't remote."],
+];
+const FROM_BAR = /180|9 ?am|3 (of|out of) (every )?5|3 days/i;
+
 /** The member's answers to a form: prefills as drafted, a plain answer where one's required. */
 function fill(form: UiForm): { values: FormValues; attachResume: boolean } {
   const values: FormValues = {};
@@ -116,6 +128,7 @@ function fill(form: UiForm): { values: FormValues; attachResume: boolean } {
       case "text":
       case "long_text":
         if (f.prefill) values[f.id] = f.prefill;
+        else if (BAR.some(([q]) => q.test(f.label))) values[f.id] = BAR.find(([q]) => q.test(f.label))![1];
         else if (/\bpay\b|salary|compensation/i.test(f.label)) values[f.id] = "$150k";
         else if (/location|where|\bcit(y|ies)\b/i.test(f.label)) values[f.id] = "Remote, US";
         else if (/break/i.test(f.label)) values[f.id] = "Crypto, agencies";
@@ -227,14 +240,24 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     expect(first.reply.length, describeTurn(first)).toBeLessThan(700);
   });
 
+  it("asks the member to define success in their own words before anything else", () => {
+    const first = turns[0]?.form;
+    expect(first, "needs the opening form").toBeTruthy();
+    // Open questions about their bar, not a menu of things the agent could do.
+    expect(first!.fields.filter((f) => f.kind === "long_text" || f.kind === "text").length, first!.title).toBeGreaterThanOrEqual(3);
+    expect(first!.fields.some((f) => f.kind === "multi_choice"), first!.title).toBe(false);
+    expect(first!.fields.some((f) => f.kind === "file"), "asked for the résumé before the bar").toBe(false);
+  });
+
   it("reads the résumé and prefills the next form from it", { timeout: 900_000 }, async () => {
     // Answer step by step until the résumé has gone in (the form asking for it, or alongside
     // the first answer if the agent never asks), then look at the form that follows.
     let last = turns[turns.length - 1];
     expect(last?.form, "needs the opening form").toBeTruthy();
-    for (let i = 0; i < 3 && !t.agentFiles!.includes(RESUME_NAME); i++) {
+    // The success step takes a few turns (the bar, maybe a follow-up, the playback).
+    for (let i = 0; i < 6 && !t.agentFiles!.includes(RESUME_NAME); i++) {
       const asksForFile = last.form?.fields.some((f) => f.kind === "file") ?? false;
-      last = await answer(last, { resume: i === 1 && !asksForFile });
+      last = await answer(last, { resume: i === 4 && !asksForFile });
     }
     expect(t.agentFiles, "the résumé never went in").toContain(RESUME_NAME);
     expect(last.form, describeTurn(last)).not.toBeNull();
@@ -280,6 +303,10 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
       else expect(taskScheduleSchema.safeParse(task.schedule).success, `"${id}" schedule ${JSON.stringify(task.schedule)}`).toBe(true);
     }
     expect(templated.some((x) => x.schedule !== null), "no proposed task runs on a schedule").toBe(true);
+    // It's built on, and holds later runs to, the bar the member confirmed.
+    const instructions = last.proposal!.instructions ?? "";
+    expect(instructions, "the proposal doesn't say what success means").toMatch(/what success means/i);
+    expect(instructions, "the proposal dropped the member's bar").toMatch(FROM_BAR);
     // Nothing is applied yet, so the agent mustn't say it is.
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
   });
@@ -305,7 +332,7 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
         (raw.form.fields ?? []).forEach((f, i) => {
           const kept = fields.find((x) => x.label === String(f.label ?? "").trim());
           if (!kept) lost.push(`form "${raw.form!.title}" field ${i}: ${JSON.stringify(f).slice(0, 200)}`);
-          else if ((f.prefill ?? f.value ?? f.items) != null && !("prefill" in kept && kept.prefill))
+          else if (![null, undefined, ""].includes((f.prefill ?? f.value ?? f.items) as string) && !("prefill" in kept && kept.prefill))
             lost.push(`form "${raw.form!.title}" prefill of "${kept.label}": ${JSON.stringify(f).slice(0, 200)}`);
         });
       } else if (raw.proposal) {

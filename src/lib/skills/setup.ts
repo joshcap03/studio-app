@@ -1,27 +1,30 @@
 import { describeSchedule } from "@/lib/tasks/schedule";
-import { DEFAULT_TEMPLATE_ID, templateById, type AgentTemplate } from "@/lib/templates";
+import { DEFAULT_TEMPLATE_ID, setupSteps, templateById, type AgentTemplate } from "@/lib/templates";
 import type { WorkspaceSkill } from "@/lib/types";
 import { CATALOG } from "./catalog";
 
 // The setup interview every agent opens with: one built-in skill whose steps come from the
 // agent's template. It uses only the agent's general-purpose cards (show_form, ask_user,
 // propose_agent), so nothing here is UI for one template; the template only says what to ask.
+// Every interview opens by having the owner define success (SUCCESS_STEP), and the proposal
+// it ends with is built on, and holds every later run to, the bar they confirmed.
 
 export const SETUP_SKILL_ID = "builtin:setup";
 export const SETUP_SKILL_NAME = "Set up this agent";
 
 const RULES = `Set this agent up with the owner, as a short interview, so it works the way they need from here on.
-- Go through the steps below in order, one step per reply. Each reply is a sentence or two, then one show_form (ask_user for a single quick choice), and then stop: their answers arrive as their next message.
+- Go through the steps below in order, one step per reply (step 1 can take a few). Each reply is a sentence or two, then one show_form (ask_user for a single quick choice), and then stop: their answers arrive as their next message.
+- Step 1 sets their bar: what they need this agent to do and how they'll judge it. Don't plan, suggest tasks, or design anything until they've confirmed it, and build every later step on it.
 - Before each step, check what you already know (CONTEXT: about them, what this agent is for, its instructions, memory, their files, the tracker). Prefill the form with it, and skip a step that's already answered (say so in a few words).
 - Read any file they add before the next step. Use only facts from their files and answers; never invent experience, numbers, or preferences.
 - Remember lasting facts as you learn them, with remember, as usual.
 - On your first reply, call update_plan with one step per setup step below (the current one "doing", the rest "todo"), and update it each time a step finishes or is skipped.
 - If they want to stop, skip a step, or change course, do that.
-- Finish with propose_agent, then stop. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it.
+- Finish with propose_agent, then stop. Its instructions open with a "What success means" section: their confirmed criteria and deal-breakers in their words, then "Check every result against these before you send it, and say plainly which one it misses." Every task you propose serves one of the criteria. In your reply, say for each criterion how you'll meet it, and be honest about any you can't meet yet (a missing app, data, or ability) and what would close the gap; never promise more than you can do. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it.
 - Your first reply's text (not the form) starts with "Hey!", then one sentence on what you'll do together and that it takes about {count} quick steps, then step 1's form.`;
 
 function steps(template: AgentTemplate): string {
-  return template.setup.steps.map((s, i) => `${i + 1}. ${s.title}: ${s.goal}`).join("\n");
+  return setupSteps(template).map((s, i) => `${i + 1}. ${s.title}: ${s.goal}`).join("\n");
 }
 
 function templateTasks(template: AgentTemplate): string {
@@ -44,7 +47,7 @@ export function setupSkill(templateId: string | null | undefined): WorkspaceSkil
     catalogId: null,
     name: SETUP_SKILL_NAME,
     description: template.setup.intro,
-    instructions: `${RULES.replace("{count}", String(template.setup.steps.length))}
+    instructions: `${RULES.replace("{count}", String(setupSteps(template).length))}
 
 This agent started from the "${template.name}" template. ${template.setup.intro}
 

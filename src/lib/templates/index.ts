@@ -40,7 +40,15 @@ export interface AgentTemplate {
 export interface TemplateSetup {
   /** One sentence on what setting up gets the member, as the agent would say it. */
   intro: string;
-  /** In order; the agent runs one per reply and skips what it already knows. */
+  /**
+   * A vague and a crisp way to say what success is for this kind of agent, for the agent to
+   * coach with in the success step (SUCCESS_STEP). It's an illustration, never the member's bar.
+   */
+  successExample: { vague: string; crisp: string };
+  /**
+   * In order, after SUCCESS_STEP (which every setup opens with); the agent runs one per reply
+   * and skips what it already knows. The last one proposes the agent's setup.
+   */
   steps: TemplateSetupStep[];
 }
 
@@ -50,6 +58,28 @@ export interface TemplateSetupStep {
   title: string;
   /** What to learn in this step and which card to show, written for the agent. */
   goal: string;
+}
+
+/**
+ * The step every setup opens with: before anything is planned, the member says, as crisply as
+ * a product manager writing acceptance criteria, what this agent must do and how they'll judge
+ * it. The agent draws it out of them rather than offering a menu of things it could do, and the
+ * proposal at the end is built on (and held to) what they confirm.
+ */
+export const SUCCESS_STEP: TemplateSetupStep = {
+  id: "success",
+  title: "What success looks like",
+  goal: `Get the owner to define success crisply, the way a product manager writes acceptance criteria, before anything is planned. They have a specific job in mind, and this agent is only worth using if it does that job to their standard, so draw it out of them: don't offer a menu of things you could do, and don't suggest goals of your own. This step can take a few replies.
+  a. show_form (intro: one sentence on why you're asking: so you can hold yourself to their bar) with required long_text fields "What's the one thing you most want me to do?", "Picture it going perfectly: what do you get from me, and when?", "How will you judge it? What makes a result great rather than just okay?", and "What would make you stop using me?", plus an optional long_text "Paste an example of a result you'd love (or one you'd hate)". Placeholders can hint at the crisp example below; never prefill these with your own guesses.
+  b. Read their answers like a product manager. For each part that's vague or can't be checked ("good", "relevant", "high quality", "save me time", "a lot"), ask what it means to them: ask_user with 2-4 concrete readings drawn from their own words (they can type their own), or one show_form covering the vague parts. At most two rounds of this; then work with what they gave and say what's still loose. Never fill a gap with an assumption.
+  c. Play it back: show_form titled "Your bar" with one list field (item_label "Criterion", parts: criterion (short), how we'll check it (long)) prefilled with 3-6 criteria in their words, each one a result could pass or fail (a number, a deadline, a yes/no), the deal-breakers among them. When they send it back, that's the bar: remember it in one line, and finish the step.
+Coaching example for this kind of agent (an illustration only; their bar is their own): vague "{vague}"; crisp "{crisp}".`,
+};
+
+/** The setup steps an agent made from `template` runs, in order. */
+export function setupSteps(template: AgentTemplate): TemplateSetupStep[] {
+  const success = { ...SUCCESS_STEP, goal: SUCCESS_STEP.goal.replace("{vague}", template.setup.successExample.vague).replace("{crisp}", template.setup.successExample.crisp) };
+  return [success, ...template.setup.steps];
 }
 
 export interface TemplateTask {
@@ -120,13 +150,12 @@ export const TEMPLATES: AgentTemplate[] = [
     ],
     contextCollections: ["stories"],
     setup: {
-      intro: "I'll learn what you're looking for, read your résumé, help you get your stories ready, and then suggest how I'll run your search.",
+      intro: "I'll learn exactly what a great job search looks like to you, read your résumé, help you get your stories ready, and then suggest how I'll run your search.",
+      successExample: {
+        vague: "Find me good jobs.",
+        crisp: "Each weekday by 9am, 3-5 new senior product design roles: remote in the US, $180k+ base, B2B SaaS, posted in the last 3 days, none I've seen before, each with one line on why it fits. If I'd pass on more than 2 of every 5, it isn't working.",
+      },
       steps: [
-        {
-          id: "goals",
-          title: "What you want from me",
-          goal: `Learn which jobs they want help with and how hands-on to be. show_form with: a multi_choice "What should I do for you?" (Find roles that fit, Tailor applications, Reach out to people, Prep for interviews, Keep my tracker, Follow up on applications), a choice "How often should I check in?" (Every weekday, A few times a week, Weekly, Only when I ask), and an optional long_text "Anything else I should know about your search?".`,
-        },
         {
           id: "resume",
           title: "Your résumé",
@@ -135,7 +164,7 @@ export const TEMPLATES: AgentTemplate[] = [
         {
           id: "search",
           title: "Your search",
-          goal: `Pin down the search. show_form, prefilled from the résumé and what they said: text "Target roles", choice "Seniority" (from their level, a step up, either), multi_choice "How do you want to work?" (Remote, Hybrid, On-site; they pick every one they'd take), text "Cities" (help: only for hybrid or on-site roles), text "Pay floor", long_text "Must-haves", long_text "Deal-breakers", and text "Companies you'd love to work at".`,
+          goal: `Pin down the search. show_form, prefilled from the résumé, their bar, and what they said: text "Target roles", choice "Seniority" (from their level, a step up, either), multi_choice "How do you want to work?" (Remote, Hybrid, On-site; they pick every one they'd take), text "Cities" (help: only for hybrid or on-site roles), text "Pay floor", long_text "Must-haves", long_text "Deal-breakers", text "Companies you'd love to work at", and a choice "How often should I check in?" (Every weekday, A few times a week, Weekly, Only when I ask; prefilled to match their bar if it says).`,
         },
         {
           id: "stories",
@@ -150,7 +179,7 @@ export const TEMPLATES: AgentTemplate[] = [
         {
           id: "design",
           title: "How I'll work",
-          goal: `Design this agent for them with propose_agent: a profile summarizing the search in their words, instructions that adapt this agent's current instructions to what they told you (focus, how proactive, how to check in), the listed tasks they'd want switched on (each with its template_task_id, title, instructions, and a schedule object such as {every: "weekdays", at: "08:00"} that matches how often they want check-ins), any library skills they need that the agent lacks, and a few lasting facts to remember.`,
+          goal: `Design this agent for them with propose_agent: a profile summarizing the search in their words, instructions that adapt this agent's current instructions to their bar and what they told you (focus, how proactive, how to check in), the listed tasks that serve their bar switched on (each with its template_task_id, title, instructions, and a schedule object such as {every: "weekdays", at: "08:00"} that matches how often they want check-ins), any library skills they need that the agent lacks, and a few lasting facts to remember.`,
         },
       ],
     },
@@ -167,7 +196,11 @@ export const TEMPLATES: AgentTemplate[] = [
     apps: ["gmail", "shopify", "sheets", "quickbooks"],
     tasks: [],
     setup: {
-      intro: "I'll learn how your business works, connect the tools you run on, and then suggest what I'll take off your plate.",
+      intro: "I'll learn exactly what you need me to get right, how your business works, and the tools you run on, and then suggest what I'll take off your plate.",
+      successExample: {
+        vague: "Help with customer emails.",
+        crisp: "Every customer email gets a reply drafted within 2 hours on weekdays, in my tone, with the right order details from Shopify; I send at least 4 of every 5 without editing, and nothing promising a refund goes out without me.",
+      },
       steps: [
         {
           id: "business",
@@ -180,14 +213,14 @@ export const TEMPLATES: AgentTemplate[] = [
           goal: `Connect what they run on. show_form with a connect field for gmail, shopify, sheets and quickbooks (help: say what you'd use each for), and say they can skip any and connect later.`,
         },
         {
-          id: "chores",
-          title: "What to take off your plate",
-          goal: `Find the recurring work. show_form with a multi_choice "What should I help with?" (Answer customer emails, Weekly sales summary, Watch stock, Chase unpaid invoices, Social posts, Bookkeeping prep), a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask), and a long_text "Anything you dread doing each week?".`,
+          id: "rhythm",
+          title: "When I work",
+          goal: `Find when the work happens. show_form with a long_text "When does this work come up, and by when does it need doing?" (prefilled from their bar), a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask), and an optional long_text "Anything else you dread doing each week?".`,
         },
         {
           id: "design",
           title: "How I'll work",
-          goal: `Design this agent with propose_agent: a profile of the business in their words, instructions for how to work (tone, what always needs their OK), new tasks for the chores they picked (title, instructions, a schedule that matches how often they want check-ins), library skills that fit, and a few lasting facts to remember.`,
+          goal: `Design this agent with propose_agent: a profile of the business in their words, instructions for how to work (tone, what always needs their OK), new tasks for the recurring work their bar needs (title, instructions, a schedule that matches how often they want check-ins), library skills that fit, and a few lasting facts to remember.`,
         },
       ],
     },
@@ -202,22 +235,21 @@ export const TEMPLATES: AgentTemplate[] = [
     apps: [],
     tasks: [],
     setup: {
-      intro: "Tell me what you want me to be, and I'll suggest how to set myself up for it.",
+      intro: "Tell me the job you want done and how you'll judge it, and I'll suggest how to set myself up to meet that bar.",
+      successExample: {
+        vague: "Keep an eye on flight prices.",
+        crisp: "Every Monday, the 3 cheapest nonstop round trips from Boston to Lisbon for the first two weeks of June under $700, with the airline and a link; ping me the same day if one drops below $550.",
+      },
       steps: [
-        {
-          id: "purpose",
-          title: "What I'm for",
-          goal: `Learn what they want. show_form with a long_text "What should this agent do for you?" (required; placeholder an example like "Plan my trips and keep an eye on prices"), a multi_choice "How should I work?" (Answer when I ask, Check things on a schedule, Keep a running list or tracker, Draft things for me to send), and a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask).`,
-        },
         {
           id: "context",
           title: "What I should know",
-          goal: `Gather what you'll need, based on what they want: a show_form with up to 4 short fields that matter for it (prefilled from what you know), an optional file field (keep: true) for anything to keep on hand, and a connect field for the 1-4 apps that would help most.`,
+          goal: `Gather what you'll need to meet their bar: a show_form with up to 4 short fields that matter for it (prefilled from what you know), a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask; prefilled to match their bar if it says), an optional file field (keep: true) for anything to keep on hand, and a connect field for the 1-4 apps that would help most.`,
         },
         {
           id: "design",
           title: "How I'll work",
-          goal: `Design this agent from scratch with propose_agent: a profile in their words, standing instructions, the library skills that fit (by id), new tasks with schedules for anything recurring, and a few lasting facts to remember.`,
+          goal: `Design this agent from scratch with propose_agent: a profile in their words, standing instructions built on their bar, the library skills that fit (by id), new tasks with schedules for anything recurring, and a few lasting facts to remember.`,
         },
       ],
     },
