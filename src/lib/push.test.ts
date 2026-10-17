@@ -31,6 +31,18 @@ describe("notificationFor", () => {
     expect(notificationFor(reply({ status: "interrupted" }), conversation)).toMatchObject({ title: "Couldn't finish" });
   });
 
+  it("follows a task run's report: quiet when nothing's new, a nudge when it needs the member", () => {
+    const done = reply({ content: "Checked your inbox." });
+    expect(notificationFor(done, conversation, { outcome: "nothing_new", summary: "No replies" })).toBeNull();
+    expect(notificationFor(done, conversation, { outcome: "needs_you", summary: "Pick a time for Acme's interview" })).toMatchObject({
+      title: "Needs you",
+      body: "Pick a time for Acme's interview",
+    });
+    expect(notificationFor(done, conversation, { outcome: "update", summary: "3 new roles" })).toMatchObject({ title: "March invoices", body: "3 new roles" });
+    // A report never hides a failure.
+    expect(notificationFor(reply({ status: "error" }), conversation, { outcome: "nothing_new", summary: "" })).toMatchObject({ title: "Couldn't finish" });
+  });
+
   it("stays quiet when the member stopped it", () => {
     expect(notificationFor(reply({ status: "stopped" }), conversation)).toBeNull();
   });

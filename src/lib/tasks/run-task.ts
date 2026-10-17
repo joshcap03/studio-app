@@ -48,11 +48,11 @@ export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { r
       input: { kind: "task", taskId: task.id, runId: id },
       // A stop can come from any server (the member's browser talks to the app, not the worker).
       shouldStop: id ? () => runStopRequested(tenant, id) : undefined,
-      onFinished: async (message) => {
+      onFinished: async (message, _conversation, { report }) => {
         // A run waiting on the member's approval isn't over: approving continues it.
         const outcome: RunOutcome =
           message.status === "complete"
-            ? { status: "done", reason: null }
+            ? { status: "done", reason: report?.outcome ?? null }
             : message.status === "awaiting"
               ? { status: "running", reason: "waiting_on_you" }
               : { status: "failed", reason: message.status };

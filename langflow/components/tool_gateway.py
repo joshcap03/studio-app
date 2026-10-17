@@ -72,6 +72,12 @@ class RecordArgs(BaseModel):
     fields: dict = Field(default_factory=dict, description="Any other details as short key-value pairs, e.g. {'score': 4, 'location': 'Remote'}.")
 
 
+class RunReportArgs(BaseModel):
+    outcome: str = Field(description=("nothing_new if this run found nothing worth the owner's attention, update if "
+                                      "there's something for them to read, needs_you if they must decide or act."))
+    summary: str = Field(default="", description="One short sentence for the notification, e.g. '3 new roles match; 1 recruiter replied'.")
+
+
 # Nested argument shapes are plain JSON schema rather than nested models: LangChain rebuilds
 # a tool's argument model where nested model names can't be resolved inside Langflow, and the
 # agent then sees the tool with no arguments at all.
@@ -603,6 +609,15 @@ class ToolGatewayComponent(Component):
         async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
             return save_record(collection, key, title, status, url, fields)
 
+        def report_run(outcome: str, summary: str = "") -> str:
+            # The app reads this to decide whether to notify the owner; it changes nothing.
+            outcome = outcome if outcome in ("nothing_new", "update", "needs_you") else "update"
+            return json.dumps({"run_report": {"outcome": outcome, "summary": " ".join(str(summary or "").split())[:300]},
+                               "note": "Reported. Finish your reply briefly."})
+
+        async def report_run_async(outcome: str, summary: str = "") -> str:
+            return report_run(outcome, summary)
+
         def report_timeline(question: str, entries: list, causes: list | None = None) -> str:
             # Like remember, this changes nothing: the app reads the structured result, checks
             # each link against what this run's tools returned, and shows it as a timeline.
@@ -781,6 +796,13 @@ class ToolGatewayComponent(Component):
                              "WORKSPACE has a tracker section; otherwise nothing would be kept. Use it for "
                              "things the owner will want to follow over time, not one-off answers. Saved for the owner; "
                              "changes nothing in their accounts."),
+            ),
+            StructuredTool.from_function(
+                func=report_run, coroutine=report_run_async, name="report_run",
+                args_schema=RunReportArgs,
+                description=("Only in a conversation that works on a task: once this run's work is done, say whether "
+                             "the owner should hear about it. They get a notification for update and needs_you, none "
+                             "for nothing_new. Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=report_timeline, coroutine=report_timeline_async, name="report_timeline",

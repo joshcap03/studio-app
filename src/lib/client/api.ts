@@ -1,5 +1,16 @@
 import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, StreamEvent } from "@/lib/types";
+import type { TaskSchedule } from "@/lib/tasks/schedule";
+import type { AgentRecord, AgentTask, PlanStep, TaskRun } from "@/lib/tasks/types";
 import { disablePush } from "./push";
+
+/** What a member sets on a task; the server fills in the rest. */
+export interface TaskFields {
+  title: string;
+  instructions: string;
+  skillId: string | null;
+  schedule: TaskSchedule | null;
+  timezone: string;
+}
 
 // Browser-side calls to this application's own API. The browser never talks to the agent
 // backend directly and never holds credentials; the session cookie is httpOnly.
@@ -67,6 +78,18 @@ export const api = {
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
   deleteProjectFile: (projectId: string, fileId: string) => request<void>(`/api/projects/${projectId}/files/${fileId}`, { method: "DELETE" }),
   deleteAttachment: (id: string) => request<void>(`/api/attachments/${id}`, { method: "DELETE" }),
+  listTasks: (signal?: AbortSignal) => request<{ tasks: AgentTask[] }>("/api/tasks", { signal }),
+  getTask: (id: string, signal?: AbortSignal) => request<{ task: AgentTask }>(`/api/tasks/${id}`, { signal }),
+  createTask: (draft: TaskFields) => request<{ task: AgentTask }>("/api/tasks", { method: "POST", body: JSON.stringify(draft) }),
+  updateTask: (id: string, patch: Partial<TaskFields> & { status?: AgentTask["status"]; plan?: PlanStep[] }) =>
+    request<{ task: AgentTask }>(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
+  listTaskRuns: (id: string, signal?: AbortSignal) => request<{ runs: TaskRun[] }>(`/api/tasks/${id}/runs`, { signal }),
+  runTask: (id: string) => request<{ conversationId: string; runId: string }>(`/api/tasks/${id}/run`, { method: "POST" }),
+  listRecords: (signal?: AbortSignal) => request<{ records: AgentRecord[] }>("/api/records", { signal }),
+  updateRecord: (id: string, patch: { status?: string | null }) =>
+    request<{ record: AgentRecord }>(`/api/records/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteRecord: (id: string) => request<void>(`/api/records/${id}`, { method: "DELETE" }),
   /** Stops notifications on this device first, so the next person on it doesn't get them. */
   signOut: async () => {
     await disablePush().catch(() => undefined);

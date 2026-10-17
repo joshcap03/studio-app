@@ -701,6 +701,21 @@ describe("edits, files, and memory suggestions", () => {
     expect(asked.origin).toEqual({ kind: "task", taskId: "t1", title: "Job hunt", runId: null });
   });
 
+  it("passes the agent's run report to onFinished, ignoring malformed ones", async () => {
+    const reports: unknown[] = [];
+    for (const report of [{ outcome: "nothing_new", summary: "  No   replies " }, { outcome: "bogus" }]) {
+      const store = createMemoryStore(scopeA);
+      const adapter = scripted([{ type: "run-report", report }, { type: "message", text: "Checked." }]);
+      await collect(
+        startTurn(
+          { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, onFinished: (_m, _c, info) => void reports.push(info.report) },
+          { conversationId: crypto.randomUUID(), kind: "send", text: "x" },
+        ),
+      );
+    }
+    expect(reports).toEqual([{ outcome: "nothing_new", summary: "No replies" }, null]);
+  });
+
   it("drops plan and tracker reports when nothing can save them", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

@@ -144,6 +144,16 @@ export interface Attachment {
   size: number;
 }
 
+/**
+ * How a task's run went, as the agent reported it: whether there's anything for the member.
+ * Decides whether the member is notified when the run ends.
+ */
+export const RUN_OUTCOMES = ["nothing_new", "update", "needs_you"] as const;
+export interface RunReport {
+  outcome: (typeof RUN_OUTCOMES)[number];
+  summary: string;
+}
+
 /** Where a message came from when the member didn't type it. */
 export interface MessageOrigin {
   kind: "task";
