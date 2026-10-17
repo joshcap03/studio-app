@@ -228,6 +228,17 @@ const SCENARIOS: Scenario[] = [
     steps: [
       { kind: "text", text: "Let's get you set up (mock)." },
       {
+        kind: "plan",
+        plan: [
+          { text: "What success looks like", status: "done", note: "Bar set: 5 criteria, 2 deal-breakers (mock)" },
+          { text: "Your résumé", status: "done", note: "Read it: 8 years in B2B SaaS design (mock)" },
+          { text: "Your search", status: "doing" },
+          { text: "Your stories", status: "todo" },
+          { text: "Your apps", status: "todo" },
+          { text: "How I'll work", status: "todo" },
+        ],
+      },
+      {
         kind: "ui",
         block: {
           form: {

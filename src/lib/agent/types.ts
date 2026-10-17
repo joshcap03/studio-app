@@ -31,7 +31,7 @@ export interface AgentTenantContext {
    */
   tracker?: { collection: string; key: string; title: string; status: string | null }[];
   /** Set when this conversation is the agent's setup interview: its checklist so far. */
-  setup?: { plan: { text: string; status: string }[] } | null;
+  setup?: { plan: { text: string; status: string; note?: string | null }[] } | null;
   /**
    * Reference rows the template keeps in view in every chat (e.g. interview stories), with
    * their fields, unlike the tracker's one-line summaries.

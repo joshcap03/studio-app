@@ -75,8 +75,21 @@ describe("agent setup", () => {
     const res = await alice.api.json(`/api/conversations/${conversation}/messages`, "POST", { kind: "send", text: "", skillId: "builtin:setup" });
     expect(res.status, await res.clone().text()).toBe(200);
     await res.text(); // Let the run finish.
-    expect(await setupOf(alice)).toMatchObject({ status: "in_progress", conversationId: conversation, plan: [] });
+    // The mock agent reports its checklist, each finished step with what it gave the agent.
+    const setup = await setupOf(alice);
+    expect(setup).toMatchObject({ status: "in_progress", conversationId: conversation });
+    expect(setup?.plan[0]).toMatchObject({ status: "done", note: expect.stringContaining("Bar set") });
     expect(await setupOf(bob)).toBeNull();
+  });
+
+  it("tells only the owner where their setup stands, for the journey rail", async () => {
+    const res = await alice.api.json("/api/agent/setup", "GET");
+    expect(res.status).toBe(200);
+    const { setup } = (await res.json()) as { setup: { status: string; conversationId: string; done: number; total: number; plan: unknown[] } };
+    expect(setup).toMatchObject({ status: "in_progress", conversationId: conversation, done: 2, total: 6 });
+    // Bob's own agent hasn't started setup: he sees his template's steps, nothing of alice's.
+    const bobs = (await (await bob.api.json("/api/agent/setup", "GET")).json()) as { setup: { status: string; conversationId: string | null } };
+    expect(bobs.setup).toMatchObject({ status: "not_started", conversationId: null });
   });
 
   it("finishes when the owner applies a proposal in the setup conversation", async () => {

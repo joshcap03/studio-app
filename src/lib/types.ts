@@ -258,6 +258,18 @@ export interface SetupSummary {
   conversationId: string | null;
   done: number;
   total: number;
+  /** The checklist as the agent last reported it, or the template's steps before it has. */
+  plan: JourneyStep[];
+}
+
+/**
+ * One step of a journey the agent reports with update_plan (a setup checklist, a task's plan):
+ * `note` is what finishing it gave the agent, or what's in the way.
+ */
+export interface JourneyStep {
+  text: string;
+  status: "todo" | "doing" | "done" | "blocked" | "needs_you";
+  note?: string | null;
 }
 
 /** The setup interview's state (see src/lib/skills/setup.ts). */
@@ -265,8 +277,8 @@ export interface AgentSetup {
   status: "in_progress" | "done" | "skipped";
   /** The conversation the interview runs in. */
   conversationId: string | null;
-  /** The checklist as the agent last reported it (update_plan), with each step's status. */
-  plan: { text: string; status: "todo" | "doing" | "done" | "blocked" | "needs_you" }[];
+  /** The checklist as the agent last reported it (update_plan), with each step's status and outcome. */
+  plan: JourneyStep[];
   updatedAt: number;
 }
 

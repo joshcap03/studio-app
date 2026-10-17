@@ -220,6 +220,19 @@ body {
 .settle-check {
   animation: settle 220ms var(--ease-out-soft) both;
 }
+/* The step under way in a journey: a slow, quiet pulse. */
+@keyframes breathe-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.breathe-soft {
+  animation: breathe-soft 2.4s ease-in-out infinite;
+}
 /* A row that just moved, e.g. in a ranking, glows briefly where it landed. */
 @keyframes landed {
   from {

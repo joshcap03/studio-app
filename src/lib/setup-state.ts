@@ -1,5 +1,6 @@
+import { setupSteps, templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
-import type { AgentSetup } from "@/lib/types";
+import type { AgentSetup, SetupSummary } from "@/lib/types";
 
 // Where the owner is in the agent's setup interview (workspace_settings.setup): started, its
 // conversation, the checklist the agent keeps with update_plan, and done once they apply the
@@ -29,6 +30,23 @@ export async function updateSetup(tenant: Tenant, patch: Partial<Omit<AgentSetup
   };
   check(await tenant.db.from("workspace_settings").update({ setup, updated_at: new Date().toISOString() }).eq("workspace_id", tenant.workspace.id));
   return true;
+}
+
+/**
+ * What the owner sees of the setup: its checklist as the agent last reported it, or, before it
+ * has, the steps of the agent's template, all still to do. Null for anyone but the owner.
+ */
+export function summarizeSetup(tenant: Tenant, setup: AgentSetup | null, templateId: string | null): SetupSummary | null {
+  if (tenant.workspace.role !== "owner") return null;
+  const template = templateById(templateId);
+  const plan = setup?.plan.length ? setup.plan : template ? setupSteps(template).map((s) => ({ text: s.title, status: "todo" as const })) : [];
+  return {
+    status: setup?.status ?? "not_started",
+    conversationId: setup?.conversationId ?? null,
+    done: plan.filter((s) => s.status === "done").length,
+    total: plan.length,
+    plan,
+  };
 }
 
 /** True when `conversationId` holds the agent's setup interview. */

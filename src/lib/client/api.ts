@@ -1,4 +1,4 @@
-import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, ProposalPicks, StreamEvent, UiResponse } from "@/lib/types";
+import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
 import type { AgentRecord, AgentTask, PlanStep, TaskRun } from "@/lib/tasks/types";
 import { disablePush } from "./push";
@@ -62,6 +62,7 @@ export const api = {
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   clearConversations: () => request<{ deleted: number }>("/api/conversations", { method: "DELETE" }),
   stopRun: (id: string) => request<void>(`/api/conversations/${id}/stop`, { method: "POST" }),
+  getSetup: () => request<{ setup: SetupSummary | null }>("/api/agent/setup"),
   skipSetup: () => request<{ ok: true }>("/api/agent/setup", { method: "POST", body: JSON.stringify({ status: "skipped" }) }),
   decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss" | "undo") =>
     request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {

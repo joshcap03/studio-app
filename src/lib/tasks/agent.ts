@@ -64,7 +64,7 @@ export async function savePlanFromAgent(tenant: Tenant, conversationId: string, 
   if (!task) {
     if (!(await isSetupConversation(tenant, conversationId))) return false;
     const plan = planFromAgent(value);
-    return plan ? updateSetup(tenant, { plan: plan.map(({ text, status }) => ({ text, status })) }) : false;
+    return plan ? updateSetup(tenant, { plan: plan.map(({ text, status, note }) => ({ text, status, ...(note ? { note } : {}) })) }) : false;
   }
   const plan = planFromAgent(value, task.plan);
   if (!plan) return false;
