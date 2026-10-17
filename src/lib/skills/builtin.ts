@@ -1,5 +1,5 @@
 import { previewEnabled } from "@/lib/flags";
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import type { WorkspaceSkill } from "@/lib/types";
 
 // Skills every workspace has without adding them. They live in code, not the database, so

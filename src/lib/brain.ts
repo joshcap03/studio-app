@@ -1,5 +1,5 @@
 import { forget, getMemory, listMemories, parseMemoryId, remember } from "@/lib/memory";
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import { toMemoryCategory, type Memory, type MemoryPromotion } from "@/lib/types";
 
 // Business Brain's review queue: a member asks for a personal memory to be shared with the

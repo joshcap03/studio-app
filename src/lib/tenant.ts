@@ -1,8 +1,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseServerClient, type Db } from "@/lib/supabase/server";
-import type { WorkspaceSummary } from "@/lib/types";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { resolveTenant, sessionFor, type Session, type Tenant } from "@/lib/tenant-core";
+
+export { resolveTenant, sessionFor, type Session, type Tenant };
 
 // Identity and tenancy are derived only from the authenticated session. The active
 // workspace is a preference cookie, honored only if the user is actually a member of it
@@ -10,57 +12,12 @@ import type { WorkspaceSummary } from "@/lib/types";
 
 export const ACTIVE_WORKSPACE_COOKIE = "lj_ws";
 
-export interface Session {
-  db: Db;
-  userId: string;
-  email: string | null;
-}
-
-export interface Tenant extends Session {
-  workspace: WorkspaceSummary;
-  workspaces: WorkspaceSummary[];
-  /** This member's private id for tool connections (Composio user id). */
-  composioUserId: string;
-}
-
 export async function getSession(): Promise<Session | null> {
   const db = await createSupabaseServerClient();
   // getUser() validates the token with Supabase Auth instead of trusting the cookie.
   const { data, error } = await db.auth.getUser();
   if (error || !data.user) return null;
-  return { db, userId: data.user.id, email: data.user.email ?? null };
-}
-
-interface MembershipRow {
-  workspace_id: string;
-  role: "owner" | "member";
-  composio_user_id: string;
-  created_at: string;
-  workspaces: { name: string } | null;
-}
-
-export async function resolveTenant(session: Session, preferred?: string | null): Promise<Tenant | null> {
-  const { data, error } = await session.db
-    .from("workspace_members")
-    .select("workspace_id, role, composio_user_id, created_at, workspaces(name)")
-    .eq("user_id", session.userId)
-    .order("created_at", { ascending: true })
-    .returns<MembershipRow[]>();
-  if (error) throw error;
-  if (!data || data.length === 0) return null;
-
-  const workspaces: WorkspaceSummary[] = data.map((m) => ({
-    id: m.workspace_id,
-    name: m.workspaces?.name ?? "Workspace",
-    role: m.role,
-  }));
-  const active = data.find((m) => m.workspace_id === preferred) ?? data[0];
-  return {
-    ...session,
-    workspaces,
-    workspace: workspaces.find((w) => w.id === active.workspace_id)!,
-    composioUserId: active.composio_user_id,
-  };
+  return sessionFor(db, data.user);
 }
 
 /** For server components: signed out → /login, no workspace yet → onboarding. */

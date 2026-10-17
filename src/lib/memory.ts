@@ -1,5 +1,5 @@
 import { getConfig } from "@/lib/config";
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import { toMemoryCategory, type Memory, type MemoryCategory } from "@/lib/types";
 
 // Long-term memory, kept in Supermemory (v5 API). Every call is scoped to a namespace
