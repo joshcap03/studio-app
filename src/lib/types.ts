@@ -219,6 +219,10 @@ export interface Project extends ProjectSummary {
 export const MAX_PROJECT_NAME_LENGTH = 80;
 export const MAX_PROJECT_FILES = 10;
 export const MAX_PROJECTS = 100;
+/** Files on a member's shelf for one agent, sent with every run of that agent. */
+export const MAX_AGENT_FILES = 10;
+/** Standing files (agent files, then project files) one run carries, besides the message's own. */
+export const MAX_RUN_FILES = 15;
 
 export interface AgentStatus {
   /** "unavailable": a live agent is configured but not enabled for this workspace. */

@@ -30,6 +30,8 @@ export interface AgentTenantContext {
    * it found. Absent when the member has no tracker, so the agent knows not to save to one.
    */
   tracker?: { collection: string; key: string; title: string; status: string | null }[];
+  /** Names of the member's files for this agent; they arrive as attachments on every run. */
+  agentFiles?: string[];
   /** The member's project this conversation is in, if any. Its files arrive as attachments. */
   project?: { name: string; instructions: string; files: string[] } | null;
   /**

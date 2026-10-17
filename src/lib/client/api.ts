@@ -79,6 +79,7 @@ export const api = {
     request<{ project: Project }>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
   deleteProjectFile: (projectId: string, fileId: string) => request<void>(`/api/projects/${projectId}/files/${fileId}`, { method: "DELETE" }),
+  deleteAgentFile: (id: string) => request<void>(`/api/agent/files/${id}`, { method: "DELETE" }),
   deleteAttachment: (id: string) => request<void>(`/api/attachments/${id}`, { method: "DELETE" }),
   listTasks: (signal?: AbortSignal) => request<{ tasks: AgentTask[] }>("/api/tasks", { signal }),
   getTask: (id: string, signal?: AbortSignal) => request<{ task: AgentTask }>(`/api/tasks/${id}`, { signal }),
@@ -119,6 +120,11 @@ export async function uploadAttachment(file: File, signal?: AbortSignal): Promis
 /** Adds a file to a project; the agent gets it with every message in the project. */
 export async function uploadProjectFile(projectId: string, file: File): Promise<Attachment> {
   return (await upload<{ file: Attachment }>(`/api/projects/${projectId}/files`, file)).file;
+}
+
+/** Adds a file to the active agent; it gets the file with every message. */
+export async function uploadAgentFile(file: File): Promise<Attachment> {
+  return (await upload<{ file: Attachment }>("/api/agent/files", file)).file;
 }
 
 export type TurnBody =

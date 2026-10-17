@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { AgentView } from "@/components/agent/agent-view";
+import { getAgentAdapter } from "@/lib/agent";
+import { listAgentFiles } from "@/lib/agent-files";
 import { requirePageTenant } from "@/lib/tenant";
 import { brainMemories, listPromotions } from "@/lib/brain";
 import { previewEnabled } from "@/lib/flags";
@@ -20,11 +22,12 @@ export default async function AgentPage() {
       })
     : Promise.resolve(null);
   const promotions = brain && memoryEnabled() ? listPromotions(tenant).catch(() => []) : Promise.resolve(null);
-  const [settings, initialMemories, usage, initialPromotions] = await Promise.all([
+  const [settings, initialMemories, usage, initialPromotions, files] = await Promise.all([
     getSettings(tenant),
     memories,
     getUsage(tenant),
     promotions,
+    listAgentFiles(tenant),
   ]);
 
   return (
@@ -43,6 +46,8 @@ export default async function AgentPage() {
           initialPromotions={initialPromotions}
           usage={usage}
           canEdit={tenant.workspace.role === "owner"}
+          initialFiles={files}
+          allowFiles={getAgentAdapter().capabilities.attachments}
         />
       </div>
     </main>
