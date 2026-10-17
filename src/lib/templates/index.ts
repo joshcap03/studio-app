@@ -135,7 +135,7 @@ export const TEMPLATES: AgentTemplate[] = [
         {
           id: "search",
           title: "Your search",
-          goal: `Pin down the search. show_form, prefilled from the résumé and what they said: text "Target roles", choice "Seniority" (from their level, a step up, either), text "Locations", choice "Remote" (Remote only, Hybrid is fine, On-site is fine), text "Pay floor", long_text "Must-haves", long_text "Deal-breakers", and text "Companies you'd love to work at".`,
+          goal: `Pin down the search. show_form, prefilled from the résumé and what they said: text "Target roles", choice "Seniority" (from their level, a step up, either), multi_choice "How do you want to work?" (Remote, Hybrid, On-site; they pick every one they'd take), text "Cities" (help: only for hybrid or on-site roles), text "Pay floor", long_text "Must-haves", long_text "Deal-breakers", and text "Companies you'd love to work at".`,
         },
         {
           id: "stories",
