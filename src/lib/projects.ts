@@ -3,7 +3,7 @@ import type { AgentAttachment, AgentTenantContext } from "@/lib/agent/types";
 import { ATTACHMENTS_BUCKET, attachmentError, checkUpload, readAttachment, removeAttachmentFiles, uploadError } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
 import type { StoredAttachment } from "@/lib/db/store";
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import { MAX_PROJECT_FILES, MAX_PROJECTS, type Attachment, type Project, type ProjectSummary } from "@/lib/types";
 
 // A member's projects: folders of conversations with instructions and files the agent gets on

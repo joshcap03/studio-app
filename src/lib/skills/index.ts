@@ -1,4 +1,4 @@
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import { MAX_SKILLS, type WorkspaceSkill } from "@/lib/types";
 import { builtinSkill } from "./builtin";
 import { catalogEntry } from "./catalog";

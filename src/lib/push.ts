@@ -1,6 +1,6 @@
 import webpush from "web-push";
 import { getConfig } from "@/lib/config";
-import type { Session } from "@/lib/tenant";
+import type { Session } from "@/lib/tenant-core";
 import type { ChatMessage, ConversationSummary } from "@/lib/types";
 
 // Notifications on the devices where a member turned them on (Web Push). Subscriptions are

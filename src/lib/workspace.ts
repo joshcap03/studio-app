@@ -3,7 +3,7 @@ import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
 import { recall } from "@/lib/memory";
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import type { UsageSummary, WorkspaceSettings } from "@/lib/types";
 
 // Workspace-level data: settings, usage, and the per-run agent context. All reads and writes

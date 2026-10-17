@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 
 vi.mock("@/lib/config", () => ({
   getConfig: () => ({ previewEmails: new Set(["preview@example.test"]) }),

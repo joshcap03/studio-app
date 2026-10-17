@@ -32,6 +32,7 @@ raw/technical text.
 
 - `supabase/migrations/`: schema, RLS policies, RPCs. Append new migrations; never edit applied ones.
 - `src/lib/tenant.ts`: session → user → active workspace (membership-checked). The only source of identity.
+  `tenant-core.ts` holds the request-free part (`resolveTenant`), with no `next/*` imports.
 - `src/lib/db/store.ts`: conversation persistence, scoped to one workspace + user.
 - `src/lib/workspace.ts`: settings (the agent profile, "what this agent is for", is stored in
   `workspace_settings.business_context`), usage/limits, and the per-run agent context.
@@ -45,6 +46,8 @@ raw/technical text.
   sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to.
 - `src/lib/agent/`: provider-neutral interface (`types.ts`), `langflow.ts`, `mock.ts`, registry `index.ts`.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
+  `run.ts` builds its deps from a tenant (`buildTurnDeps`), free of Next.js so a worker can run turns;
+  `no-next.test.ts` keeps it that way.
 - `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
