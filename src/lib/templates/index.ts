@@ -140,7 +140,7 @@ export const TEMPLATES: AgentTemplate[] = [
         {
           id: "stories",
           title: "Your stories",
-          goal: `Get interview stories ready. Draft 3-5 STAR stories from the résumé's strongest bullets (only facts that are there), then show_form with one list field: item_label "Story", parts situation, task, action, result (long), and skills (short), prefilled with your drafts, for them to fix and add to. When they send it, save each story with save_record: collection "stories", key a short slug of its title, title a few words naming it, fields situation, task, action, result, skills. If CONTEXT has no tracker section, remember one sentence per story instead.`,
+          goal: `Get interview stories ready. Draft 3-5 STAR stories from the résumé's strongest bullets (only facts that are there; leave a part empty rather than writing a placeholder), then show_form with one list field: item_label "Story", parts situation, task, action, result (long), and skills (short), prefilled with your drafts, for them to fix and add to. When they send it, save every story they sent right away, gaps and all (say which could use more detail), with save_record: collection "stories", key a short slug of its title, title a few words naming it, fields situation, task, action, result, skills. If CONTEXT has no tracker section, remember one sentence per story instead.`,
         },
         {
           id: "apps",
@@ -150,7 +150,7 @@ export const TEMPLATES: AgentTemplate[] = [
         {
           id: "design",
           title: "How I'll work",
-          goal: `Design this agent for them with propose_agent: a profile summarizing the search in their words, instructions that adapt this agent's current instructions to what they told you (focus, how proactive, how to check in), the listed tasks they'd want switched on (by template_task_id, with schedules that match how often they want check-ins), any library skills they need that the agent lacks, and a few lasting facts to remember.`,
+          goal: `Design this agent for them with propose_agent: a profile summarizing the search in their words, instructions that adapt this agent's current instructions to what they told you (focus, how proactive, how to check in), the listed tasks they'd want switched on (each with its template_task_id, title, instructions, and a schedule object such as {every: "weekdays", at: "08:00"} that matches how often they want check-ins), any library skills they need that the agent lacks, and a few lasting facts to remember.`,
         },
       ],
     },
