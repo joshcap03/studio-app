@@ -77,6 +77,19 @@ describe("evidenceFor", () => {
     expect(byUrl["https://acme.example/careers"].text).not.toContain("nothing");
     expect(byUrl["https://mail.google.com/mail/u/0/#inbox/1"]).toMatchObject({ app: "gmail", title: "Reservation" });
     expect(byUrl["https://mail.google.com/mail/u/0/#inbox/1"].text).toContain("Five days at the resort");
-    expect(byUrl["https://acme.example/about"]).toMatchObject({ app: "browser", text: "Founded in 2021 in New York" });
+    expect(byUrl["https://acme.example/about"]).toMatchObject({ app: "browser", text: expect.stringContaining("Founded in 2021 in New York") });
+  });
+
+  it("ties what a browser visit returned to that page, even when the page is never read separately", () => {
+    // Browserbase's navigate can return a serialized page object rather than page text.
+    const visit = { meta: null, content: [{ type: "text", text: JSON.stringify({ success: true, data: { result: { page: { _url: "https://jobs.example/roles/1", conn: { _closeCode: 1006 } } } } }) }], isError: false };
+    const byUrl = Object.fromEntries(
+      evidenceFor([
+        { name: "navigate", input: { url: "https://jobs.example/roles/1" }, output: visit, error: null },
+        { name: "navigate", input: { url: "https://down.example" }, output: null, error: "No active session" },
+      ]).map((e) => [e.url, e]),
+    );
+    expect(byUrl["https://jobs.example/roles/1"]).toMatchObject({ app: "browser", text: expect.stringContaining("https://jobs.example/roles/1") });
+    expect(byUrl["https://down.example"]).toBeUndefined();
   });
 });

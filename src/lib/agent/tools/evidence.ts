@@ -40,11 +40,16 @@ export function evidenceFor(calls: ToolCall[]): Evidence[] {
   let page: string | undefined;
   for (const call of calls) {
     const input = isRecord(call.input) ? call.input : {};
-    if (call.name === "navigate") page = safeUrl(input.url) ?? page;
+    if (call.name === "navigate") {
+      page = safeUrl(input.url) ?? page;
+      // A failed visit read nothing from the page; its error isn't the page's text.
+      if (call.error || (isRecord(call.output) && call.output.isError === true)) continue;
+    }
     const app = appFor(call.name, call.output);
     for (const value of resultsOf(call)) {
-      // A browser page's text belongs to the page it was read from.
-      if (PAGE_TOOLS.has(call.name) && page) {
+      // A browser page's text belongs to the page it was read from, including whatever the
+      // visit itself returned (the agent may never read the page separately).
+      if ((PAGE_TOOLS.has(call.name) || call.name === "navigate") && page) {
         add(page, "browser", allText(value));
         continue;
       }

@@ -491,6 +491,19 @@ describe("interpretCalls", () => {
     expect(nav).toMatchObject({ status: "failed", app: "browser", label: "Couldn't open airline.example", detail: "The app isn't connected or needs to be re-authorized." });
   });
 
+  it("hides a started browser session (connection details only) but shows when it didn't start", () => {
+    // Browserbase's start: an MCP result whose text is the session's connection details.
+    const started = (payload: unknown) => ({ meta: null, content: [{ type: "text", text: JSON.stringify(payload), annotations: null, meta: null }], structuredContent: null, isError: false });
+    const [ok, unavailable] = interpretCalls([
+      { name: "start", input: {}, output: started({ success: true, data: { sessionId: "00000000-0000-0000-0000-000000000000", cdpUrl: `wss://connect.browser.example/?signingKey=${"x".repeat(600)}`, available: true } }), error: null },
+      { name: "start", input: {}, output: started({ success: false, data: { available: false } }), error: null },
+    ]);
+    expect(ok).toMatchObject({ status: "done", app: "browser", label: "Opened a browser", hidden: true });
+    expect(ok.preview).toBeUndefined();
+    expect(unavailable).toMatchObject({ status: "failed", label: "Couldn't open a browser", detail: "The browser wasn't available." });
+    expect(unavailable.hidden).toBeUndefined();
+  });
+
   it("hides tool-discovery plumbing but keeps it in the count", () => {
     const steps = interpretCalls([
       { name: "discover_tools", input: { query: "gmail" }, output: {}, error: null },
