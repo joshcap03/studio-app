@@ -222,3 +222,86 @@ describe("loose agent output", () => {
     expect(proposal).toMatchObject({ tasks: [{ schedule: null }] });
   });
 });
+
+describe("react-first fields", () => {
+  const form = buildUiBlock(
+    {
+      form: {
+        title: "Your bar",
+        fields: [
+          { kind: "choice", label: "The job", options: ["Find roles", "Prep"], allow_other: true, required: true },
+          { type: "ranking", label: "What matters most", options: ["Pay", "Remote", "Seniority"], prefill: ["Remote", "Pay", "Seniority"] },
+          { kind: "rank", label: "Partial order", options: ["A", "B", "C"], prefill: ["B"] },
+          { kind: "slider", label: "How hands-on", low: "Ask me first", high: "Just do it", steps: 12, value: "4" },
+          { kind: "scale", label: "No ends", steps: 5 },
+          {
+            kind: "verdict",
+            label: "Would you go for these?",
+            required: true,
+            reasons: ["Too junior", "too junior", "Not remote"],
+            items: [
+              { title: "Senior Designer · Acme", body: "Remote, $190k", url: "https://example.com/1", record: { collection: "applications", key: "https://example.com/1" } },
+              { title: "Senior Designer · Acme", link: "javascript:alert(1)" },
+              "Designer II · Beta",
+              { body: "no title" },
+            ],
+          },
+          { kind: "verdict", label: "Nothing to judge", items: [] },
+        ],
+      },
+    },
+    "v",
+  ) as UiForm;
+
+  it("keeps rank, scale, verdict, and allow_other, dropping what can't be used", () => {
+    expect(form.fields.map((f) => f.kind)).toEqual(["choice", "rank", "rank", "scale", "verdict"]);
+    expect(form.fields[0]).toMatchObject({ allowOther: true });
+    expect(form.fields[1]).toMatchObject({ prefill: ["Remote", "Pay", "Seniority"], required: false });
+    expect(form.fields[2]).not.toHaveProperty("prefill");
+    expect(form.fields[3]).toEqual({ kind: "scale", id: "how_hands_on", label: "How hands-on", required: false, steps: 7, low: "Ask me first", high: "Just do it", prefill: 4 });
+    expect(form.fields[4]).toEqual({
+      kind: "verdict",
+      id: "would_you_go_for_these",
+      label: "Would you go for these?",
+      required: true,
+      reasons: ["Too junior", "Not remote"],
+      items: [
+        { id: "senior_designer_acme", title: "Senior Designer · Acme", body: "Remote, $190k", link: "https://example.com/1", record: { collection: "applications", key: "https://example.com/1" } },
+        { id: "senior_designer_acme_2", title: "Senior Designer · Acme" },
+        { id: "designer_ii_beta", title: "Designer II · Beta" },
+      ],
+    });
+  });
+
+  it("wants a call on every item of a required verdict", () => {
+    const base = { the_job: ["Find roles"] };
+    expect(missingAnswer(form, base)).toBe("Would you go for these?");
+    const some = [{ id: "senior_designer_acme", verdict: "keep" }];
+    expect(missingAnswer(form, { ...base, would_you_go_for_these: some })).toBe("Would you go for these?");
+    const all = [...some, { id: "senior_designer_acme_2", verdict: "pass" }, { id: "designer_ii_beta", verdict: "pass", reason: "Too junior" }];
+    expect(missingAnswer(form, { ...base, would_you_go_for_these: all })).toBeNull();
+  });
+
+  it("reads verdicts, order, and scale points as the member meant them", () => {
+    const text = formAnswerText(form, {
+      the_job: ["Write my cover letters"],
+      what_matters_most: ["Remote", "Pay", "Seniority"],
+      how_hands_on: "2",
+      would_you_go_for_these: [
+        { id: "designer_ii_beta", verdict: "pass", reason: " Too junior " },
+        { id: "senior_designer_acme", verdict: "keep" },
+        { id: "senior_designer_acme_2", verdict: "" },
+      ],
+    });
+    expect(text).toBe(
+      [
+        "The job: Write my cover letters",
+        "What matters most (most important first): 1. Remote; 2. Pay; 3. Seniority",
+        "How hands-on: 2 of 7 (1 = Ask me first, 7 = Just do it)",
+        "Would you go for these?:",
+        "- Kept: Senior Designer · Acme",
+        "- Passed: Designer II · Beta (Too junior)",
+      ].join("\n"),
+    );
+  });
+});

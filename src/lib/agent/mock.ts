@@ -192,6 +192,37 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // Results to keep or pass on, the way a trial run or a task run asks for a verdict.
+    match: /\b(trial run|keep or pass|judge (these|them))\b/i,
+    steps: [
+      { kind: "text", text: "Here's a trial run (mock): four made-up results. Keep the ones you'd want, pass on the rest." },
+      {
+        kind: "ui",
+        block: {
+          form: {
+            title: "Trial run (mock)",
+            submit_label: "Send verdicts",
+            fields: [
+              {
+                kind: "verdict",
+                id: "roles",
+                label: "Would you go for these?",
+                required: true,
+                reasons: ["Too junior", "Not remote", "Pay too low", "Wrong industry"],
+                items: [
+                  { title: "Senior Product Designer · Example Co (mock)", body: "Remote US, $185k. Design systems team.", link: "https://example.com/jobs/1" },
+                  { title: "Product Designer II · Sample Labs (mock)", body: "Hybrid, NYC. $140k." },
+                  { title: "Staff Designer · Placeholder Inc (mock)", body: "Remote US, $210k. B2B analytics." },
+                  { title: "Design Lead · Demo Systems (mock)", body: "On-site, Austin. Manages 4." },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
     // A setup form with every kind of field; the answers arrive as the member's next message.
     match: /\b(set (me|you) up|set up this agent|show me a form)\b/i,
     steps: [
@@ -204,10 +235,11 @@ const SCENARIOS: Scenario[] = [
             intro: "A few things so I can look in the right places. I filled in what I could guess.",
             submit_label: "Next",
             fields: [
-              { kind: "multi_choice", id: "jobs", label: "What should I do for you?", options: ["Find roles", "Tailor applications", "Outreach", "Interview prep"], prefill: ["Find roles"], required: true },
+              { kind: "choice", id: "job", label: "The one thing you most want from me", options: ["Find roles that fit", "Tailor applications", "Reach out to people"], allow_other: true, required: true },
               { kind: "text", id: "roles", label: "Target roles", placeholder: "e.g. Product manager, growth", prefill: "Product manager" },
-              { kind: "choice", id: "where", label: "Where", options: ["Remote", "Hybrid", "On-site"] },
-              { kind: "long_text", id: "dealbreakers", label: "Deal-breakers", help: "Anything you'd never take." },
+              { kind: "multi_choice", id: "where", label: "Where", options: ["Remote", "Hybrid", "On-site"] },
+              { kind: "scale", id: "hands_on", label: "How hands-on should I be?", low: "Ask me first", high: "Just do it", prefill: 2 },
+              { kind: "rank", id: "matters", label: "What matters most?", options: ["Pay", "Remote", "Seniority", "Industry"] },
               { kind: "file", id: "resume", label: "Your résumé", accept: ["pdf", "docx"], max: 1, keep: true },
               {
                 kind: "list",

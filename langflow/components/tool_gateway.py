@@ -194,18 +194,35 @@ class AskArgs(BaseModel):
 FORM_FIELD_SCHEMA = {
     "type": "object",
     "properties": {
-        "kind": {"type": "string", "enum": ["choice", "multi_choice", "text", "long_text", "file", "list", "connect"],
-                 "description": ("choice or multi_choice (2-8 options), text (one line), long_text (a paragraph), "
+        "kind": {"type": "string", "enum": ["choice", "multi_choice", "rank", "scale", "verdict", "text", "long_text", "file", "list", "connect"],
+                 "description": ("choice or multi_choice (2-8 options), rank (the owner puts 2-8 options in order, "
+                                 "most important first), scale (one point between two labelled ends, e.g. 'Ask me "
+                                 "first' to 'Just do it'), verdict (results you found or drafted for the owner to "
+                                 "keep or pass on, a pass with a reason), text (one line), long_text (a paragraph), "
                                  "file (the owner drops in files, e.g. a resume), list (repeatable entries with the "
-                                 "same parts, e.g. stories), connect (apps to connect, shown as Connect buttons).")},
+                                 "same parts, e.g. stories), connect (apps to connect, shown as Connect buttons). "
+                                 "Prefer something the owner can react to (choices drafted from what you know, a "
+                                 "rank, a scale, a verdict) over an empty text box.")},
         "id": {"type": "string", "description": "A short snake_case id, unique in the form, e.g. 'target_roles'."},
         "label": {"type": "string", "description": "The question or label, as the owner would read it."},
         "help": {"type": "string", "description": "Optional: one short line on what to put, or why you ask."},
         "required": {"type": "boolean", "description": "True only when you can't go on without it."},
-        "options": {"type": "array", "items": {"type": "string"}, "description": "For choice and multi_choice: 2-8 choices."},
+        "options": {"type": "array", "items": {"type": "string"}, "description": "For choice, multi_choice, and rank: 2-8 choices."},
+        "allow_other": {"type": "boolean", "description": "For choice and multi_choice: true to add a 'Something else' choice they can type."},
+        "steps": {"type": "integer", "description": "For scale: how many points, 3-7 (default 5)."},
+        "low": {"type": "string", "description": "For scale: what the first point means, e.g. 'Ask me first'."},
+        "high": {"type": "string", "description": "For scale: what the last point means, e.g. 'Just do it'."},
+        "items": {"type": "array", "description": ("For verdict: 1-8 real results, each an object with title, body (one or two "
+                                                   "lines on why it might fit), link (its URL, if it has one), and record "
+                                                   "({collection, key}) when it's a tracker row."),
+                  "items": {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"}, "link": {"type": "string"},
+                                                             "record": {"type": "object", "properties": {"collection": {"type": "string"}, "key": {"type": "string"}}}},
+                            "required": ["title"]}},
+        "reasons": {"type": "array", "items": {"type": "string"}, "description": "For verdict: 2-6 short reasons someone might pass, e.g. 'Too junior', 'Not remote'."},
         "placeholder": {"type": "string", "description": "For text and long_text: an example answer."},
         "prefill": {"description": ("What you already know, for the owner to confirm or fix: a string for text and "
-                                    "long_text, a list of option labels for choices, or for list a list of objects "
+                                    "long_text, a list of option labels for choices, every option label in your "
+                                    "suggested order for rank, a number for scale, or for list a list of objects "
                                     "keyed by part id (your drafts).")},
         "accept": {"type": "array", "items": {"type": "string"}, "description": "For file: allowed extensions, e.g. ['pdf', 'docx']."},
         "keep": {"type": "boolean", "description": ("For file: true to keep the files in this agent's files, so they come with "
@@ -945,11 +962,14 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=show_form, coroutine=show_form_async, name="show_form",
                 args_schema=FormArgs,
-                description=("Show the owner a short form when you need several details at once, longer answers, files "
-                             "(a resume, a price list), repeatable entries (stories, contacts), or apps to connect: "
-                             "for example while setting up this agent. Prefill what you already know so they only "
-                             "confirm or fix it. Use ask_user instead for one quick choice. Call it as the last "
-                             "thing in your reply; their answers arrive as the next message. Changes nothing."),
+                description=("Show the owner a short form when you need several details at once, an order of priorities "
+                             "(rank), a point on a scale, their verdict on results you found (verdict), longer "
+                             "answers, files (a resume, a price list), repeatable entries (stories, contacts), or "
+                             "apps to connect: for example while setting up this agent, or to have them judge a "
+                             "run's results. Draft answers they can react to and prefill what you already know, so "
+                             "they mostly pick, order, or fix rather than type. Use ask_user instead for one quick "
+                             "choice. Call it as the last thing in your reply; their answers arrive as the next "
+                             "message. Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=propose_agent, coroutine=propose_agent_async, name="propose_agent",

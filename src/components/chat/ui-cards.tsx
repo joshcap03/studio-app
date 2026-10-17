@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, ClipboardList, FileUp, Paperclip, Plug, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronUp, ClipboardList, ExternalLink, FileUp, GripVertical, Paperclip, Plug, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { appName, toolkitForApp } from "@/lib/apps";
 import { formAnswerText, missingAnswer, type FormValues } from "@/lib/chat/ui-answer";
@@ -79,6 +79,8 @@ function initialValues(form: UiForm): FormValues {
     if ((f.kind === "choice" || f.kind === "multi_choice") && f.prefill) values[f.id] = f.prefill;
     else if ((f.kind === "text" || f.kind === "long_text") && f.prefill) values[f.id] = f.prefill;
     else if (f.kind === "list") values[f.id] = f.prefill?.length ? f.prefill : [{}];
+    else if (f.kind === "rank") values[f.id] = f.prefill ?? f.options.map((o) => o.label);
+    else if (f.kind === "scale" && f.prefill) values[f.id] = String(f.prefill);
   }
   return values;
 }
@@ -104,7 +106,7 @@ export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
     const answered = sent || response?.status === "submitted";
     return (
       <section aria-label="Form from the agent" className="mt-3 flex items-start gap-2 text-[13px] leading-[1.5] text-fg-3 animate-fade-up">
-        {answered ? <Check size={14} className="mt-[3px] shrink-0 text-success" /> : <ClipboardList size={14} className="mt-[3px] shrink-0 text-fg-4" />}
+        {answered ? <Check size={14} className="settle-check mt-[3px] shrink-0 text-success" /> : <ClipboardList size={14} className="mt-[3px] shrink-0 text-fg-4" />}
         <span className="min-w-0 [overflow-wrap:anywhere]">
           {form.title}
           {answered ? <span className="text-fg-4"> · Sent</span> : null}
@@ -142,7 +144,17 @@ export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
   }
 
   return (
-    <section aria-label="Form from the agent" className={card}>
+    <section
+      aria-label="Form from the agent"
+      className={card}
+      onKeyDown={(e) => {
+        // Cmd/Ctrl+Enter sends from anywhere in the form.
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          void submit();
+        }
+      }}
+    >
       <div className="px-4 pt-3.5">
         <p className="text-[12px] font-medium tracking-[0.01em] text-fg-3">{form.title}</p>
         {form.intro ? <p className="mt-0.5 text-[14px] leading-[1.5] text-fg-2 [overflow-wrap:anywhere]">{form.intro}</p> : null}
@@ -165,7 +177,7 @@ export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
         ))}
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
-        <span className={`mr-auto pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? "Or type your own answer below."}</span>
+        <span className={`mr-auto pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? formProgress(form, values) ?? "Or type your own answer below."}</span>
         <button type="button" onClick={() => void submit()} disabled={uploading > 0 || busy} className={primary}>
           {uploading > 0 || busy ? <span className="spinner size-3.5" aria-hidden="true" /> : <ArrowUp size={14} />}
           {form.submitLabel}
@@ -189,42 +201,20 @@ function FieldView({ field, value, files, onChange, onFiles, onUploading, onErro
   const label = (
     <span className="block">
       <span className="text-[14px] font-medium text-fg">{field.label}</span>
-      {field.required ? null : field.kind === "connect" ? null : <span className="text-[12px] text-fg-4"> · Optional</span>}
+      {field.required || field.kind === "connect" || field.kind === "rank" ? null : <span className="text-[12px] text-fg-4"> · Optional</span>}
       {field.help ? <span className="mt-0.5 block text-[12.5px] leading-[1.45] text-fg-3">{field.help}</span> : null}
     </span>
   );
   switch (field.kind) {
     case "choice":
-    case "multi_choice": {
-      const picked = Array.isArray(value) ? (value as string[]) : [];
-      const multi = field.kind === "multi_choice";
-      return (
-        <fieldset>
-          <legend className="contents">{label}</legend>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {field.options.map((o) => {
-              const chosen = picked.includes(o.label);
-              return (
-                <button
-                  key={o.label}
-                  type="button"
-                  role={multi ? "checkbox" : "radio"}
-                  aria-checked={chosen}
-                  title={o.description}
-                  onClick={() => onChange(multi ? (chosen ? picked.filter((l) => l !== o.label) : [...picked, o.label]) : chosen ? [] : [o.label])}
-                  className={`inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-3 py-1 text-[13.5px] transition-colors ${
-                    chosen ? "border-accent bg-accent-soft text-fg" : "border-line text-fg-2 hover:border-line-strong hover:bg-hover"
-                  }`}
-                >
-                  {chosen ? <Check size={13} strokeWidth={2.5} className="text-accent" /> : null}
-                  {o.label}
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-      );
-    }
+    case "multi_choice":
+      return <ChoiceField field={field} label={label} value={Array.isArray(value) ? (value as string[]) : []} onChange={onChange} />;
+    case "rank":
+      return <RankField field={field} label={label} value={Array.isArray(value) ? (value as string[]) : field.options.map((o) => o.label)} onChange={onChange} />;
+    case "scale":
+      return <ScaleField field={field} label={label} value={typeof value === "string" ? Number(value) : 0} onChange={(n) => onChange(String(n))} />;
+    case "verdict":
+      return <VerdictField field={field} label={label} value={Array.isArray(value) ? (value as Record<string, string>[]) : []} onChange={onChange} />;
     case "text":
     case "long_text":
       return (
@@ -256,6 +246,370 @@ function FieldView({ field, value, files, onChange, onFiles, onUploading, onErro
     case "connect":
       return <ConnectField field={field} label={label} />;
   }
+}
+
+/** A quiet running count for forms where the member judges results, e.g. "3 of 5 judged · 2 kept". */
+function formProgress(form: UiForm, values: FormValues): string | null {
+  const verdicts = form.fields.filter((f) => f.kind === "verdict");
+  if (verdicts.length === 0) return null;
+  const total = verdicts.reduce((n, f) => n + f.items.length, 0);
+  const calls = verdicts.flatMap((f) => (Array.isArray(values[f.id]) ? (values[f.id] as Record<string, string>[]) : []));
+  const kept = calls.filter((c) => c.verdict === "keep").length;
+  const judged = calls.filter((c) => c.verdict).length;
+  return judged ? `${judged} of ${total} judged · ${kept} kept` : `Keep or pass on each of the ${total}.`;
+}
+
+const tile = (chosen: boolean) =>
+  `inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-3 py-1 text-[13.5px] transition-[background-color,border-color,transform] duration-150 active:scale-[0.97] ${
+    chosen ? "border-accent bg-accent-soft text-fg" : "border-line text-fg-2 hover:border-line-strong hover:bg-hover"
+  }`;
+
+/** Pick one or several; number keys pick while the group has focus. "Something else" takes their own words. */
+function ChoiceField({
+  field,
+  label,
+  value,
+  onChange,
+}: {
+  field: Extract<UiField, { kind: "choice" | "multi_choice" }>;
+  label: React.ReactNode;
+  value: string[];
+  onChange: (value: string[]) => void;
+}) {
+  const multi = field.kind === "multi_choice";
+  const labels = new Set(field.options.map((o) => o.label));
+  const own = value.find((v) => !labels.has(v));
+  const [other, setOther] = useState(own !== undefined);
+  const toggle = (l: string) => {
+    const chosen = value.includes(l);
+    onChange(multi ? (chosen ? value.filter((x) => x !== l) : [...value, l]) : chosen ? [] : [l]);
+  };
+  const setOwn = (text: string) => {
+    const rest = multi ? value.filter((v) => labels.has(v)) : [];
+    onChange(text.trim() ? [...rest, text] : rest);
+  };
+  return (
+    <fieldset
+      onKeyDown={(e) => {
+        if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
+        const n = Number.parseInt(e.key, 10);
+        if (n >= 1 && n <= field.options.length) {
+          e.preventDefault();
+          if (!multi) setOther(false);
+          toggle(field.options[n - 1].label);
+        }
+      }}
+    >
+      <legend className="contents">{label}</legend>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {field.options.map((o, i) => {
+          const chosen = value.includes(o.label);
+          return (
+            <button
+              key={o.label}
+              type="button"
+              role={multi ? "checkbox" : "radio"}
+              aria-checked={chosen}
+              aria-keyshortcuts={i < 9 ? String(i + 1) : undefined}
+              title={o.description}
+              onClick={() => {
+                if (!multi) setOther(false);
+                toggle(o.label);
+              }}
+              className={tile(chosen)}
+            >
+              {chosen ? <Check size={13} strokeWidth={2.5} className="settle-check text-accent" /> : null}
+              {o.label}
+            </button>
+          );
+        })}
+        {field.allowOther && !other ? (
+          <button
+            type="button"
+            onClick={() => {
+              setOther(true);
+              if (!multi) onChange([]);
+            }}
+            className={`${tile(false)} border-dashed text-fg-3`}
+          >
+            <Plus size={13} />
+            Something else
+          </button>
+        ) : null}
+      </div>
+      {field.allowOther && other ? (
+        <div className="mt-1.5 flex items-center gap-1.5 animate-fade-in">
+          <input
+            autoFocus
+            className={input}
+            value={own ?? ""}
+            placeholder="In your own words"
+            maxLength={200}
+            onChange={(e) => setOwn(e.target.value)}
+          />
+          <button
+            type="button"
+            aria-label="Never mind"
+            onClick={() => {
+              setOther(false);
+              setOwn("");
+            }}
+            className={quiet}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+/** Put options in order, most important first: drag a row, or focus it and use the arrow keys. */
+function RankField({
+  field,
+  label,
+  value,
+  onChange,
+}: {
+  field: Extract<UiField, { kind: "rank" }>;
+  label: React.ReactNode;
+  value: string[];
+  onChange: (value: string[]) => void;
+}) {
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [moved, setMoved] = useState<string | null>(null);
+  const rows = useRef<(HTMLLIElement | null)[]>([]);
+  const describe = new Map(field.options.map((o) => [o.label, o.description]));
+  function move(from: number, to: number, focus = false) {
+    if (to < 0 || to >= value.length || from === to) return;
+    const next = [...value];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    onChange(next);
+    setMoved(item);
+    if (focus) requestAnimationFrame(() => rows.current[to]?.focus());
+  }
+  return (
+    <div>
+      {label}
+      <ol className="mt-2 flex flex-col gap-1" aria-label={field.label}>
+        {value.map((item, i) => (
+          <li
+            key={item}
+            ref={(el) => {
+              rows.current[i] = el;
+            }}
+            tabIndex={0}
+            draggable
+            aria-label={`${i + 1}. ${item}. Use the up and down arrow keys to move it.`}
+            onDragStart={() => setDragging(i)}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (dragging !== null && dragging !== i) {
+                move(dragging, i);
+                setDragging(i);
+              }
+            }}
+            onDragEnd={() => setDragging(null)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault();
+                move(i, i + (e.key === "ArrowUp" ? -1 : 1), true);
+              }
+            }}
+            className={`group flex cursor-grab items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[13.5px] transition-[background-color,border-color,opacity] duration-150 focus:outline-none focus-visible:border-line-strong active:cursor-grabbing ${
+              dragging === i ? "border-line-strong bg-subtle opacity-70" : moved === item ? "border-line-strong animate-landed" : "border-line"
+            }`}
+            onAnimationEnd={() => setMoved(null)}
+          >
+            <span className="w-4 shrink-0 text-center font-mono text-[12px] tabular-nums text-fg-3">{i + 1}</span>
+            <span className="min-w-0 flex-1">
+              <span className="text-fg">{item}</span>
+              {describe.get(item) ? <span className="block text-[12.5px] leading-[1.45] text-fg-3">{describe.get(item)}</span> : null}
+            </span>
+            <span className="flex shrink-0 items-center opacity-60 transition-opacity group-hover:opacity-100">
+              <button type="button" tabIndex={-1} aria-label={`Move ${item} up`} disabled={i === 0} onClick={() => move(i, i - 1)} className={`${quiet} px-1 disabled:opacity-30`}>
+                <ChevronUp size={14} />
+              </button>
+              <button type="button" tabIndex={-1} aria-label={`Move ${item} down`} disabled={i === value.length - 1} onClick={() => move(i, i + 1)} className={`${quiet} px-1 disabled:opacity-30`}>
+                <ChevronDown size={14} />
+              </button>
+              <GripVertical size={14} className="text-fg-4" aria-hidden="true" />
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** One point on a short scale between two labelled ends. */
+function ScaleField({
+  field,
+  label,
+  value,
+  onChange,
+}: {
+  field: Extract<UiField, { kind: "scale" }>;
+  label: React.ReactNode;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const points = Array.from({ length: field.steps }, (_, i) => i + 1);
+  return (
+    <fieldset>
+      <legend className="contents">{label}</legend>
+      <div
+        role="radiogroup"
+        aria-label={field.label}
+        className="mt-2 grid gap-1"
+        style={{ gridTemplateColumns: `repeat(${field.steps}, minmax(0, 1fr))` }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            e.preventDefault();
+            const next = Math.min(field.steps, Math.max(1, (value || Math.ceil(field.steps / 2)) + (e.key === "ArrowRight" ? 1 : -1)));
+            onChange(next);
+            (e.currentTarget.children[next - 1] as HTMLElement | undefined)?.focus();
+          }
+        }}
+      >
+        {points.map((n) => (
+          <button
+            key={n}
+            type="button"
+            role="radio"
+            aria-checked={value === n}
+            aria-label={`${n} of ${field.steps}`}
+            tabIndex={value === n || (!value && n === 1) ? 0 : -1}
+            onClick={() => onChange(n)}
+            className={`h-8 rounded-md border text-[13px] tabular-nums transition-[background-color,border-color,transform] duration-150 active:scale-[0.97] ${
+              value === n ? "border-accent bg-accent-soft text-fg" : value && n < value ? "border-line bg-subtle text-fg-3" : "border-line text-fg-3 hover:bg-hover"
+            }`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between gap-4 text-[12px] leading-[1.4] text-fg-3">
+        <span>{field.low}</span>
+        <span className="text-right">{field.high}</span>
+      </div>
+    </fieldset>
+  );
+}
+
+/** Results to keep or pass on; a pass can say why, from the agent's suggested reasons or the member's own. */
+function VerdictField({
+  field,
+  label,
+  value,
+  onChange,
+}: {
+  field: Extract<UiField, { kind: "verdict" }>;
+  label: React.ReactNode;
+  value: Record<string, string>[];
+  onChange: (value: Record<string, string>[]) => void;
+}) {
+  const callOf = (id: string) => value.find((v) => v.id === id);
+  const put = (id: string, patch: Record<string, string>) => {
+    const current = callOf(id) ?? { id };
+    const next = { ...current, ...patch };
+    onChange([...value.filter((v) => v.id !== id), next]);
+  };
+  return (
+    <div>
+      {label}
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {field.items.map((item) => {
+          const call = callOf(item.id);
+          const verdict = call?.verdict;
+          return (
+            <li
+              key={item.id}
+              tabIndex={-1}
+              onKeyDown={(e) => {
+                if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return;
+                if (e.key === "k") put(item.id, { verdict: "keep", reason: "" });
+                if (e.key === "p") put(item.id, { verdict: "pass" });
+              }}
+              className={`rounded-lg border px-3 py-2.5 transition-[background-color,border-color,opacity] duration-200 ${
+                verdict === "keep" ? "border-accent bg-accent-soft" : verdict === "pass" ? "border-line bg-subtle" : "border-line"
+              }`}
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+                <div className={`min-w-0 flex-1 transition-opacity duration-200 ${verdict === "pass" ? "opacity-60" : ""}`}>
+                  <p className="text-[13.5px] font-medium leading-[1.45] text-fg [overflow-wrap:anywhere]">
+                    {item.link ? (
+                      <a href={item.link} target="_blank" rel="noreferrer" className="inline-flex items-baseline gap-1 hover:underline">
+                        {item.title}
+                        <ExternalLink size={11} className="shrink-0 translate-y-[1px] text-fg-4" />
+                      </a>
+                    ) : (
+                      item.title
+                    )}
+                  </p>
+                  {item.body ? <p className="mt-0.5 text-[12.5px] leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">{item.body}</p> : null}
+                </div>
+                <div className="flex shrink-0 gap-1" role="radiogroup" aria-label={`Keep or pass on ${item.title}`}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={verdict === "keep"}
+                    aria-keyshortcuts="k"
+                    onClick={() => put(item.id, verdict === "keep" ? { verdict: "" } : { verdict: "keep", reason: "" })}
+                    className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[12.5px] font-medium transition-[background-color,border-color,transform] duration-150 active:scale-[0.96] ${
+                      verdict === "keep" ? "border-accent bg-surface text-fg" : "border-line text-fg-3 hover:bg-hover hover:text-fg"
+                    }`}
+                  >
+                    <Check size={13} strokeWidth={verdict === "keep" ? 2.5 : 2} className={verdict === "keep" ? "settle-check text-accent" : ""} />
+                    Keep
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={verdict === "pass"}
+                    aria-keyshortcuts="p"
+                    onClick={() => put(item.id, verdict === "pass" ? { verdict: "" } : { verdict: "pass" })}
+                    className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[12.5px] font-medium transition-[background-color,border-color,transform] duration-150 active:scale-[0.96] ${
+                      verdict === "pass" ? "border-line-strong bg-surface text-fg" : "border-line text-fg-3 hover:bg-hover hover:text-fg"
+                    }`}
+                  >
+                    <X size={13} />
+                    Pass
+                  </button>
+                </div>
+              </div>
+              {verdict === "pass" ? (
+                <div className="mt-2 flex flex-wrap items-center gap-1 animate-fade-in">
+                  <span className="mr-0.5 text-[12px] text-fg-3">Why?</span>
+                  {field.reasons.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      aria-pressed={call?.reason === r}
+                      onClick={() => put(item.id, { reason: call?.reason === r ? "" : r })}
+                      className={`h-6 rounded-md border px-2 text-[12px] transition-colors ${
+                        call?.reason === r ? "border-line-strong bg-surface text-fg" : "border-line text-fg-3 hover:bg-hover hover:text-fg"
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                  <input
+                    className="h-6 min-w-32 flex-1 rounded-md border border-line bg-transparent px-2 text-[12px] text-fg placeholder:text-fg-4 focus:border-line-strong focus:outline-none"
+                    placeholder={field.reasons.length ? "Or say why" : "Say why (optional)"}
+                    maxLength={200}
+                    value={call?.reason && !field.reasons.includes(call.reason) ? call.reason : ""}
+                    onChange={(e) => put(item.id, { reason: e.target.value })}
+                  />
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function FileField({

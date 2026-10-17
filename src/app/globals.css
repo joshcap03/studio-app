@@ -203,6 +203,32 @@ body {
 .animate-fade-in {
   animation: fade-in 200ms ease-out both;
 }
+/* A small, quiet "got it": a check that pops in as something is picked or sent. */
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  to {
+    transform: none;
+  }
+}
+.settle-check {
+  animation: settle 220ms var(--ease-out-soft) both;
+}
+/* A row that just moved, e.g. in a ranking, glows briefly where it landed. */
+@keyframes landed {
+  from {
+    background-color: var(--hover);
+  }
+}
+.animate-landed {
+  animation: landed 500ms ease-out;
+}
 .text-shimmer {
   background: linear-gradient(90deg, var(--fg-3) 0%, var(--fg-3) 40%, var(--fg) 50%, var(--fg-3) 60%, var(--fg-3) 100%);
   background-size: 200% 100%;
