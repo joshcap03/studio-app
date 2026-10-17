@@ -18,6 +18,7 @@ import {
   type ConversationSummary,
   type MemoryCategory,
   type MemoryProposal,
+  type MessageOrigin,
   type MessageStatus,
   type StreamEvent,
   type Question,
@@ -52,7 +53,16 @@ export type TurnRequest = { conversationId: string } & (
    * `steer`: if the agent is still working here, stop it and answer this instead.
    * `projectId` places a new conversation in one of the caller's projects (ignored for existing ones).
    */
-  | { kind: "send"; text: string; skill?: TurnSkill; attachmentIds?: string[]; steer?: boolean; projectId?: string }
+  | {
+      kind: "send";
+      text: string;
+      skill?: TurnSkill;
+      attachmentIds?: string[];
+      steer?: boolean;
+      projectId?: string;
+      /** Set when no one typed the message (a task's run); shown as a label instead of a member bubble. */
+      origin?: MessageOrigin;
+    }
   | { kind: "retry" }
   /** Replace the latest member message and answer it again (keeping its skill and files). */
   | { kind: "edit"; messageId: string; text: string }
@@ -85,6 +95,14 @@ export interface TurnDeps {
    * reply it will write. Returns why it was refused, or null to go ahead.
    */
   claim?: (replyId: string) => Promise<string | null>;
+  /**
+   * Saves what the agent reported about the conversation's task, under the caller's session:
+   * a rewritten plan, or a tracker row upserted by collection and key. Each validates its
+   * input and resolves false when it was refused or there's no task to save to. Without
+   * them, these reports are dropped.
+   */
+  savePlan?: (plan: unknown) => Promise<boolean>;
+  saveRecord?: (record: unknown, source: { messageId: string }) => Promise<boolean>;
   /** Whether this member gets investigation timelines and visuals; when false they're dropped. */
   timelines?: boolean;
   /** How often partial output is saved while streaming. */
@@ -135,6 +153,9 @@ export function sanitizeArtifact(value: unknown): Artifact | null {
 }
 
 const MAX_PROPOSALS = 5;
+/** Tracker rows one run may add or update; the rest are dropped. */
+const MAX_RECORDS_PER_RUN = 25;
+const noop = () => undefined;
 
 /**
  * Stops a run in progress. Runs are not tied to the browser connection: closing or reloading
@@ -281,6 +302,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       activity: [],
       artifacts: [],
       skill: request.skill ? { id: request.skill.id, name: request.skill.name } : null,
+      origin: request.origin ?? null,
     });
     if (ids.length > 0) {
       if (!(await store.claimAttachments(ids, userMessage.id))) {
@@ -365,6 +387,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const approvals: Approval[] = [...(assistant.approvals ?? [])];
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       const remembering: Promise<void>[] = [];
+      let records = 0;
       let timeline: Timeline | null = assistant.timeline ?? null;
       // Kept from before a pause for approval; this run's citations are added to them.
       const earlierCitations: Citation[] = assistant.citations ?? [];
@@ -510,6 +533,19 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                 questions = built;
                 send({ type: "questions", questions: built });
               }
+              break;
+            }
+            case "plan-update": {
+              if (!deps.savePlan) break;
+              remembering.push(deps.savePlan(event.plan).then(noop, (e) => console.error("[turn] couldn't save the plan", e)));
+              break;
+            }
+            case "record": {
+              if (!deps.saveRecord || records >= MAX_RECORDS_PER_RUN) break;
+              records += 1;
+              remembering.push(
+                deps.saveRecord(event.record, { messageId: assistant.id }).then(noop, (e) => console.error("[turn] couldn't save a record", e)),
+              );
               break;
             }
             case "memory-proposal": {

@@ -1,4 +1,4 @@
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import { check, fail, time } from "./db";
 import { MAX_RECORDS_PER_COLLECTION, type RecordPatch, type RecordUpsert } from "./schema";
 import type { AgentRecord } from "./types";

@@ -36,7 +36,9 @@ type Step =
   | { kind: "visual"; visual: unknown }
   | { kind: "questions"; questions: unknown }
   | { kind: "evidence"; items: Evidence[] }
-  | { kind: "citations"; citations: unknown };
+  | { kind: "citations"; citations: unknown }
+  | { kind: "plan"; plan: unknown }
+  | { kind: "record"; record: unknown };
 
 interface Scenario {
   match: RegExp;
@@ -238,6 +240,24 @@ const SCENARIOS: Scenario[] = [
           ["Body", "Hi, it looks like invoice #4471 was paid twice. Could you refund the second $1,240 payment? Thanks!"],
         ],
       },
+    ],
+  },
+  {
+    // A task's run (or "track" in chat): plan the work, then add rows to the tracker.
+    match: /\b(track|roles?)\b/i,
+    steps: [
+      { kind: "activity", id: "search", running: "Searching job boards", done: "Searched job boards", ms: 700, app: "web", action: "search" },
+      {
+        kind: "plan",
+        plan: [
+          { text: "Search for matching roles", status: "done" },
+          { text: "Shortlist the best fits", status: "doing" },
+          { text: "Draft outreach for the top 2", status: "todo" },
+        ],
+      },
+      { kind: "record", record: { collection: "applications", key: "https://jobs.example/acme-pm", title: "Senior PM — Acme (demo)", status: "discovered", url: "https://jobs.example/acme-pm", fields: { score: 4 } } },
+      { kind: "record", record: { collection: "applications", key: "https://jobs.example/globex-pm", title: "Product Lead — Globex (demo)", status: "discovered", url: "https://jobs.example/globex-pm", fields: { score: 3 } } },
+      { kind: "text", text: "Demo run: I found two roles and added them to your tracker. The plan is updated." },
     ],
   },
   {
@@ -614,6 +634,10 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "questions") {
           await wait(400 * pace, signal);
           yield { type: "questions", questions: step.questions };
+        } else if (step.kind === "plan") {
+          yield { type: "plan-update", plan: step.plan };
+        } else if (step.kind === "record") {
+          yield { type: "record", record: step.record };
         } else if (step.kind === "remember") {
           yield { type: "memory-proposal", content: step.content, scope: "workspace", category: "suppliers" };
         } else if (!streaming) {

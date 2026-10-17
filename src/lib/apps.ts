@@ -20,6 +20,7 @@ export const APPS = {
   web: "Web",
   browser: "Browser",
   memory: "Memory",
+  tracker: "Tracker",
   code: "Analysis",
   calculator: "Calculator",
   agent: "Agent",

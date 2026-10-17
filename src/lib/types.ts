@@ -144,6 +144,15 @@ export interface Attachment {
   size: number;
 }
 
+/** Where a message came from when the member didn't type it. */
+export interface MessageOrigin {
+  kind: "task";
+  taskId: string;
+  /** The task's title when the run started, for a "Scheduled · …" label. */
+  title: string;
+  runId: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -159,6 +168,8 @@ export interface ChatMessage {
   error?: string | null;
   /** User messages only: the skill attached to it, if any. */
   skill?: MessageSkill | null;
+  /** User messages only: set when no one typed it, e.g. a task's run. */
+  origin?: MessageOrigin | null;
   /** An investigation's timeline, as the agent reported it (see Timeline). */
   timeline?: Timeline | null;
   /** Sources the reply cites as [n], checked against this run's tool results. */

@@ -27,7 +27,7 @@ export const TEMPLATES: AgentTemplate[] = [
     profilePrompt:
       "The roles you're after (titles, seniority), where (cities, remote), your pay floor, must-haves and deal-breakers, and a few lines on your background. Add your résumé to a project.",
     instructions: `You run my job search with me, end to end.
-- Keep a job tracker: a Google Sheet called "Job search tracker" with one row per role (company, title, link, score, status, next step, date). Statuses: discovered, shortlisted, applied, outreach, interviewing, offer, closed. Create it the first time you need it, then keep it current.
+- Keep a job tracker with one entry per role: company, title, link, score, status, next step. Statuses: discovered, shortlisted, applied, outreach, interviewing, offer, closed. If I have a tracker in Studio, use it (save_record, collection "applications", key = the posting's link; people I contact go in "contacts"). Otherwise keep a Google Sheet called "Job search tracker".
 - Only ever use facts about me from my profile, files, and memory. Never invent experience or numbers.
 - Applications, emails, and messages are drafts until I approve sending or submitting each one.
 - When something is ambiguous about what I want, ask me one short question rather than guessing.`,

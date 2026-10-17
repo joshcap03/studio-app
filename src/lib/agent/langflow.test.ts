@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, templateValues, toolQuestions, toolTimelines, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -130,6 +130,40 @@ describe("Langflow request", () => {
     expect(body.tweaks["Agent-x"].system_prompt).toContain("Be brief.");
     expect(body.tweaks["Agent-x"].system_prompt).toMatch(/current conversation decides the topic.*Don't narrow a search or answer by the location/);
     expect(fillTemplate({ k: "{{unknown}}" }, {})).toEqual({ k: "{{unknown}}" });
+  });
+
+  it("tells the agent about its task and the member's tracker, only when there are some", () => {
+    const system = templateValues({
+      ...tenantA,
+      task: { title: "Job hunt", instructions: "Find PM roles.", plan: [{ text: "Find roles", status: "doing", note: null }] },
+      tracker: [{ collection: "applications", key: "https://jobs.example/1", title: "PM — Acme", status: "applied" }],
+    }).system_context;
+    expect(system).toContain('works on the member\'s task "Job hunt"');
+    expect(system).toContain("- [doing] Find roles");
+    expect(system).toContain("- applications | https://jobs.example/1 | PM — Acme | applied");
+    const plain = templateValues({ ...tenantA, task: null }).system_context;
+    expect(plain).not.toContain("tracker");
+    expect(plain).not.toContain("task");
+    expect(templateValues({ ...tenantA, tracker: [] }).system_context).toContain("The member has a tracker, empty so far.");
+  });
+
+  it("reads plan updates and tracker rows only from tools that declare them", () => {
+    const message = {
+      content_blocks: [
+        {
+          contents: [
+            { type: "tool_use", name: "update_plan", output: JSON.stringify({ plan_update: { steps: [{ text: "a", status: "todo" }] } }) },
+            { type: "tool_use", name: "save_record", output: { record: { collection: "applications", key: "k" } } },
+            { type: "tool_use", name: "web_search", output: { results: [] } },
+            { type: "tool_use", name: "save_record", output: { record: { collection: "x", key: "y" } }, error: true },
+          ],
+        },
+      ],
+    };
+    expect(toolTaskUpdates(message as never)).toEqual([
+      { type: "plan-update", plan: [{ text: "a", status: "todo" }] },
+      { type: "record", record: { collection: "applications", key: "k" } },
+    ]);
   });
 
   it("describes the workspace by what the agent is for, not as a business", () => {

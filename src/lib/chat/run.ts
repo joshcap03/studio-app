@@ -8,8 +8,10 @@ import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
 import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { getSkill } from "@/lib/skills";
+import { getTask } from "@/lib/tasks";
+import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
-import type { ChatMessage, ConversationSummary } from "@/lib/types";
+import type { ChatMessage, ConversationSummary, MessageOrigin } from "@/lib/types";
 import { buildAgentContext, claimRun } from "@/lib/workspace";
 
 // Builds everything one turn needs for one member, from their tenant alone: the chat route
@@ -21,7 +23,9 @@ export type RunInput =
   | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
-  | { kind: "decide"; approvalId: string; decision: "approve" | "reject" };
+  | { kind: "decide"; approvalId: string; decision: "approve" | "reject" }
+  /** Run one of the member's tasks: its brief (and skill) is sent as a message no one typed. */
+  | { kind: "task"; taskId: string; runId: string | null };
 
 export interface RunOptions {
   conversationId: string;
@@ -36,8 +40,19 @@ export interface RunOptions {
  */
 export async function buildTurnDeps(
   tenant: Tenant,
-  { conversationId, input, onFinished }: RunOptions,
+  { conversationId, input: asked, onFinished }: RunOptions,
 ): Promise<{ deps: TurnDeps; request: TurnRequest }> {
+  // A task's run is a message with the task's brief and skill, labeled with where it came from.
+  let origin: MessageOrigin | undefined;
+  let input: Exclude<RunInput, { kind: "task" }>;
+  if (asked.kind === "task") {
+    const task = await getTask(tenant, asked.taskId);
+    if (!task) throw new TurnError(404, "Task not found.");
+    origin = { kind: "task", taskId: task.id, title: task.title, runId: asked.runId };
+    input = { kind: "send", text: task.instructions.trim() || task.title, skillId: task.skillId ?? undefined };
+  } else {
+    input = asked;
+  }
   // Context (settings and memory recall) loads alongside the skill and project lookups rather
   // than after them; it only reads, so a refused run just discards it.
   // Memory is searched with the member's recent messages, not just this one, so a follow-up
@@ -90,6 +105,12 @@ export async function buildTurnDeps(
     timelines: previewEnabled(tenant, "why"),
     loadAttachment: (attachment) => readAttachment(tenant, attachment),
     loadSkill,
+    ...(previewEnabled(tenant, "tasks")
+      ? {
+          savePlan: (plan: unknown) => savePlanFromAgent(tenant, conversationId, plan),
+          saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source),
+        }
+      : {}),
     onFinished: finished,
   };
   const request: TurnRequest =
@@ -102,6 +123,7 @@ export async function buildTurnDeps(
           attachmentIds: input.attachmentIds,
           steer: input.steer,
           projectId: input.projectId,
+          origin,
         }
       : { conversationId, ...input };
   return { deps, request };
