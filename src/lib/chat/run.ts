@@ -121,9 +121,7 @@ export async function buildTurnDeps(
     loadSkill,
     // Plans save only in a task's conversation or the agent's setup interview (for everyone).
     savePlan: (plan: unknown) => savePlanFromAgent(tenant, conversationId, plan),
-    ...(previewEnabled(tenant, "tasks")
-      ? { saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source) }
-      : {}),
+    saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source),
     onFinished: finished,
     shouldStop,
   };

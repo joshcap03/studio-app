@@ -1,4 +1,3 @@
-import { previewEnabled } from "@/lib/flags";
 import { addFromCatalog, listSkills } from "@/lib/skills";
 import { createTask, listTasks } from "@/lib/tasks";
 import type { Tenant } from "@/lib/tenant";
@@ -9,7 +8,7 @@ import { templateById } from "./index";
 /**
  * Applies a built-in template to the tenant's workspace: records it, fills in the agent's
  * instructions if the workspace has none, and copies in its library skills that aren't there
- * yet. With the "tasks" preview on, it also gives the member applying it the template's
+ * yet. It also gives the member applying it the template's
  * tasks, paused so nothing runs until they turn each on. Never overwrites anything the owner
  * wrote, and tasks are keyed by their template id, so applying twice changes nothing.
  * Owner-only (updateSettings and the skill writes check).
@@ -42,7 +41,7 @@ export async function applyTemplate(
     room -= 1;
     addedSkills += 1;
   }
-  const addedTasks = previewEnabled(tenant, "tasks") ? await seedTasks(tenant, template.tasks, options.timezone ?? "UTC") : 0;
+  const addedTasks = await seedTasks(tenant, template.tasks, options.timezone ?? "UTC");
   return { addedSkills, addedTasks };
 }
 

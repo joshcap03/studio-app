@@ -3,9 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./helpers";
 
 // Tasks and records through the app's HTTP API: each member reaches only their own, a forged
-// workspace cookie changes nothing, and ids from another tenant read as missing. The routes
-// are a preview feature, so Alice and Bob are fixed accounts the QA server allowlists
-// (PREVIEW_FEATURE_EMAILS in `npm run qa:serve`); they're reused across runs on the local stack.
+// workspace cookie changes nothing, and ids from another tenant read as missing. Alice and Bob
+// are fixed accounts reused across runs on the local stack.
 // Requires the QA server (mock agent) on APP_URL.
 
 const APP = process.env.APP_URL ?? "http://127.0.0.1:3100";
@@ -120,11 +119,12 @@ afterAll(async () => {
 });
 
 describe("tasks API", () => {
-  it("is off for accounts without the preview", async () => {
-    const outsider = await member(`tasks-outsider-${crypto.randomUUID().slice(0, 8)}@example.test`, `pw-${crypto.randomUUID()}`);
-    expect((await outsider.api.json("/api/tasks", "GET")).status).toBe(404);
-    expect((await outsider.api.json("/api/tasks", "POST", { title: "x" })).status).toBe(404);
-    expect((await outsider.api.json("/api/records", "GET")).status).toBe(404);
+  it("is on for every account, starting empty", async () => {
+    const newcomer = await member(`tasks-newcomer-${crypto.randomUUID().slice(0, 8)}@example.test`, `pw-${crypto.randomUUID()}`);
+    const tasks = await newcomer.api.json("/api/tasks", "GET");
+    expect(tasks.status).toBe(200);
+    expect(((await tasks.json()) as { tasks: unknown[] }).tasks).toEqual([]);
+    expect((await newcomer.api.json("/api/records", "GET")).status).toBe(200);
   });
 
   it("serves the owner their task, plan, and runs", async () => {
@@ -266,7 +266,7 @@ describe("applying a template", () => {
   const seeded = async (m: Member) =>
     ((await (await m.api.json("/api/tasks", "GET")).json()) as { tasks: Seeded[] }).tasks.filter((t) => JOB_TASKS.includes(t.templateTaskId ?? ""));
 
-  it("gives a preview member the template's tasks, paused, once", async () => {
+  it("gives the member the template's tasks, paused, once", async () => {
     for (const t of await seeded(alice)) await alice.api.json(`/api/tasks/${t.id}`, "DELETE");
     try {
       const first = await alice.api.json("/api/workspace/template", "POST", { templateId: "job-search", timezone: "America/New_York" });
@@ -290,16 +290,17 @@ describe("applying a template", () => {
     }
   });
 
-  it("adds skills but no tasks for a member without the preview", async () => {
-    const outsider = await member(`tasks-outsider-${crypto.randomUUID().slice(0, 8)}@example.test`, `pw-${crypto.randomUUID()}`);
-    const res = await outsider.api.json("/api/workspaces", "POST", { name: "Job hunt", templateId: "job-search", timezone: "Europe/London" });
+  it("gives a new agent made from a template its skills and paused tasks", async () => {
+    const newcomer = await member(`tasks-newcomer-${crypto.randomUUID().slice(0, 8)}@example.test`, `pw-${crypto.randomUUID()}`);
+    const res = await newcomer.api.json("/api/workspaces", "POST", { name: "Job hunt", templateId: "job-search", timezone: "Europe/London" });
     expect(res.status, await res.clone().text()).toBe(201);
     const workspaceId = ((await res.json()) as { workspaceId: string }).workspaceId;
-    const skills = await outsider.db.from("workspace_skills").select("catalog_id").eq("workspace_id", workspaceId);
+    const skills = await newcomer.db.from("workspace_skills").select("catalog_id").eq("workspace_id", workspaceId);
     expect(skills.data?.map((s) => s.catalog_id)).toContain("find-roles");
-    const tasks = await outsider.db.from("agent_tasks").select("id").eq("workspace_id", workspaceId);
+    const tasks = await newcomer.db.from("agent_tasks").select("status").eq("workspace_id", workspaceId);
     expect(tasks.error).toBeNull();
-    expect(tasks.data).toEqual([]);
+    expect(tasks.data?.length).toBe(JOB_TASKS.length);
+    for (const t of tasks.data ?? []) expect(t.status).toBe("paused");
   });
 });
 

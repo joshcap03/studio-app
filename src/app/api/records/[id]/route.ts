@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, parseBody } from "@/lib/api";
-import { previewEnabled } from "@/lib/flags";
 import { deleteRecord, updateRecord } from "@/lib/tasks/records";
 import { patchRecordBody } from "@/lib/tasks/schema";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
@@ -11,7 +10,6 @@ type Context = { params: Promise<{ id: string }> };
 export async function PATCH(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
-  if (!previewEnabled(auth.value, "tasks")) return jsonError(404, "Not found.");
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Record not found.");
   const patch = await parseBody(request, patchRecordBody);
@@ -28,7 +26,6 @@ export async function PATCH(request: NextRequest, { params }: Context) {
 export async function DELETE(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
-  if (!previewEnabled(auth.value, "tasks")) return jsonError(404, "Not found.");
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Record not found.");
   try {

@@ -4,7 +4,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./helpers";
 
 // The route the background worker calls to start a queued run: it takes only a member's
 // access token, runs only that member's own queued run, and runs it in the app (mock agent).
-// The members are fixed accounts the QA server allowlists for the tasks preview (qa:serve).
+// The members are fixed accounts reused across runs on the local stack.
 // Requires the QA server on APP_URL.
 
 const APP = process.env.APP_URL ?? "http://127.0.0.1:3100";

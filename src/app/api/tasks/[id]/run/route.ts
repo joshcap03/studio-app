@@ -3,7 +3,6 @@ import { z } from "zod";
 import { agentEnabledFor } from "@/lib/agent";
 import { errorResponse } from "@/lib/api";
 import { TurnError } from "@/lib/chat/turn";
-import { previewEnabled } from "@/lib/flags";
 import { getTask } from "@/lib/tasks";
 import { startTaskRun } from "@/lib/tasks/run-task";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
@@ -21,7 +20,6 @@ export async function POST(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
   const tenant = auth.value;
-  if (!previewEnabled(tenant, "tasks")) return jsonError(404, "Not found.");
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Task not found.");
   if (!agentEnabledFor(tenant.workspace.id)) {

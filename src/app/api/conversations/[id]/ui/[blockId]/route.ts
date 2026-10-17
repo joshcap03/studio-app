@@ -4,7 +4,6 @@ import { claimAsAgentFile } from "@/lib/agent-files";
 import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { proposalPicksSchema } from "@/lib/chat/ui";
-import { previewEnabled } from "@/lib/flags";
 import { isSetupConversation, updateSetup } from "@/lib/setup-state";
 import { memoryEnabled, remember } from "@/lib/memory";
 import { addFromCatalog, createSkill, listSkills } from "@/lib/skills";
@@ -83,7 +82,7 @@ const unique = (picked: number[], length: number) => [...new Set(picked)].filter
 
 /**
  * Applies the picked items and reports which ones took effect, so the card shows only what
- * really changed. Settings and skills are the owner's, tasks need the "tasks" preview, and
+ * really changed. Settings and skills are the owner's, and
  * memories need memory to be set up; anything else is left out rather than failing the rest.
  */
 async function applyProposal(
@@ -109,7 +108,7 @@ async function applyProposal(
     done.instructions = instructions !== undefined;
   }
 
-  const taskIndexes = previewEnabled(tenant, "tasks") ? unique(picks.tasks, proposal.tasks.length) : [];
+  const taskIndexes = unique(picks.tasks, proposal.tasks.length);
   const skillIndexes = unique(picks.skills, proposal.skills.length);
   let addedSkills = 0;
   const owned = await listSkills(tenant);

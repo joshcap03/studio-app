@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
-import { previewEnabled } from "@/lib/flags";
 import { deleteTask, getTask, updateTask } from "@/lib/tasks";
 import { patchTaskBody } from "@/lib/tasks/schema";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
@@ -11,7 +10,6 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
-  if (!previewEnabled(auth.value, "tasks")) return jsonError(404, "Not found.");
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Task not found.");
   try {
@@ -26,7 +24,6 @@ export async function GET(request: NextRequest, { params }: Context) {
 export async function PATCH(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
-  if (!previewEnabled(auth.value, "tasks")) return jsonError(404, "Not found.");
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Task not found.");
   const patch = await parseBody(request, patchTaskBody);
@@ -43,7 +40,6 @@ export async function PATCH(request: NextRequest, { params }: Context) {
 export async function DELETE(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
-  if (!previewEnabled(auth.value, "tasks")) return jsonError(404, "Not found.");
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Task not found.");
   try {
