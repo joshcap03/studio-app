@@ -11,8 +11,9 @@
 //
 //   node --env-file=.env.worker.local scripts/check-deploy-env.mjs --worker
 //
-// The worker needs the app's agent settings (it runs the same turns) plus the Supabase secret
-// key; the app must never have that key. Exits 1 if anything fails.
+// The worker only signs in as a task's member and asks the app to run it, so it needs the
+// Supabase URL and keys and the app's URL, nothing else; the app must never have the secret
+// key. Exits 1 if anything fails.
 
 const WORKER = process.argv.includes("--worker");
 
@@ -54,6 +55,11 @@ function positiveInt(name) {
   return /^\d+$/.test(env[name] ?? "") && Number(env[name]) > 0;
 }
 
+// `vercel env pull` writes this for values it can't read back; it's not a value.
+for (const [name, value] of Object.entries(env)) {
+  if (value === "[SENSITIVE]") fail(name, "still the [SENSITIVE] placeholder from vercel env pull; paste the real value");
+}
+
 // --- Supabase ---
 const supabaseUrl = publicHttpsUrl("NEXT_PUBLIC_SUPABASE_URL");
 if (supabaseUrl) {
@@ -84,7 +90,11 @@ if (!WORKER) {
   else if (secret.startsWith("sb_secret_") || jwtRole(secret) === "service_role") pass("SUPABASE_SECRET_KEY");
   else fail("SUPABASE_SECRET_KEY", "isn't a secret key (sb_secret_…) or a service_role key");
   if (env.SUPABASE_ACCESS_TOKEN) warn("SUPABASE_ACCESS_TOKEN", "set, but the worker doesn't need it; remove it");
-  if (!env.PREVIEW_FEATURE_EMAILS) warn("PREVIEW_FEATURE_EMAILS", "not set; tasks are a preview feature, so the worker will skip every run");
+  // The worker asks the app to run each task (trigger/run-task.ts).
+  if (publicHttpsUrl("APP_URL")) pass("APP_URL");
+  for (const name of ["LANGFLOW_API_KEY", "COMPOSIO_API_KEY", "SUPERMEMORY_API_KEY", "VAPID_PRIVATE_KEY"]) {
+    if (env[name]) warn(name, "set, but the worker doesn't need it (the app runs the task); remove it");
+  }
   if (env.TRIGGER_SECRET_KEY) pass("TRIGGER_SECRET_KEY", "set (Trigger.dev provides it in its own environments)");
 }
 
@@ -98,6 +108,8 @@ function jwtRole(token) {
   }
 }
 
+// Everything below is the app's: the worker hands each run to the app.
+if (!WORKER) {
 // --- Agent provider ---
 if (env.AGENT_PROVIDER === "langflow") pass("AGENT_PROVIDER", "langflow");
 else fail("AGENT_PROVIDER", env.AGENT_PROVIDER ? "must be langflow in production (mock is for development)" : "not set (defaults to mock)");
@@ -179,6 +191,8 @@ for (const name of ["LIMIT_RUNS_PER_MINUTE", "LIMIT_RUNS_PER_WORKSPACE_PER_DAY",
 }
 for (const name of ["LANGFLOW_STREAM", "MOCK_STREAMING"]) {
   if (env[name] && !["true", "false"].includes(env[name])) fail(name, 'must be "true" or "false"');
+}
+
 }
 
 // --- Report ---

@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "qa:serve": "AGENT_PROVIDER=mock NEXT_DIST_DIR=.next-qa PREVIEW_FEATURE_EMAILS=tasks-api-alice@example.test,tasks-api-bob@example.test next dev --hostname 127.0.0.1 --port 3100",
+    "qa:serve": "AGENT_PROVIDER=mock NEXT_DIST_DIR=.next-qa PREVIEW_FEATURE_EMAILS=tasks-api-alice@example.test,tasks-api-bob@example.test,worker-route-alice@example.test,worker-route-bob@example.test next dev --hostname 127.0.0.1 --port 3100",
     "test:integration": "vitest run -c vitest.integration.config.ts",
     "db:start": "supabase start -x studio,imgproxy,edge-runtime,logflare,vector,realtime,supavisor,postgres-meta",
     "db:reset": "supabase db reset",

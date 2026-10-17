@@ -1,12 +1,11 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { sessionFor, type Session } from "@/lib/tenant-core";
 
 // The only code that holds the Supabase secret key (see AGENTS.md; a test fails if it shows
 // up anywhere else). It's used for exactly two things:
 //   1. the service_role-only worker_* functions that find due tasks and move their schedule on;
 //   2. issuing a one-time sign-in for a task's member, so the run happens as them under RLS.
-// The admin client never reads or writes tables. Everything after `asMember` hands over its
-// session runs as the member, through the same code as the app.
+// The admin client never reads or writes tables. The member's session goes only to the app
+// (trigger/run-task.ts), which runs the task as them with its own settings and keys.
 
 const authOnly = { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false };
 
@@ -84,7 +83,7 @@ export class SignInRateLimited extends Error {}
  * the user id from the claimed row, never by anything a member could edit, and the session is
  * checked to be theirs before it's used.
  */
-async function openMemberSession(userId: string): Promise<{ session: Session; close: () => Promise<void> }> {
+async function openMemberSession(userId: string): Promise<{ accessToken: string; close: () => Promise<void> }> {
   const admin = adminClient();
   const { data: found, error: lookup } = await admin.auth.admin.getUserById(userId);
   if (lookup || !found.user?.email) throw new MemberUnavailable(`member ${userId} is unavailable`);
@@ -105,14 +104,17 @@ async function openMemberSession(userId: string): Promise<{ session: Session; cl
     await close();
     throw new Error("The sign-in opened a session for someone else.");
   }
-  return { session: sessionFor(db, data.session.user), close };
+  return { accessToken: data.session.access_token, close };
 }
 
-/** Runs `fn` with one session as the member, always signing it out afterwards. */
-export async function asMember<T>(userId: string, fn: (session: Session) => Promise<T>): Promise<T> {
-  const { session, close } = await openMemberSession(userId);
+/**
+ * Runs `fn` with one session's access token as the member, always signing it out afterwards.
+ * The token is short-lived and goes nowhere but the app; never log it.
+ */
+export async function asMember<T>(userId: string, fn: (accessToken: string) => Promise<T>): Promise<T> {
+  const { accessToken, close } = await openMemberSession(userId);
   try {
-    return await fn(session);
+    return await fn(accessToken);
   } finally {
     await close().catch((e) => console.error("[worker] couldn't sign the member's session out", e));
   }
