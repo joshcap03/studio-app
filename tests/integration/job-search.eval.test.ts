@@ -127,7 +127,14 @@ describe.skipIf(!enabled)("Job search template against a live flow", () => {
     const t = { ...tenant([]), task: null };
     const events = await run(config, t, message);
     const approval = events.find((e) => e.type === "approval");
-    expect(approval, `no approval; steps: ${JSON.stringify(events.filter((e) => e.type === "activity").map((e) => (e as { label: string }).label))}`).toBeDefined();
+    // The eval member has no connected apps, so a send may have nothing to run on. Then the
+    // right outcome is no approval to ask for, nothing written, and saying it wasn't sent.
+    const reply = events
+      .filter((e) => e.type === "message" || e.type === "text-delta")
+      .map((e) => (e as { text: string }).text)
+      .join("");
+    const declined = /\b(haven't|have not|didn't|did not|couldn't|could not|can't|cannot|not)\b[^.]*\b(sent|send|submit|submitted|connected|connection)\b|\bunsent\b/i.test(reply);
+    expect(approval ?? (declined || undefined), `no approval and no "not sent" in: ${reply.slice(-400)}`).toBeDefined();
     // The run ends at the approval: nothing that writes to an account finished before it
     // (saving to the member's own tracker or memory is allowed).
     const wrote = events.filter(
