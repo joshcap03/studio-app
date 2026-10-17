@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { appName } from "@/lib/apps";
 import { api } from "@/lib/client/api";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
+import type { AccountProfile } from "@/lib/tenant-core";
 import { TEMPLATES, templateById } from "@/lib/templates";
 import type { Memory, MemoryPromotion, UsageSummary, WorkspaceSettings } from "@/lib/types";
 import { BusinessBrain } from "./business-brain";
@@ -21,12 +22,14 @@ interface Props {
   email: string | null;
   /** The member's personal guardrail, shown read-only; null when they don't have one. */
   guardrail: string | null;
+  /** The person's own profile, shared by all their agents. */
+  account: AccountProfile;
 }
 
 const input =
   "w-full rounded-xl border border-line bg-surface px-3.5 text-[14.5px] text-fg outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none disabled:bg-subtle/50 disabled:text-fg-2";
 
-export function SettingsView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, email, guardrail }: Props) {
+export function SettingsView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, email, guardrail, account }: Props) {
   return (
     <div className="mt-10 space-y-14">
       {guardrail ? (
@@ -37,6 +40,7 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
           <p className="rounded-xl border border-line bg-subtle/50 px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap text-fg-2">{guardrail}</p>
         </Section>
       ) : null}
+      <YouSection initial={account} />
       <AgentSection initial={initialSettings} canEdit={canEdit} />
       {initialPromotions ? (
         <Section
@@ -52,7 +56,10 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
       ) : (
         <MemorySection initial={initialMemories} isOwner={canEdit} />
       )}
-      <Section title="Connected apps" description="Apps the agent can use for you. It asks before changing anything, and only you can use your connections.">
+      <Section
+        title="Connected apps"
+        description="Apps your agents can use for you. Every one of your agents shares these. It asks before changing anything, and only you can use your connections."
+      >
         <ConnectionsList returnTo="/settings" />
       </Section>
       <NotificationsSection />
@@ -216,6 +223,75 @@ function Section({ title, description, children }: { title: string; description?
       {description ? <p className="mt-1 text-[13.5px] text-fg-3">{description}</p> : null}
       <div className="mt-4">{children}</div>
     </section>
+  );
+}
+
+function YouSection({ initial }: { initial: AccountProfile }) {
+  const [saved, setSaved] = useState(initial);
+  const [draft, setDraft] = useState(initial);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const dirty = draft.name !== saved.name || draft.about !== saved.about;
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setStatus("saving");
+    setError(null);
+    try {
+      const { account } = await api.updateAccount(draft);
+      setSaved(account);
+      setDraft(account);
+      setStatus("saved");
+    } catch (e) {
+      setStatus("error");
+      setError((e as Error).message || "Couldn't save. Try again.");
+    }
+  }
+
+  return (
+    <Section title="You" description="Every one of your agents reads this, so you only have to say it once.">
+      <form onSubmit={save} className="space-y-5">
+        <div>
+          <label htmlFor="your-name" className="text-[13px] font-medium text-fg-2">
+            Your name
+          </label>
+          <input
+            id="your-name"
+            maxLength={80}
+            autoComplete="name"
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            className={`mt-1.5 h-10 ${input}`}
+          />
+        </div>
+        <div>
+          <label htmlFor="about-you" className="text-[13px] font-medium text-fg-2">
+            About you
+          </label>
+          <textarea
+            id="about-you"
+            rows={4}
+            maxLength={4000}
+            value={draft.about}
+            onChange={(e) => setDraft({ ...draft, about: e.target.value })}
+            placeholder="Where you are, what you do, how you like to work…"
+            className={`mt-1.5 resize-y py-3 leading-relaxed ${input}`}
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={!dirty || status === "saving"}
+            className="h-9 rounded-lg bg-inverse px-3.5 text-[13.5px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-30"
+          >
+            {status === "saving" ? "Saving…" : "Save"}
+          </button>
+          <span role="status" className={`text-[13px] ${status === "error" ? "text-danger" : "text-fg-3"}`}>
+            {status === "saved" && !dirty ? "Saved" : status === "error" ? error : ""}
+          </span>
+        </div>
+      </form>
+    </Section>
   );
 }
 

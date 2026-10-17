@@ -11,8 +11,10 @@ export interface AgentTenantContext {
   workspaceId: string;
   workspaceName: string;
   userId: string;
-  /** This member's private id for their connected apps (Composio user id). */
+  /** The person's private id for their connected apps (Composio user id), the same in all their agents. */
   composioUserId: string;
+  /** Who the agent is assisting, as they described themself. Shared by all their agents. */
+  account?: { name: string; about: string };
   /** Apps offered for connection: toolkit slug → auth config id. Empty when none are configured. */
   composioToolkits: Record<string, string>;
   /** Workspace-configured agent profile: who the agent works for and what it's for. */

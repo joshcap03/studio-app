@@ -43,6 +43,8 @@ async function errorMessage(res: Response): Promise<string> {
 }
 
 export const api = {
+  updateAccount: (patch: { name?: string; about?: string }) =>
+    request<{ account: { name: string; about: string } }>("/api/account", { method: "PATCH", body: JSON.stringify(patch) }),
   listConversations: (query = "", signal?: AbortSignal) =>
     request<{ conversations: ConversationSummary[] }>(`/api/conversations?q=${encodeURIComponent(query)}`, { signal }),
   getConversation: (id: string, signal?: AbortSignal) =>

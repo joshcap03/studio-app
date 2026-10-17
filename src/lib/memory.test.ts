@@ -5,7 +5,7 @@ vi.mock("@/lib/config", () => ({
   getConfig: () => ({ supermemory: { apiKey: "sm_test", baseUrl: "https://sm.example" } }),
 }));
 
-const { forget, listMemories, namespaceFor, parseMemoryId, recall, recallQuery, remember, replaceMemory } = await import("./memory");
+const { forget, listMemories, moveLegacyPersonal, namespaceFor, parseMemoryId, recall, recallQuery, remember, replaceMemory, resetMoves } = await import("./memory");
 
 const WS = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -13,10 +13,14 @@ const tenant = (role: "owner" | "member" = "member") =>
   ({ workspace: { id: WS, name: "Acme", role }, userId: USER }) as unknown as Tenant;
 
 type Call = { url: string; method: string; body: unknown; auth: string | null };
+/** Which namespace a call went to. */
+const where = (call: Call) =>
+  call.url.includes(`/ns/u_${USER}/`) ? "personal" : call.url.includes(`/ns/ws_${WS}_u_${USER}/`) ? "legacy" : "workspace";
 let calls: Call[];
 let reply: (call: Call) => Response;
 
 beforeEach(() => {
+  resetMoves();
   calls = [];
   reply = () => Response.json({});
   vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
@@ -33,14 +37,18 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("memory namespaces", () => {
-  it("keeps each workspace, and each member's personal memory, in its own namespace", () => {
+  it("keeps each workspace's shared memory in its own namespace, and a person's in theirs, across agents", () => {
+    const other = { ...tenant(), workspace: { id: "other", name: "", role: "owner" as const } };
     expect(namespaceFor(tenant(), "workspace")).toBe(`ws_${WS}`);
-    expect(namespaceFor(tenant(), "personal")).toBe(`ws_${WS}_u_${USER}`);
-    expect(namespaceFor({ ...tenant(), workspace: { id: "other", name: "", role: "owner" } }, "workspace")).not.toBe(`ws_${WS}`);
+    expect(namespaceFor(other, "workspace")).not.toBe(`ws_${WS}`);
+    expect(namespaceFor(tenant(), "personal")).toBe(`u_${USER}`);
+    expect(namespaceFor(other, "personal")).toBe(`u_${USER}`);
+    expect(namespaceFor(tenant(), "legacy")).toBe(`ws_${WS}_u_${USER}`);
   });
 
   it("only accepts memory ids that name their scope", () => {
-    expect(parseMemoryId("personal:abc_123")).toEqual({ scope: "personal", documentId: "abc_123" });
+    expect(parseMemoryId("personal:abc_123")).toEqual({ scope: "personal", where: "personal", documentId: "abc_123" });
+    expect(parseMemoryId("legacy:abc_123")).toEqual({ scope: "personal", where: "legacy", documentId: "abc_123" });
     expect(parseMemoryId("abc")).toBeNull();
     expect(parseMemoryId("workspace:../x")).toBeNull();
     expect(parseMemoryId("ns:abc")).toBeNull();
@@ -52,7 +60,7 @@ describe("remember", () => {
     reply = () => Response.json({ id: "doc1", status: "queued" });
     const memory = await remember(tenant(), "  Ships on   Tuesdays. ", "personal");
     expect(calls[0]).toMatchObject({
-      url: `https://sm.example/ns/ws_${WS}_u_${USER}/document`,
+      url: `https://sm.example/ns/u_${USER}/document`,
       method: "POST",
       auth: "Bearer sm_test",
       body: { content: "Ships on Tuesdays.", dreaming: "instant", metadata: { text: "Ships on Tuesdays.", createdBy: USER } },
@@ -117,7 +125,7 @@ describe("listMemories", () => {
   it("lists shared and personal memory, newest first, marking what the caller saved", async () => {
     reply = (call) =>
       Response.json({
-        documents: call.url.includes("_u_")
+        documents: where(call) === "legacy" ? [] : where(call) === "personal"
           ? [{ id: "p1", metadata: { text: "Likes bullets" }, system: { createdAt: "2026-10-02T00:00:00Z" } }]
           : [
               { id: "w1", metadata: { text: "Fiscal year starts in Feb", createdBy: "someone-else" }, system: { createdAt: "2026-10-01T00:00:00Z" } },
@@ -146,7 +154,7 @@ describe("forget", () => {
     await expect(forget(tenant(), "personal:p1")).resolves.toBe(true);
     expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
       ["DELETE", `https://sm.example/ns/ws_${WS}/document`, { ids: ["w1"] }],
-      ["DELETE", `https://sm.example/ns/ws_${WS}_u_${USER}/document`, { ids: ["p1"] }],
+      ["DELETE", `https://sm.example/ns/u_${USER}/document`, { ids: ["p1"] }],
     ]);
   });
 });
@@ -161,7 +169,8 @@ describe("recallQuery", () => {
 describe("recall", () => {
   it("puts matches for the message first, then the standing profile, without repeats", async () => {
     reply = (call) => {
-      const personal = call.url.includes("_u_");
+      if (where(call) === "legacy") return call.url.includes("/list/") ? Response.json({ documents: [] }) : Response.json({});
+      const personal = where(call) === "personal";
       if (call.url.endsWith("/search")) return Response.json({ results: personal ? [] : [{ memory: "Ships on Tuesdays" }] });
       return Response.json({
         profile: personal
@@ -170,7 +179,7 @@ describe("recall", () => {
       });
     };
     expect(await recall(tenant(), "when do we ship?")).toEqual(["Ships on Tuesdays", "Sells jewelry", "Prefers short replies"]);
-    expect(calls.filter((c) => c.url.endsWith("/search")).map((c) => c.body)).toEqual([
+    expect(calls.filter((c) => c.url.endsWith("/search") && where(c) !== "legacy").map((c) => c.body)).toEqual([
       { query: "when do we ship?", searchMode: "memories", limit: 6 },
       { query: "when do we ship?", searchMode: "memories", limit: 6 },
     ]);
@@ -180,7 +189,7 @@ describe("recall", () => {
     reply = (call) => {
       if (call.url.includes("/list/documents"))
         return Response.json({
-          documents: call.url.includes("_u_")
+          documents: where(call) !== "workspace"
             ? []
             : [
                 { id: "w1", metadata: { text: "Never discount bridal", pinned: true } },
@@ -200,6 +209,81 @@ describe("recall", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     reply = () => new Response("down", { status: 500 });
     expect(await recall(tenant(), "hi")).toEqual([]);
+    error.mockRestore();
+  });
+});
+
+describe("moving personal memory out of the workspace", () => {
+  const legacyDoc = {
+    id: "old1",
+    metadata: { text: "Prefers mornings", createdBy: USER, category: "voice", pinned: true, savedAt: 500, sourceConversation: "c1", sourceMessage: "m1" },
+  };
+
+  it("copies each old personal fact into the person's own namespace, keeping its details, then removes the old copy", async () => {
+    let legacy = [legacyDoc];
+    reply = (call) => {
+      if (call.url.includes("/list/")) return Response.json({ documents: where(call) === "legacy" ? legacy : [] });
+      if (call.method === "POST") return Response.json({ id: "new1" });
+      if (call.method === "DELETE") {
+        legacy = [];
+        return Response.json({ count: 1 });
+      }
+      return Response.json({});
+    };
+    await moveLegacyPersonal(tenant());
+    const saved = calls.find((c) => c.method === "POST" && c.url.endsWith("/document"))!;
+    expect(where(saved)).toBe("personal");
+    expect(saved.body).toMatchObject({
+      content: "Prefers mornings",
+      metadata: { createdBy: USER, category: "voice", pinned: true, savedAt: 500, sourceConversation: "c1", sourceMessage: "m1", movedFrom: "old1" },
+    });
+    const removed = calls.find((c) => c.method === "DELETE")!;
+    expect([where(removed), removed.body]).toEqual(["legacy", { ids: ["old1"] }]);
+
+    // Done once per process: no more calls.
+    calls = [];
+    await moveLegacyPersonal(tenant());
+    expect(calls).toEqual([]);
+  });
+
+  it("doesn't copy a fact twice when an earlier move stopped before removing the old copy", async () => {
+    let legacy = [legacyDoc];
+    reply = (call) => {
+      if (call.url.includes("/list/"))
+        return Response.json({ documents: where(call) === "legacy" ? legacy : [{ id: "new1", metadata: { text: "Prefers mornings", movedFrom: "old1" } }] });
+      if (call.method === "DELETE") {
+        legacy = [];
+        return Response.json({ count: 1 });
+      }
+      return Response.json({ id: "dup" });
+    };
+    await moveLegacyPersonal(tenant());
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/document"))).toBe(false);
+    expect(calls.filter((c) => c.method === "DELETE").map((c) => where(c))).toEqual(["legacy"]);
+  });
+
+  it("keeps the old copy, and still lists it, if copying fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    reply = (call) => {
+      if (call.url.includes("/list/")) return Response.json({ documents: where(call) === "legacy" ? [legacyDoc] : [] });
+      if (call.method === "POST") return new Response("down", { status: 500 });
+      return Response.json({ count: 1 });
+    };
+    const list = await listMemories(tenant());
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(list.map((m) => [m.id, m.scope])).toEqual([["legacy:old1", "personal"]]);
+    error.mockRestore();
+  });
+
+  it("recalls old personal facts while the move hasn't finished", async () => {
+    reply = (call) => {
+      if (call.url.endsWith("/profile"))
+        return Response.json({ profile: { static: where(call) === "legacy" ? [{ memory: "Prefers mornings" }] : [], dynamic: [] } });
+      if (call.url.includes("/list/")) return new Response("slow", { status: 500 });
+      return Response.json({ results: [] });
+    };
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await recall(tenant(), "hi")).toEqual(["Prefers mornings"]);
     error.mockRestore();
   });
 });

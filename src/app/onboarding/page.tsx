@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/ui/brand-mark";
+import { getAccount } from "@/lib/account";
 import { ACTIVE_WORKSPACE_COOKIE, getSession, resolveTenant } from "@/lib/tenant";
 import { Onboarding } from "./onboarding";
 
@@ -13,6 +14,8 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
   if (!session) redirect("/login");
   const tenant = await resolveTenant(session, (await cookies()).get(ACTIVE_WORKSPACE_COOKIE)?.value);
   const creating = !tenant || (await searchParams).new === "1";
+  // First-time setup starts with the person; another agent later skips straight to it.
+  const account = tenant ? null : await getAccount(session);
 
   return (
     <main className="flex min-h-dvh justify-center px-6 py-14 md:items-center md:py-12">
@@ -21,7 +24,12 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
           <BrandMark size={28} />
           <span className="text-[15px] font-semibold tracking-[-0.01em]">Studio</span>
         </div>
-        <Onboarding initialStep={creating ? "workspace" : "connect"} workspaceName={creating ? null : tenant!.workspace.name} canCancel={!!tenant} />
+        <Onboarding
+          initialStep={account ? "you" : creating ? "workspace" : "connect"}
+          account={account}
+          workspaceName={creating ? null : tenant!.workspace.name}
+          canCancel={!!tenant}
+        />
       </div>
     </main>
   );

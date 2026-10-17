@@ -141,7 +141,7 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
 /**
  * Everything the agent may know about this tenant for one run. Built fresh per run from
  * the caller's own session, so it can only ever contain this workspace's settings, this
- * workspace's shared memory, and this member's personal memory and connection id. `query`
+ * workspace's shared memory, and this member's own profile, personal memory, and connection id. `query`
  * (the member's message) pulls in memories that match it. `conversationId` is the conversation
  * being answered, left out of the recent chats a guardrail run sees.
  */
@@ -163,6 +163,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     workspaceName: settings.name,
     userId: tenant.userId,
     composioUserId: tenant.composioUserId,
+    account: tenant.account,
     composioToolkits: Object.fromEntries((getConfig().composio?.toolkits ?? []).map((t) => [t.slug, t.authConfigId])),
     profile: settings.profile,
     agentInstructions: settings.agentInstructions,

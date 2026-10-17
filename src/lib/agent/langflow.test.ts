@@ -177,6 +177,15 @@ describe("Langflow request", () => {
     expect(values.business_context).toBe("Handmade rings.");
   });
 
+  it("tells every agent who it's assisting, next to which agent it is, and nothing when the person hasn't said", () => {
+    const system = templateValues({ ...tenantA, account: { name: "Alice Ng", about: "Lives in Oakland." } }).system_context;
+    expect(system).toContain("You're assisting: Alice Ng\n\nAbout them:\nLives in Oakland.\n\nThis agent: Alice Atelier");
+    const blank = templateValues({ ...tenantA, account: { name: " ", about: "" } }).system_context;
+    expect(blank).not.toContain("You're assisting");
+    expect(blank).not.toContain("About them");
+    expect(templateValues(tenantA).system_context).not.toContain("You're assisting");
+  });
+
   it("adds the conversation's project to the agent's context, and nothing when there is none", () => {
     const project = { name: "Spring catalog", instructions: "Cite the price list.", files: ["prices.csv"] };
     const system = templateValues({ ...tenantA, project }).system_context;
