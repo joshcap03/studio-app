@@ -102,6 +102,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.account?.about.trim() && `About them:\n${tenant.account.about.trim()}`,
     `This agent: ${tenant.workspaceName}`,
     tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
+    tenant.agentFiles?.length && `Your files (the member's, attached to every message with this agent): ${tenant.agentFiles.join(", ")}`,
     project && projectContext(project),
     tenant.task && taskContext(tenant.task),
     tenant.tracker && trackerContext(tenant.tracker),

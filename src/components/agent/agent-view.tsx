@@ -1,13 +1,22 @@
 "use client";
 
-import { Pencil, Trash2 } from "lucide-react";
+import { AlertCircle, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { formatSize, iconFor } from "@/components/chat/attachments";
 import { BusinessBrain } from "@/components/settings/business-brain";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "@/components/settings/section";
 import { appName } from "@/lib/apps";
-import { api } from "@/lib/client/api";
+import { ApiError, api, uploadAgentFile } from "@/lib/client/api";
 import { TEMPLATES, templateById } from "@/lib/templates";
-import type { Memory, MemoryPromotion, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import {
+  ATTACHMENT_TYPES,
+  MAX_AGENT_FILES,
+  type Attachment,
+  type Memory,
+  type MemoryPromotion,
+  type UsageSummary,
+  type WorkspaceSettings,
+} from "@/lib/types";
 
 interface Props {
   initialSettings: WorkspaceSettings;
@@ -17,6 +26,10 @@ interface Props {
   initialPromotions: MemoryPromotion[] | null;
   usage: UsageSummary;
   canEdit: boolean;
+  /** The caller's own files for this agent. */
+  initialFiles: Attachment[];
+  /** Whether the agent can read files. */
+  allowFiles: boolean;
 }
 
 async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
@@ -31,7 +44,7 @@ async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<Workspa
 }
 
 // Everything about the active agent: who it is, what it knows, and how much it's used.
-export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit }: Props) {
+export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles }: Props) {
   const [settings, setSettings] = useState(initialSettings);
   return (
     <>
@@ -41,6 +54,7 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
       </p>
       <div className="mt-10 space-y-14">
         <AgentSection initial={settings} canEdit={canEdit} onSaved={setSettings} />
+        {allowFiles || initialFiles.length > 0 ? <FilesSection initial={initialFiles} allowFiles={allowFiles} /> : null}
         {initialPromotions ? (
           <Section
             title="Brain"
@@ -159,6 +173,131 @@ function AgentName({ name, canEdit, onSaved }: { name: string; canEdit: boolean;
         </p>
       ) : null}
     </div>
+  );
+}
+
+const ACCEPT = Object.keys(ATTACHMENT_TYPES)
+  .map((ext) => `.${ext}`)
+  .join(",");
+
+// The caller's own files for this agent (a résumé, a price list). Every member has their own
+// shelf, so this isn't limited to the owner.
+function FilesSection({ initial, allowFiles }: { initial: Attachment[]; allowFiles: boolean }) {
+  const [files, setFiles] = useState(initial);
+  const [uploads, setUploads] = useState<{ key: string; name: string; error?: string }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const full = files.length + uploads.filter((u) => !u.error).length >= MAX_AGENT_FILES;
+
+  async function add(list: FileList) {
+    setError(null);
+    const room = MAX_AGENT_FILES - files.length - uploads.filter((u) => !u.error).length;
+    const chosen = [...list].slice(0, Math.max(0, room));
+    if (chosen.length < list.length) setError(`This agent can hold up to ${MAX_AGENT_FILES} files.`);
+    for (const file of chosen) {
+      const key = crypto.randomUUID();
+      setUploads((all) => [...all, { key, name: file.name }]);
+      try {
+        const added = await uploadAgentFile(file);
+        setFiles((all) => [...all, added]);
+        setUploads((all) => all.filter((u) => u.key !== key));
+      } catch (e) {
+        const message = e instanceof ApiError ? e.message : "Couldn't upload this file.";
+        setUploads((all) => all.map((u) => (u.key === key ? { ...u, error: message } : u)));
+      }
+    }
+  }
+
+  async function remove(id: string) {
+    setError(null);
+    const previous = files;
+    setFiles((all) => all.filter((f) => f.id !== id));
+    try {
+      await api.deleteAgentFile(id);
+    } catch {
+      setFiles(previous);
+      setError("Couldn't remove that file. Try again.");
+    }
+  }
+
+  return (
+    <Section title="Files" description="Documents this agent reads with every message, in every chat, like your résumé or a price list. Only you see your files.">
+      <div className="rounded-xl border border-line bg-surface px-3 py-2">
+        {files.length === 0 && uploads.length === 0 ? (
+          <p className="px-1 py-1.5 text-[13.5px] text-fg-3">No files yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {files.map((f) => {
+              const Icon = iconFor(f.name, f.mimeType);
+              return (
+                <li key={f.id} className="group/file flex h-8 items-center gap-2 rounded-lg px-1 text-[13.5px]">
+                  <Icon size={15} className="shrink-0 text-fg-3" />
+                  <span className="min-w-0 flex-1 truncate text-fg">{f.name}</span>
+                  <span className="shrink-0 text-[12px] text-fg-3">{formatSize(f.size)}</span>
+                  <button
+                    type="button"
+                    onClick={() => void remove(f.id)}
+                    aria-label={`Remove ${f.name}`}
+                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-3 opacity-0 transition-opacity group-hover/file:opacity-100 hover:bg-hover hover:text-fg focus-visible:opacity-100 max-md:opacity-100"
+                  >
+                    <X size={13} />
+                  </button>
+                </li>
+              );
+            })}
+            {uploads.map((u) => (
+              <li key={u.key} className="flex h-8 items-center gap-2 rounded-lg px-1 text-[13.5px]">
+                {u.error ? <AlertCircle size={15} className="shrink-0 text-danger" /> : <span className="spinner shrink-0" aria-label="Uploading" />}
+                <span className={`min-w-0 flex-1 truncate ${u.error ? "text-danger" : "text-fg-2"}`} title={u.error}>
+                  {u.error ? `${u.name}: ${u.error}` : u.name}
+                </span>
+                {u.error ? (
+                  <button
+                    type="button"
+                    onClick={() => setUploads((all) => all.filter((x) => x.key !== u.key))}
+                    aria-label={`Dismiss ${u.name}`}
+                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-3 hover:bg-hover hover:text-fg"
+                  >
+                    <X size={13} />
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        {allowFiles ? (
+          <div className="mt-1 border-t border-line pt-2">
+            <button
+              type="button"
+              onClick={() => picker.current?.click()}
+              disabled={full}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover disabled:opacity-50"
+            >
+              <Plus size={14} />
+              Add files
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              accept={ACCEPT}
+              hidden
+              aria-label="Add files"
+              onChange={(e) => {
+                if (e.target.files?.length) void add(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+      {error ? (
+        <p role="status" className="mt-2 text-[12.5px] text-danger">
+          {error}
+        </p>
+      ) : null}
+      {!allowFiles ? <p className="mt-2 text-[12.5px] text-fg-3">The agent can&apos;t read files yet.</p> : null}
+    </Section>
   );
 }
 

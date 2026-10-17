@@ -197,6 +197,14 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, project }).project_instructions).toBe("Cite the price list.");
   });
 
+  it("names the member's files for this agent, and nothing when there are none", () => {
+    const system = templateValues({ ...tenantA, agentFiles: ["resume.pdf", "stories.md"] }).system_context;
+    expect(system).toContain("Your files");
+    expect(system).toContain("resume.pdf, stories.md");
+    expect(templateValues({ ...tenantA, agentFiles: [] }).system_context).not.toContain("Your files");
+    expect(templateValues(tenantA).system_context).not.toContain("Your files");
+  });
+
   it("puts a member's guardrail first, over every other instruction, and nothing when there is none", () => {
     const guardrail = { instructions: "Only look things up; no opinions.", recentChats: ["Should I move?", "Is moving smart?"] };
     const values = templateValues({ ...tenantA, guardrail });

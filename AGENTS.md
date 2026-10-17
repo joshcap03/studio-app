@@ -69,6 +69,8 @@ raw/technical text.
   `no-next.test.ts` keeps it that way.
 - `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id
   (`accounts.composio_user_id`, one per person; `workspace_members.composio_user_id` is legacy).
+- `src/lib/agent-files.ts`: a member's own files for one agent (a résumé), sent with every run of
+  that agent ahead of project files (`runFiles` caps them). `claimAsAgentFile` moves an unsent upload there.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).

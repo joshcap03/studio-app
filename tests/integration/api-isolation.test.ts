@@ -17,7 +17,8 @@ class Client {
       redirect: "manual",
       headers: {
         Origin: APP,
-        "Content-Type": "application/json",
+        // A multipart body sets its own type (with the boundary).
+        ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
         Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; "),
         ...init.headers,
       },
@@ -35,6 +36,12 @@ class Client {
 
   json(path: string, method: string, body?: unknown, extraCookies?: Record<string, string>) {
     return this.request(path, { method, body: body === undefined ? undefined : JSON.stringify(body) }, extraCookies);
+  }
+
+  upload(path: string, name: string, content: string, extraCookies?: Record<string, string>) {
+    const form = new FormData();
+    form.append("file", new File([content], name, { type: "text/plain" }));
+    return this.request(path, { method: "POST", body: form }, extraCookies);
   }
 
   /** Sends a message and reads the whole NDJSON stream. */
@@ -116,6 +123,38 @@ describe("API tenant isolation", () => {
     expect(still.messages.map((m) => m.content)).not.toContain("inject into alice");
     expect(still.messages[0].content).toBe("non-streaming alice-private-message");
   });
+
+  it("keeps agent files to the member who added them, and sends them with every run", async () => {
+    const added = await alice.upload("/api/agent/files", "resume.txt", "alice-resume-first-line\nmore");
+    expect(added.status, await added.clone().text()).toBe(201);
+    const file = ((await added.json()) as { file: { id: string; name: string } }).file;
+    expect(file.name).toBe("resume.txt");
+    const mine = (await (await alice.request("/api/agent/files")).json()) as { files: { id: string }[] };
+    expect(mine.files.map((f) => f.id)).toEqual([file.id]);
+
+    // A new chat with the agent gets the file without attaching it.
+    const run = await alice.send(crypto.randomUUID(), "non-streaming what's on my resume?");
+    expect(run.res.status).toBe(200);
+    expect(run.body).toContain("alice-resume-first-line");
+
+    // Bob can't see, remove, or receive it, even naming Alice's agent in the cookie.
+    for (const cookies of [{}, { lj_ws: aliceWs }] as Record<string, string>[]) {
+      const theirs = (await (await bob.request("/api/agent/files", {}, cookies)).json()) as { files: unknown[] };
+      expect(theirs.files).toEqual([]);
+      expect((await bob.json(`/api/agent/files/${file.id}`, "DELETE", undefined, cookies)).status).toBe(404);
+    }
+    const bobRun = await bob.send(crypto.randomUUID(), "non-streaming what's on my resume?", { lj_ws: aliceWs });
+    expect(bobRun.body).not.toContain("alice-resume-first-line");
+    // Bob's upload lands on his own shelf, not Alice's.
+    expect((await bob.upload("/api/agent/files", "bob.txt", "bob", { lj_ws: aliceWs })).status).toBe(201);
+    const still = (await (await alice.request("/api/agent/files")).json()) as { files: { id: string }[] };
+    expect(still.files.map((f) => f.id)).toEqual([file.id]);
+
+    expect((await alice.json(`/api/agent/files/not-a-uuid`, "DELETE")).status).toBe(404);
+    expect((await alice.json(`/api/agent/files/${file.id}`, "DELETE")).status).toBe(204);
+    expect(((await (await alice.request("/api/agent/files")).json()) as { files: unknown[] }).files).toEqual([]);
+    expect((await alice.json(`/api/agent/files/${file.id}`, "DELETE")).status).toBe(404);
+  }, 60_000);
 
   it("ignores a forged active-workspace cookie", async () => {
     const list = (await (await bob.json("/api/conversations", "GET", undefined, { lj_ws: aliceWs })).json()) as { conversations: unknown[] };

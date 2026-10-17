@@ -1,6 +1,8 @@
 import { getAgentAdapter } from "@/lib/agent";
+import { agentFilesForRun, runFiles } from "@/lib/agent-files";
 import { readAttachment } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
+import type { AgentAttachment } from "@/lib/agent/types";
 import { TurnError, type TurnDeps, type TurnRequest } from "@/lib/chat/turn";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
@@ -78,12 +80,18 @@ export async function buildTurnDeps(
     const projectId = conversation ? conversation.projectId : input.kind === "send" ? input.projectId : undefined;
     return projectId ? projectForRun(tenant, projectId, adapter.capabilities.attachments) : undefined;
   };
-  const [skill, project] = await Promise.all([
+  const [skill, project, agentFiles] = await Promise.all([
     input.kind === "send" && input.skillId ? loadSkill(input.skillId) : Promise.resolve(undefined),
     loadProject(),
+    agentFilesForRun(tenant, adapter.capabilities.attachments),
   ]);
   if (skill === null) throw new TurnError(404, "Skill not found.");
   if (project === null) throw new TurnError(404, "Project not found.");
+  // Every run gets the member's files for this agent, then the project's, within the cap; the
+  // context names only the files that were actually sent.
+  const files = runFiles(agentFiles, project?.files ?? []);
+  const sent = new Set(files.map((f) => f.id));
+  const named = (list: AgentAttachment[]) => list.filter((f) => sent.has(f.id)).map((f) => f.name);
 
   // A member who wasn't watching when the run ended gets a notification.
   const finished: NonNullable<TurnDeps["onFinished"]> = async (message, conversation, info) => {
@@ -98,8 +106,12 @@ export async function buildTurnDeps(
   const deps: TurnDeps = {
     store,
     adapter,
-    context: { ...(await context), project: project?.context ?? null },
-    projectFiles: project?.files,
+    context: {
+      ...(await context),
+      agentFiles: named(agentFiles),
+      project: project ? { ...project.context, files: named(project.files) } : null,
+    },
+    projectFiles: files,
     remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
