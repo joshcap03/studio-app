@@ -50,6 +50,8 @@ const STEP_LABEL: Partial<Record<StepStatus, string>> = { doing: "In progress", 
 export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle }: Props) {
   const [state, setState] = useState<TaskState>({ status: "loading" });
   const [runs, setRuns] = useState<TaskRun[] | null>(null);
+  // "4 of 5 kept this past week": the member's keep/pass calls on this task's results.
+  const [score, setScore] = useState<string | null>(null);
   const [records, setRecords] = useState<AgentRecord[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -63,7 +65,10 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
     const { signal } = controller;
     api
       .getTask(taskId, signal)
-      .then(({ task }) => setState({ status: "ready", task }))
+      .then(({ task, score }) => {
+        setState({ status: "ready", task });
+        setScore(score ?? null);
+      })
       .catch((error: unknown) => {
         if (!signal.aborted) setState({ status: error instanceof ApiError && error.status === 404 ? "missing" : "error" });
       });
@@ -190,6 +195,12 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
               <div className="flex gap-1.5">
                 <dt>Last run</dt>
                 <dd className="text-fg-2">{formatWhen(task.lastRunAt)}</dd>
+              </div>
+            ) : null}
+            {score ? (
+              <div className="flex gap-1.5">
+                <dt>Your bar</dt>
+                <dd className="text-fg-2">{score}</dd>
               </div>
             ) : null}
           </dl>

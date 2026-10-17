@@ -7,10 +7,11 @@ import { proposalPicksSchema } from "@/lib/chat/ui";
 import { isSetupConversation, updateSetup } from "@/lib/setup-state";
 import { memoryEnabled, remember } from "@/lib/memory";
 import { addFromCatalog, createSkill, listSkills } from "@/lib/skills";
-import { createTask, listTasks, updateTask } from "@/lib/tasks";
+import { createTask, getTaskForConversation, listTasks, updateTask } from "@/lib/tasks";
 import { timezoneSchema } from "@/lib/tasks/schema";
 import { authorizeTenant, jsonError, type Tenant } from "@/lib/tenant";
-import { MAX_CONTEXT_LENGTH, MAX_FORM_FILES, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
+import { MAX_CONTEXT_LENGTH, MAX_FORM_FIELDS, MAX_FORM_FILES, MAX_VERDICT_ITEMS, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
+import { saveVerdicts } from "@/lib/verdicts";
 import { updateSettings } from "@/lib/workspace";
 
 type Context = { params: Promise<{ id: string; blockId: string }> };
@@ -18,7 +19,22 @@ type Context = { params: Promise<{ id: string; blockId: string }> };
 const body = z.discriminatedUnion("action", [
   // The member is sending a form's answers (as their next message): this marks the form
   // answered and first moves the uploads from its "keep" file fields onto the agent's shelf.
-  z.strictObject({ action: z.literal("submit"), keepFiles: z.array(z.uuid()).max(MAX_FORM_FILES).optional() }),
+  // Its verdict fields' keep/pass calls are saved too, against the items the stored card holds.
+  z.strictObject({
+    action: z.literal("submit"),
+    keepFiles: z.array(z.uuid()).max(MAX_FORM_FILES).optional(),
+    verdicts: z
+      .array(
+        z.strictObject({
+          fieldId: z.string().min(1).max(48),
+          itemId: z.string().min(1).max(48),
+          verdict: z.enum(["keep", "pass"]),
+          reason: z.string().max(200).optional(),
+        }),
+      )
+      .max(MAX_FORM_FIELDS * MAX_VERDICT_ITEMS)
+      .optional(),
+  }),
   // The member applied some or all of a proposed setup, with their own edits to its texts.
   z.strictObject({
     action: z.literal("apply"),
@@ -58,6 +74,15 @@ export async function POST(request: NextRequest, { params }: Context) {
       // Only the caller's own unsent uploads can move (claim_agent_file checks).
       for (const id of keep) {
         if (!(await claimAsAgentFile(auth.value, id))) return jsonError(404, "That file wasn't found. Upload it again.");
+      }
+      if (input.verdicts?.length) {
+        // The answer still goes out if the verdicts can't be saved; only the score misses them.
+        try {
+          const task = await getTaskForConversation(auth.value, ids.data.id);
+          await saveVerdicts(auth.value, block, { messageId: message.id, taskId: task?.id ?? null }, input.verdicts);
+        } catch (error) {
+          console.error("[ui] couldn't save verdicts", error);
+        }
       }
       response = { status: "submitted", at: Date.now() };
     } else {

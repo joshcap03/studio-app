@@ -77,6 +77,26 @@ let bob: Member;
 let originalInstructions = "";
 
 const form = { kind: "form", id: formId, title: "Your search", fields: [{ kind: "text", id: "roles", label: "Roles", required: true }], submitLabel: "Send" };
+const verdictFormId = crypto.randomUUID();
+const verdictForm = {
+  kind: "form",
+  id: verdictFormId,
+  title: "Trial run",
+  fields: [
+    {
+      kind: "verdict",
+      id: "roles",
+      label: "Would you go for these?",
+      required: true,
+      reasons: ["Too junior"],
+      items: [
+        { id: "acme", title: `Acme ${tag}` },
+        { id: "globex", title: `Globex ${tag}` },
+      ],
+    },
+  ],
+  submitLabel: "Send",
+};
 const keepFormId = crypto.randomUUID();
 const keepForm = {
   kind: "form",
@@ -112,7 +132,7 @@ beforeAll(async () => {
     role: "assistant",
     content: "",
     status: "complete",
-    ui: [form, proposal, keepForm],
+    ui: [form, proposal, keepForm, verdictForm],
   });
   expect(inserted.error).toBeNull();
 }, 60_000);
@@ -128,6 +148,25 @@ const url = (blockId: string) => `/api/conversations/${conversation}/ui/${blockI
 const picks = { profile: false, instructions: true, skills: [], tasks: [0], memories: [] };
 
 describe("ui card answers", () => {
+  it("save the member's keep/pass calls against the card's own items, and count them", async () => {
+    const verdicts = [
+      { fieldId: "roles", itemId: "acme", verdict: "keep" },
+      { fieldId: "roles", itemId: "globex", verdict: "pass", reason: " Too junior " },
+      // Not in the card: dropped, never stored under a title the request made up.
+      { fieldId: "roles", itemId: "forged", verdict: "keep" },
+      { fieldId: "nope", itemId: "acme", verdict: "pass" },
+    ];
+    const res = await alice.api.json(url(verdictFormId), "POST", { action: "submit", verdicts });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const stored = await alice.db.from("agent_verdicts").select("item_id, title, verdict, reason").eq("block_id", verdictFormId).order("item_id");
+    expect(stored.data).toEqual([
+      { item_id: "acme", title: `Acme ${tag}`, verdict: "keep", reason: null },
+      { item_id: "globex", title: `Globex ${tag}`, verdict: "pass", reason: "Too junior" },
+    ]);
+    expect((await bob.db.from("agent_verdicts").select("id").eq("block_id", verdictFormId)).data).toEqual([]);
+    expect((await alice.api.json(url(verdictFormId), "POST", { action: "submit", verdicts: [{ fieldId: "roles", itemId: "acme", verdict: "maybe" }] })).status).toBe(400);
+  });
+
   it("are refused for anyone the card wasn't shown to", async () => {
     expect((await bob.api.json(url(formId), "POST", { action: "submit" })).status).toBe(404);
     expect((await bob.api.json(url(proposalId), "POST", { action: "apply", picks })).status).toBe(404);

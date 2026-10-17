@@ -39,6 +39,11 @@ export interface AgentTenantContext {
   notes?: { collection: string; title: string; fields: Record<string, unknown> }[];
   /** Names of the member's files for this agent; they arrive as attachments on every run. */
   agentFiles?: string[];
+  /**
+   * How the member's bar is holding up: what they kept of the results they judged lately, and
+   * what they passed on and why. Absent until they've judged something.
+   */
+  bar?: { kept: number; judged: number; days: number; passes: { title: string; reason: string | null }[] };
   /** The member's project this conversation is in, if any. Its files arrive as attachments. */
   project?: { name: string; instructions: string; files: string[] } | null;
   /**

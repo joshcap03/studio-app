@@ -147,6 +147,18 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, tracker: [] }).system_context).toContain("The member has a tracker, empty so far.");
   });
 
+  it("shows the agent how the member's bar is holding up, and what they passed on and why", () => {
+    const system = templateValues({
+      ...tenantA,
+      setup: { plan: [{ text: "Your bar", status: "done", note: "Bar set: 6 criteria" }] },
+      bar: { kept: 4, judged: 5, days: 7, passes: [{ title: "Designer II · Beta", reason: "Too junior" }, { title: "Lead · Gamma", reason: null }] },
+    }).system_context;
+    expect(system).toContain("they kept 4 of the 5 results they judged in the last 7 days");
+    expect(system).toContain("- Designer II · Beta (Too junior)\n- Lead · Gamma");
+    expect(system).toContain("- [done] Your bar (Bar set: 6 criteria)");
+    expect(templateValues({ ...tenantA, bar: undefined }).system_context).not.toContain("member's bar");
+  });
+
   it("tells the agent when it's in its setup interview, and shows saved reference notes with their fields", () => {
     const system = templateValues({
       ...tenantA,

@@ -108,6 +108,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.setup && setupContext(tenant.setup),
     tenant.tracker && trackerContext(tenant.tracker),
     tenant.notes?.length && notesContext(tenant.notes),
+    tenant.bar && barContext(tenant.bar),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
     (tenant.profile.trim() || tenant.account?.about.trim() || memories) && BACKGROUND_ONLY,
   ]
@@ -128,6 +129,17 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     personal_guardrail: guardrail,
     system_context: system,
   };
+}
+
+/** The member's keep/pass calls lately: their standard in practice, for the agent to aim at. */
+function barContext(bar: NonNullable<AgentTenantContext["bar"]>): string {
+  const passes = bar.passes.map((p) => `- ${p.title}${p.reason ? ` (${p.reason})` : ""}`).join("\n");
+  return [
+    `How you're doing against the member's bar: they kept ${bar.kept} of the ${bar.judged} results they judged in the last ${bar.days} days.`,
+    passes && `What they passed on lately, and why (their standard; don't bring them more like these):\n${passes}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** This conversation is the agent's setup interview: its checklist so far. */

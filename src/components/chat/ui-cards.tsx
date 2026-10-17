@@ -7,7 +7,8 @@ import { formAnswerText, missingAnswer, type FormValues } from "@/lib/chat/ui-an
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
-import type { AgentProposal, Attachment, ConnectionsState, ProposalPicks, UiBlock, UiField, UiForm, UiResponse } from "@/lib/types";
+import type { AgentProposal, Attachment, ConnectionsState, ProposalPicks, UiBlock, UiField, UiForm, UiResponse, Verdict } from "@/lib/types";
+import type { VerdictCall } from "@/lib/verdicts";
 import { ATTACHMENT_TYPES } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
 
@@ -41,8 +42,12 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             form={block}
             response={responses?.[block.id]}
             onAnswer={onAnswer}
-            onSubmit={async (keepFiles) => {
-              const { response } = await api.answerUi(conversationId, block.id, { action: "submit", ...(keepFiles.length ? { keepFiles } : {}) });
+            onSubmit={async (keepFiles, verdicts) => {
+              const { response } = await api.answerUi(conversationId, block.id, {
+                action: "submit",
+                ...(keepFiles.length ? { keepFiles } : {}),
+                ...(verdicts.length ? { verdicts } : {}),
+              });
               onResponse?.(messageId, block.id, response);
             }}
           />
@@ -92,8 +97,11 @@ interface FormProps {
   form: UiForm;
   response?: UiResponse;
   onAnswer?: UiCardsProps["onAnswer"];
-  /** Marks the form answered, first moving the uploads in `keepFiles` onto the agent's shelf. */
-  onSubmit: (keepFiles: string[]) => Promise<void>;
+  /**
+   * Marks the form answered, first moving the uploads in `keepFiles` onto the agent's shelf and
+   * saving the keep/pass calls from its verdict fields.
+   */
+  onSubmit: (keepFiles: string[], verdicts: VerdictCall[]) => Promise<void>;
 }
 
 /** A form the agent asked the member to fill in. Its answers go out as their next message. */
@@ -134,9 +142,16 @@ export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
     const kept = new Set(form.fields.filter((f) => f.kind === "file" && f.keep).map((f) => f.id));
     const keepFiles = Object.entries(files).flatMap(([id, list]) => (kept.has(id) ? list.map((a) => a.id) : []));
     const attachments = Object.entries(files).flatMap(([id, list]) => (kept.has(id) ? [] : list));
+    const verdicts = form.fields.flatMap((f) =>
+      f.kind === "verdict" && Array.isArray(values[f.id])
+        ? (values[f.id] as Record<string, string>[])
+            .filter((c) => c.verdict === "keep" || c.verdict === "pass")
+            .map((c) => ({ fieldId: f.id, itemId: c.id, verdict: c.verdict as Verdict, ...(c.verdict === "pass" && c.reason?.trim() ? { reason: c.reason.trim() } : {}) }))
+        : [],
+    );
     setBusy(true);
     try {
-      await onSubmit(keepFiles);
+      await onSubmit(keepFiles, verdicts);
     } catch (e) {
       setBusy(false);
       setError(e instanceof ApiError ? e.message : "Couldn't send this. Try again.");
