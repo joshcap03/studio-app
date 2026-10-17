@@ -135,11 +135,23 @@ interface AssistantProps {
   onAnswer?: (text: string, extras?: { attachments: Attachment[] }) => void;
   /** Records what the member did with one of the reply's cards (a form sent, a proposal applied). */
   onUiResponse?: (messageId: string, blockId: string, response: UiResponse) => void;
+  onRunTask?: (taskId: string) => Promise<void>;
   /** Rates this reply (null clears the rating). */
   onFeedback?: (messageId: string, feedback: MessageFeedback | null) => void;
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal, onAnswer, onUiResponse, onFeedback }: AssistantProps) {
+export const AssistantMessage = memo(function AssistantMessage({
+  message,
+  isLast,
+  onRetry,
+  onOpenPanel,
+  onDecide,
+  onProposal,
+  onAnswer,
+  onUiResponse,
+  onRunTask,
+  onFeedback,
+}: AssistantProps) {
   const streaming = message.status === "streaming";
   const feedback = message.feedback ?? null;
   const [asking, setAsking] = useState<MessageFeedback["rating"] | null>(null);
@@ -202,6 +214,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
           messageId={message.id}
           onAnswer={onAnswer && message.status === "complete" ? onAnswer : undefined}
           onResponse={onUiResponse}
+          onRunTask={onRunTask}
           settled={message.status === "complete"}
         />
       ) : null}

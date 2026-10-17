@@ -92,9 +92,10 @@ async function applyProposal(
   edits: { profile?: string; instructions?: string },
   timezone: string,
   source: { conversationId: string; messageId: string },
-): Promise<Pick<Applied, "picks" | "applied">> {
+): Promise<Pick<Applied, "picks" | "applied" | "taskIds">> {
   const owner = tenant.workspace.role === "owner";
   const done: ProposalPicks = { profile: false, instructions: false, skills: [], tasks: [], memories: [] };
+  const taskIds: string[] = [];
 
   const profile = owner && picks.profile && proposal.profile !== undefined ? (edits.profile ?? proposal.profile).trim() : undefined;
   const instructions =
@@ -164,7 +165,10 @@ async function applyProposal(
               templateTaskId: null,
             }),
           );
-      if (changed) done.tasks.push(i);
+      if (changed) {
+        done.tasks.push(i);
+        taskIds.push(changed.id);
+      }
     }
   }
 
@@ -190,6 +194,7 @@ async function applyProposal(
       memories: done.memories.length,
       skipped: count(picks, proposal) - count(done, proposal),
     },
+    ...(taskIds.length ? { taskIds } : {}),
   };
 }
 
