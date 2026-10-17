@@ -44,6 +44,9 @@ raw/technical text.
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
   composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
   sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to.
+- `src/lib/tasks/`: long-horizon tasks (a goal, a plan, a schedule, a linked conversation) and
+  their runs (`index.ts`), the agent's tracker of records per collection (`records.ts`), and
+  request validation (`schema.ts`). Private to each member; the API is the "tasks" preview.
 - `src/lib/agent/`: provider-neutral interface (`types.ts`), `langflow.ts`, `mock.ts`, registry `index.ts`.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
   `run.ts` builds its deps from a tenant (`buildTurnDeps`), free of Next.js so a worker can run turns;
