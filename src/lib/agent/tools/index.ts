@@ -253,6 +253,11 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "exa_search":
     case "search_web":
       return webSearch(input, result);
+    case "get_contents":
+    case "exa_get_contents":
+    case "crawling":
+    case "crawling_exa":
+      return webRead(input, result);
     case "search_memory":
     case "list_memories":
     case "listmemories":
@@ -307,6 +312,8 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
       // What was remembered is shown on its own line under the reply, with an Undo.
       return { labels: { running: "Noting something to remember", done: "Remembered something" }, app: "memory", action: "remember", hidden: true };
   }
+  // Any other tool that sends back a list of web results ({ url, title, text }) read the web.
+  if (sourcesPreview(result) && isRecord(unwrapResult(result))) return webRead(input, result);
   const words = humanize(name);
   return { labels: { running: `Using ${words}`, done: `Used ${words}` }, app: "agent", action: "other" };
 }
@@ -423,6 +430,21 @@ function webSearch(input: Record<string, unknown>, result: unknown): Interpretat
     app: "web",
     action: "search",
     preview: sourcesPreview(result),
+  };
+}
+
+/** Reading pages by link (e.g. Exa's get_contents): named by the site, or how many pages. */
+function webRead(input: Record<string, unknown>, result: unknown): Interpretation {
+  const asked = ["ids", "urls", "url", "id"].flatMap((k) => (Array.isArray(input[k]) ? input[k] : [input[k]])).map(safeUrl).filter((u): u is string => !!u);
+  const preview = sourcesPreview(result);
+  const urls = asked.length > 0 ? asked : preview?.type === "sources" ? preview.items.map((i) => i.url) : [];
+  const domains = [...new Set(urls.map(domainOf))];
+  const what = domains.length === 1 ? domains[0] : urls.length > 1 ? `${urls.length} pages` : "a page";
+  return {
+    labels: { running: `Reading ${what}`, done: `Read ${what}`, failed: `Couldn't read ${what}` },
+    app: "web",
+    action: "read",
+    preview,
   };
 }
 
