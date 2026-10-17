@@ -12,6 +12,8 @@ import type {
   MessageSkill,
   MessageStatus,
   Question,
+  UiBlock,
+  UiResponse,
   Citation,
   Timeline,
 } from "@/lib/types";
@@ -39,6 +41,8 @@ export interface MessagePatch {
   timeline?: Timeline | null;
   citations?: Citation[] | null;
   questions?: Question[] | null;
+  ui?: UiBlock[] | null;
+  uiResponse?: Record<string, UiResponse> | null;
   error?: string | null;
 }
 
@@ -128,6 +132,8 @@ interface MessageRow {
   timeline: Timeline | null;
   citations: Citation[] | null;
   questions: Question[] | null;
+  ui: UiBlock[] | null;
+  ui_response: Record<string, UiResponse> | null;
   feedback: MessageFeedback | null;
   error: string | null;
   skill: MessageSkill | null;
@@ -164,7 +170,7 @@ const CONVERSATION_COLUMNS = "id, title, project_id, agent_provider, agent_threa
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
-  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, feedback, error, skill, origin, created_at, updated_at, " +
+  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, error, skill, origin, created_at, updated_at, " +
   "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS = "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at";
@@ -220,6 +226,8 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   timeline: r.timeline ?? null,
   citations: r.citations ?? null,
   questions: r.questions ?? null,
+  ui: r.ui ?? null,
+  uiResponse: r.ui_response ?? null,
   feedback: r.feedback ?? null,
   attachments: (r.attachments ?? []).map(toAttachment),
   error: r.error,
@@ -448,6 +456,8 @@ export function createStore(db: Db, scope: Scope): Store {
       if (patch.timeline !== undefined) values.timeline = patch.timeline;
       if (patch.citations !== undefined) values.citations = patch.citations;
       if (patch.questions !== undefined) values.questions = patch.questions;
+      if (patch.ui !== undefined) values.ui = patch.ui;
+      if (patch.uiResponse !== undefined) values.ui_response = patch.uiResponse;
       if (patch.error !== undefined) values.error = patch.error;
       check(await messages().update(values).eq("id", id).eq("workspace_id", workspaceId).eq("user_id", userId));
     },

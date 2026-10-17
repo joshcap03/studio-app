@@ -27,9 +27,16 @@ import type {
   Project,
   ProjectSummary,
   StreamEvent,
+  UiResponse,
   WorkspaceSkill,
   WorkspaceSummary,
 } from "@/lib/types";
+
+/** Whether a finished reply still asks the member something: questions or an unsent form. */
+function hasOpenAsk(message: ChatMessage | undefined): boolean {
+  if (!message) return false;
+  return Boolean(message.questions?.length) || Boolean(message.ui?.some((b) => b.kind === "form" && !message.uiResponse?.[b.id]));
+}
 
 /** What a message is sent with besides its text. */
 type SendExtras = { skill: MessageSkill | null; attachments: Attachment[] };
@@ -431,6 +438,9 @@ export function Workspace({
           case "questions":
             patchMessage(conversationId, assistantId, (m) => ({ ...m, questions: event.questions }));
             break;
+          case "ui":
+            patchMessage(conversationId, assistantId, (m) => ({ ...m, ui: event.ui }));
+            break;
           case "end":
             cancelAnimationFrame(frame);
             buffered = "";
@@ -637,6 +647,15 @@ export function Workspace({
           put(previous);
           setNotice(error instanceof ApiError ? error.message : "Couldn't update memory. Try again.");
         });
+    },
+    [activeId, patchMessage],
+  );
+
+  /** Keeps a card answered or applied once the server has saved what the member did. */
+  const recordUiResponse = useCallback(
+    (messageId: string, blockId: string, response: UiResponse) => {
+      if (!activeId) return;
+      patchMessage(activeId, messageId, (m) => ({ ...m, uiResponse: { ...(m.uiResponse ?? {}), [blockId]: response } }));
     },
     [activeId, patchMessage],
   );
@@ -948,7 +967,7 @@ export function Workspace({
   const isRunning = activeId ? running.has(activeId) : false;
   const awaiting = activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "awaiting";
   const asking =
-    !isRunning && activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "complete" && Boolean(activeThread.messages.at(-1)?.questions?.length);
+    !isRunning && activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "complete" && hasOpenAsk(activeThread.messages.at(-1));
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
   const draftKey = activeId ?? "new";
   const projectDraftKey = `project:${activeProjectId}`;
@@ -1155,6 +1174,7 @@ export function Workspace({
               onDecide={decide}
               onProposal={answerProposal}
               onAnswer={send}
+              onUiResponse={recordUiResponse}
               onFeedback={rateMessage}
               onOpenPanel={openPanel}
               sendCount={sendCount}
@@ -1177,7 +1197,7 @@ export function Workspace({
                     placeholder={isRunning ? "Redirect the agent…" : "Reply…"}
                     autoFocus={desktop}
                     allowFiles={agent.attachments}
-                    hint={awaiting ? "Approve or decline above, or reply to change course" : asking ? "Pick an answer above, or type your own" : undefined}
+                    hint={awaiting ? "Approve or decline above, or reply to change course" : asking ? "Answer above, or type your own" : undefined}
                   />
                   {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
                 </div>

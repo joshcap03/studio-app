@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -393,7 +393,7 @@ describe("Langflow streaming", () => {
     const intro = { type: "text", text: "Let me check." };
     const answer = { type: "text", text: "Here's what I found." };
     const work = { type: "tool_use", name: "search", tool_input: {} };
-    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "remember", "propose_memory"]) {
+    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "remember", "propose_memory"]) {
       const direct = { type: "tool_use", name, tool_input: {} };
       const viaGateway = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: name, arguments: {} } };
       expect(openingLineIndexes([intro, work, answer, direct])).toEqual([0]);
@@ -732,6 +732,29 @@ describe("Langflow approvals", () => {
     expect(toolQuestions(bot("", [ask, chatter]) as never)).toEqual([{ type: "questions", questions }]);
     const { events } = await run(base, streamResponse([frame("add_message", bot("One question.", [ask])), frame("end", {})]));
     expect(events.filter((e) => e.type === "questions")).toEqual([{ type: "questions", questions }]);
+    expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ hidden: true });
+  });
+
+  it("passes on forms and proposals only from structured show_form and propose_agent output, and hides the steps", async () => {
+    const form = { title: "Your search", fields: [{ kind: "text", label: "Role" }] };
+    const proposal = { summary: "s", instructions: "Be brief." };
+    const call = (name: string, id: string, content: unknown) => ({
+      type: "tool_use",
+      name,
+      tool_input: {},
+      output: { type: "tool", tool_call_id: id, content: JSON.stringify(content) },
+      error: null,
+    });
+    const show = call("show_form", "c4", { form, note: "x" });
+    const propose = call("propose_agent", "c5", { proposal, note: "x" });
+    const chatter = { type: "tool_use", name: "search", tool_input: {}, output: JSON.stringify({ form }), error: null };
+    expect(toolUi(bot("", [show, propose]) as never)).toEqual([
+      { type: "ui", block: { form } },
+      { type: "ui", block: { proposal } },
+    ]);
+    expect(toolUi(bot("", [{ ...show, error: "boom" }]) as never)).toEqual([]);
+    const { events } = await run(base, streamResponse([frame("add_message", bot("A few things.", [show, chatter])), frame("end", {})]));
+    expect(events.filter((e) => e.type === "ui")).toHaveLength(1);
     expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ hidden: true });
   });
 

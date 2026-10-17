@@ -811,6 +811,24 @@ describe("edits, files, and memory suggestions", () => {
     expect(events.find((e) => e.type === "questions")).toEqual({ type: "questions", questions: expected });
   });
 
+  it("keeps the agent's forms and proposals on the reply, validated, even with no text", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const adapter = scripted([
+      { type: "ui", block: { form: { title: "Your search", fields: [{ kind: "text", label: "Roles" }, { kind: "nonsense", label: "x" }] } } },
+      { type: "ui", block: { form: { title: "Empty", fields: [] } } },
+      { type: "ui", block: { proposal: { summary: "s", instructions: "Be brief.", skills: ["find-roles", "not-a-skill"] } } },
+    ]);
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "x" }));
+    const reply = (await store.listMessages(id))[1];
+    expect(reply.status).toBe("complete");
+    expect(reply.ui).toMatchObject([
+      { kind: "form", title: "Your search", fields: [{ kind: "text", id: "roles", label: "Roles" }], submitLabel: "Send" },
+      { kind: "proposal", instructions: "Be brief.", skills: [{ catalogId: "find-roles" }] },
+    ]);
+    expect(events.filter((e) => e.type === "ui").at(-1)).toEqual({ type: "ui", ui: reply.ui });
+  });
+
   it("keeps the agent's memory suggestions on the reply, pending, when there's no memory to save to", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

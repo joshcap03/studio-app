@@ -1,4 +1,4 @@
-import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, StreamEvent } from "@/lib/types";
+import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, ProposalPicks, StreamEvent, UiResponse } from "@/lib/types";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
 import type { AgentRecord, AgentTask, PlanStep, TaskRun } from "@/lib/tasks/types";
 import { disablePush } from "./push";
@@ -66,6 +66,17 @@ export const api = {
     request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {
       method: "POST",
       body: JSON.stringify({ decision }),
+    }),
+  answerUi: (
+    conversationId: string,
+    blockId: string,
+    body:
+      | { action: "submit" }
+      | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string },
+  ) =>
+    request<{ response: UiResponse }>(`/api/conversations/${conversationId}/ui/${blockId}`, {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
   rateMessage: (conversationId: string, messageId: string, feedback: MessageFeedback | null) =>
     request<{ feedback: MessageFeedback | null }>(`/api/conversations/${conversationId}/messages/${messageId}/feedback`, {

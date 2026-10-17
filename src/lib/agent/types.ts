@@ -122,6 +122,8 @@ export type AgentEvent =
   | { type: "visual"; visual: unknown }
   /** Multiple-choice questions for the member, unvalidated; the answer comes as their next message. */
   | { type: "questions"; questions: unknown }
+  /** A form or a proposed agent setup to show the member (`{form}` or `{proposal}`), unvalidated. */
+  | { type: "ui"; block: unknown }
   /** The task's plan as the agent rewrote it, unvalidated; saved only in a task's conversation. */
   | { type: "plan-update"; plan: unknown }
   /** A tracker row the agent added or updated (upserted by collection and key), unvalidated. */

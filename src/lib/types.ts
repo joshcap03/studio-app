@@ -186,6 +186,9 @@ export interface ChatMessage {
   citations?: Citation[] | null;
   /** Multiple-choice questions the agent asked at the end of this reply. */
   questions?: Question[] | null;
+  /** Forms and proposals the agent put under this reply, and what the member did with each. */
+  ui?: UiBlock[] | null;
+  uiResponse?: Record<string, UiResponse> | null;
   /** Assistant messages only: the member's thumbs up or down on this reply, and why. */
   feedback?: MessageFeedback | null;
   createdAt: number;
@@ -299,6 +302,7 @@ export type StreamEvent =
   | { type: "timeline"; timeline: Timeline }
   | { type: "citations"; citations: Citation[] }
   | { type: "questions"; questions: Question[] }
+  | { type: "ui"; ui: UiBlock[] }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
 export const MAX_MESSAGE_LENGTH = 32_000;
@@ -433,6 +437,113 @@ export interface Question {
   /** More than one option can be picked. */
   multiSelect: boolean;
 }
+
+/**
+ * Cards the agent puts under a reply for the member to act on (see src/lib/chat/ui.ts): a form
+ * to fill in, whose answers go out as the member's next message, or a proposed setup for the
+ * agent, which changes nothing until the member applies it.
+ */
+export type UiBlock = UiForm | AgentProposal;
+
+export interface UiOption {
+  label: string;
+  description?: string;
+}
+
+interface FieldBase {
+  /** Unique within the form, e.g. "roles". */
+  id: string;
+  label: string;
+  help?: string;
+  required: boolean;
+}
+
+/** One sub-field of a list entry, e.g. a STAR story's "Result". */
+export interface UiListPart {
+  id: string;
+  label: string;
+  /** A paragraph rather than a line. */
+  long: boolean;
+}
+
+export type UiField = FieldBase &
+  (
+    | { kind: "choice" | "multi_choice"; options: UiOption[]; prefill?: string[] }
+    | { kind: "text" | "long_text"; placeholder?: string; prefill?: string }
+    /** Files the member drops in; `accept` holds extensions from ATTACHMENT_TYPES. */
+    | { kind: "file"; accept: string[]; max: number }
+    /** Repeatable entries with the same parts, e.g. stories; `prefill` holds the agent's drafts. */
+    | { kind: "list"; parts: UiListPart[]; itemLabel: string; max: number; prefill?: Record<string, string>[] }
+    /** Apps to connect, shown as Connect buttons. */
+    | { kind: "connect"; apps: string[] }
+  );
+
+export interface UiForm {
+  kind: "form";
+  id: string;
+  title: string;
+  intro?: string;
+  fields: UiField[];
+  submitLabel: string;
+}
+
+/** A recurring task schedule, as src/lib/tasks/schedule.ts defines it. */
+export type UiSchedule =
+  | { every: "day" | "weekdays"; at: string }
+  | { every: "week"; at: string; weekday: number }
+  | { every: "hours"; hours: number };
+
+export interface ProposedTask {
+  /** The template task it switches on, when it's one of those. */
+  templateTaskId?: string;
+  title: string;
+  instructions: string;
+  /** A library skill id the task runs with. */
+  skill?: string;
+  schedule: UiSchedule | null;
+}
+
+export type ProposedSkill = { catalogId: string } | { name: string; description: string; instructions: string };
+
+/** The agent's suggested setup for itself, from what the member told it. */
+export interface AgentProposal {
+  kind: "proposal";
+  id: string;
+  summary: string;
+  profile?: string;
+  instructions?: string;
+  skills: ProposedSkill[];
+  tasks: ProposedTask[];
+  memories: string[];
+}
+
+/** Which parts of a proposal the member chose to apply, by item. */
+export interface ProposalPicks {
+  profile: boolean;
+  instructions: boolean;
+  skills: number[];
+  tasks: number[];
+  memories: number[];
+}
+
+/** What the member did with one card, keyed by its id in ChatMessage.uiResponse. */
+export type UiResponse =
+  | { status: "submitted"; at: number }
+  | {
+      status: "applied";
+      at: number;
+      /** What took effect, which can be less than the member picked. */
+      picks: ProposalPicks;
+      /** `skipped`: picked items that couldn't be applied (not the owner, a preview off, memory not set up). */
+      applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number };
+    };
+
+export const MAX_UI_BLOCKS = 2;
+export const MAX_FORM_FIELDS = 8;
+export const MAX_LIST_ITEMS = 8;
+export const MAX_LIST_PARTS = 5;
+export const MAX_FORM_FILES = 5;
+export const MAX_PROPOSED_ITEMS = 8;
 
 /** A member's rating of one reply. Reasons come from FEEDBACK_REASONS for that rating. */
 export interface MessageFeedback {
