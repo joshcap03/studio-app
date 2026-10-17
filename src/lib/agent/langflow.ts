@@ -132,7 +132,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
 
 /** This conversation is the agent's setup interview: its checklist so far. */
 function setupContext(setup: NonNullable<AgentTenantContext["setup"]>): string {
-  const plan = setup.plan.map((s) => `- [${s.status}] ${s.text}`).join("\n");
+  const plan = setup.plan.map((s) => `- [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ""}`).join("\n");
   return [
     "This conversation is this agent's setup interview with the member.",
     plan ? `Setup checklist so far:\n${plan}` : "There's no setup checklist yet; write one with update_plan.",

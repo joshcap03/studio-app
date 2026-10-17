@@ -13,6 +13,7 @@ import { Sidebar } from "@/components/sidebar/sidebar";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { TasksView } from "@/components/tasks/tasks-view";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
+import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
@@ -155,6 +156,8 @@ export function Workspace({
       : {},
   );
   const [running, setRunning] = useState<ReadonlySet<string>>(() => new Set());
+  // The owner's setup interview (null for other members); see "The agent's setup interview" below.
+  const [setup, setSetup] = useState(initialSetup);
   const [sendCount, setSendCount] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -659,6 +662,8 @@ export function Workspace({
     (messageId: string, blockId: string, response: UiResponse) => {
       if (!activeId) return;
       patchMessage(activeId, messageId, (m) => ({ ...m, uiResponse: { ...(m.uiResponse ?? {}), [blockId]: response } }));
+      // Applying the proposed setup can finish the setup interview.
+      if (response.status === "applied") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
     },
     [activeId, patchMessage],
   );
@@ -786,7 +791,6 @@ export function Workspace({
 
   // The agent's setup interview: picks up where it left off, or starts it in a new chat with
   // the setup skill attached (the agent opens with its first question).
-  const [setup, setSetup] = useState(initialSetup);
   const startSetup = useCallback(
     (fresh = false) => {
       if (!fresh && setup?.status === "in_progress" && setup.conversationId) {
@@ -797,7 +801,7 @@ export function Workspace({
       if (activeId) return;
       // Just the skill, no words: the agent speaks first ("Hey!") and opens step 1.
       send("", { skill: { id: SETUP_SKILL_ID, name: SETUP_SKILL_NAME } });
-      setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0 } : s));
+      setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0, plan: s.plan.map(({ text }) => ({ text, status: "todo" as const })) } : s));
     },
     [activeId, navigate, send, setup],
   );
@@ -805,6 +809,15 @@ export function Workspace({
     setSetup((s) => (s ? { ...s, status: "skipped" } : s));
     api.skipSetup().catch(() => setSetup(initialSetup));
   }, [initialSetup]);
+
+  // The journey rail follows the interview: when a reply ends while it's under way, the server's
+  // copy of the checklist (as the agent last reported it) replaces ours.
+  const wasRunning = useRef<ReadonlySet<string>>(running);
+  useEffect(() => {
+    const ended = [...wasRunning.current].some((id) => !running.has(id));
+    wasRunning.current = running;
+    if (ended && setup?.status === "in_progress") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
+  }, [running, setup?.status]);
 
   // Arriving from onboarding (or "Run setup" on the agent's page) with ?setup=1 starts it once.
   const setupRequested = useRef(false);
@@ -1224,6 +1237,9 @@ export function Workspace({
                     <p role="status" className="mb-2 px-1 text-center text-[13px] text-danger">
                       {notice}
                     </p>
+                  ) : null}
+                  {setup && activeId === setup.conversationId && setup.status !== "skipped" ? (
+                    <Journey steps={setup.plan} title="Setting up" className="mb-2 animate-fade-up" />
                   ) : null}
                   <Composer
                     key={draftKey}

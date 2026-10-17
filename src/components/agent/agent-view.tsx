@@ -3,6 +3,7 @@
 import { AlertCircle, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { formatSize, iconFor } from "@/components/chat/attachments";
+import { JourneyList } from "@/components/ui/journey";
 import { BusinessBrain } from "@/components/settings/business-brain";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "@/components/settings/section";
 import { appName } from "@/lib/apps";
@@ -446,17 +447,25 @@ function SetupInterview({ setup }: { setup: WorkspaceSettings["setup"] }) {
         : "A short interview: the agent asks what it needs, then suggests how it'll work for you.";
   const resume = setup?.status === "in_progress" && setup.conversationId;
   return (
-    <div className="mb-5 flex items-center gap-3 rounded-xl border border-line px-3.5 py-3">
-      <div className="min-w-0 flex-1">
-        <p className="text-[14px] font-medium text-fg">Setup interview</p>
-        <p className="text-[12.5px] leading-[1.45] text-fg-3">{status}</p>
+    <div className="mb-5 rounded-xl border border-line px-3.5 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[14px] font-medium text-fg">Setup interview</p>
+          <p className="text-[12.5px] leading-[1.45] text-fg-3">{status}</p>
+        </div>
+        <a
+          href={resume ? `/c/${setup.conversationId}` : "/?setup=new"}
+          className="inline-flex h-8 shrink-0 items-center rounded-lg border border-line px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg"
+        >
+          {resume ? "Continue" : setup?.status === "done" ? "Run again" : "Start"}
+        </a>
       </div>
-      <a
-        href={resume ? `/c/${setup.conversationId}` : "/?setup=new"}
-        className="inline-flex h-8 shrink-0 items-center rounded-lg border border-line px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg"
-      >
-        {resume ? "Continue" : setup?.status === "done" ? "Run again" : "Start"}
-      </a>
+      {/* What each step of the interview gave this agent, as the agent reported it. */}
+      {setup?.plan.length && setup.status !== "skipped" ? (
+        <div className="mt-2.5 border-t border-line pt-1.5">
+          <JourneyList steps={setup.plan} />
+        </div>
+      ) : null}
     </div>
   );
 }

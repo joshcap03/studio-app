@@ -2,6 +2,7 @@
 
 import { ArrowRight, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 import { forwardRef, useEffect } from "react";
+import { JourneyBar } from "@/components/ui/journey";
 import type { SetupSummary, WorkspaceSkill } from "@/lib/types";
 import { Composer, type ComposerHandle, type MessageExtras } from "./composer";
 
@@ -131,11 +132,18 @@ function SetupBanner({ setup, agentName, onSetup, onSkip }: { setup: SetupSummar
       <Sparkles size={17} className="shrink-0 text-accent" />
       <div className="min-w-0 flex-1">
         <p className="text-[14px] font-medium text-fg">{started ? `Finish setting up ${name}` : `Set up ${name}`}</p>
-        <p className="text-[12.5px] leading-[1.45] text-fg-3">
-          {started && setup.total > 0
-            ? `${setup.done} of ${setup.total} steps done`
-            : `A few quick questions${setup.total ? ` (${setup.total} steps)` : ""} so it works the way you need.`}
-        </p>
+        {started && setup.total > 0 ? (
+          <div className="mt-1.5 flex items-center gap-2.5">
+            <JourneyBar steps={setup.plan} className="max-w-48 flex-1" />
+            <span className="shrink-0 text-[12px] text-fg-3">
+              {setup.done} of {setup.total}
+            </span>
+          </div>
+        ) : (
+          <p className="text-[12.5px] leading-[1.45] text-fg-3">
+            A few quick questions{setup.total ? ` (${setup.total} steps)` : ""} so it works the way you need.
+          </p>
+        )}
       </div>
       {onSkip ? (
         <button

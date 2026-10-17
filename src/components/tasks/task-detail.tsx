@@ -5,6 +5,7 @@ import { AlertDialog, Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/client/api";
 import { MAX_PLAN_STEPS, MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
+import { JourneyBar } from "@/components/ui/journey";
 import type { AgentRecord, AgentTask, PlanStep, StepStatus, TaskRun } from "@/lib/tasks/types";
 import type { WorkspaceSkill } from "@/lib/types";
 import {
@@ -342,6 +343,7 @@ function PlanCard({ plan, onSave }: { plan: PlanStep[]; onSave: (plan: PlanStep[
           </span>
         ) : null}
       </div>
+      {steps.length > 0 ? <JourneyBar steps={steps} className="mt-2.5 mb-1" /> : null}
       {steps.length === 0 ? <p className="mt-2 text-[13px] text-fg-3">No plan yet. The agent writes one when it runs, or add steps yourself.</p> : null}
       <ul className="mt-2">
         {steps.map((step) => (

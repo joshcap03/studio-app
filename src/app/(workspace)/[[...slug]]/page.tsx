@@ -6,17 +6,14 @@ import { storeFor } from "@/lib/chat/store-for";
 import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
-import { templateById, setupSteps, type AgentTemplate } from "@/lib/templates";
+import { summarizeSetup } from "@/lib/setup-state";
 import { requirePageTenant } from "@/lib/tenant";
-import type { SetupSummary } from "@/lib/types";
 import { getSettings } from "@/lib/workspace";
 
 // One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", and "/tasks[/<task id>]". After the first load the browser
 // switches conversations in place, without a server round trip per navigation.
 
 export const dynamic = "force-dynamic";
-
-const setupStepCount = (template: AgentTemplate | undefined) => (template ? setupSteps(template).length : 0);
 
 export default async function WorkspacePage({
   params,
@@ -55,15 +52,7 @@ export default async function WorkspacePage({
   const initialSkillId = skills.find((s) => s.id === requested)?.id ?? null;
 
   // The owner's setup interview: how far along it is, for the "Finish setting up" banner.
-  const setup: SetupSummary | null =
-    tenant.workspace.role === "owner"
-      ? {
-          status: settings.setup?.status ?? "not_started",
-          conversationId: settings.setup?.conversationId ?? null,
-          done: settings.setup?.plan.filter((s) => s.status === "done").length ?? 0,
-          total: settings.setup?.plan.length || setupStepCount(templateById(settings.templateId)),
-        }
-      : null;
+  const setup = summarizeSetup(tenant, settings.setup, settings.templateId);
 
   let initialThread: InitialThread | null = null;
   if (conversationId) {
