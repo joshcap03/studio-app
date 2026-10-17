@@ -4,6 +4,7 @@ import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { ACTIVE_WORKSPACE_COOKIE, authorizeSession, jsonError, resolveTenant } from "@/lib/tenant";
 import { applyTemplate } from "@/lib/templates/apply";
 import { templateById } from "@/lib/templates";
+import { timezoneSchema } from "@/lib/tasks/schema";
 import { MAX_CONTEXT_LENGTH } from "@/lib/types";
 
 const create = z.object({
@@ -13,6 +14,8 @@ const create = z.object({
     .string()
     .refine((id) => templateById(id) !== undefined, "That template doesn't exist.")
     .optional(),
+  /** The browser's time zone, for the template's scheduled tasks. */
+  timezone: timezoneSchema.optional().catch(undefined),
 });
 
 export async function GET(request: NextRequest) {
@@ -38,7 +41,7 @@ export async function POST(request: NextRequest) {
     }
     if (input.templateId) {
       const tenant = await resolveTenant(auth.value, data as string);
-      if (tenant) await applyTemplate(tenant, input.templateId);
+      if (tenant) await applyTemplate(tenant, input.templateId, { timezone: input.timezone });
     }
     const response = NextResponse.json({ workspaceId: data as string }, { status: 201 });
     response.cookies.set(ACTIVE_WORKSPACE_COOKIE, data as string, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 365 });

@@ -337,9 +337,9 @@ function TemplatePicker({ current, onApplied }: { current: string | null; onAppl
     const res = await fetch("/api/workspace/template", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: choice }),
+      body: JSON.stringify({ templateId: choice, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
-    const body = (await res.json().catch(() => null)) as { settings?: WorkspaceSettings; addedSkills?: number; error?: string } | null;
+    const body = (await res.json().catch(() => null)) as { settings?: WorkspaceSettings; addedSkills?: number; addedTasks?: number; error?: string } | null;
     if (!res.ok || !body?.settings) {
       setStatus("error");
       setMessage(body?.error ?? "Couldn't apply the template. Try again.");
@@ -347,8 +347,11 @@ function TemplatePicker({ current, onApplied }: { current: string | null; onAppl
     }
     onApplied(body.settings);
     setStatus("idle");
-    const added = body.addedSkills ?? 0;
-    setMessage(added > 0 ? `Applied. Added ${added} skill${added === 1 ? "" : "s"}.` : "Applied. Nothing new to add.");
+    const added = [
+      body.addedSkills ? `${body.addedSkills} skill${body.addedSkills === 1 ? "" : "s"}` : "",
+      body.addedTasks ? `${body.addedTasks} paused task${body.addedTasks === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
+    setMessage(added.length > 0 ? `Applied. Added ${added.join(" and ")}.` : "Applied. Nothing new to add.");
   }
 
   return (
@@ -389,6 +392,7 @@ function TemplatePicker({ current, onApplied }: { current: string | null; onAppl
         <p className="mt-2 text-[12.5px] leading-snug text-fg-3">
           {chosen.description} Adds its skills and fills in instructions if they&apos;re empty; never overwrites what you wrote.
           {chosen.apps.length > 0 ? ` Works best with ${chosen.apps.map(appName).join(", ")}.` : ""}
+          {chosen.optionalApps?.length ? ` Optional: ${chosen.optionalApps.map(appName).join(", ")}.` : ""}
         </p>
       ) : null}
     </div>

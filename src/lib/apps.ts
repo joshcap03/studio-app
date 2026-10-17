@@ -17,6 +17,10 @@ export const APPS = {
   stripe: "Stripe",
   instagram: "Instagram",
   granola: "Granola",
+  apollo: "Apollo",
+  hunter: "Hunter",
+  clay: "Clay",
+  linkedin: "LinkedIn",
   web: "Web",
   browser: "Browser",
   memory: "Memory",
@@ -50,10 +54,23 @@ const COMPOSIO_TOOLKITS: Record<string, AppId> = {
   STRIPE: "stripe",
   INSTAGRAM: "instagram",
   GRANOLA: "granola",
+  APOLLO: "apollo",
+  HUNTER: "hunter",
+  CLAY: "clay",
+  LINKEDIN: "linkedin",
   BROWSERBASE: "browser",
   BROWSERBASE_TOOL: "browser",
   EXA: "web",
 };
+
+// Built into the agent rather than connected by a member.
+const BUILT_IN_TOOLKITS = new Set(["BROWSERBASE", "BROWSERBASE_TOOL", "EXA"]);
+
+/** The Composio toolkit a member connects for an app ("sheets" → "googlesheets"), if any. */
+export function toolkitForApp(app: AppId): string | undefined {
+  const prefix = Object.keys(COMPOSIO_TOOLKITS).find((p) => COMPOSIO_TOOLKITS[p] === app && !BUILT_IN_TOOLKITS.has(p));
+  return prefix?.toLowerCase();
+}
 
 /** True when the name starts with a known Composio toolkit prefix (any case). */
 export function isKnownToolkit(slugOrToolkit: string): boolean {
