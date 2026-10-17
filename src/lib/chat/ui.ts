@@ -113,6 +113,15 @@ function link(raw: unknown): string {
   }
 }
 
+/** A verdict's own buttons, which models sometimes list as if they were results. */
+const CALLS = /^(keep|pass|yes|no|skip|maybe|keep it|pass on it)$/i;
+
+/** Kinds models use for a verdict's reasons as a field of their own; they join the verdict. */
+const REASON_KINDS = new Set(["verdict_reasons", "pass_reasons", "reasons"]);
+
+/** Kinds models use for read-only text in a form; their text joins the form's intro. */
+const NOTE_KINDS = new Set(["note", "info", "message", "static", "paragraph_text", "callout"]);
+
 function verdictItems(raw: unknown): UiVerdictItem[] {
   const seen = new Set<string>();
   const out: UiVerdictItem[] = [];
@@ -176,14 +185,21 @@ function field(raw: unknown): Draft<UiField> | null {
     }
     case "scale": {
       const steps = Math.max(3, Math.min(count(raw.steps ?? raw.max, 5, 7), 7));
-      const low = line(raw.low ?? raw.min_label ?? raw.minLabel ?? raw.left, 60);
-      const high = line(raw.high ?? raw.max_label ?? raw.maxLabel ?? raw.right, 60);
+      const low = line(raw.low ?? raw.low_label ?? raw.lowLabel ?? raw.min_label ?? raw.minLabel ?? raw.left, 60);
+      const high = line(raw.high ?? raw.high_label ?? raw.highLabel ?? raw.max_label ?? raw.maxLabel ?? raw.right, 60);
       if (!low || !high) return null;
       const n = typeof prefillRaw === "number" ? Math.round(prefillRaw) : Number.parseInt(String(prefillRaw ?? ""), 10);
       return { ...base, kind, steps, low, high, ...(n >= 1 && n <= steps ? { prefill: n } : {}) };
     }
     case "verdict": {
-      const items = verdictItems(raw.items ?? raw.results ?? raw.options);
+      // Models sometimes write one verdict field per result, with Keep and Pass as its options:
+      // the label is then the result (buildForm gathers those into one field).
+      const listed = verdictItems(raw.items ?? raw.results ?? raw.options);
+      const items = listed.filter((i) => !CALLS.test(i.title));
+      if (items.length === 0 && listed.length > 0) {
+        const reasons = list(raw.reasons).map((r) => line(r, 60)).filter(Boolean).slice(0, MAX_VERDICT_REASONS);
+        return { ...base, label: "Keep or pass on each", kind, items: [{ id: slug(label) || "item", title: label.slice(0, 160) }], reasons, single: true } as Draft<UiField>;
+      }
       if (items.length === 0) return null;
       const reasons = list(raw.reasons ?? raw.pass_reasons ?? raw.passReasons)
         .map((r) => line(r, 60))
@@ -245,11 +261,47 @@ function field(raw: unknown): Draft<UiField> | null {
   }
 }
 
+/** One-result verdict fields (see field()) gathered into one, where the first of them was. */
+function gatherVerdicts(fields: Draft<UiField>[]): Draft<UiField>[] {
+  const singles = fields.filter((f) => (f as { single?: boolean }).single);
+  const strip = ({ single: _single, ...f }: Draft<UiField> & { single?: boolean }) => f as Draft<UiField>;
+  if (singles.length < 2) return fields.map(strip);
+  const seen = new Set<string>();
+  const items = singles.flatMap((f) => (f.kind === "verdict" ? f.items : [])).map((item) => {
+    let id = item.id;
+    for (let n = 2; seen.has(id); n += 1) id = `${item.id}_${n}`;
+    seen.add(id);
+    return { ...item, id };
+  });
+  const reasons = singles
+    .flatMap((f) => (f.kind === "verdict" ? f.reasons : []))
+    .filter((r, i, all) => all.findIndex((o) => o.toLowerCase() === r.toLowerCase()) === i)
+    .slice(0, MAX_VERDICT_REASONS);
+  const merged = { ...strip(singles[0]), items: items.slice(0, MAX_VERDICT_ITEMS), reasons, required: singles.some((f) => f.required) } as Draft<UiField>;
+  return fields.flatMap((f) => (f === singles[0] ? [merged] : singles.includes(f) ? [] : [strip(f)]));
+}
+
 function buildForm(raw: Record<string, unknown>, id: string): UiForm | null {
   const title = line(raw.title, 120);
-  const fields = ids<UiField>(list(raw.fields).map(field).filter((f): f is Draft<UiField> => Boolean(f))).slice(0, MAX_FORM_FIELDS);
+  const rawFields = list(raw.fields);
+  const notes = rawFields
+    .filter((f) => isRecord(f) && NOTE_KINDS.has(line(f.kind ?? f.type, 30).toLowerCase()))
+    .map((f) => para((f as Record<string, unknown>).value ?? (f as Record<string, unknown>).text ?? (f as Record<string, unknown>).prefill ?? (f as Record<string, unknown>).label, 400))
+    .filter(Boolean);
+  const reasons = rawFields
+    .filter((f) => isRecord(f) && REASON_KINDS.has(line(f.kind ?? f.type, 30).toLowerCase()))
+    .flatMap((f) => list((f as Record<string, unknown>).items ?? (f as Record<string, unknown>).options ?? (f as Record<string, unknown>).reasons))
+    .map((r) => line(r, 60))
+    .filter(Boolean);
+  const drafts = rawFields.map(field).filter((f): f is Draft<UiField> => Boolean(f));
+  const withReasons = drafts.map((f) =>
+    f.kind === "verdict" && reasons.length
+      ? { ...f, reasons: [...f.reasons, ...reasons].filter((r, i, all) => all.findIndex((o) => o.toLowerCase() === r.toLowerCase()) === i).slice(0, MAX_VERDICT_REASONS) }
+      : f,
+  );
+  const fields = ids<UiField>(gatherVerdicts(withReasons)).slice(0, MAX_FORM_FIELDS);
   if (!title || fields.length === 0) return null;
-  const intro = para(raw.intro, 600);
+  const intro = para([raw.intro, ...notes].filter((x) => typeof x === "string" && x.trim()).join("\n\n"), 900);
   return { kind: "form", id, title, ...(intro ? { intro } : {}), fields, submitLabel: line(raw.submit_label ?? raw.submitLabel, 30) || "Send" };
 }
 
@@ -268,20 +320,21 @@ function task(raw: unknown): ProposedTask | null {
   if (!isRecord(raw)) return null;
   const templateTaskId = line(raw.template_task_id ?? raw.templateTaskId, 60);
   // Switching on a template task by its id alone keeps that task's own title.
-  const title = line(raw.title, 80) || (templateTaskId ? (TEMPLATE_TASKS.get(templateTaskId) ?? "") : "");
+  const title = line(raw.title ?? raw.name, 80) || (templateTaskId ? (TEMPLATE_TASKS.get(templateTaskId) ?? "") : "");
   if (!title) return null;
   const schedule = taskScheduleSchema.safeParse(scheduleFrom(raw.schedule));
   const skillId = line(raw.skill, 60);
   return {
     ...(templateTaskId ? { templateTaskId } : {}),
     title,
-    instructions: para(raw.instructions, 4000),
+    instructions: para(raw.instructions ?? raw.description, 4000),
     ...(skillId && catalogEntry(skillId) ? { skill: skillId } : {}),
     schedule: schedule.success ? schedule.data : null,
   };
 }
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const PARTS_OF_DAY: Record<string, string> = { morning: "08:00", noon: "12:00", midday: "12:00", afternoon: "14:00", evening: "18:00" };
 
 /** "8", "8:30", "8am", "08:00", "2:15 PM" as a 24-hour HH:MM, or the input when it isn't a time. */
 function clock(raw: unknown): unknown {
@@ -298,6 +351,10 @@ function clock(raw: unknown): unknown {
  * AM", "Every Monday at 9", "Daily at 7pm", "Every 4 hours". Anything else stays as it was.
  */
 export function scheduleFrom(raw: unknown): unknown {
+  // "On demand" in its many spellings: no schedule.
+  const onDemand = (v: unknown) => typeof v === "string" && /^(on[ -_]?demand|manual(ly)?|none|never|when (i|you) ask)$/i.test(v.trim());
+  if (isRecord(raw) && (raw.on_demand === true || raw.onDemand === true || raw.manual === true || onDemand(raw.every))) return null;
+  if (onDemand(raw)) return null;
   if (isRecord(raw)) {
     const every = line(raw.every, 20).toLowerCase();
     const kind = ({ daily: "day", weekday: "weekdays", weekly: "week", hourly: "hours" } as Record<string, string>)[every] ?? every;
@@ -314,7 +371,10 @@ export function scheduleFrom(raw: unknown): unknown {
     return raw;
   }
   if (typeof raw !== "string") return raw;
-  const s = raw.trim().toLowerCase();
+  // "Weekdays, morning" and "every Monday in the evening" name a time of day instead of a clock.
+  let s = raw.trim().toLowerCase().replace(/,/g, " ");
+  if (!/\d/.test(s)) s = s.replace(/\b(?:in the |at )?(morning|noon|midday|afternoon|evening)s?\b/, (_, part: string) => ` ${PARTS_OF_DAY[part]}`);
+  s = s.replace(/\s+/g, " ").trim();
   const hours = /^every\s+(\d{1,2})\s+hours?$/.exec(s) ?? (s === "hourly" || s === "every hour" ? ["", "1"] : null);
   if (hours) return { every: "hours", hours: Number(hours[1]) };
   const m = /^(?:every\s+|each\s+|on\s+|weekly\s+on\s+)?([a-z]+?)s?(?:\s+mornings?)?(?:\s+at\s+|\s+)(\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?)$/.exec(s);

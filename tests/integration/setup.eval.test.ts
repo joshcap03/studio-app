@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createLangflowAdapter, type LangflowConfig } from "@/lib/agent/langflow";
 import type { AgentAttachment, AgentEvent, AgentTenantContext } from "@/lib/agent/types";
 import { buildQuestions } from "@/lib/chat/questions";
-import { buildUiBlock } from "@/lib/chat/ui";
+import { buildUiBlock, scheduleFrom } from "@/lib/chat/ui";
 import { formAnswerText, type FormValues } from "@/lib/chat/ui-answer";
 import { renderSkillMessage } from "@/lib/skills/render";
 import { setupSkill } from "@/lib/skills/setup";
@@ -102,15 +102,17 @@ const resumeFile = (): AgentAttachment => ({
 });
 
 /**
- * The member's bar, as a crisp answer to each part of the success step. Words from it showing
- * up in the proposal's instructions mean the agent carried the bar through.
+ * The member's bar, as crisp answers of their own where a card lets them say "something else".
+ * Words from it showing up in the proposal's instructions mean the agent carried the bar through.
  */
 const BAR: [RegExp, string][] = [
   [/one thing|most want/i, "Find senior product design roles that actually fit me, so I only spend time applying to good ones."],
-  [/perfect|what do you get|when\b/i, "Every weekday by 9am: 3 to 5 new roles, each with the link, the pay, and one line on why it fits."],
-  [/judge|great|okay/i, "I'd apply to at least 3 of every 5 you send. Remote in the US only, $180k base or more, B2B SaaS, posted in the last 3 days, never one I've already seen."],
-  [/stop using|hate/i, "Roles below senior, the same role twice, or anything that isn't remote."],
+  [/great|judge|good/i, "Remote in the US, $180k base or more, posted in the last 3 days"],
+  [/stop using|deal|hate/i, "Agency roles instead of in-house"],
 ];
+/** Why the member passes on trial results: a reason distinctive enough to find in their bar. */
+const PASS_REASON = "Agency, not in-house";
+const FROM_PASS = /agenc/i;
 const FROM_BAR = /180|9 ?am|3 (of|out of) (every )?5|3 days/i;
 
 /** The member's answers to a form: prefills as drafted, a plain answer where one's required. */
@@ -119,11 +121,26 @@ function fill(form: UiForm): { values: FormValues; attachResume: boolean } {
   let attachResume = false;
   for (const f of form.fields) {
     switch (f.kind) {
-      case "choice":
-        values[f.id] = f.prefill?.length ? f.prefill : [f.options[0].label];
+      case "choice": {
+        const own = f.allowOther ? BAR.find(([q]) => q.test(f.label))?.[1] : undefined;
+        values[f.id] = own ? [own] : f.prefill?.length ? f.prefill : [f.options[0].label];
         break;
-      case "multi_choice":
-        values[f.id] = f.prefill?.length ? f.prefill : f.options.slice(0, 3).map((o) => o.label);
+      }
+      case "multi_choice": {
+        const own = f.allowOther ? BAR.find(([q]) => q.test(f.label))?.[1] : undefined;
+        const picked = f.prefill?.length ? f.prefill : f.options.slice(0, own ? 2 : 3).map((o) => o.label);
+        values[f.id] = own ? [...picked, own] : picked;
+        break;
+      }
+      case "scale":
+        values[f.id] = String(f.prefill ?? Math.ceil((f.steps * 3) / 4));
+        break;
+      case "rank":
+        values[f.id] = f.prefill ?? f.options.map((o) => o.label);
+        break;
+      case "verdict":
+        // Keeps the first two results, passes on the rest for one telling reason.
+        values[f.id] = f.items.map((item, i): Record<string, string> => (i < 2 ? { id: item.id, verdict: "keep" } : { id: item.id, verdict: "pass", reason: PASS_REASON }));
         break;
       case "text":
       case "long_text":
@@ -233,44 +250,49 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
 
   const describeTurn = (turn: Turn) => `reply: ${turn.reply.slice(0, 600)}\nevents: ${turn.events.map((e) => e.type).join(", ")}`;
 
-  it("opens with a greeting and a form, not a wall of prose", { timeout: 300_000 }, async () => {
+  it("opens with a greeting and a question, not a wall of prose", { timeout: 300_000 }, async () => {
     const first = await send(renderSkillMessage(setupSkill("job-search"), ""));
-    expect(first.form, describeTurn(first)).not.toBeNull();
+    expect(first.form !== null || first.events.some((e) => e.type === "questions"), describeTurn(first)).toBe(true);
     expect(first.reply.trimStart(), describeTurn(first)).toMatch(/^Hey!/);
     expect(first.reply.length, describeTurn(first)).toBeLessThan(700);
   });
 
-  it("asks the member to define success in their own words before anything else", () => {
-    const first = turns[0]?.form;
-    expect(first, "needs the opening form").toBeTruthy();
-    // Open questions about their bar, not a menu of things the agent could do.
-    expect(first!.fields.filter((f) => f.kind === "long_text" || f.kind === "text").length, first!.title).toBeGreaterThanOrEqual(3);
-    expect(first!.fields.some((f) => f.kind === "multi_choice"), first!.title).toBe(false);
-    expect(first!.fields.some((f) => f.kind === "file"), "asked for the résumé before the bar").toBe(false);
+  it("gets to know them (the résumé) before anything else", () => {
+    const first = turns[0];
+    expect(first.form?.fields.some((f) => f.kind === "file"), describeTurn(first)).toBe(true);
   });
 
-  it("reads the résumé and prefills the next form from it", { timeout: 900_000 }, async () => {
-    // Answer step by step until the résumé has gone in (the form asking for it, or alongside
-    // the first answer if the agent never asks), then look at the form that follows.
+  it("runs a real trial that fits the résumé, for the member to judge", { timeout: 900_000 }, async () => {
+    // Answer until the résumé has gone in, then until the trial run shows its results.
     let last = turns[turns.length - 1];
-    expect(last?.form, "needs the opening form").toBeTruthy();
-    // The success step takes a few turns (the bar, maybe a follow-up, the playback).
-    for (let i = 0; i < 6 && !t.agentFiles!.includes(RESUME_NAME); i++) {
-      const asksForFile = last.form?.fields.some((f) => f.kind === "file") ?? false;
-      last = await answer(last, { resume: i === 4 && !asksForFile });
-    }
+    for (let i = 0; i < 3 && !t.agentFiles!.includes(RESUME_NAME); i++) last = await answer(last, { resume: i === 1 });
     expect(t.agentFiles, "the résumé never went in").toContain(RESUME_NAME);
-    expect(last.form, describeTurn(last)).not.toBeNull();
-    const prefills = last.form!.fields.flatMap((f) =>
-      "prefill" in f && f.prefill ? (Array.isArray(f.prefill) ? f.prefill.map((p) => (typeof p === "string" ? p : Object.values(p).join(" "))) : [f.prefill]) : [],
-    );
-    expect(prefills.join(" | "), `form "${last.form!.title}" isn't prefilled from the résumé`).toMatch(FROM_RESUME);
+    // A search can honestly turn up only two strong matches.
+    const isTrial = (x: Turn) => x.form?.fields.some((f) => f.kind === "verdict" && f.items.length >= 2) ?? false;
+    for (let i = 0; i < 4 && !isTrial(last); i++) last = await answer(last);
+    expect(isTrial(last), describeTurn(last)).toBe(true);
+    const results = last.form!.fields.flatMap((f) => (f.kind === "verdict" ? f.items.map((item) => `${item.title} ${item.body ?? ""}`) : []));
+    expect(results.join(" | "), "the trial run doesn't fit the résumé").toMatch(FROM_RESUME);
+    // The job was asked with something to tap, not a box to fill.
+    const between = turns.slice(1, turns.indexOf(last));
+    expect(between.some((x) => x.events.some((e) => e.type === "questions") || x.form?.fields.some((f) => f.kind === "choice" || f.kind === "multi_choice"))).toBe(true);
+  });
+
+  it("turns the member's verdicts into a bar they put in order, before the search details", { timeout: 900_000 }, async () => {
+    let last = turns[turns.length - 1];
+    const ranked = (x: Turn) => x.form?.fields.some((f) => f.kind === "rank") ?? false;
+    for (let i = 0; i < 3 && !ranked(last); i++) last = await answer(last);
+    expect(ranked(last), describeTurn(last)).toBe(true);
+    const trial = turns.findIndex((x) => x.form?.fields.some((f) => f.kind === "verdict"));
+    const search = turns.findIndex((x) => /search/i.test(x.form?.title ?? ""));
+    expect(trial).toBeLessThan(turns.indexOf(last));
+    expect(search === -1 || search > turns.indexOf(last), "asked for search details before the bar").toBe(true);
   });
 
   it("saves the stories the member sends to the stories tracker", { timeout: 900_000 }, async () => {
     let last = turns[turns.length - 1];
     let saved: Record<string, unknown>[] = [];
-    for (let i = 0; i < 4 && saved.length === 0 && !last.proposal; i++) {
+    for (let i = 0; i < 5 && saved.length === 0 && !last.proposal; i++) {
       last = await answer(last);
       saved = records(last.events, "stories");
     }
@@ -278,7 +300,8 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     for (const r of saved) {
       expect(String(r.key ?? ""), JSON.stringify(r)).not.toBe("");
       const fields = (r.fields ?? {}) as Record<string, unknown>;
-      expect(Object.keys(fields), JSON.stringify(r)).toEqual(expect.arrayContaining(["situation", "action", "result"]));
+      // Gaps stay empty rather than invented, so a story needs only some of its parts.
+      expect(Object.keys(fields).filter((k) => ["situation", "task", "action", "result"].includes(k)).length, JSON.stringify(r)).toBeGreaterThanOrEqual(2);
     }
   });
 
@@ -293,7 +316,7 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     expect(templated.length, JSON.stringify(raw.tasks)).toBeGreaterThan(0);
     tasks.forEach((task, i) => {
       const sent = Array.isArray(raw.tasks) ? raw.tasks[i]?.schedule : undefined;
-      expect(sent == null || task.schedule !== null, `couldn't read "${task.title}" schedule ${JSON.stringify(sent)}`).toBe(true);
+      expect(sent == null || scheduleFrom(sent) === null || task.schedule !== null, `couldn't read "${task.title}" schedule ${JSON.stringify(sent)}`).toBe(true);
     });
     for (const task of templated) {
       const id = task.templateTaskId!;
@@ -307,6 +330,7 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     const instructions = last.proposal!.instructions ?? "";
     expect(instructions, "the proposal doesn't say what success means").toMatch(/what success means/i);
     expect(instructions, "the proposal dropped the member's bar").toMatch(FROM_BAR);
+    expect(instructions, "the bar didn't learn from what they passed on in the trial run").toMatch(FROM_PASS);
     // Nothing is applied yet, so the agent mustn't say it is.
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
   });
@@ -329,17 +353,23 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
       const block = buildUiBlock(e.block);
       if (raw.form) {
         const fields = block?.kind === "form" ? block.fields : [];
+        const intro = block?.kind === "form" ? (block.intro ?? "") : "";
+        const judged = fields.flatMap((x) => (x.kind === "verdict" ? x.items.map((item) => item.title) : []));
         (raw.form.fields ?? []).forEach((f, i) => {
+          const kind = String(f.kind ?? f.type ?? "").toLowerCase();
+          // Read-only notes join the intro; one-result verdict fields become items of one field.
+          if (kind === "note" && intro.includes(String(f.value ?? f.text ?? f.label ?? "").trim().slice(0, 40))) return;
+          if (kind === "verdict" && judged.includes(String(f.label ?? "").trim())) return;
           const kept = fields.find((x) => x.label === String(f.label ?? "").trim());
           if (!kept) lost.push(`form "${raw.form!.title}" field ${i}: ${JSON.stringify(f).slice(0, 200)}`);
-          else if (![null, undefined, ""].includes((f.prefill ?? f.value ?? f.items) as string) && !("prefill" in kept && kept.prefill))
+          else if (kind !== "verdict" && ![null, undefined, ""].includes((f.prefill ?? f.value ?? f.items) as string) && !("prefill" in kept && kept.prefill))
             lost.push(`form "${raw.form!.title}" prefill of "${kept.label}": ${JSON.stringify(f).slice(0, 200)}`);
         });
       } else if (raw.proposal) {
         const tasks = block?.kind === "proposal" ? block.tasks : [];
         (raw.proposal.tasks ?? []).forEach((t, i) => {
           if (!tasks[i]) lost.push(`proposed task ${i}: ${JSON.stringify(t).slice(0, 200)}`);
-          else if (t.schedule != null && tasks[i].schedule === null) lost.push(`schedule of "${tasks[i].title}": ${JSON.stringify(t.schedule)}`);
+          else if (t.schedule != null && scheduleFrom(t.schedule) !== null && tasks[i].schedule === null) lost.push(`schedule of "${tasks[i].title}": ${JSON.stringify(t.schedule)}`);
         });
       }
     }
