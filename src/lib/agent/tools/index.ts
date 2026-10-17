@@ -792,6 +792,27 @@ export function talksMachinery(text: string): boolean {
   return /\b(tools?|tool calls?|toolkits?|schemas?|callable|composio|mcp|discovery)\b/i.test(text);
 }
 
+/** Tools that report on the answer (its sources, charts, questions, what to remember) rather than do the work. */
+const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "remember", "propose_memory"]);
+
+/**
+ * Whether a call only reports on the answer. Text the agent writes before such a call is
+ * the answer itself (agents often answer, then cite or remember), never an opening line.
+ */
+export function reportsOnAnswer(name: string, input: unknown): boolean {
+  if (REPORTING_TOOLS.has(name)) return true;
+  return GATEWAY_TOOLS.has(name) && isRecord(input) && typeof input.tool_name === "string" && REPORTING_TOOLS.has(input.tool_name);
+}
+
+/** Longest text treated as an opening line ("Let me check your emails") rather than the answer. */
+export const OPENING_LINE_MAX = 280;
+
+/** Whether text the agent wrote before a tool call reads as an opening line: short, one paragraph. */
+export function opensWork(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length > 0 && trimmed.length <= OPENING_LINE_MAX && !trimmed.includes("\n\n");
+}
+
 /** A gateway's plain-text failure report, reduced to the reason a person needs. */
 export function gatewayFailure(text: string): string | undefined {
   const value = text.trim().replace(/^"|"$/g, "");

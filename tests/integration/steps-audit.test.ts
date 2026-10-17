@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { findingsForReply } from "@/components/chat/findings";
+import { openingLineIndexes } from "@/lib/agent/langflow";
 import { evidenceFor, interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
 import { linksSeen } from "@/lib/chat/timeline";
 import type { ActivityStep } from "@/lib/types";
@@ -27,14 +28,15 @@ interface Leaf {
 
 /** Rebuilds a reply's steps (tool steps and the agent's lines) in the order they happened. */
 function replyToSteps(leaves: Leaf[]): (ActivityStep & { returned?: number })[] {
-  const lastTool = leaves.map((l) => l.type).lastIndexOf("tool_use");
+  // The same rule the adapter uses: only opening lines become steps, never the answer.
+  const opening = new Set(openingLineIndexes(leaves));
   const calls: ToolCall[] = [];
   const order: ({ kind: "call"; index: number } | { kind: "note"; text: string })[] = [];
   leaves.forEach((leaf, i) => {
     if (leaf.type === "tool_use") {
       order.push({ kind: "call", index: calls.length });
       calls.push({ name: leaf.name ?? "tool", input: leaf.tool_input ?? leaf.input ?? {}, output: leaf.output, error: leaf.error });
-    } else if (leaf.type === "text" && i < lastTool && typeof leaf.text === "string" && leaf.text.trim()) {
+    } else if (opening.has(i) && typeof leaf.text === "string") {
       order.push({ kind: "note", text: leaf.text.trim() });
     }
   });
