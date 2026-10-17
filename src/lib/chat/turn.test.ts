@@ -257,6 +257,30 @@ describe("startTurn", () => {
     expect(assistant.content.length).toBeGreaterThan(0);
   });
 
+  it("stops when a stop is requested from elsewhere, checked on the heartbeat", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    let requested = false;
+    let asked = 0;
+    const stream = await startTurn(
+      {
+        store,
+        adapter: createMockAdapter({ streaming: true, pace: 1 }),
+        context: context(scopeA),
+        idleTimeoutMs: 5000,
+        heartbeatMs: 10,
+        shouldStop: async () => (asked++, requested),
+      },
+      { conversationId: id, kind: "send", text: "help with operations" },
+    );
+    await stream.cancel(); // no one watching, as in the worker
+    for (let i = 0; i < 100 && asked === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect((await store.listMessages(id))[1].status).toBe("streaming");
+    requested = true;
+    for (let i = 0; i < 100 && (await store.listMessages(id))[1]?.status === "streaming"; i++) await new Promise((r) => setTimeout(r, 20));
+    expect((await store.listMessages(id))[1].status).toBe("stopped");
+  });
+
   it("keeps working after the browser disconnects, and saves the full reply", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

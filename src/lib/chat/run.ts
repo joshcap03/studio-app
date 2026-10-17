@@ -32,6 +32,8 @@ export interface RunOptions {
   input: RunInput;
   /** Called after the reply's final state is saved and any notification is sent. */
   onFinished?: NonNullable<TurnDeps["onFinished"]>;
+  /** Asked while the run streams; resolving true stops it (a stop requested from another process). */
+  shouldStop?: TurnDeps["shouldStop"];
 }
 
 /**
@@ -40,7 +42,7 @@ export interface RunOptions {
  */
 export async function buildTurnDeps(
   tenant: Tenant,
-  { conversationId, input: asked, onFinished }: RunOptions,
+  { conversationId, input: asked, onFinished, shouldStop }: RunOptions,
 ): Promise<{ deps: TurnDeps; request: TurnRequest }> {
   // A task's run is a message with the task's brief and skill, labeled with where it came from.
   let origin: MessageOrigin | undefined;
@@ -101,7 +103,7 @@ export async function buildTurnDeps(
     remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
-    claim: (replyId) => claimRun(tenant, replyId),
+    claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
     timelines: previewEnabled(tenant, "why"),
     loadAttachment: (attachment) => readAttachment(tenant, attachment),
     loadSkill,
@@ -112,6 +114,7 @@ export async function buildTurnDeps(
         }
       : {}),
     onFinished: finished,
+    shouldStop,
   };
   const request: TurnRequest =
     input.kind === "send"

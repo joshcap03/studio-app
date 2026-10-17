@@ -99,32 +99,40 @@ export async function usageSnapshot(tenant: Tenant) {
   };
 }
 
+/** Chat runs and task runs are limited separately (both count toward the service-wide cap). */
+export type RunKind = "agent_run" | "task_run";
+
 /**
  * Claims one agent run for the caller, writing to the reply `replyId`: checks every limit and
  * records the run atomically, so requests sent at the same moment can't all slip under a limit.
  * Returns the limit it would exceed (nothing is recorded then), or null once the run is claimed.
+ * A task's run ("task_run") has its own concurrency and daily cap, apart from chat.
  */
-export async function claimRun(tenant: Tenant, replyId?: string): Promise<string | null> {
+export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind = "agent_run"): Promise<string | null> {
   const { limits } = getConfig();
+  const task = kind === "task_run";
   const refused = check(
     await tenant.db.rpc("claim_run", {
       ws: tenant.workspace.id,
       p_concurrent: limits.concurrentRuns,
       p_per_minute: limits.runsPerMinute,
-      p_per_day: limits.runsPerWorkspacePerDay,
+      p_per_day: task ? limits.taskRunsPerWorkspacePerDay : limits.runsPerWorkspacePerDay,
       p_service_per_day: limits.runsServicePerDay ?? null,
       p_message_id: replyId ?? null,
+      p_kind: kind,
     }),
   ) as string | null;
   switch (refused) {
     case null:
       return null;
     case "concurrent":
-      return "You already have tasks running. Wait for one to finish.";
+      return task ? "Your other tasks are still running. This one will wait for its next time." : "You already have tasks running. Wait for one to finish.";
     case "per_minute":
-      return "You're sending messages too quickly. Try again in a minute.";
+      return task ? "Too many tasks started at once. Try again in a minute." : "You're sending messages too quickly. Try again in a minute.";
     case "workspace_day":
-      return "This workspace has reached today's message limit. It resets at midnight UTC.";
+      return task
+        ? "This workspace has reached today's limit for task runs. It resets at midnight UTC."
+        : "This workspace has reached today's message limit. It resets at midnight UTC.";
     default:
       return "Studio is at capacity for today. Try again tomorrow.";
   }

@@ -109,3 +109,13 @@ export function describeSchedule(schedule: TaskSchedule, timeZone: string): stri
       return schedule.hours === 1 ? "Every hour" : `Every ${schedule.hours} hours`;
   }
 }
+
+/**
+ * When a task runs next after its run due at `due` was claimed at `now`: the schedule's next
+ * time after `due` (so an every-N-hours task doesn't drift with dispatch delays), or after
+ * `now` when times were missed, which aren't made up.
+ */
+export function nextRunAfter(schedule: TaskSchedule, timeZone: string, due: Date, now: Date): Date {
+  const next = nextRun(schedule, timeZone, due);
+  return next > now ? next : nextRun(schedule, timeZone, now);
+}

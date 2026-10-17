@@ -6,7 +6,15 @@
 //   npm run check:deploy-env   (loads .env.production.local if present)
 //   node --env-file=.env.production.local scripts/check-deploy-env.mjs
 //
-// Exits 1 if anything fails.
+// With --worker it checks the background worker's env instead (the Trigger.dev project's
+// prod environment, exported to a file; docs/deploy-checklist.md, "Background worker"):
+//
+//   node --env-file=.env.worker.local scripts/check-deploy-env.mjs --worker
+//
+// The worker needs the app's agent settings (it runs the same turns) plus the Supabase secret
+// key; the app must never have that key. Exits 1 if anything fails.
+
+const WORKER = process.argv.includes("--worker");
 
 const env = Object.fromEntries(
   Object.entries(process.env).map(([k, v]) => [k, typeof v === "string" && v.trim() === "" ? undefined : v?.trim()]),
@@ -64,8 +72,21 @@ else {
   else if (anon.length < 20) fail("NEXT_PUBLIC_SUPABASE_ANON_KEY", "too short to be a key");
   else warn("NEXT_PUBLIC_SUPABASE_ANON_KEY", "unrecognized key format; double-check it is the anon key");
 }
-if (!env.SUPABASE_ACCESS_TOKEN) fail("SUPABASE_ACCESS_TOKEN", "not set; production builds need it to apply migrations");
-else pass("SUPABASE_ACCESS_TOKEN");
+
+// --- Supabase secret key: the worker's alone (trigger/lib/elevated.ts) ---
+const secret = env.SUPABASE_SECRET_KEY;
+if (!WORKER) {
+  if (secret) fail("SUPABASE_SECRET_KEY", "is set for the app; only the background worker may have it. Remove it from Vercel");
+  if (!env.SUPABASE_ACCESS_TOKEN) fail("SUPABASE_ACCESS_TOKEN", "not set; production builds need it to apply migrations");
+  else pass("SUPABASE_ACCESS_TOKEN");
+} else {
+  if (!secret) fail("SUPABASE_SECRET_KEY", "not set; the worker needs it to find due tasks and sign in as their members");
+  else if (secret.startsWith("sb_secret_") || jwtRole(secret) === "service_role") pass("SUPABASE_SECRET_KEY");
+  else fail("SUPABASE_SECRET_KEY", "isn't a secret key (sb_secret_…) or a service_role key");
+  if (env.SUPABASE_ACCESS_TOKEN) warn("SUPABASE_ACCESS_TOKEN", "set, but the worker doesn't need it; remove it");
+  if (!env.PREVIEW_FEATURE_EMAILS) warn("PREVIEW_FEATURE_EMAILS", "not set; tasks are a preview feature, so the worker will skip every run");
+  if (env.TRIGGER_SECRET_KEY) pass("TRIGGER_SECRET_KEY", "set (Trigger.dev provides it in its own environments)");
+}
 
 function jwtRole(token) {
   const parts = token.split(".");
@@ -153,7 +174,7 @@ if (!env.LIMIT_RUNS_SERVICE_PER_DAY) warn("LIMIT_RUNS_SERVICE_PER_DAY", "not set
 else if (positiveInt("LIMIT_RUNS_SERVICE_PER_DAY")) pass("LIMIT_RUNS_SERVICE_PER_DAY");
 else fail("LIMIT_RUNS_SERVICE_PER_DAY", "must be a positive integer");
 
-for (const name of ["LIMIT_RUNS_PER_MINUTE", "LIMIT_RUNS_PER_WORKSPACE_PER_DAY", "LIMIT_CONCURRENT_RUNS", "AGENT_IDLE_TIMEOUT_MS"]) {
+for (const name of ["LIMIT_RUNS_PER_MINUTE", "LIMIT_RUNS_PER_WORKSPACE_PER_DAY", "LIMIT_CONCURRENT_RUNS", "LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY", "AGENT_IDLE_TIMEOUT_MS"]) {
   if (env[name] && !positiveInt(name)) fail(name, "must be a positive integer");
 }
 for (const name of ["LANGFLOW_STREAM", "MOCK_STREAMING"]) {
@@ -165,5 +186,5 @@ const label = { pass: "PASS", warn: "WARN", fail: "FAIL" };
 for (const r of results) console.log(`${label[r.level]}  ${r.name}${r.note ? `: ${r.note}` : ""}`);
 const failed = results.filter((r) => r.level === "fail").length;
 const warned = results.filter((r) => r.level === "warn").length;
-console.log(`\n${failed} failed, ${warned} warning(s).`);
+console.log(`\n${WORKER ? "Worker" : "App"}: ${failed} failed, ${warned} warning(s).`);
 process.exit(failed ? 1 : 0);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSchedule, nextRun, taskScheduleSchema, type TaskSchedule } from "./schedule";
+import { describeSchedule, nextRun, nextRunAfter, taskScheduleSchema, type TaskSchedule } from "./schedule";
 
 const NY = "America/New_York";
 
@@ -207,5 +207,20 @@ describe("taskScheduleSchema", () => {
     ]) {
       expect(taskScheduleSchema.safeParse(schedule).success, JSON.stringify(schedule)).toBe(false);
     }
+  });
+});
+
+describe("nextRunAfter", () => {
+  it("steps every-N-hours tasks from the time they were due, not when they were picked up", () => {
+    const due = new Date("2026-10-17T12:00:00Z");
+    const now = new Date("2026-10-17T12:01:40Z");
+    expect(nextRunAfter({ every: "hours", hours: 4 }, "UTC", due, now).toISOString()).toBe("2026-10-17T16:00:00.000Z");
+  });
+
+  it("doesn't make up missed times", () => {
+    const due = new Date("2026-10-14T12:00:00Z");
+    const now = new Date("2026-10-17T13:00:00Z");
+    expect(nextRunAfter({ every: "day", at: "12:00" }, "UTC", due, now).toISOString()).toBe("2026-10-18T12:00:00.000Z");
+    expect(nextRunAfter({ every: "hours", hours: 4 }, "UTC", due, now).toISOString()).toBe("2026-10-17T17:00:00.000Z");
   });
 });
