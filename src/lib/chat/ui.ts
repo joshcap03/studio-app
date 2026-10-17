@@ -2,6 +2,7 @@ import { z } from "zod";
 import { APPS } from "@/lib/apps";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
+import { TEMPLATES } from "@/lib/templates";
 import {
   ATTACHMENT_TYPES,
   MAX_FORM_FIELDS,
@@ -88,6 +89,8 @@ const KIND_ALIASES: Record<string, (typeof KINDS)[number]> = {
   apps: "connect",
 };
 
+const LONG_PARTS = new Set(["long", "long_text", "longtext", "paragraph", "textarea"]);
+
 function count(raw: unknown, fallback: number, max: number): number {
   const n = typeof raw === "number" ? Math.floor(raw) : Number.parseInt(String(raw ?? ""), 10);
   return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : fallback;
@@ -100,20 +103,22 @@ function field(raw: unknown): Draft<UiField> | null {
   const label = line(raw.label ?? raw.question ?? raw.title, 200);
   if (!kind || !label) return null;
   const help = line(raw.help ?? raw.description, 300);
-  const base = { id: raw.id, label, ...(help ? { help } : {}), required: raw.required === true };
+  // Models often call a prefill its value or default, and an id its name or key.
+  const prefillRaw = raw.prefill ?? raw.value ?? raw.default;
+  const base = { id: raw.id ?? raw.name ?? raw.key, label, ...(help ? { help } : {}), required: raw.required === true };
   switch (kind) {
     case "choice":
     case "multi_choice": {
       const opts = options(raw.options ?? raw.choices);
       if (opts.length < 2) return null;
       const labels = new Set(opts.map((o) => o.label));
-      const prefill = (Array.isArray(raw.prefill) ? raw.prefill : [raw.prefill]).map((p) => line(p, 80)).filter((p) => labels.has(p));
+      const prefill = (Array.isArray(prefillRaw) ? prefillRaw : [prefillRaw]).map((p) => line(p, 80)).filter((p) => labels.has(p));
       return { ...base, kind, options: opts, ...(prefill.length ? { prefill: kind === "choice" ? prefill.slice(0, 1) : prefill } : {}) };
     }
     case "text":
     case "long_text": {
       const placeholder = line(raw.placeholder, 200);
-      const prefill = kind === "text" ? line(raw.prefill, 500) : para(raw.prefill, 4000);
+      const prefill = kind === "text" ? line(prefillRaw, 500) : para(prefillRaw, 4000);
       return { ...base, kind, ...(placeholder ? { placeholder } : {}), ...(prefill ? { prefill } : {}) };
     }
     case "file": {
@@ -126,19 +131,23 @@ function field(raw: unknown): Draft<UiField> | null {
       const parts = ids<UiListPart>(
         list(raw.parts ?? raw.fields)
           .map((p): Draft<UiListPart> | null =>
-            typeof p === "string" ? { label: line(p, 60), long: false } : isRecord(p) ? { id: p.id, label: line(p.label, 60), long: p.long === true || p.kind === "long_text" } : null,
+            typeof p === "string"
+              ? { label: line(p, 60), long: false }
+              : isRecord(p)
+                ? { id: p.id ?? p.key ?? p.name, label: line(p.label ?? p.name, 60), long: p.long === true || LONG_PARTS.has(line(p.kind ?? p.type, 20).toLowerCase()) }
+                : null,
           )
           .filter((p): p is Draft<UiListPart> => Boolean(p?.label)),
       ).slice(0, MAX_LIST_PARTS);
       if (parts.length === 0) return null;
       const max = count(raw.max, MAX_LIST_ITEMS, MAX_LIST_ITEMS);
       // Drafts the agent wrote for the member to fix up, keyed by part id or label.
-      const prefill = list(raw.prefill)
+      const prefill = list(raw.prefill ?? raw.items ?? raw.entries ?? raw.value)
         .filter(isRecord)
         .map((entry) => {
           const out: Record<string, string> = {};
           for (const p of parts) {
-            const value = para(entry[p.id] ?? entry[p.label] ?? entry[p.label.toLowerCase()], 2000);
+            const value = para(entry[p.id] ?? entry[p.label] ?? entry[p.label.toLowerCase()] ?? entry[slug(p.label)], 2000);
             if (value) out[p.id] = value;
           }
           return out;
@@ -172,13 +181,16 @@ function skill(raw: unknown): ProposedSkill | null {
   return name && instructions ? { name, description: line(raw.description, 200), instructions } : null;
 }
 
+const TEMPLATE_TASKS = new Map(TEMPLATES.flatMap((t) => t.tasks.map((task) => [task.id, task.title] as const)));
+
 function task(raw: unknown): ProposedTask | null {
   if (!isRecord(raw)) return null;
-  const title = line(raw.title, 80);
-  if (!title) return null;
-  const schedule = taskScheduleSchema.safeParse(raw.schedule);
-  const skillId = line(raw.skill, 60);
   const templateTaskId = line(raw.template_task_id ?? raw.templateTaskId, 60);
+  // Switching on a template task by its id alone keeps that task's own title.
+  const title = line(raw.title, 80) || (templateTaskId ? (TEMPLATE_TASKS.get(templateTaskId) ?? "") : "");
+  if (!title) return null;
+  const schedule = taskScheduleSchema.safeParse(scheduleFrom(raw.schedule));
+  const skillId = line(raw.skill, 60);
   return {
     ...(templateTaskId ? { templateTaskId } : {}),
     title,
@@ -186,6 +198,49 @@ function task(raw: unknown): ProposedTask | null {
     ...(skillId && catalogEntry(skillId) ? { skill: skillId } : {}),
     schedule: schedule.success ? schedule.data : null,
   };
+}
+
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+/** "8", "8:30", "8am", "08:00", "2:15 PM" as a 24-hour HH:MM, or the input when it isn't a time. */
+function clock(raw: unknown): unknown {
+  const m = typeof raw === "string" ? /^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?\s*m?\.?\s*$/i.exec(raw) : null;
+  if (!m) return raw;
+  let h = Number(m[1]);
+  if (m[3]) h = (h % 12) + (m[3].toLowerCase() === "p" ? 12 : 0);
+  return `${String(h).padStart(2, "0")}:${m[2] ?? "00"}`;
+}
+
+/**
+ * A schedule as the agent wrote it, in the stored shape when it can be read: the object form
+ * with loose values ("weekday", "8am", weekday "Monday"), or a phrase like "Weekdays at 8:00
+ * AM", "Every Monday at 9", "Daily at 7pm", "Every 4 hours". Anything else stays as it was.
+ */
+export function scheduleFrom(raw: unknown): unknown {
+  if (isRecord(raw)) {
+    const every = line(raw.every, 20).toLowerCase();
+    const kind = ({ daily: "day", weekday: "weekdays", weekly: "week", hourly: "hours" } as Record<string, string>)[every] ?? every;
+    const named = raw.weekday ?? raw.day ?? raw.day_of_week;
+    const day = line(named, 20).toLowerCase().slice(0, 3);
+    const weekday = typeof named === "string" && day ? WEEKDAYS.findIndex((d) => d.startsWith(day)) : named;
+    if (kind === "day" || kind === "weekdays") return { every: kind, at: clock(raw.at) };
+    if (kind === "week") return { every: kind, at: clock(raw.at), weekday };
+    if (kind === "hours") return { every: kind, hours: raw.hours === undefined ? 1 : Number(raw.hours) };
+    return raw;
+  }
+  if (typeof raw !== "string") return raw;
+  const s = raw.trim().toLowerCase();
+  const hours = /^every\s+(\d{1,2})\s+hours?$/.exec(s) ?? (s === "hourly" || s === "every hour" ? ["", "1"] : null);
+  if (hours) return { every: "hours", hours: Number(hours[1]) };
+  const m = /^(?:every\s+|each\s+|on\s+|weekly\s+on\s+)?([a-z]+?)s?(?:\s+mornings?)?(?:\s+at\s+|\s+)(\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?)$/.exec(s);
+  if (!m) return raw;
+  const at = clock(m[2]);
+  const when = m[1];
+  if (when === "day" || when === "daily") return { every: "day", at };
+  if (when === "weekday") return { every: "weekdays", at };
+  const day = WEEKDAYS.findIndex((d) => d === when || (when.length >= 3 && d.startsWith(when)));
+  if (day >= 0) return { every: "week", at, weekday: day };
+  return raw;
 }
 
 function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal | null {

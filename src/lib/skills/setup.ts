@@ -18,7 +18,7 @@ const RULES = `Set this agent up with the owner, as a short interview, so it wor
 - On your first reply, call update_plan with one step per setup step below (the current one "doing", the rest "todo"), and update it each time a step finishes or is skipped.
 - If they want to stop, skip a step, or change course, do that.
 - Finish with propose_agent, then stop. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it.
-- Your first reply: "Hey!", one sentence on what you'll do together and that it takes about {count} quick steps, then step 1.`;
+- Your first reply's text (not the form) starts with "Hey!", then one sentence on what you'll do together and that it takes about {count} quick steps, then step 1's form.`;
 
 function steps(template: AgentTemplate): string {
   return template.setup.steps.map((s, i) => `${i + 1}. ${s.title}: ${s.goal}`).join("\n");

@@ -116,7 +116,7 @@ function fill(form: UiForm): { values: FormValues; attachResume: boolean } {
       case "text":
       case "long_text":
         if (f.prefill) values[f.id] = f.prefill;
-        else if (/pay|salary|comp/i.test(f.label)) values[f.id] = "$150k";
+        else if (/\bpay\b|salary|compensation/i.test(f.label)) values[f.id] = "$150k";
         else if (/location|where/i.test(f.label)) values[f.id] = "Remote, US";
         else if (/break/i.test(f.label)) values[f.id] = "Crypto, agencies";
         else if (f.required) values[f.id] = "Nothing more to add.";
@@ -263,18 +263,23 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     let last = turns[turns.length - 1];
     for (let i = 0; i < 4 && !last.proposal; i++) last = await answer(last);
     expect(last.proposal, describeTurn(last)).not.toBeNull();
+    // What the app reads from it (the validated card), and what the agent sent.
+    const tasks = last.proposal!.tasks;
     const raw = last.rawProposal as { tasks?: Record<string, unknown>[] };
-    const tasks = Array.isArray(raw.tasks) ? raw.tasks : [];
-    const templated = tasks.filter((x) => x.template_task_id ?? x.templateTaskId);
+    const templated = tasks.filter((x) => x.templateTaskId);
     expect(templated.length, JSON.stringify(raw.tasks)).toBeGreaterThan(0);
+    tasks.forEach((task, i) => {
+      const sent = Array.isArray(raw.tasks) ? raw.tasks[i]?.schedule : undefined;
+      expect(sent == null || task.schedule !== null, `couldn't read "${task.title}" schedule ${JSON.stringify(sent)}`).toBe(true);
+    });
     for (const task of templated) {
-      const id = String(task.template_task_id ?? task.templateTaskId);
+      const id = task.templateTaskId!;
       expect(TEMPLATE_TASK_IDS.has(id), `unknown template task "${id}"`).toBe(true);
       const onDemand = template.tasks.find((x) => x.id === id)!.schedule === null;
-      if (task.schedule == null) expect(onDemand, `"${id}" was proposed without a schedule`).toBe(true);
+      if (task.schedule === null) expect(onDemand, `"${id}" was proposed without a schedule`).toBe(true);
       else expect(taskScheduleSchema.safeParse(task.schedule).success, `"${id}" schedule ${JSON.stringify(task.schedule)}`).toBe(true);
     }
-    expect(templated.some((x) => x.schedule != null), "no proposed task runs on a schedule").toBe(true);
+    expect(templated.some((x) => x.schedule !== null), "no proposed task runs on a schedule").toBe(true);
     // Nothing is applied yet, so the agent mustn't say it is.
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
   });
