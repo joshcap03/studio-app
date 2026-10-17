@@ -248,6 +248,26 @@ export interface WorkspaceSettings {
   agentInstructions: string;
   /** The built-in template (src/lib/templates) the workspace started from or last applied. */
   templateId: string | null;
+  /** Where the owner is in the agent's setup interview; null until it's started. */
+  setup: AgentSetup | null;
+}
+
+/** What the chat screen shows the owner about the agent's setup: how far along, and where. */
+export interface SetupSummary {
+  status: "not_started" | AgentSetup["status"];
+  conversationId: string | null;
+  done: number;
+  total: number;
+}
+
+/** The setup interview's state (see src/lib/skills/setup.ts). */
+export interface AgentSetup {
+  status: "in_progress" | "done" | "skipped";
+  /** The conversation the interview runs in. */
+  conversationId: string | null;
+  /** The checklist as the agent last reported it (update_plan), with each step's status. */
+  plan: { text: string; status: "todo" | "doing" | "done" | "blocked" | "needs_you" }[];
+  updatedAt: number;
 }
 
 export interface Memory {

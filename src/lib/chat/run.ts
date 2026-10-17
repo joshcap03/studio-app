@@ -119,11 +119,10 @@ export async function buildTurnDeps(
     timelines: previewEnabled(tenant, "why"),
     loadAttachment: (attachment) => readAttachment(tenant, attachment),
     loadSkill,
+    // Plans save only in a task's conversation or the agent's setup interview (for everyone).
+    savePlan: (plan: unknown) => savePlanFromAgent(tenant, conversationId, plan),
     ...(previewEnabled(tenant, "tasks")
-      ? {
-          savePlan: (plan: unknown) => savePlanFromAgent(tenant, conversationId, plan),
-          saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source),
-        }
+      ? { saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source) }
       : {}),
     onFinished: finished,
     shouldStop,

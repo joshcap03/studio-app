@@ -23,7 +23,8 @@ const BUILTIN: WorkspaceSkill[] = [
   },
 ];
 
-export const BUILTIN_SKILL_IDS = BUILTIN.map((s) => s.id) as [string, ...string[]];
+// "builtin:setup" is every agent's setup interview (./setup.ts), loaded per template by getSkill.
+export const BUILTIN_SKILL_IDS: [string, ...string[]] = ["builtin:setup", ...BUILTIN.map((s) => s.id)];
 
 /** The built-in skills this member can use. */
 export function builtinSkills(tenant: Tenant): WorkspaceSkill[] {

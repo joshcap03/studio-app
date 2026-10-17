@@ -54,7 +54,7 @@ Cite every source. Keep it to one page.`,
     apps: ["docs", "web", "tracker"],
     instructions: `Tailor the user's application to the role they point to.
 1. Read the posting and pull out the 5 requirements that matter most.
-2. Using only facts from the user's résumé, files, and memory, rewrite their résumé bullets to show those requirements. Never invent experience, titles, dates, or numbers; ask instead.
+2. Using only facts from the user's résumé, files, saved stories, and memory, rewrite their résumé bullets to show those requirements. Never invent experience, titles, dates, or numbers; ask instead.
 3. Draft a cover letter under 250 words: why this company, the two most relevant wins, and a clear close.
 4. Save both as a document draft and reply with a link and a list of what changed.
 5. In the job tracker, set the role's next step (with a Studio tracker, save_record on its "applications" row, same key).
@@ -85,7 +85,7 @@ Reply with who you found, why each, and the drafts.`,
 1. Who they're meeting: role and public background of each interviewer, if known.
 2. The company: a short brief and anything that changed recently.
 3. The 10 questions they're most likely to be asked for this role and stage, with what a strong answer covers.
-4. Matching stories from their experience in STAR form, using only facts from their files and memory; mark gaps where they need a story.
+4. Matching stories in STAR form: start from their saved stories (the "stories" notes in context, from setup), then their files and memory, using only those facts; mark gaps where they need a new story.
 5. Five sharp questions for them to ask.
 Save it as a document and reply with the link and the three things to practise most. With a Studio tracker, set the role's "applications" row to "interviewing" with save_record (same key) if it isn't already.`,
   },

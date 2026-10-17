@@ -147,6 +147,22 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, tracker: [] }).system_context).toContain("The member has a tracker, empty so far.");
   });
 
+  it("tells the agent when it's in its setup interview, and shows saved reference notes with their fields", () => {
+    const system = templateValues({
+      ...tenantA,
+      setup: { plan: [{ text: "Your résumé", status: "done" }, { text: "Your search", status: "doing" }] },
+      notes: [{ collection: "stories", title: "Fixed onboarding", fields: { situation: "Signups  stalled", result: "Up 18%", nested: { x: 1 } } }],
+    }).system_context;
+    expect(system).toContain("This conversation is this agent's setup interview");
+    expect(system).toContain("- [done] Your résumé\n- [doing] Your search");
+    expect(system).toContain("- [stories] Fixed onboarding (situation: Signups stalled; result: Up 18%)");
+    const plain = templateValues({ ...tenantA, setup: null, notes: [] }).system_context;
+    expect(plain).not.toContain("setup interview");
+    expect(plain).not.toContain("reference notes");
+    const many = Array.from({ length: 200 }, (_, i) => ({ collection: "stories", title: `Story ${i}`, fields: { result: "x".repeat(50) } }));
+    expect(templateValues({ ...tenantA, notes: many }).system_context.length).toBeLessThan(templateValues(tenantA).system_context.length + 3300);
+  });
+
   it("reads plan updates and tracker rows only from tools that declare them", () => {
     const message = {
       content_blocks: [

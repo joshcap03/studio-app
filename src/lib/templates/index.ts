@@ -25,6 +25,31 @@ export interface AgentTemplate {
    * on. `id` keeps applying idempotent; `skill` is a library skill from `skills`.
    */
   tasks: TemplateTask[];
+  /**
+   * The setup interview a new agent opens with (src/lib/skills/setup.ts runs it). Every
+   * template has one: it's how the agent learns what the member needs before it starts.
+   */
+  setup: TemplateSetup;
+  /**
+   * Tracker collections the agent should see in full (fields included) in every chat, not
+   * just in tasks, e.g. interview stories. Kept small: a few rows of reference material.
+   */
+  contextCollections?: string[];
+}
+
+export interface TemplateSetup {
+  /** One sentence on what setting up gets the member, as the agent would say it. */
+  intro: string;
+  /** In order; the agent runs one per reply and skips what it already knows. */
+  steps: TemplateSetupStep[];
+}
+
+export interface TemplateSetupStep {
+  id: string;
+  /** A short checklist label, e.g. "Your résumé". */
+  title: string;
+  /** What to learn in this step and which card to show, written for the agent. */
+  goal: string;
 }
 
 export interface TemplateTask {
@@ -93,6 +118,42 @@ export const TEMPLATES: AgentTemplate[] = [
 - Don't contact anyone or accept invites.`,
       },
     ],
+    contextCollections: ["stories"],
+    setup: {
+      intro: "I'll learn what you're looking for, read your résumé, help you get your stories ready, and then suggest how I'll run your search.",
+      steps: [
+        {
+          id: "goals",
+          title: "What you want from me",
+          goal: `Learn which jobs they want help with and how hands-on to be. show_form with: a multi_choice "What should I do for you?" (Find roles that fit, Tailor applications, Reach out to people, Prep for interviews, Keep my tracker, Follow up on applications), a choice "How often should I check in?" (Every weekday, A few times a week, Weekly, Only when I ask), and an optional long_text "Anything else I should know about your search?".`,
+        },
+        {
+          id: "resume",
+          title: "Your résumé",
+          goal: `Get their résumé onto this agent's files. If CONTEXT already lists a résumé among their files, say so and skip ahead. Otherwise show_form with a required file field (keep: true, accept pdf, docx, txt, md) and an optional long_text "Anything that isn't on it?". When it arrives, read it, and remember the few facts you'll lean on most (current role, years of experience, strongest areas).`,
+        },
+        {
+          id: "search",
+          title: "Your search",
+          goal: `Pin down the search. show_form, prefilled from the résumé and what they said: text "Target roles", choice "Seniority" (from their level, a step up, either), text "Locations", choice "Remote" (Remote only, Hybrid is fine, On-site is fine), text "Pay floor", long_text "Must-haves", long_text "Deal-breakers", and text "Companies you'd love to work at".`,
+        },
+        {
+          id: "stories",
+          title: "Your stories",
+          goal: `Get interview stories ready. Draft 3-5 STAR stories from the résumé's strongest bullets (only facts that are there), then show_form with one list field: item_label "Story", parts situation, task, action, result (long), and skills (short), prefilled with your drafts, for them to fix and add to. When they send it, save each story with save_record: collection "stories", key a short slug of its title, title a few words naming it, fields situation, task, action, result, skills. If CONTEXT has no tracker section, remember one sentence per story instead.`,
+        },
+        {
+          id: "apps",
+          title: "Your apps",
+          goal: `Connect what you'll work in. show_form with a connect field for gmail, calendar, apollo and hunter (with help saying Gmail and Calendar are for replies and interviews, Apollo and Hunter for finding the right people), and another optional connect field for clay. Say they can skip any and connect later.`,
+        },
+        {
+          id: "design",
+          title: "How I'll work",
+          goal: `Design this agent for them with propose_agent: a profile summarizing the search in their words, instructions that adapt this agent's current instructions to what they told you (focus, how proactive, how to check in), the listed tasks they'd want switched on (by template_task_id, with schedules that match how often they want check-ins), any library skills they need that the agent lacks, and a few lasting facts to remember.`,
+        },
+      ],
+    },
   },
   {
     id: "small-business",
@@ -105,6 +166,31 @@ export const TEMPLATES: AgentTemplate[] = [
     skills: ["business-snapshot", "inbox-triage", "customer-email-replies", "weekly-sales-report"],
     apps: ["gmail", "shopify", "sheets", "quickbooks"],
     tasks: [],
+    setup: {
+      intro: "I'll learn how your business works, connect the tools you run on, and then suggest what I'll take off your plate.",
+      steps: [
+        {
+          id: "business",
+          title: "Your business",
+          goal: `Learn the business. show_form, prefilled from what you know: long_text "What you sell and who buys it", text "Where you sell" (e.g. online store, shop, markets), long_text "How you talk to customers" (tone, sign-off), and an optional file field (keep: true) for a price list, menu, or policies.`,
+        },
+        {
+          id: "apps",
+          title: "Your tools",
+          goal: `Connect what they run on. show_form with a connect field for gmail, shopify, sheets and quickbooks (help: say what you'd use each for), and say they can skip any and connect later.`,
+        },
+        {
+          id: "chores",
+          title: "What to take off your plate",
+          goal: `Find the recurring work. show_form with a multi_choice "What should I help with?" (Answer customer emails, Weekly sales summary, Watch stock, Chase unpaid invoices, Social posts, Bookkeeping prep), a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask), and a long_text "Anything you dread doing each week?".`,
+        },
+        {
+          id: "design",
+          title: "How I'll work",
+          goal: `Design this agent with propose_agent: a profile of the business in their words, instructions for how to work (tone, what always needs their OK), new tasks for the chores they picked (title, instructions, a schedule that matches how often they want check-ins), library skills that fit, and a few lasting facts to remember.`,
+        },
+      ],
+    },
   },
   {
     id: "blank",
@@ -115,6 +201,26 @@ export const TEMPLATES: AgentTemplate[] = [
     skills: [],
     apps: [],
     tasks: [],
+    setup: {
+      intro: "Tell me what you want me to be, and I'll suggest how to set myself up for it.",
+      steps: [
+        {
+          id: "purpose",
+          title: "What I'm for",
+          goal: `Learn what they want. show_form with a long_text "What should this agent do for you?" (required; placeholder an example like "Plan my trips and keep an eye on prices"), a multi_choice "How should I work?" (Answer when I ask, Check things on a schedule, Keep a running list or tracker, Draft things for me to send), and a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask).`,
+        },
+        {
+          id: "context",
+          title: "What I should know",
+          goal: `Gather what you'll need, based on what they want: a show_form with up to 4 short fields that matter for it (prefilled from what you know), an optional file field (keep: true) for anything to keep on hand, and a connect field for the 1-4 apps that would help most.`,
+        },
+        {
+          id: "design",
+          title: "How I'll work",
+          goal: `Design this agent from scratch with propose_agent: a profile in their words, standing instructions, the library skills that fit (by id), new tasks with schedules for anything recurring, and a few lasting facts to remember.`,
+        },
+      ],
+    },
   },
 ];
 

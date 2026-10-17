@@ -5,6 +5,7 @@ import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { proposalPicksSchema } from "@/lib/chat/ui";
 import { previewEnabled } from "@/lib/flags";
+import { isSetupConversation, updateSetup } from "@/lib/setup-state";
 import { memoryEnabled, remember } from "@/lib/memory";
 import { addFromCatalog, createSkill, listSkills } from "@/lib/skills";
 import { createTask, listTasks, updateTask } from "@/lib/tasks";
@@ -66,6 +67,8 @@ export async function POST(request: NextRequest, { params }: Context) {
       const source = { conversationId: ids.data.id, messageId: message.id };
       const result = await applyProposal(auth.value, block, input.picks, input.edits ?? {}, input.timezone ?? "UTC", source);
       response = { status: "applied", at: Date.now(), ...result };
+      // Applying the proposal is how the setup interview ends.
+      if (await isSetupConversation(auth.value, ids.data.id)) await updateSetup(auth.value, { status: "done" });
     }
     await store.updateMessage(message.id, { uiResponse: { ...(message.uiResponse ?? {}), [block.id]: response } });
     return NextResponse.json({ response });

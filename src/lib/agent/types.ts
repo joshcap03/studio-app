@@ -30,6 +30,13 @@ export interface AgentTenantContext {
    * it found. Absent when the member has no tracker, so the agent knows not to save to one.
    */
   tracker?: { collection: string; key: string; title: string; status: string | null }[];
+  /** Set when this conversation is the agent's setup interview: its checklist so far. */
+  setup?: { plan: { text: string; status: string }[] } | null;
+  /**
+   * Reference rows the template keeps in view in every chat (e.g. interview stories), with
+   * their fields, unlike the tracker's one-line summaries.
+   */
+  notes?: { collection: string; title: string; fields: Record<string, unknown> }[];
   /** Names of the member's files for this agent; they arrive as attachments on every run. */
   agentFiles?: string[];
   /** The member's project this conversation is in, if any. Its files arrive as attachments. */

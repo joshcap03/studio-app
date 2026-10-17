@@ -1,4 +1,5 @@
 import type { AgentTenantContext } from "@/lib/agent/types";
+import { isSetupConversation, updateSetup } from "@/lib/setup-state";
 import type { Tenant } from "@/lib/tenant-core";
 import { getTaskForConversation, updateTask } from "./index";
 import { listRecords, upsertRecord } from "./records";
@@ -54,10 +55,17 @@ export function planFromAgent(value: unknown, previous: PlanStep[] = []): PlanSt
   return parsed.success ? parsed.data : null;
 }
 
-/** Saves the agent's plan to the conversation's task. False when there's no task or no plan. */
+/**
+ * Saves the agent's plan to the conversation's task, or to the setup checklist when this is
+ * the agent's setup conversation. False when it's neither, or there's no plan.
+ */
 export async function savePlanFromAgent(tenant: Tenant, conversationId: string, value: unknown): Promise<boolean> {
   const task = await getTaskForConversation(tenant, conversationId);
-  if (!task) return false;
+  if (!task) {
+    if (!(await isSetupConversation(tenant, conversationId))) return false;
+    const plan = planFromAgent(value);
+    return plan ? updateSetup(tenant, { plan: plan.map(({ text, status }) => ({ text, status })) }) : false;
+  }
   const plan = planFromAgent(value, task.plan);
   if (!plan) return false;
   return (await updateTask(tenant, task.id, { plan })) !== null;

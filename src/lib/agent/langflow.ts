@@ -105,7 +105,9 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.agentFiles?.length && `Your files (the member's, attached to every message with this agent): ${tenant.agentFiles.join(", ")}`,
     project && projectContext(project),
     tenant.task && taskContext(tenant.task),
+    tenant.setup && setupContext(tenant.setup),
     tenant.tracker && trackerContext(tenant.tracker),
+    tenant.notes?.length && notesContext(tenant.notes),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
     (tenant.profile.trim() || tenant.account?.about.trim() || memories) && BACKGROUND_ONLY,
   ]
@@ -126,6 +128,35 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     personal_guardrail: guardrail,
     system_context: system,
   };
+}
+
+/** This conversation is the agent's setup interview: its checklist so far. */
+function setupContext(setup: NonNullable<AgentTenantContext["setup"]>): string {
+  const plan = setup.plan.map((s) => `- [${s.status}] ${s.text}`).join("\n");
+  return [
+    "This conversation is this agent's setup interview with the member.",
+    plan ? `Setup checklist so far:\n${plan}` : "There's no setup checklist yet; write one with update_plan.",
+    "Keep the checklist current with update_plan as steps finish or are skipped.",
+  ].join("\n\n");
+}
+
+const NOTES_BUDGET = 3000;
+
+/** Reference rows kept in view in every chat (e.g. interview stories), fields included, within a budget. */
+function notesContext(notes: NonNullable<AgentTenantContext["notes"]>): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (const n of notes) {
+    const fields = Object.entries(n.fields)
+      .filter(([, v]) => typeof v === "string" || typeof v === "number")
+      .map(([k, v]) => `${k}: ${String(v).replace(/\s+/g, " ").trim()}`)
+      .join("; ");
+    const line = `- [${n.collection}] ${n.title}${fields ? ` (${fields})` : ""}`;
+    if (used + line.length > NOTES_BUDGET) break;
+    lines.push(line);
+    used += line.length;
+  }
+  return `The member's saved reference notes (from their tracker; use them when they fit, e.g. stories in interview prep):\n${lines.join("\n")}`;
 }
 
 /** The task this conversation works on: what it's for, and the plan so far. */

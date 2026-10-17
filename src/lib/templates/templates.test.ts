@@ -15,6 +15,24 @@ describe("templates", () => {
     }
   });
 
+  it("each ship a setup interview that asks through the reusable cards and ends in a proposal", () => {
+    for (const t of TEMPLATES) {
+      const steps = t.setup.steps;
+      expect(t.setup.intro.trim(), t.id).not.toBe("");
+      expect(steps.length, t.id).toBeGreaterThanOrEqual(2);
+      expect(new Set(steps.map((s) => s.id)).size, t.id).toBe(steps.length);
+      for (const s of steps) {
+        expect(s.id).toMatch(/^[a-z0-9-]{1,40}$/);
+        // Short enough for the checklist the agent keeps with update_plan (200 chars a step).
+        expect(s.title.length).toBeLessThanOrEqual(40);
+      }
+      // Every step but the last asks with a card; the last proposes the agent's setup.
+      for (const s of steps.slice(0, -1)) expect(s.goal, `${t.id}/${s.id}`).toMatch(/show_form|ask_user/);
+      expect(steps.at(-1)!.goal, t.id).toContain("propose_agent");
+      for (const c of t.contextCollections ?? []) expect(c).toMatch(/^[a-z0-9_-]{1,40}$/);
+    }
+  });
+
   it("have valid tasks whose skills the template adds", () => {
     for (const t of TEMPLATES) {
       expect(new Set(t.tasks.map((task) => task.id)).size).toBe(t.tasks.length);

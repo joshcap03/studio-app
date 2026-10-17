@@ -16,6 +16,7 @@ import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
+import { SETUP_KICKOFF, SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
 import type {
   AgentStatus,
   Attachment,
@@ -26,6 +27,7 @@ import type {
   MessageSkill,
   Project,
   ProjectSummary,
+  SetupSummary,
   StreamEvent,
   UiResponse,
   WorkspaceSkill,
@@ -77,6 +79,8 @@ interface Props {
   initialSkillId: string | null;
   /** Whether this member sees Tasks (a preview feature). */
   tasksEnabled: boolean;
+  /** The owner's setup interview for this agent; null for other members. */
+  setup: SetupSummary | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -122,6 +126,7 @@ export function Workspace({
   skills,
   initialSkillId,
   tasksEnabled,
+  setup: initialSetup,
 }: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
@@ -781,6 +786,39 @@ export function Workspace({
     requestAnimationFrame(() => composer.current?.focus());
   }, [navigate]);
 
+  // The agent's setup interview: picks up where it left off, or starts it in a new chat with
+  // the setup skill attached (the agent opens with its first question).
+  const [setup, setSetup] = useState(initialSetup);
+  const startSetup = useCallback(
+    (fresh = false) => {
+      if (!fresh && setup?.status === "in_progress" && setup.conversationId) {
+        navigate(`/c/${setup.conversationId}`);
+        return;
+      }
+      // Only offered on the new-chat screen, so this starts a new conversation.
+      if (activeId) return;
+      send(SETUP_KICKOFF, { skill: { id: SETUP_SKILL_ID, name: SETUP_SKILL_NAME } });
+      setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0 } : s));
+    },
+    [activeId, navigate, send, setup],
+  );
+  const skipSetup = useCallback(() => {
+    setSetup((s) => (s ? { ...s, status: "skipped" } : s));
+    api.skipSetup().catch(() => setSetup(initialSetup));
+  }, [initialSetup]);
+
+  // Arriving from onboarding (or "Run setup" on the agent's page) with ?setup=1 starts it once.
+  const setupRequested = useRef(false);
+  useEffect(() => {
+    if (setupRequested.current || !setup) return;
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("setup");
+    if (!wanted) return;
+    setupRequested.current = true;
+    window.history.replaceState(null, "", window.location.pathname);
+    startSetup(wanted === "new");
+  }, [setup, startSetup]);
+
   const rename = useCallback(
     (id: string, title: string) => {
       const previous = conversations.find((c) => c.id === id);
@@ -1161,6 +1199,10 @@ export function Workspace({
               canManageSkills={workspace.role === "owner"}
               allowFiles={agent.attachments}
               footnote={footnote}
+              setup={setup && (setup.status === "not_started" || setup.status === "in_progress") ? setup : null}
+              agentName={workspace.name}
+              onSetup={() => startSetup()}
+              onSkipSetup={skipSetup}
             />
           ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
             <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
