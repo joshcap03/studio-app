@@ -120,7 +120,7 @@ const RUN_REASON_TEXT: Record<string, string> = {
   paused: "Skipped: the task was paused.",
   done: "Skipped: the task was marked done.",
   archived: "Skipped: the task was archived.",
-  agent_unavailable: "Skipped: the agent isn't available for this workspace.",
+  agent_unavailable: "Skipped: this agent isn't enabled yet.",
   error: "The agent hit an error.",
   stopped: "Stopped before it finished.",
   interrupted: "Interrupted before it finished.",

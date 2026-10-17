@@ -51,7 +51,7 @@ export async function POST(request: NextRequest, { params }: Context) {
   if (input instanceof NextResponse) return input;
 
   if (!agentEnabledFor(tenant.workspace.id)) {
-    return jsonError(403, "The agent isn't enabled for this workspace yet.", "agent_unavailable");
+    return jsonError(403, "This agent isn't enabled yet.", "agent_unavailable");
   }
 
   try {

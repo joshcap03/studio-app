@@ -25,7 +25,7 @@ export async function POST(request: NextRequest, { params }: Context) {
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Task not found.");
   if (!agentEnabledFor(tenant.workspace.id)) {
-    return jsonError(403, "The agent isn't enabled for this workspace yet.", "agent_unavailable");
+    return jsonError(403, "This agent isn't enabled yet.", "agent_unavailable");
   }
 
   try {

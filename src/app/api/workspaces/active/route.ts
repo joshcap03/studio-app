@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
   const input = await parseBody(request, body);
   if (input instanceof NextResponse) return input;
   const tenant = await resolveTenant(auth.value, input.workspaceId);
-  if (!tenant || tenant.workspace.id !== input.workspaceId) return jsonError(404, "Workspace not found.");
+  if (!tenant || tenant.workspace.id !== input.workspaceId) return jsonError(404, "Agent not found.");
   const response = NextResponse.json({ workspace: tenant.workspace });
   response.cookies.set(ACTIVE_WORKSPACE_COOKIE, tenant.workspace.id, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 365 });
   return response;

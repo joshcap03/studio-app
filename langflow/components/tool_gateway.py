@@ -782,7 +782,7 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=update_plan, coroutine=update_plan_async, name="update_plan",
                 args_schema=PlanArgs,
-                description=("Only in a conversation that works on a task (see THIS WORKSPACE): write or update the "
+                description=("Only in a conversation that works on a task (see CONTEXT): write or update the "
                              "task's plan, the whole list of steps each time. Call it when you make a plan and whenever "
                              "a step starts, finishes, gets blocked, or needs the owner. Saved for the owner; changes "
                              "nothing in their accounts."),
@@ -792,8 +792,8 @@ class ToolGatewayComponent(Component):
                 args_schema=RecordArgs,
                 description=("Add or update one row in the owner's tracker: a list kept across conversations, e.g. job "
                              "applications, people contacted, companies researched. Saving the same collection and key "
-                             "again updates that row, so check the tracker in THIS WORKSPACE before adding. Only when THIS "
-                             "WORKSPACE has a tracker section; otherwise nothing would be kept. Use it for "
+                             "again updates that row, so check the tracker in CONTEXT before adding. Only when "
+                             "CONTEXT has a tracker section; otherwise nothing would be kept. Use it for "
                              "things the owner will want to follow over time, not one-off answers. Saved for the owner; "
                              "changes nothing in their accounts."),
             ),

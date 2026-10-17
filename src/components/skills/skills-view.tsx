@@ -74,7 +74,7 @@ export function SkillsView({ initialSkills, canEdit, initialDraft }: Props) {
   }
 
   async function remove(skill: WorkspaceSkill) {
-    if (!window.confirm(`Remove "${skill.name}" from this workspace?`)) return;
+    if (!window.confirm(`Remove "${skill.name}" from this agent?`)) return;
     const previous = skills;
     setSkills((list) => list.filter((s) => s.id !== skill.id));
     try {
@@ -90,9 +90,9 @@ export function SkillsView({ initialSkills, canEdit, initialDraft }: Props) {
       <section>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-[15px] font-semibold tracking-[-0.01em]">In this workspace</h2>
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em]">This agent's skills</h2>
             <p className="mt-1 text-[13.5px] text-fg-3">
-              {canEdit ? "Everyone in the workspace can use these." : "Only the workspace owner can add or change skills."}
+              {canEdit ? "Use these with / in any message." : "Only the owner can add or change skills."}
             </p>
           </div>
           {canEdit ? (
@@ -176,7 +176,7 @@ export function SkillsView({ initialSkills, canEdit, initialDraft }: Props) {
                     Add to workspace
                   </button>
                 ) : (
-                  <span className="text-[13px] text-fg-3">Ask the workspace owner to add this.</span>
+                  <span className="text-[13px] text-fg-3">Ask the owner to add this.</span>
                 )}
               </div>
             </>

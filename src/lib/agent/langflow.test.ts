@@ -170,7 +170,7 @@ describe("Langflow request", () => {
 
   it("describes the workspace by what the agent is for, not as a business", () => {
     const values = templateValues(tenantA);
-    expect(values.system_context).toContain("Workspace: Alice Atelier");
+    expect(values.system_context).toContain("This agent: Alice Atelier");
     expect(values.system_context).toContain("What this agent is for:\nHandmade rings.");
     expect(values.system_context).not.toMatch(/business/i);
     expect(values.agent_profile).toBe("Handmade rings.");

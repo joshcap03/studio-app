@@ -39,6 +39,6 @@ export function getAgentStatus(workspaceId: string): AgentStatus {
   const a = getAgentAdapter();
   const attachments = a.capabilities.attachments;
   if (!a.live) return { mode: "mock", label: a.label, attachments };
-  if (!agentEnabledFor(workspaceId)) return { mode: "unavailable", label: "Agent not enabled for this workspace", attachments: false };
+  if (!agentEnabledFor(workspaceId)) return { mode: "unavailable", label: "Agent not enabled yet", attachments: false };
   return { mode: "live", label: a.label, attachments };
 }

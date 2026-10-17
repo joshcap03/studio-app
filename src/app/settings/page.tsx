@@ -39,7 +39,7 @@ export default async function SettingsPage() {
           Back to chat
         </a>
         <h1 className="mt-6 font-display text-[30px] leading-tight tracking-[-0.015em]">{settings.name}</h1>
-        <p className="mt-1 text-[14px] text-fg-3">Workspace settings</p>
+        <p className="mt-1 text-[14px] text-fg-3">Agent settings</p>
         <SettingsView
           initialSettings={settings}
           initialMemories={initialMemories}

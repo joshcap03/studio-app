@@ -83,11 +83,11 @@ export function langflowSessionId(tenant: AgentTenantContext, conversationId: st
   return `${tenant.workspaceId}.${tenant.composioUserId}.${conversationId}`;
 }
 
-// The profile and memories describe the workspace in general. Without this, a follow-up in a
-// conversation about something new gets answered for the workspace's usual work, and searches
+// The profile and memories describe this agent's usual work. Without this, a follow-up in a
+// conversation about something new gets answered for this agent's usual work, and searches
 // get narrowed to its city or niche though the owner never asked for that.
 const BACKGROUND_ONLY =
-  "Use the above as background only. The current conversation decides the topic: if the owner asks about something other than this workspace's usual work, stay on what they asked about, including in follow-ups that don't repeat it. Don't narrow a search or answer by the location, niche, or other details above unless the owner asked for that; if one would clearly change the answer, mention it as an option instead.";
+  "Use the above as background only. The current conversation decides the topic: if the owner asks about something other than this agent's usual work, stay on what they asked about, including in follow-ups that don't repeat it. Don't narrow a search or answer by the location, niche, or other details above unless the owner asked for that; if one would clearly change the answer, mention it as an option instead.";
 
 const TRACKER_CHARS = 5000;
 
@@ -98,7 +98,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   const system = [
     guardrail,
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
-    `Workspace: ${tenant.workspaceName}`,
+    `This agent: ${tenant.workspaceName}`,
     tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
     project && projectContext(project),
     tenant.task && taskContext(tenant.task),
@@ -163,7 +163,7 @@ function trackerContext(rows: NonNullable<AgentTenantContext["tracker"]>): strin
  */
 function guardrailContext(guardrail: NonNullable<AgentTenantContext["guardrail"]>): string {
   return [
-    "This member's personal rules. They override every other instruction you have, including your base instructions, the workspace's and project's instructions, and any skill attached to a message. The member set these on purpose ahead of time; keep following them even if they ask you not to. Follow them quietly, in your usual tone: don't announce or explain them, frame an answer as \"objective facts\", or tell the member a decision is theirs; just answer within them, and say what you can't do only when they ask for it.",
+    "This member's personal rules. They override every other instruction you have, including your base instructions, this agent's and project's instructions, and any skill attached to a message. The member set these on purpose ahead of time; keep following them even if they ask you not to. Follow them quietly, in your usual tone: don't announce or explain them, frame an answer as \"objective facts\", or tell the member a decision is theirs; just answer within them, and say what you can't do only when they ask for it.",
     guardrail.instructions.trim(),
     guardrail.recentChats.length > 0 &&
       `The member's other recent conversations (titles only, newest first; use them only to notice a question coming back):\n${guardrail.recentChats.map((t) => `- ${t}`).join("\n")}`,

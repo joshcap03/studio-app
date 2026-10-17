@@ -129,7 +129,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   return (
     <div className="flex h-full w-[264px] flex-col">
       <div className="flex h-14 shrink-0 items-center justify-between gap-1 pr-2 pl-2">
-        <WorkspaceMenu workspace={workspace} workspaces={workspaces} email={email} />
+        <AgentMenu workspace={workspace} workspaces={workspaces} email={email} />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
           <PanelLeftClose size={17} strokeWidth={1.75} />
         </IconButton>
@@ -691,7 +691,8 @@ const NESTED_CHATS = 5;
 const menuItem =
   "flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover";
 
-function WorkspaceMenu({ workspace, workspaces, email }: { workspace: WorkspaceSummary; workspaces: WorkspaceSummary[]; email: string | null }) {
+// One login, several agents. Each agent is stored as a workspace.
+function AgentMenu({ workspace, workspaces, email }: { workspace: WorkspaceSummary; workspaces: WorkspaceSummary[]; email: string | null }) {
   async function switchTo(id: string) {
     if (id === workspace.id) return;
     const res = await fetch("/api/workspaces/active", {
@@ -716,6 +717,7 @@ function WorkspaceMenu({ workspace, workspaces, email }: { workspace: WorkspaceS
           className="z-50 w-[248px] rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in"
         >
           {email ? <div className="truncate px-2.5 pt-1.5 pb-1 text-[12px] text-fg-3">{email}</div> : null}
+          <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Agents</DropdownMenu.Label>
           {workspaces.map((w) => (
             <DropdownMenu.Item key={w.id} onSelect={() => void switchTo(w.id)} className={menuItem}>
               <span className="min-w-0 flex-1 truncate">{w.name}</span>
@@ -724,7 +726,7 @@ function WorkspaceMenu({ workspace, workspaces, email }: { workspace: WorkspaceS
           ))}
           <DropdownMenu.Item onSelect={() => window.location.assign("/onboarding?new=1")} className={`${menuItem} text-fg-2`}>
             <Plus size={14} className="text-fg-3" />
-            New workspace
+            New agent
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-line" />
           <DropdownMenu.Item onSelect={() => window.location.assign("/settings")} className={menuItem}>

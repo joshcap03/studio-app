@@ -167,7 +167,7 @@ function fetchDocument(tenant: Tenant, scope: Scope, documentId: string): Promis
 async function documentToModify(tenant: Tenant, scope: Scope, documentId: string): Promise<DocumentRow | null> {
   const doc = await fetchDocument(tenant, scope, documentId);
   if (doc && scope === "workspace" && tenant.workspace.role !== "owner" && doc.metadata?.createdBy !== tenant.userId) {
-    throw Object.assign(new Error("Only the person who saved this or a workspace owner can change it."), { status: 403 });
+    throw Object.assign(new Error("Only the person who saved this or the owner can change it."), { status: 403 });
   }
   return doc;
 }

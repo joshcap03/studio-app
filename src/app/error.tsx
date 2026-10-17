@@ -4,7 +4,7 @@ export default function ErrorPage({ reset }: { error: Error & { digest?: string 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
       <h1 className="font-display text-[26px] tracking-[-0.01em]">Something went wrong</h1>
-      <p className="mt-2 max-w-sm text-[14px] text-fg-3">The workspace hit an unexpected error. Your conversations are safe.</p>
+      <p className="mt-2 max-w-sm text-[14px] text-fg-3">Studio hit an unexpected error. Your conversations are safe.</p>
       <button
         type="button"
         onClick={reset}

@@ -51,7 +51,7 @@ export async function authorizeTenant(request: NextRequest): Promise<Authorized<
   const auth = await authorizeSession(request);
   if (!auth.ok) return auth;
   const tenant = await resolveTenant(auth.value, request.cookies.get(ACTIVE_WORKSPACE_COOKIE)?.value);
-  if (!tenant) return { ok: false, response: jsonError(409, "Create a workspace first.", "no_workspace") };
+  if (!tenant) return { ok: false, response: jsonError(409, "Create an agent first.", "no_workspace") };
   return { ok: true, value: tenant };
 }
 

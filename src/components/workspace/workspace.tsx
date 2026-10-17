@@ -480,7 +480,7 @@ export function Workspace({
                   error:
                     error instanceof ApiError
                       ? error.message
-                      : "Couldn't reach the workspace server. Check your connection and try again.",
+                      : "Couldn't reach Studio. Check your connection and try again.",
                 },
         );
       } finally {
@@ -959,7 +959,7 @@ export function Workspace({
         Mock agent — responses are simulated. Connect the agent API to work with real data.
       </p>
     ) : agent.mode === "unavailable" ? (
-      <p className="text-[12px] text-fg-3">The agent isn&apos;t enabled for this workspace yet.</p>
+      <p className="text-[12px] text-fg-3">This agent isn&apos;t enabled yet.</p>
     ) : null;
 
   return (

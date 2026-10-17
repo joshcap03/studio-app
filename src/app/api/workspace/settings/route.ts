@@ -6,7 +6,7 @@ import { MAX_CONTEXT_LENGTH } from "@/lib/types";
 import { getSettings, updateSettings } from "@/lib/workspace";
 
 const patch = z.object({
-  name: z.string().trim().min(1, "Name your workspace.").max(80).optional(),
+  name: z.string().trim().min(1, "Name this agent.").max(80).optional(),
   profile: z.string().trim().max(MAX_CONTEXT_LENGTH).optional(),
   agentInstructions: z.string().trim().max(MAX_CONTEXT_LENGTH).optional(),
 });

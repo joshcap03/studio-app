@@ -27,7 +27,7 @@ function fail(status: number, message: string): never {
 }
 
 function requireOwner(tenant: Tenant) {
-  if (tenant.workspace.role !== "owner") fail(403, "Only the workspace owner can change skills.");
+  if (tenant.workspace.role !== "owner") fail(403, "Only the owner can change skills.");
 }
 
 const toSkill = (r: SkillRow): WorkspaceSkill => ({
@@ -72,13 +72,13 @@ async function insert(tenant: Tenant, draft: SkillDraft, catalogId: string | nul
     .select("id", { count: "exact", head: true })
     .eq("workspace_id", tenant.workspace.id);
   if (error) throw new Error(error.message);
-  if ((count ?? 0) >= MAX_SKILLS) fail(409, `A workspace can hold up to ${MAX_SKILLS} skills. Remove some first.`);
+  if ((count ?? 0) >= MAX_SKILLS) fail(409, `An agent can hold up to ${MAX_SKILLS} skills. Remove some first.`);
   const result = await tenant.db
     .from("workspace_skills")
     .insert({ workspace_id: tenant.workspace.id, catalog_id: catalogId, created_by: tenant.userId, ...draft })
     .select(COLUMNS)
     .single();
-  if (result.error?.code === "23505") fail(409, "That skill is already in this workspace.");
+  if (result.error?.code === "23505") fail(409, "That skill is already in this agent.");
   return toSkill(check(result) as SkillRow);
 }
 
