@@ -1,4 +1,4 @@
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import { check, fail, time } from "./db";
 import { nextRun, type TaskSchedule } from "./schedule";
 import { appendRunInput, MAX_TASKS, type AppendRunInput, type TaskDraft, type TaskPatch } from "./schema";
@@ -89,6 +89,21 @@ export async function listTasks(tenant: Tenant): Promise<AgentTask[]> {
 export async function getTask(tenant: Tenant, id: string): Promise<AgentTask | null> {
   const row = check(
     await tasks(tenant).select(COLUMNS).eq("id", id).eq("workspace_id", tenant.workspace.id).eq("user_id", tenant.userId).maybeSingle(),
+  ) as TaskRow | null;
+  return row ? toTask(row) : null;
+}
+
+/** The member's task this conversation belongs to, if any. */
+export async function getTaskForConversation(tenant: Tenant, conversationId: string): Promise<AgentTask | null> {
+  const row = check(
+    await tasks(tenant)
+      .select(COLUMNS)
+      .eq("conversation_id", conversationId)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ) as TaskRow | null;
   return row ? toTask(row) : null;
 }
@@ -197,4 +212,36 @@ export async function listRuns(tenant: Tenant, taskId: string, limit = 50): Prom
       .limit(limit),
   ) as RunRow[];
   return rows.map(toRun);
+}
+
+/** Records how a run ended (or where it is), and the reply it wrote. */
+export async function settleRun(
+  tenant: Tenant,
+  runId: string,
+  outcome: { status: TaskRun["status"]; reason?: string | null; messageId?: string | null },
+): Promise<void> {
+  check(
+    await runs(tenant)
+      .update({
+        status: outcome.status,
+        reason: outcome.reason ?? null,
+        ...(outcome.messageId !== undefined ? { message_id: outcome.messageId } : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", runId)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId),
+    "That reply doesn't exist.",
+  );
+}
+
+/** Stamps when a task last ran. */
+export async function markTaskRan(tenant: Tenant, taskId: string, at = new Date()): Promise<void> {
+  check(
+    await tasks(tenant)
+      .update({ last_run_at: at.toISOString(), updated_at: at.toISOString() })
+      .eq("id", taskId)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId),
+  );
 }

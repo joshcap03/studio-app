@@ -3,6 +3,7 @@ import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
 import { recall } from "@/lib/memory";
+import { taskContextFor } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
 import type { UsageSummary, WorkspaceSettings } from "@/lib/types";
 
@@ -137,10 +138,17 @@ export async function claimRun(tenant: Tenant, replyId?: string): Promise<string
  * being answered, left out of the recent chats a guardrail run sees.
  */
 export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string): Promise<AgentTenantContext> {
-  const [settings, memories, guardrail] = await Promise.all([
+  const [settings, memories, guardrail, tasks] = await Promise.all([
     getSettings(tenant),
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
     guardrailForRun(tenant, conversationId),
+    // A run goes ahead without its task context rather than failing over it.
+    previewEnabled(tenant, "tasks")
+      ? taskContextFor(tenant, conversationId).catch((e) => {
+          console.error("[context] couldn't load the task and tracker", e);
+          return {};
+        })
+      : Promise.resolve({}),
   ]);
   return {
     workspaceId: tenant.workspace.id,
@@ -152,5 +160,6 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     agentInstructions: settings.agentInstructions,
     memories,
     guardrail,
+    ...tasks,
   };
 }

@@ -209,3 +209,51 @@ describe("records API", () => {
     expect(kept.records.map((r) => r.title)).toEqual(["alice-secret-job"]);
   });
 });
+
+describe("running a task", () => {
+  it("runs the brief in the task's own conversation and saves the plan and tracker rows the agent reports", async () => {
+    // The mock agent's "roles" run reports a plan and two tracker rows.
+    const created = await alice.api.json("/api/tasks", "POST", { title: "Scout roles", instructions: "Find roles that fit." });
+    expect(created.status).toBe(201);
+    const taskId = ((await created.json()) as { task: { id: string } }).task.id;
+    try {
+      expect((await bob.api.json(`/api/tasks/${taskId}/run`, "POST")).status).toBe(404);
+      expect((await bob.api.json(`/api/tasks/${taskId}/run`, "POST", undefined, { lj_ws: alice.workspaceId })).status).toBe(404);
+
+      const started = await alice.api.json(`/api/tasks/${taskId}/run`, "POST");
+      expect(started.status, await started.clone().text()).toBe(202);
+      const { conversationId, runId } = (await started.json()) as { conversationId: string; runId: string };
+
+      let messages: { role: string; status: string; origin?: { kind: string; taskId: string } | null }[] = [];
+      for (let i = 0; i < 60 && messages.at(-1)?.status !== "complete"; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        messages = ((await (await alice.api.json(`/api/conversations/${conversationId}`, "GET")).json()) as { messages: typeof messages }).messages;
+      }
+      expect(messages.map((m) => [m.role, m.status])).toEqual([
+        ["user", "complete"],
+        ["assistant", "complete"],
+      ]);
+      expect(messages[0].origin).toMatchObject({ kind: "task", taskId });
+
+      const task = ((await (await alice.api.json(`/api/tasks/${taskId}`, "GET")).json()) as {
+        task: { conversationId: string; plan: { text: string; status: string }[]; lastRunAt: number | null };
+      }).task;
+      expect(task.conversationId).toBe(conversationId);
+      expect(task.plan.map((s) => s.status)).toEqual(["done", "doing", "todo"]);
+      expect(task.lastRunAt).not.toBeNull();
+
+      const runs = ((await (await alice.api.json(`/api/tasks/${taskId}/runs`, "GET")).json()) as { runs: { id: string; status: string }[] }).runs;
+      expect(runs.find((r) => r.id === runId)?.status).toBe("done");
+
+      const tracked = ((await (await alice.api.json("/api/records?collection=applications", "GET")).json()) as {
+        records: { key: string; taskId: string | null }[];
+      }).records.filter((r) => r.key.startsWith("https://jobs.example/"));
+      expect(tracked.map((r) => r.taskId)).toEqual([taskId, taskId]);
+      const bobs = (await (await bob.api.json("/api/records?collection=applications", "GET")).json()) as { records: { taskId: string | null }[] };
+      expect(bobs.records.some((r) => r.taskId === taskId)).toBe(false);
+    } finally {
+      await alice.db.from("agent_records").delete().eq("collection", "applications").like("key", "https://jobs.example/%");
+      await alice.api.json(`/api/tasks/${taskId}`, "DELETE");
+    }
+  }, 60_000);
+});

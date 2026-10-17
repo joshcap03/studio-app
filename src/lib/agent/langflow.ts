@@ -89,6 +89,8 @@ export function langflowSessionId(tenant: AgentTenantContext, conversationId: st
 const BACKGROUND_ONLY =
   "Use the above as background only. The current conversation decides the topic: if the owner asks about something other than this workspace's usual work, stay on what they asked about, including in follow-ups that don't repeat it. Don't narrow a search or answer by the location, niche, or other details above unless the owner asked for that; if one would clearly change the answer, mention it as an option instead.";
 
+const TRACKER_CHARS = 5000;
+
 export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPLATE_VARIABLES)[number], string> {
   const memories = tenant.memories.map((m) => `- ${m}`).join("\n");
   const project = tenant.project;
@@ -99,6 +101,8 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     `Workspace: ${tenant.workspaceName}`,
     tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
     project && projectContext(project),
+    tenant.task && taskContext(tenant.task),
+    tenant.tracker && trackerContext(tenant.tracker),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
     (tenant.profile.trim() || memories) && BACKGROUND_ONLY,
   ]
@@ -119,6 +123,36 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     personal_guardrail: guardrail,
     system_context: system,
   };
+}
+
+/** The task this conversation works on: what it's for, and the plan so far. */
+function taskContext(task: NonNullable<AgentTenantContext["task"]>): string {
+  const plan = task.plan.map((s) => `- [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ""}`).join("\n");
+  return [
+    `This conversation works on the member's task "${task.title}". Each run continues it.`,
+    task.instructions.trim() && `Task brief:\n${task.instructions.trim()}`,
+    plan ? `Plan so far:\n${plan}` : "There's no plan yet. If the task has several steps, write one with update_plan.",
+    "Keep the plan current with update_plan whenever a step starts, finishes, gets blocked, or needs the member.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
+ * The member's tracker, when they have one: the rows it already holds, so the agent updates
+ * them instead of re-adding. Its presence is what tells the agent save_record will be kept.
+ */
+function trackerContext(rows: NonNullable<AgentTenantContext["tracker"]>): string {
+  if (rows.length === 0) return "The member has a tracker, empty so far. Use save_record to keep things they'll want to follow over time.";
+  let budget = TRACKER_CHARS;
+  const lines: string[] = [];
+  for (const r of rows) {
+    const line = `- ${r.collection} | ${r.key} | ${r.title}${r.status ? ` | ${r.status}` : ""}`;
+    if (line.length > budget) break;
+    budget -= line.length + 1;
+    lines.push(line);
+  }
+  return `The member's tracker (collection | key | title | status; most recent first). save_record with the same collection and key updates a row instead of adding one:\n${lines.join("\n")}`;
 }
 
 /**
@@ -406,6 +440,22 @@ export function toolQuestions(message: LangflowMessage): AgentEvent[] {
     if (tool.output == null || tool.error) continue;
     const result = unwrapResult(tool.output);
     if (isRecord(result) && isRecord(result.ask_user)) events.push({ type: "questions", questions: result.ask_user.questions });
+  }
+  return events;
+}
+
+/**
+ * Plan updates and tracker rows the agent reported through update_plan and save_record
+ * (validated and saved by the turn, under the member's session).
+ */
+export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    if (!isRecord(result)) continue;
+    if (isRecord(result.plan_update)) events.push({ type: "plan-update", plan: result.plan_update.steps });
+    if (isRecord(result.record)) events.push({ type: "record", record: result.record });
   }
   return events;
 }
@@ -733,7 +783,13 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         const seenProposals = new Set<string>();
         const seenReports = new Set<string>();
         const newReports = (message: LangflowMessage) =>
-          [...toolTimelines(message), ...toolVisuals(message), ...toolCitations(message), ...toolQuestions(message)].filter((t) => {
+          [
+            ...toolTimelines(message),
+            ...toolVisuals(message),
+            ...toolCitations(message),
+            ...toolQuestions(message),
+            ...toolTaskUpdates(message),
+          ].filter((t) => {
             const key = JSON.stringify(t);
             if (seenReports.has(key)) return false;
             seenReports.add(key);

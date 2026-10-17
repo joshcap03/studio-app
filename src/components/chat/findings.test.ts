@@ -29,6 +29,7 @@ describe("findings", () => {
         }),
       )?.text,
     ).toBe("Read 2 sources: a.example, b.example");
+    expect(findingFor(step({ app: "tracker", label: "Updated the plan", preview: { type: "text", text: "Plan: 1 of 3 steps done" } }))?.text).toBe("Plan: 1 of 3 steps done");
     expect(findingFor(step({ app: "memory", label: "Checked what I know about you", preview: { type: "text", text: "Fiscal year starts in February" } }))?.text).toBe(
       "Remembered: Fiscal year starts in February",
     );

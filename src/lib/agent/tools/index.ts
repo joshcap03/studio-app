@@ -298,6 +298,10 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "ask_user":
       // The questions are shown under the reply as choices to click.
       return { labels: { running: "Writing a question for you", done: "Asked you a question" }, app: "agent", action: "note", hidden: true };
+    case "update_plan":
+      return planUpdate(input);
+    case "save_record":
+      return recordSave(input);
     case "remember":
     case "propose_memory":
       // What was remembered is shown on its own line under the reply, with an Undo.
@@ -613,6 +617,33 @@ function tablePreview(values: unknown[][], title?: string): StepPreview | undefi
   const columns = header.slice(0, width);
   const { items, total } = capList(body.map((r) => r.slice(0, width)), MAX_ROWS);
   return { type: "table", columns, rows: items, total, title: title ? clip(title, 80) : undefined };
+}
+
+/** The agent rewrote its task's plan: shown with how far along it is (the plan itself is on the task). */
+function planUpdate(input: Record<string, unknown>): Interpretation {
+  const steps = Array.isArray(input.steps) ? input.steps.filter(isRecord) : [];
+  const done = steps.filter((s) => s.status === "done").length;
+  const next = steps.find((s) => s.status === "doing" || s.status === "todo" || s.status === "needs_you");
+  const nextText = next && typeof next.text === "string" ? `; next: ${clip(next.text, 80)}` : "";
+  return {
+    labels: { running: "Updating the plan", done: "Updated the plan" },
+    app: "tracker",
+    action: "write",
+    preview: steps.length > 0 ? textPreview(`Plan: ${done} of ${steps.length} ${steps.length === 1 ? "step" : "steps"} done${nextText}`) : undefined,
+  };
+}
+
+/** The agent added or updated a row in the member's tracker. */
+function recordSave(input: Record<string, unknown>): Interpretation {
+  const title = firstString(input, ["title", "key"]);
+  const status = firstString(input, ["status"]);
+  const what = title ? `“${clip(title, 60)}”` : "an item";
+  return {
+    labels: { running: `Tracking ${what}`, done: `Tracked ${what}` },
+    app: "tracker",
+    action: "write",
+    preview: title ? textPreview(`Tracked ${what}${status ? ` (${clip(status, 30)})` : ""}`) : undefined,
+  };
 }
 
 function textPreview(text: string): StepPreview {

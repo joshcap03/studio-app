@@ -647,6 +647,48 @@ describe("edits, files, and memory suggestions", () => {
     expect(end?.type === "end" && end.message.memoryProposals?.map((p) => p.status)).toEqual(["saved", "pending"]);
   });
 
+  it("hands the agent's plan and tracker rows to the task savers, capped per run, and labels a task's message", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const plans: unknown[] = [];
+    const records: [unknown, { messageId: string }][] = [];
+    const adapter = scripted([
+      { type: "plan-update", plan: [{ text: "Find roles", status: "doing" }] },
+      ...Array.from({ length: 30 }, (_, i) => ({ type: "record" as const, record: { collection: "applications", key: `k${i}` } })),
+      { type: "message", text: "Found some." },
+    ]);
+    await collect(
+      startTurn(
+        {
+          store,
+          adapter,
+          context: context(scopeA),
+          idleTimeoutMs: 1000,
+          savePlan: async (plan) => (plans.push(plan), true),
+          saveRecord: async (record, source) => (records.push([record, source]), true),
+        },
+        { conversationId: id, kind: "send", text: "Find roles", origin: { kind: "task", taskId: "t1", title: "Job hunt", runId: null } },
+      ),
+    );
+    const [asked, reply] = await store.listMessages(id);
+    expect(plans).toEqual([[{ text: "Find roles", status: "doing" }]]);
+    expect(records).toHaveLength(25);
+    expect(records[0][1]).toEqual({ messageId: reply.id });
+    expect(asked.origin).toEqual({ kind: "task", taskId: "t1", title: "Job hunt", runId: null });
+  });
+
+  it("drops plan and tracker reports when nothing can save them", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const adapter = scripted([
+      { type: "plan-update", plan: [{ text: "x", status: "todo" }] },
+      { type: "record", record: { collection: "a", key: "b" } },
+      { type: "message", text: "Done." },
+    ]);
+    await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "x" }));
+    expect((await store.listMessages(id))[1].status).toBe("complete");
+  });
+
   it("keeps a why-timeline only for members who have it, linking only links this run saw", async () => {
     const script = () =>
       scripted([

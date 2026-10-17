@@ -45,6 +45,33 @@ class MemoryArgs(BaseModel):
     category: str = Field(default="other", description="What the fact is about: customers (people and contacts), suppliers (companies and organizations), products (work, offerings, and pricing), policies (rules and standing preferences), voice (tone and style), team, or other.")
 
 
+PLAN_STEP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string", "description": "The step, in a short plain sentence."},
+        "status": {"type": "string", "description": "todo, doing, done, blocked, or needs_you (waiting on the owner)."},
+        "note": {"type": "string", "description": "Optional: what happened or what's blocking it, in one line."},
+    },
+    "required": ["text", "status"],
+}
+
+
+class PlanArgs(BaseModel):
+    steps: list[dict] = Field(description=("The task's whole plan, in order, replacing the old one: each step an object "
+                                           "with text, status (todo, doing, done, blocked, needs_you), and an optional note."),
+                              json_schema_extra={"items": PLAN_STEP_SCHEMA})
+
+
+class RecordArgs(BaseModel):
+    collection: str = Field(description="Which list it belongs to, a short lowercase name, e.g. applications, contacts, companies.")
+    key: str = Field(description=("What makes it unique in that list, so saving it again updates it: e.g. the job "
+                                  "posting's link, a person's profile link or email, a company's domain."))
+    title: str = Field(default="", description="What the owner sees, e.g. 'Senior PM, Payments — Acme'.")
+    status: str = Field(default="", description="Where it stands, one or two words, e.g. discovered, applied, replied.")
+    url: str = Field(default="", description="Its http(s) link exactly as a tool returned it, if any.")
+    fields: dict = Field(default_factory=dict, description="Any other details as short key-value pairs, e.g. {'score': 4, 'location': 'Remote'}.")
+
+
 # Nested argument shapes are plain JSON schema rather than nested models: LangChain rebuilds
 # a tool's argument model where nested model names can't be resolved inside Langflow, and the
 # agent then sees the tool with no arguments at all.
@@ -544,6 +571,38 @@ class ToolGatewayComponent(Component):
         async def remember_async(content: str, scope: str = "workspace", category: str = "other") -> str:
             return remember(content, scope, category)
 
+        def update_plan(steps: list) -> str:
+            # Like remember, this changes nothing here: the app checks the plan and saves it to
+            # the task this conversation belongs to, where the owner can edit it.
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {"text": str(v)}
+            rows = [plain(s) for s in (steps or [])][:30]
+            rows = [{k: " ".join(str(r.get(k) or "").split())[:300] for k in ("text", "status", "note")} for r in rows]
+            rows = [r for r in rows if r["text"]]
+            if not rows:
+                return "No plan to save: give at least one step with text."
+            return json.dumps({"plan_update": {"steps": rows},
+                               "note": "Plan saved. The owner sees it with the task; no need to repeat it."})
+
+        async def update_plan_async(steps: list) -> str:
+            return update_plan(steps)
+
+        def save_record(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
+            # The app upserts this into the owner's own tracker (by collection and key). Nothing
+            # is stored here and no outside account changes, so it needs no approval.
+            collection = "-".join(str(collection or "").lower().split())[:40]
+            key = " ".join(str(key or "").split())[:200]
+            if not collection or not key:
+                return "Not saved: give a collection and a key."
+            extra = fields.model_dump() if hasattr(fields, "model_dump") else dict(fields or {})
+            record = {"collection": collection, "key": key, "title": " ".join(str(title or "").split())[:200],
+                      "status": " ".join(str(status or "").split())[:40], "url": str(url or "").strip()[:2000],
+                      "fields": {str(k)[:60]: v for k, v in list(extra.items())[:30]}}
+            return json.dumps({"record": record, "note": "Saved to the owner's tracker."})
+
+        async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
+            return save_record(collection, key, title, status, url, fields)
+
         def report_timeline(question: str, entries: list, causes: list | None = None) -> str:
             # Like remember, this changes nothing: the app reads the structured result, checks
             # each link against what this run's tools returned, and shows it as a timeline.
@@ -704,6 +763,24 @@ class ToolGatewayComponent(Component):
                              "organizations they deal with, standing preferences, or a correction to something you remembered. Call it on "
                              "your own whenever you learn one, without asking; the owner can undo it. Never one-off "
                              "results, links, or numbers that go stale, and nothing already in what you remember."),
+            ),
+            StructuredTool.from_function(
+                func=update_plan, coroutine=update_plan_async, name="update_plan",
+                args_schema=PlanArgs,
+                description=("Only in a conversation that works on a task (see THIS WORKSPACE): write or update the "
+                             "task's plan, the whole list of steps each time. Call it when you make a plan and whenever "
+                             "a step starts, finishes, gets blocked, or needs the owner. Saved for the owner; changes "
+                             "nothing in their accounts."),
+            ),
+            StructuredTool.from_function(
+                func=save_record, coroutine=save_record_async, name="save_record",
+                args_schema=RecordArgs,
+                description=("Add or update one row in the owner's tracker: a list kept across conversations, e.g. job "
+                             "applications, people contacted, companies researched. Saving the same collection and key "
+                             "again updates that row, so check the tracker in THIS WORKSPACE before adding. Only when THIS "
+                             "WORKSPACE has a tracker section; otherwise nothing would be kept. Use it for "
+                             "things the owner will want to follow over time, not one-off answers. Saved for the owner; "
+                             "changes nothing in their accounts."),
             ),
             StructuredTool.from_function(
                 func=report_timeline, coroutine=report_timeline_async, name="report_timeline",

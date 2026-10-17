@@ -21,6 +21,13 @@ export interface AgentTenantContext {
   agentInstructions: string;
   /** What memory recalls for this run: workspace and personal facts, most relevant first, size-capped. */
   memories: string[];
+  /** The member's task this conversation works on, if any: its brief and current plan. */
+  task?: { title: string; instructions: string; plan: { text: string; status: string; note: string | null }[] } | null;
+  /**
+   * The member's tracker rows (most recently changed first), so the agent doesn't re-add what
+   * it found. Absent when the member has no tracker, so the agent knows not to save to one.
+   */
+  tracker?: { collection: string; key: string; title: string; status: string | null }[];
   /** The member's project this conversation is in, if any. Its files arrive as attachments. */
   project?: { name: string; instructions: string; files: string[] } | null;
   /**
@@ -110,7 +117,11 @@ export type AgentEvent =
   /** A chart, key numbers, or table an investigation reported, unvalidated. */
   | { type: "visual"; visual: unknown }
   /** Multiple-choice questions for the member, unvalidated; the answer comes as their next message. */
-  | { type: "questions"; questions: unknown };
+  | { type: "questions"; questions: unknown }
+  /** The task's plan as the agent rewrote it, unvalidated; saved only in a task's conversation. */
+  | { type: "plan-update"; plan: unknown }
+  /** A tracker row the agent added or updated (upserted by collection and key), unvalidated. */
+  | { type: "record"; record: unknown };
 
 /** What a provider has been verified to support. The app adapts its behavior to these. */
 export interface AgentCapabilities {

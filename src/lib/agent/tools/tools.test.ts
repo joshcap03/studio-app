@@ -29,6 +29,28 @@ describe("interpretCalls", () => {
     expect(step).toMatchObject({ hidden: true, status: "done" });
   });
 
+  it("shows plan updates and tracked rows as plain steps the member can see", () => {
+    const [plan, record] = interpretCalls([
+      {
+        name: "update_plan",
+        input: { steps: [{ text: "Find roles", status: "done" }, { text: "Tailor the top 3", status: "doing" }, { text: "Send outreach", status: "todo" }] },
+        output: JSON.stringify({ plan_update: { steps: [] }, note: "Plan saved." }),
+        error: null,
+      },
+      {
+        name: "save_record",
+        input: { collection: "applications", key: "https://jobs.example/1", title: "Senior PM — Acme", status: "discovered" },
+        output: JSON.stringify({ record: {}, note: "Saved to the owner's tracker." }),
+        error: null,
+      },
+    ]);
+    expect(plan).toMatchObject({ label: "Updated the plan", app: "tracker", action: "write", status: "done" });
+    expect(plan.preview).toEqual({ type: "text", text: "Plan: 1 of 3 steps done; next: Tailor the top 3" });
+    expect(plan.hidden).toBeFalsy();
+    expect(record).toMatchObject({ label: "Tracked “Senior PM — Acme”", app: "tracker", action: "write" });
+    expect(record.preview).toEqual({ type: "text", text: "Tracked “Senior PM — Acme” (discovered)" });
+  });
+
   it("merges a gateway call with the tool it invoked into one step", () => {
     const steps = interpretCalls([
       gateway("search", { query: "fine jewelry trends" }, "Title: A\nURL: https://a.example/x"),
