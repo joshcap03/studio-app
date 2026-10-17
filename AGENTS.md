@@ -7,7 +7,10 @@ agent runs separately; this app never reimplements agent reasoning.
 
 Product language: one login holds several **agents** (a business agent, a job-search agent,
 a personal one). In code and the database each agent is a `workspace`; users never see
-that word. Don't add user-facing "workspace" copy.
+that word. Don't add user-facing "workspace" copy. The agents all work for the same person
+and share them: the person's **account** (`accounts`: their name, "about you", and Composio id,
+so every agent sees the same connected apps) and their personal memory. Each agent keeps its
+own name, template, profile, instructions, chats, tasks, skills, and shared memory.
 
 This repository is public. Never commit business data, secrets, real customer or member
 details, or anything specific to one business. A local `archive/` folder, if present, is
@@ -38,7 +41,7 @@ raw/technical text.
 ## Layout
 
 - `supabase/migrations/`: schema, RLS policies, RPCs. Append new migrations; never edit applied ones.
-- `src/lib/tenant.ts`: session → user → active workspace (membership-checked). The only source of identity.
+- `src/lib/tenant.ts`: session → user → account + active workspace (membership-checked). The only source of identity.
   `tenant-core.ts` holds the request-free part (`resolveTenant`), with no `next/*` imports.
 - `src/lib/db/store.ts`: conversation persistence, scoped to one workspace + user.
 - `src/lib/workspace.ts`: settings (the agent profile, "what this agent is for", is stored in
@@ -47,8 +50,12 @@ raw/technical text.
   one (`apply.ts`) copies instructions and library skills into the workspace without
   overwriting anything, and (with the "tasks" preview) gives the member the template's tasks,
   paused; suggested apps are shown, never connected automatically.
-- `src/lib/memory.ts`: long-term memory in Supermemory, namespaced per workspace and per member
-  from the session. The flow must not have its own memory connection.
+- `src/lib/memory.ts`: long-term memory in Supermemory, namespaced from the session: `ws_<workspace>`
+  for an agent's shared facts, `u_<user>` for the person's own (shared by all their agents). Old
+  per-workspace personal namespaces move into `u_<user>` on first use. The flow must not have its
+  own memory connection.
+- `src/lib/account.ts`: the person's profile (Settings → You, onboarding's first step), sent to
+  every agent as "You're assisting".
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
   composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
   sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to.
@@ -60,7 +67,8 @@ raw/technical text.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
   `run.ts` builds its deps from a tenant (`buildTurnDeps`), free of Next.js so a worker can run turns;
   `no-next.test.ts` keeps it that way.
-- `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id.
+- `src/lib/integrations/composio.ts`: connected apps, always keyed by the caller's Composio id
+  (`accounts.composio_user_id`, one per person; `workspace_members.composio_user_id` is legacy).
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).

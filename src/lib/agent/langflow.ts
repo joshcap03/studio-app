@@ -98,13 +98,15 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   const system = [
     guardrail,
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
+    tenant.account?.name.trim() && `You're assisting: ${tenant.account.name.trim()}`,
+    tenant.account?.about.trim() && `About them:\n${tenant.account.about.trim()}`,
     `This agent: ${tenant.workspaceName}`,
     tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
     project && projectContext(project),
     tenant.task && taskContext(tenant.task),
     tenant.tracker && trackerContext(tenant.tracker),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
-    (tenant.profile.trim() || memories) && BACKGROUND_ONLY,
+    (tenant.profile.trim() || tenant.account?.about.trim() || memories) && BACKGROUND_ONLY,
   ]
     .filter(Boolean)
     .join("\n\n");

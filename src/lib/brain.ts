@@ -125,10 +125,15 @@ export async function cleanUpPromoted(tenant: Tenant): Promise<string[]> {
   for (const row of rows ?? []) {
     const memoryId = `personal:${row.personal_doc_id}`;
     try {
-      // Already gone (removed by hand) counts as cleaned up.
-      await forget(tenant, memoryId).catch((error: { status?: number }) => {
-        if (error?.status !== 404) throw error;
-      });
+      // Already gone (removed by hand) counts as cleaned up. A copy requested before personal
+      // memory moved out of the workspace may still be in the old namespace.
+      for (const id of [memoryId, `legacy:${row.personal_doc_id}`]) {
+        const gone = await forget(tenant, id).catch((error: { status?: number }) => {
+          if (error?.status !== 404) throw error;
+          return false;
+        });
+        if (gone) break;
+      }
       check(await tenant.db.from("memory_promotions").update({ cleaned: true }).eq("id", row.id));
       removed.push(memoryId);
     } catch (error) {

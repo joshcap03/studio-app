@@ -2,10 +2,10 @@ import { Composio } from "@composio/core";
 import { getConfig } from "@/lib/config";
 import type { ConnectionsState, ToolkitConnection } from "@/lib/types";
 
-// Connected apps through Composio. Each workspace member has their own opaque Composio user
-// id (workspace_members.composio_user_id), and every call here is keyed by the *caller's*
-// id, taken from their authenticated session. Connections are therefore private to one
-// member of one workspace; nothing here can list or touch another member's accounts.
+// Connected apps through Composio. Each person has their own opaque Composio user id
+// (accounts.composio_user_id), and every call here is keyed by the *caller's* id, taken from
+// their authenticated session. Connections are therefore private to one person and shared by
+// all of their agents; nothing here can list or touch anyone else's accounts.
 //
 // The agent uses the same Composio project, and receives the caller's Composio user id on
 // every run, so its tools act only through the caller's own connections.

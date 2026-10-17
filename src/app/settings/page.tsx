@@ -48,6 +48,7 @@ export default async function SettingsPage() {
           canEdit={tenant.workspace.role === "owner"}
           email={tenant.email}
           guardrail={guardrail}
+          account={tenant.account}
         />
       </div>
     </main>

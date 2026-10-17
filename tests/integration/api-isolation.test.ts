@@ -317,3 +317,33 @@ describe("API limits", () => {
     expect(statuses[10]).toBe(429);
   }, 90_000);
 });
+
+describe("one person, several agents", () => {
+  it("share the person's profile, and nobody else sees it", async () => {
+    const carol = await signUp("carol");
+    const first = await carol.json("/api/workspaces", "POST", { name: "Carol Business" });
+    const firstId = ((await first.json()) as { workspaceId: string }).workspaceId;
+    expect((await carol.json("/api/account", "PATCH", { name: "Carol Q", about: "Bakes on weekends." })).status).toBe(200);
+    await carol.json("/api/workspaces", "POST", { name: "Carol Job Search" });
+    expect(await (await carol.json("/api/account", "GET")).json()).toEqual({ account: { name: "Carol Q", about: "Bakes on weekends." } });
+    expect(((await (await bob.json("/api/account", "GET")).json()) as { account: { name: string } }).account.name).not.toBe("Carol Q");
+
+    // Cross-origin writes are refused like everywhere else.
+    const forged = await carol.request("/api/account", { method: "PATCH", body: JSON.stringify({ name: "x" }), headers: { Origin: "https://evil.example" } });
+    expect(forged.status).toBe(403);
+    expect((await carol.json("/api/account", "PATCH", { name: "x".repeat(81) })).status).toBe(400);
+
+    // Personal memory saved in one agent shows up in the other; shared memory stays put.
+    const personal = await carol.json("/api/workspace/memories", "POST", { content: "carol-personal-fact", scope: "personal" });
+    if (personal.status === 503) return;
+    const shared = await carol.json("/api/workspace/memories", "POST", { content: "carol-job-search-fact" });
+    expect([personal.status, shared.status]).toEqual([201, 201]);
+    expect((await carol.json("/api/workspaces/active", "POST", { workspaceId: firstId })).status).toBe(200);
+    const list = (await (await carol.json("/api/workspace/memories", "GET")).json()) as { memories: { content: string }[] };
+    const contents = list.memories.map((m) => m.content);
+    expect(contents).toContain("carol-personal-fact");
+    expect(contents).not.toContain("carol-job-search-fact");
+    const bobs = (await (await bob.json("/api/workspace/memories", "GET")).json()) as { memories: { content: string }[] };
+    expect(bobs.memories.map((m) => m.content)).not.toContain("carol-personal-fact");
+  }, 60_000);
+});
