@@ -274,7 +274,7 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "forget_memory":
       return { labels: { running: "Updating memory", done: "Updated memory" }, app: "memory", action: "remember" };
     case "start":
-      return { labels: { running: "Opening a browser", done: "Opened a browser" }, app: "browser", action: "browse" };
+      return browserStart(result);
     case "navigate":
       return navigate(input);
     case "extract":
@@ -486,6 +486,23 @@ function navigate(input: Record<string, unknown>): Interpretation {
     app: "browser",
     action: "browse",
     preview: url ? { type: "link", url, title: where } : undefined,
+  };
+}
+
+/**
+ * Starting a browser session returns only its connection details (a session id and a signed
+ * remote-debugging URL), never page content, so it is plumbing: shown while it runs, hidden
+ * once it works, and shown with a reason if the session didn't start.
+ */
+function browserStart(result: unknown): Interpretation {
+  const value = unwrapResult(result);
+  const failed = isRecord(value) && (value.success === false || (isRecord(value.data) && value.data.available === false));
+  return {
+    labels: { running: "Opening a browser", done: "Opened a browser", failed: "Couldn't open a browser" },
+    app: "browser",
+    action: "browse",
+    hidden: true,
+    innerError: failed ? (isRecord(value) && errorMessage(value.error)) || "The browser wasn't available." : undefined,
   };
 }
 
