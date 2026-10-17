@@ -112,7 +112,7 @@ const quiet = "inline-flex h-6 items-center rounded-md px-1.5 text-[12.5px] font
  * saved asks the member instead.
  */
 export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
-  const where = proposal.scope === "personal" ? "for you" : "for the workspace";
+  const where = proposal.scope === "personal" ? " for you" : "";
   if (proposal.status !== "pending") {
     const saved = proposal.status === "saved";
     return (
@@ -123,7 +123,7 @@ export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
           <BookmarkPlus size={14} className="mt-[3px] shrink-0 text-fg-4" />
         )}
         <p className="min-w-0 flex-1 leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">
-          <span className="font-medium text-fg-2">{saved ? `Remembered ${where}` : "Not remembered"}</span>
+          <span className="font-medium text-fg-2">{saved ? `Remembered${where}` : "Not remembered"}</span>
           <span className="mx-1.5 text-fg-4">·</span>
           <span className={saved ? undefined : "line-through"}>{proposal.content}</span>
         </p>
@@ -142,7 +142,7 @@ export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
     >
       <BookmarkPlus size={17} className="mt-0.5 shrink-0 text-fg-3" />
       <div className="min-w-0 flex-1">
-        <p className="text-[12px] font-medium text-fg-3">Remember this {where}?</p>
+        <p className="text-[12px] font-medium text-fg-3">Remember this{where}?</p>
         <p className="mt-0.5 text-[14px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{proposal.content}</p>
       </div>
       {onDecide ? (

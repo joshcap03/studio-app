@@ -18,7 +18,7 @@ export function attachmentError(message: string, status = 400): Error {
 export function uploadError(error: { message: string }): Error {
   // Storage's own policy refuses uploads past the member's quota (the app checks everything else first).
   if (/row-level security/i.test(error.message)) {
-    return attachmentError("You've reached the file storage limit for this workspace. Remove some files first.", 413);
+    return attachmentError("You've reached the file storage limit for this agent. Remove some files first.", 413);
   }
   return new Error(`Storage error: ${error.message}`);
 }

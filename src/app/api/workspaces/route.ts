@@ -8,7 +8,7 @@ import { timezoneSchema } from "@/lib/tasks/schema";
 import { MAX_CONTEXT_LENGTH } from "@/lib/types";
 
 const create = z.object({
-  name: z.string().trim().min(1, "Name your workspace.").max(80),
+  name: z.string().trim().min(1, "Name this agent.").max(80),
   profile: z.string().trim().max(MAX_CONTEXT_LENGTH).default(""),
   templateId: z
     .string()
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       p_business_context: input.profile,
     });
     if (error) {
-      if (error.hint === "workspace_limit") return jsonError(409, "You've reached the limit of 3 workspaces.");
+      if (error.hint === "workspace_limit") return jsonError(409, "You've reached the limit of 3 agents.");
       throw error;
     }
     if (input.templateId) {

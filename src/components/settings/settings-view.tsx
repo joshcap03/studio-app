@@ -32,7 +32,7 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
       {guardrail ? (
         <Section
           title="Personal guardrail"
-          description="On. The agent follows these rules for you in every workspace, ahead of any other instructions. They can't be changed here."
+          description="On. The agent follows these rules for you everywhere, ahead of any other instructions. They can't be changed here."
         >
           <p className="rounded-xl border border-line bg-subtle/50 px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap text-fg-2">{guardrail}</p>
         </Section>
@@ -41,7 +41,7 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
       {initialPromotions ? (
         <Section
           title="Brain"
-          description="Everything the agent knows about you and this workspace, by topic. It saves facts as you talk; edit, pin, or remove them here. Share a personal fact and the owner can make it part of the workspace."
+          description="Everything this agent knows about you and its work, by topic. It saves facts as you talk; edit, pin, or remove them here."
         >
           {initialMemories === null ? (
             <p className="text-[13.5px] text-fg-3">Memory isn't available right now.</p>
@@ -57,7 +57,7 @@ export function SettingsView({ initialSettings, initialMemories, initialPromotio
       </Section>
       <NotificationsSection />
       <ChatHistorySection />
-      <Section title="Usage" description="Messages to the agent in this workspace today.">
+      <Section title="Usage" description="Messages to this agent today.">
         <div className="rounded-xl border border-line bg-surface px-4 py-4">
           <div className="flex items-baseline justify-between text-[14px]">
             <span className="text-fg-2">Today</span>
@@ -175,10 +175,10 @@ function ChatHistorySection() {
       <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
         <p className="text-[13.5px] text-fg-2">
           {state === "cleared"
-            ? "Your chats in this workspace are cleared."
+            ? "Your chats with this agent are cleared."
             : state === "idle"
-              ? "Delete every chat you've had in this workspace, including chats in projects. Projects, their files, and memory stay."
-              : "Delete all your chats in this workspace? This can't be undone."}
+              ? "Delete every chat you've had with this agent, including chats in projects. Projects, their files, and memory stay."
+              : "Delete all your chats with this agent? This can't be undone."}
         </p>
         {state === "idle" ? (
           <button type="button" onClick={() => setState("confirm")} className={`${button} border border-line text-danger hover:bg-hover`}>
@@ -250,7 +250,7 @@ function AgentSection({ initial, canEdit }: { initial: WorkspaceSettings; canEdi
   return (
     <Section
       title="Agent"
-      description={canEdit ? "The agent reads this before every conversation." : "Only the workspace owner can change these."}
+      description={canEdit ? "The agent reads this before every conversation." : "Only the owner can change these."}
     >
       {canEdit ? (
         <TemplatePicker
@@ -265,7 +265,7 @@ function AgentSection({ initial, canEdit }: { initial: WorkspaceSettings; canEdi
       <form onSubmit={save} className="mt-5 space-y-5">
         <div>
           <label htmlFor="name" className="text-[13px] font-medium text-fg-2">
-            Name
+            Agent name
           </label>
           <input
             id="name"
@@ -287,7 +287,7 @@ function AgentSection({ initial, canEdit }: { initial: WorkspaceSettings; canEdi
             maxLength={8000}
             value={draft.profile}
             onChange={(e) => setDraft({ ...draft, profile: e.target.value })}
-            placeholder={template?.profilePrompt ?? "Who you are, what you want this agent to help with, and anything it should always keep in mind."}
+            placeholder={template?.profilePrompt ?? "What you want this agent to help with, a few lines about you, and anything it should always keep in mind."}
             className={`mt-1.5 resize-y py-3 leading-relaxed ${input}`}
           />
         </div>
@@ -441,7 +441,7 @@ function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner
   return (
     <Section
       title="Memory"
-      description="What the agent knows about you and this workspace. It saves things as you talk, and you can add or remove them here. Workspace memories are shared with members; “Only me” memories are private."
+      description="What this agent knows about you and its work. It saves things as you talk, and you can add or remove them here."
     >
       {initial === null ? (
         <p className="text-[13.5px] text-fg-3">Memory isn't available right now.</p>
@@ -471,7 +471,7 @@ function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner
                 onClick={() => setScope(s)}
                 className={`h-7 rounded-md px-2.5 transition-colors ${scope === s ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-3 hover:text-fg"}`}
               >
-                {s === "workspace" ? "Workspace" : "Only me"}
+                {s === "workspace" ? "Shared" : "Only me"}
               </button>
             ))}
           </div>

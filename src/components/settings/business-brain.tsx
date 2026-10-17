@@ -138,7 +138,7 @@ export function BusinessBrain({ initialMemories, initialPromotions, isOwner }: P
               <li key={p.id} className="flex items-start gap-3 rounded-lg border border-line bg-surface px-3 py-2.5">
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] leading-relaxed text-fg">{p.content}</p>
-                  <p className="mt-0.5 text-[12px] text-fg-3">{MEMORY_CATEGORY_LABELS[p.category]} · asked to share with the workspace</p>
+                  <p className="mt-0.5 text-[12px] text-fg-3">{MEMORY_CATEGORY_LABELS[p.category]} · asked to share</p>
                 </div>
                 <button
                   type="button"
@@ -273,7 +273,7 @@ function FactRow({ memory: m, canChange, sharing, onChange, onRemove, onShare }:
             ))}
           </select>
         ) : null}
-        <span>{m.scope === "personal" ? "Only me" : "Workspace"}</span>
+        <span>{m.scope === "personal" ? "Only me" : "Shared"}</span>
         {m.source ? (
           <a href={`/c/${m.source.conversationId}`} className="inline-flex items-center gap-1 hover:text-fg">
             <MessageSquare size={12} />
@@ -285,7 +285,7 @@ function FactRow({ memory: m, canChange, sharing, onChange, onRemove, onShare }:
         {sharing ? <span className="rounded-full border border-line px-2 py-0.5">Waiting for owner</span> : null}
         <span className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/fact:opacity-100 focus-within:opacity-100 max-md:opacity-100">
           {m.scope === "personal" && !sharing ? (
-            <button type="button" onClick={onShare} aria-label="Share with workspace" title="Share with workspace" className={iconButton}>
+            <button type="button" onClick={onShare} aria-label="Share" title="Share" className={iconButton}>
               <Users size={14} />
             </button>
           ) : null}
@@ -361,7 +361,7 @@ function AddFact({ onAdded, onError }: { onAdded: (m: Memory) => void; onError: 
                 onClick={() => setScope(s)}
                 className={`h-7 rounded-md px-2.5 transition-colors ${scope === s ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-3 hover:text-fg"}`}
               >
-                {s === "workspace" ? "Workspace" : "Only me"}
+                {s === "workspace" ? "Shared" : "Only me"}
               </button>
             ))}
           </div>

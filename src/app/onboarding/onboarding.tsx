@@ -36,7 +36,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     setPending(false);
     if (!res.ok) {
-      setError(body?.error ?? "Couldn't create the workspace. Try again.");
+      setError(body?.error ?? "Couldn't create the agent. Try again.");
       return;
     }
     setCreated(name.trim());
@@ -67,8 +67,11 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
 
       {step === "workspace" ? (
         <form onSubmit={createWorkspace} className="mt-8 animate-fade-up" noValidate>
-          <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">Set up your agent</h1>
-          <p className="mt-1.5 text-[14px] text-fg-3">Pick a starting point. You can change everything later in Settings.</p>
+          <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">{canCancel ? "New agent" : "Set up your agent"}</h1>
+          <p className="mt-1.5 text-[14px] text-fg-3">
+            Each agent has its own focus, instructions, and chats: one for your business, one for a job search, one for the rest of your
+            life. Pick a starting point; you can change everything later in Settings.
+          </p>
 
           <fieldset className="mt-7">
             <legend className="text-[13px] font-medium text-fg-2">Start from</legend>
@@ -98,7 +101,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
           </fieldset>
 
           <label htmlFor="ws-name" className="mt-6 block text-[13px] font-medium text-fg-2">
-            Workspace name
+            Agent name
           </label>
           <input
             id="ws-name"
@@ -106,7 +109,7 @@ export function Onboarding({ initialStep, workspaceName, canCancel }: { initialS
             maxLength={80}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={template.id === "job-search" ? "My job search" : template.id === "small-business" ? "Acme Studio" : "My agent"}
+            placeholder={template.id === "job-search" ? "Job search" : template.id === "small-business" ? "My business" : "Personal"}
             className="mt-1.5 h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-[15px] outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
           />
 

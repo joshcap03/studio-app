@@ -55,7 +55,7 @@ async function guardrailForRun(tenant: Tenant, conversationId?: string): Promise
 }
 
 export async function updateSettings(tenant: Tenant, patch: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
-  if (tenant.workspace.role !== "owner") throw Object.assign(new Error("Only the workspace owner can change settings."), { status: 403 });
+  if (tenant.workspace.role !== "owner") throw Object.assign(new Error("Only the owner can change settings."), { status: 403 });
   if (patch.name !== undefined) {
     check(await tenant.db.from("workspaces").update({ name: patch.name }).eq("id", tenant.workspace.id));
     tenant.workspace = { ...tenant.workspace, name: patch.name };
@@ -131,8 +131,8 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
       return task ? "Too many tasks started at once. Try again in a minute." : "You're sending messages too quickly. Try again in a minute.";
     case "workspace_day":
       return task
-        ? "This workspace has reached today's limit for task runs. It resets at midnight UTC."
-        : "This workspace has reached today's message limit. It resets at midnight UTC.";
+        ? "This agent has reached today's limit for task runs. It resets at midnight UTC."
+        : "This agent has reached today's message limit. It resets at midnight UTC.";
     default:
       return "Studio is at capacity for today. Try again tomorrow.";
   }

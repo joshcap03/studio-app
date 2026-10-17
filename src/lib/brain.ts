@@ -78,7 +78,7 @@ export async function requestPromotion(tenant: Tenant, memoryId: string): Promis
 
 /** An owner approves (the fact becomes shared, credited to the requester) or rejects. */
 export async function decidePromotion(tenant: Tenant, id: string, decision: "approve" | "reject"): Promise<MemoryPromotion> {
-  if (tenant.workspace.role !== "owner") fail(403, "Only the workspace owner can decide on shared memories.");
+  if (tenant.workspace.role !== "owner") fail(403, "Only the owner can decide on shared memories.");
   const row = check(
     await tenant.db
       .from("memory_promotions")

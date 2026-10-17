@@ -266,7 +266,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   const withSkill = async (message: ChatMessage, text: string) => {
     if (!message.skill) return text;
     const skill = await deps.loadSkill?.(message.skill.id);
-    if (!skill) throw new TurnError(409, `The skill "${message.skill.name}" was removed from this workspace.`);
+    if (!skill) throw new TurnError(409, `The skill "${message.skill.name}" was removed from this agent.`);
     return renderSkillMessage(skill, text);
   };
 

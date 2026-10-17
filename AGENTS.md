@@ -5,6 +5,10 @@ shared AI agent (Langflow today) that they shape for any job (running a business
 search, a project) with their own profile, instructions, skills, memory, and connected apps. The
 agent runs separately; this app never reimplements agent reasoning.
 
+Product language: one login holds several **agents** (a business agent, a job-search agent,
+a personal one). In code and the database each agent is a `workspace`; users never see
+that word. Don't add user-facing "workspace" copy.
+
 This repository is public. Never commit business data, secrets, real customer or member
 details, or anything specific to one business. A local `archive/` folder, if present, is
 gitignored and stays out of the repo.
