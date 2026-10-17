@@ -113,9 +113,14 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   failed: "Failed",
 };
 
-// Reasons the run route records as codes; anything else it stores is already a sentence.
+// Reasons runs record as codes (src/lib/tasks/run-task.ts); anything else stored is already a sentence.
 const RUN_REASON_TEXT: Record<string, string> = {
   waiting_on_you: "Waiting for your approval in the conversation.",
+  busy: "Skipped: the agent was still working in this task's conversation.",
+  paused: "Skipped: the task was paused.",
+  done: "Skipped: the task was marked done.",
+  archived: "Skipped: the task was archived.",
+  agent_unavailable: "Skipped: the agent isn't available for this workspace.",
   error: "The agent hit an error.",
   stopped: "Stopped before it finished.",
   interrupted: "Interrupted before it finished.",

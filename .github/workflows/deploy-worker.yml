@@ -1,0 +1,43 @@
+# Deploys the background worker (trigger/) to Trigger.dev after each successful Vercel
+# production deployment, so the worker runs the same code (and schema) as the app.
+# Needs the repo secret TRIGGER_ACCESS_TOKEN and the repo variable TRIGGER_PROJECT_REF
+# (docs/deploy-checklist.md, "Background worker"). Without them it skips.
+
+name: Deploy worker
+
+on:
+  deployment_status:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
+    runs-on: ubuntu-latest
+    env:
+      TRIGGER_ACCESS_TOKEN: ${{ secrets.TRIGGER_ACCESS_TOKEN }}
+      TRIGGER_PROJECT_REF: ${{ vars.TRIGGER_PROJECT_REF }}
+    steps:
+      - name: Skip until Trigger.dev is set up
+        if: env.TRIGGER_ACCESS_TOKEN == '' || env.TRIGGER_PROJECT_REF == ''
+        run: echo "::notice::TRIGGER_ACCESS_TOKEN or TRIGGER_PROJECT_REF isn't set; skipping the worker deploy."
+      - uses: actions/checkout@v4
+        if: env.TRIGGER_ACCESS_TOKEN != '' && env.TRIGGER_PROJECT_REF != ''
+        with:
+          # The commit Vercel just deployed (the branch head for a manual run).
+          ref: ${{ github.event.deployment.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        if: env.TRIGGER_ACCESS_TOKEN != '' && env.TRIGGER_PROJECT_REF != ''
+        with:
+          node-version: 22
+          cache: npm
+      - if: env.TRIGGER_ACCESS_TOKEN != '' && env.TRIGGER_PROJECT_REF != ''
+        run: npm ci
+      - name: Deploy to Trigger.dev
+        if: env.TRIGGER_ACCESS_TOKEN != '' && env.TRIGGER_PROJECT_REF != ''
+        run: npx trigger.dev deploy --env prod --skip-update-check

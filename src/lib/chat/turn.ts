@@ -112,6 +112,11 @@ export interface TurnDeps {
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
   heartbeatMs?: number;
   /**
+   * Asked on each heartbeat while the run streams; resolving true stops it, as `stopRun` does.
+   * For a stop requested from another process (e.g. a task running in the background worker).
+   */
+  shouldStop?: () => Promise<boolean>;
+  /**
    * Called once the reply's final state is saved. `watched` is whether the browser was still
    * listening when the run ended (so the member already saw the result). Errors are logged.
    */
@@ -417,8 +422,16 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, citations, questions }))
           .catch((e) => console.error("[turn] checkpoint failed", e));
       };
+      let asking = false;
       const heartbeat = setInterval(() => {
         if (Date.now() - lastCheckpoint >= (deps.heartbeatMs ?? 15_000)) checkpoint();
+        if (!deps.shouldStop || asking) return;
+        asking = true;
+        deps
+          .shouldStop()
+          .then((stop) => stop && controller.abort())
+          .catch((e) => console.error("[turn] couldn't check for a stop", e))
+          .finally(() => (asking = false));
       }, Math.min(deps.heartbeatMs ?? 15_000, STALE_STREAM_MS / 4));
 
       send({ type: "start", conversation: summary, userMessage, assistantMessage: assistant });

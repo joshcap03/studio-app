@@ -1,6 +1,6 @@
 # Deploy checklist (Vercel + Supabase Cloud)
 
-Do these in order. `APP_URL` is the production URL (e.g. `https://studio.example.com`, or the
+Do these in order (step 7, the background worker, can come later). `APP_URL` is the production URL (e.g. `https://studio.example.com`, or the
 `*.vercel.app` URL until a domain is attached). Background is in docs/development.md, "Deploying".
 
 ## 0. Before you start
@@ -68,7 +68,10 @@ Do these in order. `APP_URL` is the production URL (e.g. `https://studio.example
   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional; push notifications when a task finishes or needs approval while the member is away. Make the pair once with `npx web-push generate-vapid-keys` (changing it later drops every device's subscription); subject is `mailto:you@yourdomain` |
   | `AGENT_LIVE_WORKSPACES` | `*` |
   | `LIMIT_RUNS_SERVICE_PER_DAY` | daily cap across all workspaces, e.g. `500` |
-  | `LIMIT_RUNS_PER_MINUTE`, `LIMIT_RUNS_PER_WORKSPACE_PER_DAY`, `LIMIT_CONCURRENT_RUNS` | optional; defaults are in `.env.example` |
+  | `LIMIT_RUNS_PER_MINUTE`, `LIMIT_RUNS_PER_WORKSPACE_PER_DAY`, `LIMIT_CONCURRENT_RUNS`, `LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY` | optional; defaults are in `.env.example` |
+
+  Never add `SUPABASE_SECRET_KEY` here: only the background worker (step 7) has it, and
+  `check:deploy-env` fails if the app does.
 
   The build doesn't need any of these; they're read at request time. A change takes effect
   on the next deploy.
@@ -116,7 +119,52 @@ gitignored; still delete the pulled file when done.
       use A's app prompts B to connect their own.
 - [ ] Supabase → Logs: no auth or Postgres errors. Vercel → Logs: no 500s.
 
-## 7. Rollback
+## 7. Background worker (Trigger.dev)
+
+The worker (`trigger/`) runs members' scheduled tasks. Every two minutes `dispatch-due-tasks`
+claims due tasks and starts a `run-task` for each, which signs in as the task's member and
+runs the turn exactly as "Run now" does. Until this step is done nothing runs on a schedule;
+the rest of the app (including "Run now") works without it.
+
+- [ ] Create a project at cloud.trigger.dev (e.g. "studio-worker"). Copy its ref (`proj_…`,
+      Project settings).
+- [ ] Supabase → Project Settings → API Keys → **Secret keys** → create one named
+      `trigger-worker` (so it can be rotated on its own). It goes **only** into Trigger.dev.
+- [ ] Build the worker's env from the app's production env:
+
+  ```sh
+  npx vercel env pull .env.worker.local --environment=production
+  # edit .env.worker.local: delete SUPABASE_ACCESS_TOKEN, add SUPABASE_SECRET_KEY=<the trigger-worker key>
+  node --env-file=.env.worker.local scripts/check-deploy-env.mjs --worker
+  ```
+
+  The worker needs: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+  `SUPABASE_SECRET_KEY`, `AGENT_PROVIDER`, `LANGFLOW_BASE_URL`, `LANGFLOW_API_KEY`,
+  `LANGFLOW_FLOW_ID`, `LANGFLOW_TWEAKS` (and `LANGFLOW_STREAM` / `LANGFLOW_END_USER_HEADER`
+  if the app sets them), `AGENT_LIVE_WORKSPACES`, `COMPOSIO_API_KEY` (and `COMPOSIO_TOOLKITS`
+  if set), `SUPERMEMORY_API_KEY`, `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`
+  (so a paused or finished run notifies the member), `PREVIEW_FEATURE_EMAILS` (tasks are a
+  preview), and the `LIMIT_*` values. Sensitive Vercel variables come down empty; fill those in
+  by hand.
+- [ ] Trigger.dev → the project → Environment Variables → **Production** → add them (paste
+      the file's lines). Then `rm .env.worker.local`.
+- [ ] Trigger.dev → Account → Personal Access Tokens → create one. GitHub → repo → Settings
+      → Secrets and variables → Actions: secret `TRIGGER_ACCESS_TOKEN` = that token;
+      variable `TRIGGER_PROJECT_REF` = the `proj_…` ref.
+- [ ] Deploy: GitHub → Actions → **Deploy worker** → Run workflow (later deploys run on
+      their own after each successful Vercel production deployment). Or locally:
+      `npx trigger.dev login`, then `TRIGGER_PROJECT_REF=proj_… npx trigger.dev deploy --env prod`.
+- [ ] Trigger.dev → Schedules shows `dispatch-due-tasks` every 2 minutes. Create a task with a
+      schedule a few minutes out; a `run-task` run appears, and its conversation gets the reply.
+- [ ] Supabase → Authentication → Rate Limits: each run is one sign-in (`/verify`), and every
+      run shares Trigger.dev's egress IPs. The default (30 per 5 minutes) allows ~6 runs a
+      minute; raise "Token verifications" as volume grows. Rate-limited runs are retried later.
+- [ ] Leave Supabase's "new sign-in" security emails off: each run is a sign-in.
+
+Kill switch: Trigger.dev → Schedules → disable `dispatch-due-tasks` (runs already started
+finish). Rotating the `trigger-worker` secret key stops the worker entirely.
+
+## 8. Rollback
 
 - App: Vercel → Deployments → pick the last good one → **Instant Rollback** (or
   `npx vercel rollback <deployment-url>`). Env var changes need a redeploy to take or undo.
