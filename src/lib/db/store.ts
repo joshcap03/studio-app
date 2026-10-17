@@ -1,4 +1,4 @@
-import type { Db } from "@/lib/supabase/server";
+import type { Db } from "@/lib/supabase/db";
 import type {
   ActivityStep,
   Approval,

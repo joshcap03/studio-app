@@ -1,5 +1,5 @@
 import type { StoredAttachment } from "@/lib/db/store";
-import type { Tenant } from "@/lib/tenant";
+import type { Tenant } from "@/lib/tenant-core";
 import { ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES, type Attachment } from "@/lib/types";
 
 // Files members attach to messages. Bytes live in the private "attachments" Storage bucket

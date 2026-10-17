@@ -1,20 +1,12 @@
 import { NextResponse, after, type NextRequest } from "next/server";
 import { z } from "zod";
-import { agentEnabledFor, getAgentAdapter } from "@/lib/agent";
+import { agentEnabledFor } from "@/lib/agent";
 import { errorResponse, parseBody } from "@/lib/api";
-import { readAttachment } from "@/lib/attachments";
-import { storeFor } from "@/lib/chat/store-for";
+import { buildTurnDeps } from "@/lib/chat/run";
 import { TurnError, startTurn } from "@/lib/chat/turn";
-import { getConfig } from "@/lib/config";
-import { getSkill } from "@/lib/skills";
 import { BUILTIN_SKILL_IDS } from "@/lib/skills/builtin";
-import { previewEnabled } from "@/lib/flags";
-import { notificationFor, notify, pushEnabled } from "@/lib/push";
-import { projectForRun } from "@/lib/projects";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
-import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH, type ChatMessage, type ConversationSummary } from "@/lib/types";
-import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
-import { buildAgentContext, claimRun } from "@/lib/workspace";
+import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
 
 // Starts a turn and streams it back as NDJSON (one StreamEvent per line). Creating the
 // conversation on first send lets the browser create conversations optimistically. The
@@ -63,78 +55,19 @@ export async function POST(request: NextRequest, { params }: Context) {
   }
 
   try {
-    // Context (settings and memory recall) loads alongside the skill and project lookups rather
-    // than after them; it only reads, so a refused run just discards it.
-    // Memory is searched with the member's recent messages, not just this one, so a follow-up
-    // recalls what the conversation is about rather than only the business's standing facts.
-    const store = storeFor(tenant);
-    const context = store
-      .listMessages(conversationId.data)
-      .then((messages) => {
-        const end = input.kind === "edit" ? messages.findIndex((m) => m.id === input.messageId) : -1;
-        const asks = (end < 0 ? messages : messages.slice(0, end)).filter((m) => m.role === "user").map((m) => m.content);
-        return "text" in input ? [...asks, input.text] : asks;
-      })
-      .catch(() => ("text" in input ? [input.text] : []))
-      .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId.data));
-    context.catch(() => undefined);
-    const adapter = getAgentAdapter();
-    const loadSkill = (id: string) => getSkill(tenant, id);
-    // A conversation's project is the one it was started in (or moved to) by its member.
-    const loadProject = async () => {
-      const conversation = await store.getConversation(conversationId.data);
-      const projectId = conversation ? conversation.projectId : input.kind === "send" ? input.projectId : undefined;
-      return projectId ? projectForRun(tenant, projectId, adapter.capabilities.attachments) : undefined;
-    };
-    const [skill, project] = await Promise.all([
-      input.kind === "send" && input.skillId ? loadSkill(input.skillId) : Promise.resolve(undefined),
-      loadProject(),
-    ]);
-    if (skill === null) return jsonError(404, "Skill not found.");
-    if (project === null) return jsonError(404, "Project not found.");
-
     // The function stays alive until the run is over, even after the browser disconnects
     // (a phone locked mid-run); a member who wasn't watching gets a notification.
     let settle!: () => void;
     const settled = new Promise<void>((resolve) => (settle = resolve));
-    const onFinished = async (message: ChatMessage, conversation: ConversationSummary, { watched }: { watched: boolean }) => {
-      try {
-        const notification = watched || !pushEnabled() ? null : notificationFor(message, conversation);
-        if (notification) await notify(tenant, notification);
-      } finally {
-        settle();
-      }
-    };
+    const { deps, request: turn } = await buildTurnDeps(tenant, {
+      conversationId: conversationId.data,
+      input,
+      onFinished: () => settle(),
+    });
 
     // A conversation id that exists for another tenant fails here: the insert collides with
     // a row this tenant cannot see, and the database refuses it.
-    const stream = await startTurn(
-      {
-        store,
-        adapter,
-        context: { ...(await context), project: project?.context ?? null },
-        projectFiles: project?.files,
-        remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
-        idleTimeoutMs: getConfig().agent.idleTimeoutMs,
-        // Checks the limits and records the run in one step, so a burst can't slip under them.
-        claim: (replyId) => claimRun(tenant, replyId),
-        timelines: previewEnabled(tenant, "why"),
-        loadAttachment: (attachment) => readAttachment(tenant, attachment),
-        loadSkill,
-        onFinished,
-      },
-      input.kind === "send"
-        ? {
-            conversationId: conversationId.data,
-            kind: "send",
-            text: input.text,
-            skill: skill ?? undefined,
-            attachmentIds: input.attachmentIds,
-            steer: input.steer,
-            projectId: input.projectId,
-          }
-        : { conversationId: conversationId.data, ...input },
-    );
+    const stream = await startTurn(deps, turn);
     after(() => settled);
     return new Response(stream, {
       headers: {

@@ -1,13 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { getConfig } from "@/lib/config";
+import type { Db } from "./db";
 
 // Supabase clients always act as the signed-in user (anon key + the user's session cookie),
 // so Row Level Security applies to every query the app makes. There is deliberately no
 // service-role client anywhere in the request path.
 
-export type Db = SupabaseClient;
+export type { Db };
 
 export async function createSupabaseServerClient(): Promise<Db> {
   const { supabase } = getConfig();
