@@ -39,12 +39,10 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             form={block}
             response={responses?.[block.id]}
             onAnswer={onAnswer}
-            onSent={() =>
-              api
-                .answerUi(conversationId, block.id, { action: "submit" })
-                .then(({ response }) => onResponse?.(messageId, block.id, response))
-                .catch(() => undefined)
-            }
+            onSubmit={async (keepFiles) => {
+              const { response } = await api.answerUi(conversationId, block.id, { action: "submit", ...(keepFiles.length ? { keepFiles } : {}) });
+              onResponse?.(messageId, block.id, response);
+            }}
           />
         ) : (
           <ProposalCard
@@ -89,16 +87,18 @@ interface FormProps {
   form: UiForm;
   response?: UiResponse;
   onAnswer?: UiCardsProps["onAnswer"];
-  onSent: () => void;
+  /** Marks the form answered, first moving the uploads in `keepFiles` onto the agent's shelf. */
+  onSubmit: (keepFiles: string[]) => Promise<void>;
 }
 
 /** A form the agent asked the member to fill in. Its answers go out as their next message. */
-export function FormCard({ form, response, onAnswer, onSent }: FormProps) {
+export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
   const [values, setValues] = useState<FormValues>(() => initialValues(form));
   const [files, setFiles] = useState<Record<string, Attachment[]>>({});
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   if (!onAnswer || sent || response) {
     const answered = sent || response?.status === "submitted";
@@ -114,10 +114,9 @@ export function FormCard({ form, response, onAnswer, onSent }: FormProps) {
   }
 
   const set = (id: string, value: FormValues[string]) => setValues((v) => ({ ...v, [id]: value }));
-  const attachments = Object.values(files).flat();
 
-  function submit() {
-    if (!onAnswer || sent || uploading > 0) return;
+  async function submit() {
+    if (!onAnswer || sent || busy || uploading > 0) return;
     const withFiles: FormValues = { ...values };
     for (const [id, list] of Object.entries(files)) if (list.length) withFiles[id] = list.map((a) => a.name);
     const missing = missingAnswer(form, withFiles);
@@ -125,9 +124,21 @@ export function FormCard({ form, response, onAnswer, onSent }: FormProps) {
       setError(`Fill in “${missing}” first.`);
       return;
     }
+    // Files from "keep" fields move onto the agent's shelf, which sends them with every run
+    // (this one included); the rest ride along on the answer like any attachment.
+    const kept = new Set(form.fields.filter((f) => f.kind === "file" && f.keep).map((f) => f.id));
+    const keepFiles = Object.entries(files).flatMap(([id, list]) => (kept.has(id) ? list.map((a) => a.id) : []));
+    const attachments = Object.entries(files).flatMap(([id, list]) => (kept.has(id) ? [] : list));
+    setBusy(true);
+    try {
+      await onSubmit(keepFiles);
+    } catch (e) {
+      setBusy(false);
+      setError(e instanceof ApiError ? e.message : "Couldn't send this. Try again.");
+      return;
+    }
     setSent(true);
     onAnswer(formAnswerText(form, withFiles), { attachments });
-    onSent();
   }
 
   return (
@@ -155,8 +166,8 @@ export function FormCard({ form, response, onAnswer, onSent }: FormProps) {
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
         <span className={`mr-auto pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? "Or type your own answer below."}</span>
-        <button type="button" onClick={submit} disabled={uploading > 0} className={primary}>
-          {uploading > 0 ? <span className="spinner size-3.5" aria-hidden="true" /> : <ArrowUp size={14} />}
+        <button type="button" onClick={() => void submit()} disabled={uploading > 0 || busy} className={primary}>
+          {uploading > 0 || busy ? <span className="spinner size-3.5" aria-hidden="true" /> : <ArrowUp size={14} />}
           {form.submitLabel}
         </button>
       </div>
@@ -261,6 +272,12 @@ function FileField({
   async function add(list: FileList | null) {
     if (!list) return;
     for (const file of Array.from(list).slice(0, field.max - latest.current.length)) {
+      // A drop skips the picker's filter.
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (!field.accept.includes(ext)) {
+        onError(`${file.name} isn't a ${field.accept.map((e) => e.toUpperCase()).join(" or ")} file.`);
+        continue;
+      }
       onUploading(1);
       try {
         const attachment = await uploadAttachment(file);

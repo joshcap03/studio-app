@@ -40,7 +40,7 @@ describe("buildUiBlock", () => {
         { kind: "multi_choice", id: "what_should_i_do", label: "What should I do?", required: true, options: [{ label: "Find roles" }, { label: "Prep" }], prefill: ["Prep"] },
         { kind: "text", id: "roles", label: "Roles", required: false, prefill: "PM" },
         { kind: "text", id: "roles_2", label: "Roles again", required: false },
-        { kind: "file", id: "resume", label: "Résumé", required: false, accept: ["pdf"], max: 5 },
+        { kind: "file", id: "resume", label: "Résumé", required: false, accept: ["pdf"], max: 5, keep: false },
         {
           kind: "list",
           id: "stories",
@@ -107,7 +107,8 @@ describe("form answers", () => {
         fields: [
           { kind: "multi_choice", id: "jobs", label: "Jobs", options: ["Find", "Prep"], required: true },
           { kind: "long_text", id: "notes", label: "Notes" },
-          { kind: "file", id: "resume", label: "Résumé" },
+          { kind: "file", id: "resume", label: "Résumé", keep: true },
+          { kind: "file", id: "extra", label: "Other files" },
           { kind: "list", id: "stories", label: "Stories", item_label: "Story", parts: [{ id: "s", label: "Situation" }, { id: "r", label: "Result" }] },
         ],
       },
@@ -126,9 +127,10 @@ describe("form answers", () => {
       jobs: ["Find", "Prep"],
       notes: "  Line one\nLine two ",
       resume: ["cv.pdf"],
+      extra: ["notes.txt"],
       stories: [{ s: "Stalled", r: "Up 18%" }, { s: " ", r: "" }],
     });
-    expect(text).toBe("Jobs: Find, Prep\nNotes:\nLine one\nLine two\nRésumé: attached cv.pdf\nStories:\nStory 1\n- Situation: Stalled\n- Result: Up 18%");
+    expect(text).toBe("Jobs: Find, Prep\nNotes:\nLine one\nLine two\nRésumé: added cv.pdf to this agent's files\nOther files: attached notes.txt\nStories:\nStory 1\n- Situation: Stalled\n- Result: Up 18%");
     expect(formAnswerText(form, {})).toBe("Setup: nothing to add.");
   });
 });

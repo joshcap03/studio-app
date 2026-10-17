@@ -470,8 +470,8 @@ export type UiField = FieldBase &
   (
     | { kind: "choice" | "multi_choice"; options: UiOption[]; prefill?: string[] }
     | { kind: "text" | "long_text"; placeholder?: string; prefill?: string }
-    /** Files the member drops in; `accept` holds extensions from ATTACHMENT_TYPES. */
-    | { kind: "file"; accept: string[]; max: number }
+    /** Files the member drops in; `accept` holds extensions from ATTACHMENT_TYPES; `keep` puts them on the agent's shelf. */
+    | { kind: "file"; accept: string[]; max: number; keep: boolean }
     /** Repeatable entries with the same parts, e.g. stories; `prefill` holds the agent's drafts. */
     | { kind: "list"; parts: UiListPart[]; itemLabel: string; max: number; prefill?: Record<string, string>[] }
     /** Apps to connect, shown as Connect buttons. */

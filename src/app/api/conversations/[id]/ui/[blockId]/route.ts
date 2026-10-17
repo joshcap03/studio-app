@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { claimAsAgentFile } from "@/lib/agent-files";
 import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { proposalPicksSchema } from "@/lib/chat/ui";
@@ -9,14 +10,15 @@ import { addFromCatalog, createSkill, listSkills } from "@/lib/skills";
 import { createTask, listTasks, updateTask } from "@/lib/tasks";
 import { timezoneSchema } from "@/lib/tasks/schema";
 import { authorizeTenant, jsonError, type Tenant } from "@/lib/tenant";
-import { MAX_CONTEXT_LENGTH, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
+import { MAX_CONTEXT_LENGTH, MAX_FORM_FILES, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
 import { updateSettings } from "@/lib/workspace";
 
 type Context = { params: Promise<{ id: string; blockId: string }> };
 
 const body = z.discriminatedUnion("action", [
-  // The member sent a form's answers (as their next message); this marks the form answered.
-  z.strictObject({ action: z.literal("submit") }),
+  // The member is sending a form's answers (as their next message): this marks the form
+  // answered and first moves the uploads from its "keep" file fields onto the agent's shelf.
+  z.strictObject({ action: z.literal("submit"), keepFiles: z.array(z.uuid()).max(MAX_FORM_FILES).optional() }),
   // The member applied some or all of a proposed setup, with their own edits to its texts.
   z.strictObject({
     action: z.literal("apply"),
@@ -50,7 +52,13 @@ export async function POST(request: NextRequest, { params }: Context) {
     let response: UiResponse;
     if (input.action === "submit") {
       if (block.kind !== "form") return jsonError(400, "Only a form can be sent.");
+      const keep = [...new Set(input.keepFiles ?? [])];
+      if (keep.length && !block.fields.some((f) => f.kind === "file" && f.keep)) return jsonError(400, "This form doesn't keep files.");
       if (previous) return jsonError(409, "You already sent this.");
+      // Only the caller's own unsent uploads can move (claim_agent_file checks).
+      for (const id of keep) {
+        if (!(await claimAsAgentFile(auth.value, id))) return jsonError(404, "That file wasn't found. Upload it again.");
+      }
       response = { status: "submitted", at: Date.now() };
     } else {
       if (block.kind !== "proposal") return jsonError(400, "Only a proposal can be applied.");

@@ -35,7 +35,7 @@ export function formAnswerText(form: UiForm, values: FormValues): string {
         for (const p of f.parts) if (entry[p.id]?.trim()) out.push(`- ${p.label}: ${entry[p.id].trim()}`);
       });
     } else if (f.kind === "file") {
-      out.push(`${f.label}: attached ${(v as string[]).join(", ")}`);
+      out.push(`${f.label}: ${f.keep ? "added" : "attached"} ${(v as string[]).join(", ")}${f.keep ? " to this agent's files" : ""}`);
     } else if (f.kind === "long_text") {
       out.push(`${f.label}:\n${String(v).trim()}`);
     } else {

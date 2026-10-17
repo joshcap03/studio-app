@@ -208,6 +208,8 @@ FORM_FIELD_SCHEMA = {
                                     "long_text, a list of option labels for choices, or for list a list of objects "
                                     "keyed by part id (your drafts).")},
         "accept": {"type": "array", "items": {"type": "string"}, "description": "For file: allowed extensions, e.g. ['pdf', 'docx']."},
+        "keep": {"type": "boolean", "description": ("For file: true to keep the files in this agent's files, so they come with "
+                                                    "every future conversation (e.g. a resume). False for a one-off file.")},
         "max": {"type": "integer", "description": "For file and list: the most files or entries (1-8)."},
         "parts": {"type": "array", "description": "For list: 1-5 parts of each entry, each an object with id, label, and long (true for a paragraph).",
                   "items": {"type": "object", "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "long": {"type": "boolean"}},

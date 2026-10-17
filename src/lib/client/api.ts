@@ -71,7 +71,7 @@ export const api = {
     conversationId: string,
     blockId: string,
     body:
-      | { action: "submit" }
+      | { action: "submit"; keepFiles?: string[] }
       | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string },
   ) =>
     request<{ response: UiResponse }>(`/api/conversations/${conversationId}/ui/${blockId}`, {

@@ -120,7 +120,7 @@ function field(raw: unknown): Draft<UiField> | null {
       const accept = list(raw.accept)
         .map((e) => line(e, 10).toLowerCase().replace(/^\./, ""))
         .filter((e) => e in ATTACHMENT_TYPES);
-      return { ...base, kind, accept: accept.length ? [...new Set(accept)] : ["pdf", "docx", "txt", "md"], max: count(raw.max, 1, MAX_FORM_FILES) };
+      return { ...base, kind, accept: accept.length ? [...new Set(accept)] : ["pdf", "docx", "txt", "md"], max: count(raw.max, 1, MAX_FORM_FILES), keep: raw.keep === true };
     }
     case "list": {
       const parts = ids<UiListPart>(

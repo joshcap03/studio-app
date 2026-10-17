@@ -13,6 +13,19 @@ const PASSWORD = "pw-local-tasks-api-only";
 class Client {
   private cookies = new Map<string, string>();
 
+  /** Uploads a small text file to attach, returning its id. */
+  async upload(name: string, text: string): Promise<string> {
+    const body = new FormData();
+    body.set("file", new File([text], name, { type: "text/plain" }));
+    const res = await fetch(`${APP}/api/attachments`, {
+      method: "POST",
+      body,
+      headers: { Origin: APP, Cookie: [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; ") },
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    return ((await res.json()) as { attachment: { id: string } }).attachment.id;
+  }
+
   async json(path: string, method: string, body?: unknown): Promise<Response> {
     const res = await fetch(APP + path, {
       method,
@@ -64,6 +77,14 @@ let bob: Member;
 let originalInstructions = "";
 
 const form = { kind: "form", id: formId, title: "Your search", fields: [{ kind: "text", id: "roles", label: "Roles", required: true }], submitLabel: "Send" };
+const keepFormId = crypto.randomUUID();
+const keepForm = {
+  kind: "form",
+  id: keepFormId,
+  title: "Your résumé",
+  fields: [{ kind: "file", id: "resume", label: "Résumé", required: true, accept: ["txt"], max: 1, keep: true }],
+  submitLabel: "Send",
+};
 const proposal = {
   kind: "proposal",
   id: proposalId,
@@ -91,7 +112,7 @@ beforeAll(async () => {
     role: "assistant",
     content: "",
     status: "complete",
-    ui: [form, proposal],
+    ui: [form, proposal, keepForm],
   });
   expect(inserted.error).toBeNull();
 }, 60_000);
@@ -138,6 +159,20 @@ describe("ui card answers", () => {
     expect((await alice.api.json(url(proposalId), "POST", { action: "apply", picks })).status).toBe(409);
     const stored = await alice.db.from("messages").select("ui_response").eq("conversation_id", conversation).single();
     expect(stored.data?.ui_response).toMatchObject({ [formId]: { status: "submitted" }, [proposalId]: { status: "applied" } });
+  });
+
+  it("move a keep field's uploads onto the agent's files, and only the member's own", async () => {
+    const mine = await alice.api.upload(`resume-${tag}.txt`, "Alice's résumé (test).");
+    const theirs = await bob.api.upload(`resume-${tag}.txt`, "Bob's (test).");
+    // A form without a keep field keeps nothing (this one was already sent, but the check comes first).
+    expect((await alice.api.json(url(formId), "POST", { action: "submit", keepFiles: [mine] })).status).toBe(400);
+    expect((await alice.api.json(url(keepFormId), "POST", { action: "submit", keepFiles: [theirs] })).status).toBe(404);
+    const sent = await alice.api.json(url(keepFormId), "POST", { action: "submit", keepFiles: [mine] });
+    expect(sent.status, await sent.clone().text()).toBe(200);
+    const files = ((await (await alice.api.json("/api/agent/files", "GET")).json()) as { files: { id: string }[] }).files;
+    expect(files.map((f) => f.id)).toContain(mine);
+    await alice.api.json(`/api/agent/files/${mine}`, "DELETE");
+    await bob.db.from("attachments").delete().eq("id", theirs);
   });
 
   it("reject picks that aren't indexes", async () => {

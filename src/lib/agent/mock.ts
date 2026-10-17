@@ -208,7 +208,7 @@ const SCENARIOS: Scenario[] = [
               { kind: "text", id: "roles", label: "Target roles", placeholder: "e.g. Product manager, growth", prefill: "Product manager" },
               { kind: "choice", id: "where", label: "Where", options: ["Remote", "Hybrid", "On-site"] },
               { kind: "long_text", id: "dealbreakers", label: "Deal-breakers", help: "Anything you'd never take." },
-              { kind: "file", id: "resume", label: "Your résumé", accept: ["pdf", "docx"], max: 1 },
+              { kind: "file", id: "resume", label: "Your résumé", accept: ["pdf", "docx"], max: 1, keep: true },
               {
                 kind: "list",
                 id: "stories",
