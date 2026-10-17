@@ -147,7 +147,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel }: P
           <p className="mt-1.5 text-[14px] text-fg-3">
             Each agent has its own focus, instructions, and chats: one for your business, one for a job search, one for the rest of your
             life. They all know you, and share your connected apps and what they remember about you. Pick a starting point; you can
-            change everything later in Settings.
+            change everything later in agent setup.
           </p>
 
           <fieldset className="mt-7">
@@ -202,7 +202,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel }: P
             placeholder={template.profilePrompt}
             className="mt-1.5 w-full resize-none rounded-xl border border-line bg-surface px-3.5 py-3 text-[14.5px] leading-relaxed outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
           />
-          <p className="mt-1.5 text-[12.5px] text-fg-3">The agent reads this before every conversation. You can edit it anytime in Settings.</p>
+          <p className="mt-1.5 text-[12.5px] text-fg-3">The agent reads this before every conversation. You can edit it anytime in agent setup.</p>
 
           <p role="alert" className="mt-4 min-h-5 text-[13px] text-danger">
             {error}

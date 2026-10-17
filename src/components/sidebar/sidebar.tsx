@@ -17,6 +17,7 @@ import {
   Plus,
   Search,
   Settings,
+  SlidersHorizontal,
   SquarePen,
   Trash2,
   Sparkles,
@@ -293,6 +294,9 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         </span>
         <IconButton label="Skills" side="top" onClick={() => window.location.assign("/skills")}>
           <LibraryBig size={15} strokeWidth={1.75} />
+        </IconButton>
+        <IconButton label="Agent setup" side="top" onClick={() => window.location.assign("/agent")}>
+          <SlidersHorizontal size={15} strokeWidth={1.75} />
         </IconButton>
         <IconButton label="Settings" side="top" onClick={() => window.location.assign("/settings")}>
           <Settings size={15} strokeWidth={1.75} />
@@ -729,6 +733,10 @@ function AgentMenu({ workspace, workspaces, email }: { workspace: WorkspaceSumma
             New agent
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-line" />
+          <DropdownMenu.Item onSelect={() => window.location.assign("/agent")} className={menuItem}>
+            <SlidersHorizontal size={14} className="text-fg-3" />
+            <span className="min-w-0 truncate">Set up {workspace.name}</span>
+          </DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => window.location.assign("/settings")} className={menuItem}>
             <Settings size={14} className="text-fg-3" />
             Settings

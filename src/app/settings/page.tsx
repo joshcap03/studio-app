@@ -2,31 +2,14 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { SettingsView } from "@/components/settings/settings-view";
 import { requirePageTenant } from "@/lib/tenant";
-import { brainMemories, listPromotions } from "@/lib/brain";
-import { previewEnabled } from "@/lib/flags";
-import { listMemories, memoryEnabled } from "@/lib/memory";
-import { getGuardrail, getSettings, getUsage } from "@/lib/workspace";
+import { getGuardrail } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const tenant = await requirePageTenant();
-  const brain = previewEnabled(tenant, "brain");
-  const memories = memoryEnabled()
-    ? (brain ? brainMemories(tenant) : listMemories(tenant)).catch((error) => {
-        console.error("[settings] memory unavailable", error);
-        return null;
-      })
-    : Promise.resolve(null);
-  const promotions = brain && memoryEnabled() ? listPromotions(tenant).catch(() => []) : Promise.resolve(null);
-  const [settings, initialMemories, usage, initialPromotions, guardrail] = await Promise.all([
-    getSettings(tenant),
-    memories,
-    getUsage(tenant),
-    promotions,
-    getGuardrail(tenant),
-  ]);
+  const guardrail = await getGuardrail(tenant);
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
@@ -38,18 +21,15 @@ export default async function SettingsPage() {
           <ArrowLeft size={15} />
           Back to chat
         </a>
-        <h1 className="mt-6 font-display text-[30px] leading-tight tracking-[-0.015em]">{settings.name}</h1>
-        <p className="mt-1 text-[14px] text-fg-3">Agent settings</p>
-        <SettingsView
-          initialSettings={settings}
-          initialMemories={initialMemories}
-          initialPromotions={initialPromotions}
-          usage={usage}
-          canEdit={tenant.workspace.role === "owner"}
-          email={tenant.email}
-          guardrail={guardrail}
-          account={tenant.account}
-        />
+        <h1 className="mt-6 font-display text-[30px] leading-tight tracking-[-0.015em]">Settings</h1>
+        <p className="mt-1 text-[14px] text-fg-3">
+          Yours, shared by all your agents. To change what {tenant.workspace.name} does, open{" "}
+          <a href="/agent" className="text-fg-2 underline decoration-line-strong underline-offset-2 hover:text-fg">
+            agent setup
+          </a>
+          .
+        </p>
+        <SettingsView email={tenant.email} guardrail={guardrail} account={tenant.account} />
       </div>
     </main>
   );
