@@ -16,7 +16,7 @@ import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
-import { SETUP_KICKOFF, SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
+import { SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
 import type {
   AgentStatus,
   Attachment,
@@ -797,7 +797,8 @@ export function Workspace({
       }
       // Only offered on the new-chat screen, so this starts a new conversation.
       if (activeId) return;
-      send(SETUP_KICKOFF, { skill: { id: SETUP_SKILL_ID, name: SETUP_SKILL_NAME } });
+      // Just the skill, no words: the agent speaks first ("Hey!") and opens step 1.
+      send("", { skill: { id: SETUP_SKILL_ID, name: SETUP_SKILL_NAME } });
       setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0 } : s));
     },
     [activeId, navigate, send, setup],

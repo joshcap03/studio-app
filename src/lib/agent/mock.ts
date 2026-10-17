@@ -193,7 +193,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     // A setup form with every kind of field; the answers arrive as the member's next message.
-    match: /\b(set (me|you) up|show me a form)\b/i,
+    match: /\b(set (me|you) up|set up this agent|show me a form)\b/i,
     steps: [
       { kind: "text", text: "Let's get you set up (mock)." },
       {

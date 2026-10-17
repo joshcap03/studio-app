@@ -72,7 +72,7 @@ beforeAll(async () => {
 
 describe("agent setup", () => {
   it("starts when the owner sends with the setup skill, in that conversation", async () => {
-    const res = await alice.api.json(`/api/conversations/${conversation}/messages`, "POST", { kind: "send", text: "Let's set you up.", skillId: "builtin:setup" });
+    const res = await alice.api.json(`/api/conversations/${conversation}/messages`, "POST", { kind: "send", text: "", skillId: "builtin:setup" });
     expect(res.status, await res.clone().text()).toBe(200);
     await res.text(); // Let the run finish.
     expect(await setupOf(alice)).toMatchObject({ status: "in_progress", conversationId: conversation, plan: [] });
