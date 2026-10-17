@@ -114,6 +114,11 @@ raw/technical text.
 - Anything the agent does that changes a member's accounts must pause for their approval
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
   the member's behalf. Provider resume state stays server-side.
+- Agent-rendered UI is built as reusable gateway tools any skill can call (`ask_user`,
+  `show_form`, `propose_agent`; cards in `src/components/chat/ui-cards.tsx` and
+  `requests.tsx`), never as UI for one flow or template. They change nothing: a form's
+  answers go out as the member's next message, and a proposed setup applies only when the
+  member clicks Apply, and the card shows only what took effect.
 - Render only what the backend reports: no invented activity, statuses, or artifacts, and no
   artifact parsing from free text. Mock output stays clearly labeled.
 - Secrets stay server-side in `src/lib/config.ts`; only `NEXT_PUBLIC_SUPABASE_*` reach the browser.

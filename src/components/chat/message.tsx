@@ -4,7 +4,7 @@ import { AlertCircle, CalendarClock, Check, Copy, Pencil, RotateCcw, Sparkles } 
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
-import { MAX_MESSAGE_LENGTH, type ChatMessage, type MessageFeedback } from "@/lib/types";
+import { MAX_MESSAGE_LENGTH, type Attachment, type ChatMessage, type MessageFeedback, type UiResponse } from "@/lib/types";
 import { ActivityLog } from "./activity";
 import { ArtifactCard } from "./artifact-card";
 import { AttachmentList } from "./attachments";
@@ -12,6 +12,7 @@ import { FeedbackButtons, FeedbackReasons } from "./feedback";
 import { SourceList } from "./citation";
 import { Markdown } from "./markdown";
 import { ApprovalCard, MemoryProposalCard, QuestionCard } from "./requests";
+import { UiCards } from "./ui-cards";
 
 interface UserProps {
   message: ChatMessage;
@@ -130,13 +131,15 @@ interface AssistantProps {
   /** Present while the latest reply waits on an approval and can be answered. */
   onDecide?: (approvalId: string, decision: "approve" | "reject") => void;
   onProposal?: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
-  /** Present while the latest reply's questions can be answered; sends the answer as a message. */
-  onAnswer?: (text: string) => void;
+  /** Present while the latest reply's questions or form can be answered; sends the answer as a message. */
+  onAnswer?: (text: string, extras?: { attachments: Attachment[] }) => void;
+  /** Records what the member did with one of the reply's cards (a form sent, a proposal applied). */
+  onUiResponse?: (messageId: string, blockId: string, response: UiResponse) => void;
   /** Rates this reply (null clears the rating). */
   onFeedback?: (messageId: string, feedback: MessageFeedback | null) => void;
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal, onAnswer, onFeedback }: AssistantProps) {
+export const AssistantMessage = memo(function AssistantMessage({ message, isLast, onRetry, onOpenPanel, onDecide, onProposal, onAnswer, onUiResponse, onFeedback }: AssistantProps) {
   const streaming = message.status === "streaming";
   const feedback = message.feedback ?? null;
   const [asking, setAsking] = useState<MessageFeedback["rating"] | null>(null);
@@ -189,6 +192,18 @@ export const AssistantMessage = memo(function AssistantMessage({ message, isLast
 
       {message.questions?.length ? (
         <QuestionCard questions={message.questions} onAnswer={onAnswer && message.status === "complete" ? onAnswer : undefined} />
+      ) : null}
+
+      {message.ui?.length ? (
+        <UiCards
+          blocks={message.ui}
+          responses={message.uiResponse}
+          conversationId={message.conversationId}
+          messageId={message.id}
+          onAnswer={onAnswer && message.status === "complete" ? onAnswer : undefined}
+          onResponse={onUiResponse}
+          settled={message.status === "complete"}
+        />
       ) : null}
 
       {message.artifacts.length > 0 ? (

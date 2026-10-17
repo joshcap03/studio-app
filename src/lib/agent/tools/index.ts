@@ -303,6 +303,12 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "ask_user":
       // The questions are shown under the reply as choices to click.
       return { labels: { running: "Writing a question for you", done: "Asked you a question" }, app: "agent", action: "note", hidden: true };
+    case "show_form":
+      // The form is shown under the reply for the member to fill in.
+      return { labels: { running: "Putting a short form together", done: "Asked you a few things" }, app: "agent", action: "note", hidden: true };
+    case "propose_agent":
+      // The proposal is shown under the reply; nothing changes until the member applies it.
+      return { labels: { running: "Drafting how I'll work for you", done: "Suggested how I'll work for you" }, app: "agent", action: "note", hidden: true };
     case "report_run":
       // Decides whether the member is notified; the reply itself says how it went.
       return { labels: { running: "Wrapping up", done: "Wrapped up" }, app: "agent", action: "note", hidden: true };
@@ -818,7 +824,7 @@ export function talksMachinery(text: string): boolean {
 }
 
 /** Tools that report on the answer (its sources, charts, questions, what to remember) rather than do the work. */
-const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "remember", "propose_memory"]);
+const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "remember", "propose_memory"]);
 
 /**
  * Whether a call only reports on the answer. Text the agent writes before such a call is

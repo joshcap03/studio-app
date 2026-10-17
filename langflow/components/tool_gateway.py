@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -191,6 +191,70 @@ class AskArgs(BaseModel):
                                   json_schema_extra={"items": QUESTION_SCHEMA, "minItems": 1, "maxItems": 3})
 
 
+FORM_FIELD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": ["choice", "multi_choice", "text", "long_text", "file", "list", "connect"],
+                 "description": ("choice or multi_choice (2-8 options), text (one line), long_text (a paragraph), "
+                                 "file (the owner drops in files, e.g. a resume), list (repeatable entries with the "
+                                 "same parts, e.g. stories), connect (apps to connect, shown as Connect buttons).")},
+        "id": {"type": "string", "description": "A short snake_case id, unique in the form, e.g. 'target_roles'."},
+        "label": {"type": "string", "description": "The question or label, as the owner would read it."},
+        "help": {"type": "string", "description": "Optional: one short line on what to put, or why you ask."},
+        "required": {"type": "boolean", "description": "True only when you can't go on without it."},
+        "options": {"type": "array", "items": {"type": "string"}, "description": "For choice and multi_choice: 2-8 choices."},
+        "placeholder": {"type": "string", "description": "For text and long_text: an example answer."},
+        "prefill": {"description": ("What you already know, for the owner to confirm or fix: a string for text and "
+                                    "long_text, a list of option labels for choices, or for list a list of objects "
+                                    "keyed by part id (your drafts).")},
+        "accept": {"type": "array", "items": {"type": "string"}, "description": "For file: allowed extensions, e.g. ['pdf', 'docx']."},
+        "keep": {"type": "boolean", "description": ("For file: true to keep the files in this agent's files, so they come with "
+                                                    "every future conversation (e.g. a resume). False for a one-off file.")},
+        "max": {"type": "integer", "description": "For file and list: the most files or entries (1-8)."},
+        "parts": {"type": "array", "description": "For list: 1-5 parts of each entry, each an object with id, label, and long (true for a paragraph).",
+                  "items": {"type": "object", "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "long": {"type": "boolean"}},
+                            "required": ["label"]}},
+        "item_label": {"type": "string", "description": "For list: what one entry is called, e.g. 'Story'."},
+        "apps": {"type": "array", "items": {"type": "string"}, "description": "For connect: app ids, e.g. ['gmail', 'apollo', 'hunter']."},
+    },
+    "required": ["kind", "label"],
+}
+
+
+class FormArgs(BaseModel):
+    title: str = Field(description="What the form is for, 2-6 words, e.g. 'Your search'.")
+    intro: str = Field(default="", description="Optional: one or two sentences on why you're asking.")
+    fields: list[dict] = Field(description="1-8 fields, in the order the owner fills them in.",
+                               json_schema_extra={"items": FORM_FIELD_SCHEMA, "minItems": 1, "maxItems": 8})
+    submit_label: str = Field(default="", description="Optional button text, e.g. 'Next' or 'Save stories'.")
+
+
+PROPOSED_TASK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "template_task_id": {"type": "string", "description": "The id of a task CONTEXT lists as already set up (paused), to switch it on."},
+        "title": {"type": "string", "description": "The task, 2-6 words."},
+        "instructions": {"type": "string", "description": "What to do each run, in the owner's terms."},
+        "skill": {"type": "string", "description": "Optional: a library skill id it runs with."},
+        "schedule": {"type": "object", "description": ("When it runs: {every: 'day'|'weekdays', at: 'HH:MM'}, "
+                                                        "{every: 'week', at: 'HH:MM', weekday: 0-6 (0 = Sunday)}, "
+                                                        "{every: 'hours', hours: 1-24}, or null for on demand.")},
+    },
+    "required": ["title", "instructions"],
+}
+
+
+class ProposeArgs(BaseModel):
+    summary: str = Field(description="Two or three sentences: what this agent will do for the owner, in their words.")
+    profile: str = Field(default="", description="The agent's 'What this agent is for', rewritten from what the owner told you.")
+    instructions: str = Field(default="", description="Standing instructions for the agent, tuned to the owner's answers. The whole text.")
+    skills: list = Field(default_factory=list, description=("Library skill ids to add, or new skills as objects with name, "
+                                                           "description, and instructions."))
+    tasks: list[dict] = Field(default_factory=list, description="Recurring or on-demand tasks to switch on.",
+                              json_schema_extra={"items": PROPOSED_TASK_SCHEMA, "maxItems": 8})
+    memories: list[str] = Field(default_factory=list, description="Lasting facts to remember about the owner, one sentence each.")
+
+
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
 DiscoverArgs.model_rebuild()
 ExecuteArgs.model_rebuild()
@@ -200,6 +264,8 @@ TimelineArgs.model_rebuild()
 CiteArgs.model_rebuild()
 VisualArgs.model_rebuild()
 AskArgs.model_rebuild()
+FormArgs.model_rebuild()
+ProposeArgs.model_rebuild()
 
 
 def words(s):
@@ -744,9 +810,48 @@ class ToolGatewayComponent(Component):
         async def ask_user_async(questions: list) -> str:
             return ask_user(questions)
 
+        def show_form(title: str, fields: list, intro: str = "", submit_label: str = "") -> str:
+            # Like ask_user, this changes nothing and doesn't wait: the app validates the form and
+            # shows it under the reply. The owner's answers arrive as their next message.
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
+            items = [f for f in (plain(f) for f in (fields or [])[:8]) if f.get("label") and (f.get("kind") or f.get("type"))]
+            if not str(title or "").strip() or not items:
+                return "Not shown: a form needs a title and at least one field with a kind and a label."
+            return json.dumps({
+                "form": {"title": " ".join(str(title).split())[:120], "intro": str(intro or "")[:600],
+                         "fields": items, "submit_label": " ".join(str(submit_label or "").split())[:30]},
+                "note": ("The owner now sees this form. End your reply here: at most one short sentence, without "
+                         "repeating the fields. Their answers arrive as their next message."),
+            })
+
+        async def show_form_async(title: str, fields: list, intro: str = "", submit_label: str = "") -> str:
+            return show_form(title, fields, intro, submit_label)
+
+        def propose_agent(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
+                          tasks: list | None = None, memories: list | None = None) -> str:
+            # Changes nothing: the app shows the proposal as a card, and only the owner's Apply
+            # changes this agent's setup.
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else v
+            proposal = {"summary": str(summary or "")[:600], "profile": str(profile or "")[:8000],
+                        "instructions": str(instructions or "")[:8000], "skills": [plain(x) for x in (skills or [])][:8],
+                        "tasks": [plain(x) for x in (tasks or [])][:8], "memories": [str(m)[:500] for m in (memories or [])][:8]}
+            if not any(proposal[k] for k in ("profile", "instructions", "skills", "tasks", "memories")):
+                return "Not shown: propose at least one change (profile, instructions, skills, tasks, or memories)."
+            return json.dumps({
+                "proposal": proposal,
+                "note": ("The owner now sees your proposal and can apply all or part of it; nothing changes until "
+                         "they do. End your reply here with one short sentence."),
+            })
+
+        async def propose_agent_async(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
+                                      tasks: list | None = None, memories: list | None = None) -> str:
+            return propose_agent(summary, profile, instructions, skills, tasks, memories)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, report_visual, cite, ask_user"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, report_visual, cite, ask_user, show_form, propose_agent"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -836,5 +941,23 @@ class ToolGatewayComponent(Component):
                              "records, which way to go, a preference). Don't use it for yes/no on an action (take_action "
                              "already asks), or for things you can look up. Call it as the last thing in your reply; "
                              "their answer arrives as the next message."),
+            ),
+            StructuredTool.from_function(
+                func=show_form, coroutine=show_form_async, name="show_form",
+                args_schema=FormArgs,
+                description=("Show the owner a short form when you need several details at once, longer answers, files "
+                             "(a resume, a price list), repeatable entries (stories, contacts), or apps to connect: "
+                             "for example while setting up this agent. Prefill what you already know so they only "
+                             "confirm or fix it. Use ask_user instead for one quick choice. Call it as the last "
+                             "thing in your reply; their answers arrive as the next message. Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=propose_agent, coroutine=propose_agent_async, name="propose_agent",
+                args_schema=ProposeArgs,
+                description=("Propose how this agent should be set up for the owner: what it's for, its standing "
+                             "instructions, skills to add, tasks to switch on (with schedules), and facts to remember. "
+                             "Use it once you've learned what they want, e.g. at the end of setup or when they ask "
+                             "you to change how you work. The owner reviews it and applies what they want; nothing "
+                             "changes until they do. Call it as the last thing in your reply."),
             ),
         ]

@@ -5,6 +5,7 @@ import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
 import { buildQuestions } from "./questions";
+import { buildUiBlock } from "./ui";
 import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
 import { buildVisual, withVisual } from "./visuals";
@@ -24,6 +25,8 @@ import {
   type MessageStatus,
   type StreamEvent,
   type Question,
+  type UiBlock,
+  MAX_UI_BLOCKS,
   type Citation,
   type Timeline,
 } from "@/lib/types";
@@ -411,6 +414,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const evidence = new Map<string, Evidence>();
       const seen = () => new Set([...linksSeen(activity, artifacts), ...evidence.keys()]);
       let questions: Question[] | null = assistant.questions ?? null;
+      let ui: UiBlock[] | null = assistant.ui ?? null;
       let status: MessageStatus = "complete";
       let error: string | null = null;
       let paused = false;
@@ -419,7 +423,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const checkpoint = () => {
         lastCheckpoint = Date.now();
         saving = saving
-          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, citations, questions }))
+          .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui }))
           .catch((e) => console.error("[turn] checkpoint failed", e));
       };
       let asking = false;
@@ -555,6 +559,15 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               }
               break;
             }
+            case "ui": {
+              // A form or proposed setup; it changes nothing until the member answers or applies it.
+              const built = buildUiBlock(event.block);
+              if (built) {
+                ui = [...(ui ?? []), built].slice(-MAX_UI_BLOCKS);
+                send({ type: "ui", ui });
+              }
+              break;
+            }
             case "run-report": {
               const raw = isRecord(event.report) ? event.report : {};
               const outcome = RUN_OUTCOMES.find((o) => o === raw.outcome);
@@ -627,7 +640,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         }
         if (paused) {
           status = "awaiting";
-        } else if (!content.trim() && artifacts.length === 0 && proposals.length === 0 && !questions) {
+        } else if (!content.trim() && artifacts.length === 0 && proposals.length === 0 && !questions && !ui) {
           status = "error";
           error = "The agent finished without a response.";
         }
@@ -668,14 +681,14 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await saving;
       let updated = summary;
       try {
-        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, error });
+        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error });
         updated = await store.touchConversation(conversationId);
       } catch (e) {
         console.error("[turn] failed to save final state", e);
       }
       finished();
       const watched = open;
-      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, error };
+      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, ui, error };
       send({ type: "end", message: final, conversation: updated });
       if (open) {
         try {

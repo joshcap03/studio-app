@@ -35,6 +35,7 @@ type Step =
   | { kind: "timeline"; timeline: unknown }
   | { kind: "visual"; visual: unknown }
   | { kind: "questions"; questions: unknown }
+  | { kind: "ui"; block: unknown }
   | { kind: "evidence"; items: Evidence[] }
   | { kind: "citations"; citations: unknown }
   | { kind: "plan"; plan: unknown }
@@ -187,6 +188,67 @@ const SCENARIOS: Scenario[] = [
       {
         kind: "text",
         text: "This is a mock investigation. Most likely, the gold huggies (your top seller) were out of stock from Oct 5 because the clasp shipment slipped, and a $212 refund landed the same day. I couldn't check ad spend; no ads app is connected.",
+      },
+    ],
+  },
+  {
+    // A setup form with every kind of field; the answers arrive as the member's next message.
+    match: /\b(set me up|show me a form)\b/i,
+    steps: [
+      { kind: "text", text: "Let's get you set up (mock)." },
+      {
+        kind: "ui",
+        block: {
+          form: {
+            title: "Your search (mock)",
+            intro: "A few things so I can look in the right places. I filled in what I could guess.",
+            submit_label: "Next",
+            fields: [
+              { kind: "multi_choice", id: "jobs", label: "What should I do for you?", options: ["Find roles", "Tailor applications", "Outreach", "Interview prep"], prefill: ["Find roles"], required: true },
+              { kind: "text", id: "roles", label: "Target roles", placeholder: "e.g. Product manager, growth", prefill: "Product manager" },
+              { kind: "choice", id: "where", label: "Where", options: ["Remote", "Hybrid", "On-site"] },
+              { kind: "long_text", id: "dealbreakers", label: "Deal-breakers", help: "Anything you'd never take." },
+              { kind: "file", id: "resume", label: "Your résumé", accept: ["pdf", "docx"], max: 1, keep: true },
+              {
+                kind: "list",
+                id: "stories",
+                label: "Stories for interviews",
+                item_label: "Story",
+                max: 4,
+                parts: [
+                  { id: "situation", label: "Situation", long: true },
+                  { id: "action", label: "What you did", long: true },
+                  { id: "result", label: "Result" },
+                ],
+                prefill: [{ situation: "Signups had stalled for two quarters.", action: "Rebuilt onboarding with the design team.", result: "Activation up 18%." }],
+              },
+              { kind: "connect", id: "apps", label: "Apps I'll work in", apps: ["gmail", "apollo", "hunter"] },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
+    // A proposed setup; nothing changes until the member applies it.
+    match: /\bpropose\b/i,
+    steps: [
+      { kind: "text", text: "Here's how I'd work for you (mock)." },
+      {
+        kind: "ui",
+        block: {
+          proposal: {
+            summary: "I'll look for remote product roles every weekday morning, keep your tracker current, and prep you before interviews (mock).",
+            profile: "Job search for remote senior product manager roles, $180k floor, no ad-tech.",
+            instructions: "Shortlist at most five roles a day. Draft outreach but never send without approval.",
+            skills: ["find-roles", "interview-prep"],
+            tasks: [
+              { template_task_id: "find-new-roles", title: "Find new roles", instructions: "Look for new remote PM roles that match.", skill: "find-roles", schedule: { every: "weekdays", at: "08:00" } },
+              { title: "Weekly review", instructions: "Summarize the week's pipeline.", schedule: { every: "week", at: "09:00", weekday: 1 } },
+            ],
+            memories: ["Prefers remote roles.", "Won't work in ad-tech."],
+          },
+        },
       },
     ],
   },
@@ -645,6 +707,9 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "questions") {
           await wait(400 * pace, signal);
           yield { type: "questions", questions: step.questions };
+        } else if (step.kind === "ui") {
+          await wait(400 * pace, signal);
+          yield { type: "ui", block: step.block };
         } else if (step.kind === "plan") {
           yield { type: "plan-update", plan: step.plan };
         } else if (step.kind === "record") {

@@ -437,6 +437,19 @@ export function toolEvidence(message: LangflowMessage): AgentEvent[] {
   return items.length > 0 ? [{ type: "evidence", items }] : [];
 }
 
+/** Forms (show_form) and proposed agent setups (propose_agent) for the member (validated by the turn). */
+export function toolUi(message: LangflowMessage): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const tool of toolUses(message)) {
+    if (tool.output == null || tool.error) continue;
+    const result = unwrapResult(tool.output);
+    if (!isRecord(result)) continue;
+    if (isRecord(result.form)) events.push({ type: "ui", block: { form: result.form } });
+    else if (isRecord(result.proposal)) events.push({ type: "ui", block: { proposal: result.proposal } });
+  }
+  return events;
+}
+
 /** Multiple-choice questions the agent asked through ask_user (validated by the turn). */
 export function toolQuestions(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -796,6 +809,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
             ...toolVisuals(message),
             ...toolCitations(message),
             ...toolQuestions(message),
+            ...toolUi(message),
             ...toolTaskUpdates(message),
           ].filter((t) => {
             const key = JSON.stringify(t);
