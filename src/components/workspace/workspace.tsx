@@ -10,6 +10,8 @@ import { Thread } from "@/components/chat/thread";
 import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { ProjectView } from "@/components/project/project-view";
 import { Sidebar } from "@/components/sidebar/sidebar";
+import { TaskDetail } from "@/components/tasks/task-detail";
+import { TasksView } from "@/components/tasks/tasks-view";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
@@ -66,6 +68,8 @@ interface Props {
   skills: WorkspaceSkill[];
   /** A skill to attach on load (from "Use" on the skills page). */
   initialSkillId: string | null;
+  /** Whether this member sees Tasks (a preview feature). */
+  tasksEnabled: boolean;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -79,6 +83,13 @@ function conversationIdFrom(pathname: string): string | null {
 
 function projectIdFrom(pathname: string): string | null {
   const match = /^\/p\/([^/]+)\/?$/.exec(pathname);
+  return match && UUID.test(match[1]) ? match[1] : null;
+}
+
+/** "/tasks" gives "list", "/tasks/<id>" the task's id, anything else null. */
+function taskPathFrom(pathname: string): string | null {
+  if (/^\/tasks\/?$/.test(pathname)) return "list";
+  const match = /^\/tasks\/([^/]+)\/?$/.exec(pathname);
   return match && UUID.test(match[1]) ? match[1] : null;
 }
 
@@ -103,6 +114,7 @@ export function Workspace({
   email,
   skills,
   initialSkillId,
+  tasksEnabled,
 }: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
@@ -110,6 +122,9 @@ export function Workspace({
   const activeId = conversationIdFrom(pathname);
   /** The project page on screen (not the project of an open conversation). */
   const activeProjectId = activeId ? null : projectIdFrom(pathname);
+  /** The Tasks page on screen: "list", or the id of the open task. */
+  const activeTask = tasksEnabled ? taskPathFrom(pathname) : null;
+  const [taskTitle, setTaskTitle] = useState<string | null>(null);
 
   useEffect(() => {
     const onPop = () => setPathname(window.location.pathname);
@@ -308,10 +323,33 @@ export function Workspace({
   }, [activeProjectId]);
 
   const activeProjectName = activeProject?.status === "ready" ? activeProject.project.name : undefined;
+  const tasksTitle = activeTask === "list" ? "Tasks" : activeTask ? (taskTitle ?? undefined) : undefined;
   useEffect(() => {
-    const title = activeTitle ?? activeProjectName;
+    const title = activeTitle ?? activeProjectName ?? tasksTitle;
     document.title = title ? `${title} · Studio` : `${workspace.name} · Studio`;
-  }, [activeTitle, activeProjectName, workspace.name]);
+  }, [activeTitle, activeProjectName, tasksTitle, workspace.name]);
+
+  /**
+   * Opens a task's conversation. A run may have just created it or added to it on the server,
+   * so a copy loaded earlier is dropped and the conversation list refreshed.
+   */
+  const openTaskConversation = useCallback(
+    (conversationId: string) => {
+      if (!controllers.current.has(conversationId)) {
+        setThreads((all) => {
+          if (!all[conversationId]) return all;
+          const { [conversationId]: _, ...rest } = all;
+          return rest;
+        });
+      }
+      navigate(`/c/${conversationId}`);
+      api
+        .listConversations()
+        .then(({ conversations }) => setConversations(conversations))
+        .catch(() => undefined);
+    },
+    [navigate],
+  );
 
   // ---------------------------------------------------------------------------------------
   // Running turns
@@ -965,6 +1003,9 @@ export function Workspace({
             onRenameProject={renameProject}
             onDeleteProject={removeProject}
             onMove={moveConversation}
+            showTasks={tasksEnabled}
+            tasksActive={activeTask !== null}
+            onSelectTasks={() => navigate("/tasks")}
           />
         </aside>
 
@@ -1033,7 +1074,7 @@ export function Workspace({
                   <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
                 </>
               ) : null}
-              <span className="min-w-0 truncate">{activeTitle ?? ""}</span>
+              <span className="min-w-0 truncate">{activeTitle ?? (activeTask && activeTask !== "list" ? taskTitle : null) ?? ""}</span>
             </h1>
             {agent.mode === "mock" ? (
               <Tooltip.Root>
@@ -1054,7 +1095,18 @@ export function Workspace({
             </IconButton>
           </header>
 
-          {activeProjectId ? (
+          {activeTask === "list" ? (
+            <TasksView skills={skills} onOpen={(id) => navigate(`/tasks/${id}`)} />
+          ) : activeTask ? (
+            <TaskDetail
+              key={activeTask}
+              taskId={activeTask}
+              skills={skills}
+              onBack={() => navigate("/tasks")}
+              onOpenConversation={openTaskConversation}
+              onTitle={setTaskTitle}
+            />
+          ) : activeProjectId ? (
             activeProject?.status === "ready" ? (
               <ProjectView
                 key={activeProjectId}

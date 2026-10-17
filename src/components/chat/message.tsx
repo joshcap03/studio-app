@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-react";
+import { AlertCircle, CalendarClock, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
@@ -30,6 +30,12 @@ export const UserMessage = memo(function UserMessage({ message, onEdit }: UserPr
   return (
     <div className="group/user flex flex-col items-end gap-1.5 animate-fade-up">
       {attachments.length > 0 ? <AttachmentList attachments={attachments} /> : null}
+      {message.origin?.kind === "task" ? (
+        <span className="inline-flex h-7 max-w-[min(85%,36rem)] items-center gap-1.5 rounded-full border border-line px-2.5 text-[13px] font-medium text-fg-2">
+          <CalendarClock size={13} className="shrink-0 text-fg-3" />
+          <span className="truncate">Scheduled · {message.origin.title}</span>
+        </span>
+      ) : null}
       {message.skill ? (
         <span className="inline-flex h-7 max-w-[min(85%,36rem)] items-center gap-1.5 rounded-full bg-accent-soft px-2.5 text-[13px] font-medium text-accent">
           <Sparkles size={13} className="shrink-0" />

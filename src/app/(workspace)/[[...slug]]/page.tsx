@@ -2,13 +2,14 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import { Workspace, type InitialProject, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
+import { previewEnabled } from "@/lib/flags";
 import { storeFor } from "@/lib/chat/store-for";
 import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
 import { requirePageTenant } from "@/lib/tenant";
 
-// One page serves "/" (new conversation), "/c/<id>", and "/p/<project id>". After the first load the browser
+// One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", and "/tasks[/<task id>]". After the first load the browser
 // switches conversations in place, without a server round trip per navigation.
 
 export const dynamic = "force-dynamic";
@@ -23,9 +24,13 @@ export default async function WorkspacePage({
   const tenant = await requirePageTenant();
 
   const { slug = [] } = await params;
+  const tasksEnabled = previewEnabled(tenant, "tasks");
   let conversationId: string | null = null;
   let projectId: string | null = null;
-  if (slug.length > 0) {
+  if (slug[0] === "tasks") {
+    // The task itself loads in the browser, like a project opened from the sidebar.
+    if (!tasksEnabled || slug.length > 2 || (slug.length === 2 && !z.uuid().safeParse(slug[1]).success)) notFound();
+  } else if (slug.length > 0) {
     const id = z.uuid().safeParse(slug[1]);
     if (slug.length !== 2 || (slug[0] !== "c" && slug[0] !== "p") || !id.success) notFound();
     if (slug[0] === "c") conversationId = id.data;
@@ -64,6 +69,7 @@ export default async function WorkspacePage({
       email={tenant.email}
       skills={skills}
       initialSkillId={initialSkillId}
+      tasksEnabled={tasksEnabled}
     />
   );
 }
