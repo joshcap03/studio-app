@@ -13,7 +13,7 @@ import { getSkill } from "@/lib/skills";
 import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
-import type { ChatMessage, ConversationSummary, MessageOrigin } from "@/lib/types";
+import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
 import { buildAgentContext, claimRun } from "@/lib/workspace";
 
 // Builds everything one turn needs for one member, from their tenant alone: the chat route
@@ -22,7 +22,7 @@ import { buildAgentContext, claimRun } from "@/lib/workspace";
 
 /** What the member asked for. Skills and projects are named by id and loaded from their workspace. */
 export type RunInput =
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject" }
@@ -56,7 +56,10 @@ export async function buildTurnDeps(
     input = { kind: "send", text: task.instructions.trim() || task.title, skillId: task.skillId ?? undefined };
   } else {
     input = asked;
+    // Words said on a call are labeled as spoken.
+    if (asked.kind === "send" && asked.modality === "call" && asked.text.trim()) origin = { kind: "voice" };
   }
+  const modality = input.kind === "send" ? input.modality : undefined;
   // Context (settings and memory recall) loads alongside the skill and project lookups rather
   // than after them; it only reads, so a refused run just discards it.
   // Memory is searched with the member's recent messages, not just this one, so a follow-up
@@ -70,7 +73,7 @@ export async function buildTurnDeps(
       return "text" in input ? [...asks, input.text] : asks;
     })
     .catch(() => ("text" in input ? [input.text] : []))
-    .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId));
+    .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId, modality));
   context.catch(() => undefined);
   const adapter = getAgentAdapter();
   const loadSkill = (id: string) => getSkill(tenant, id);

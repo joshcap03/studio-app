@@ -97,6 +97,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   const guardrail = tenant.guardrail ? guardrailContext(tenant.guardrail) : "";
   const system = [
     guardrail,
+    tenant.modality && modalityContext(tenant.modality),
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
     tenant.account?.name.trim() && `You're assisting: ${tenant.account.name.trim()}`,
     tenant.account?.about.trim() && `About them:\n${tenant.account.about.trim()}`,
@@ -129,6 +130,21 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     personal_guardrail: guardrail,
     system_context: system,
   };
+}
+
+/**
+ * How the member is talking on this turn. On a call, a voice front greets them, reads out the
+ * gist of each reply and the steps it reports, and shows its cards, so the reply is written for
+ * the ear and doesn't greet them again.
+ */
+export function modalityContext(modality: NonNullable<AgentTenantContext["modality"]>): string {
+  if (modality === "voice_note") {
+    return "The member sent this as a voice message, so it was spoken: expect speech-to-text slips. Write your reply so it also works read aloud: the gist first, short sentences.";
+  }
+  return [
+    "The member is on a live voice call with you. A voice reads out the gist of your reply and the steps you report, and shows your cards on their screen; their words reach you as they said them (expect speech-to-text slips).",
+    "The voice has already greeted them: don't open with \"Hey!\" or any greeting, even where a skill or setup says to. Lead with the one or two sentences that matter, written to be heard; put details, lists, and choices in your cards or below that.",
+  ].join(" ");
 }
 
 /** The member's keep/pass calls lately: their standard in practice, for the agent to aim at. */

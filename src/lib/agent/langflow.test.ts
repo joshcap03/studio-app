@@ -258,6 +258,16 @@ describe("Langflow request", () => {
     expect(without.personal_guardrail).toBe("");
   });
 
+  it("tells the agent when the member is on a call, after their guardrail, and nothing when they type", () => {
+    const guardrail = { instructions: "Only look things up; no opinions.", recentChats: [] };
+    const call = templateValues({ ...tenantA, guardrail, modality: "call" }).system_context;
+    expect(call).toContain("live voice call");
+    expect(call).toContain("don't open with \"Hey!\"");
+    expect(call.indexOf("no opinions")).toBeLessThan(call.indexOf("live voice call"));
+    expect(templateValues({ ...tenantA, modality: "voice_note" }).system_context).toContain("voice message");
+    expect(templateValues(tenantA).system_context).not.toContain("voice");
+  });
+
   it("gives the Member Apps node this member's id and the offered apps, nobody else's", () => {
     const tweaks = { "MemberApps-studio": { member_id: "{{composio_user_id}}", toolkits: "{{composio_toolkits}}" } };
     const tenant = { ...tenantA, composioToolkits: { gmail: "ac_gmail" } };

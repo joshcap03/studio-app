@@ -1,16 +1,16 @@
 "use client";
 
-import { ArrowUp, Check, ChevronDown, ChevronUp, ClipboardList, ExternalLink, FileUp, GripVertical, Paperclip, Plug, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, ExternalLink, FileUp, GripVertical, Paperclip, Plug, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { appName, toolkitForApp } from "@/lib/apps";
-import { formAnswerText, missingAnswer, type FormValues } from "@/lib/chat/ui-answer";
+import type { FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
-import type { AgentProposal, Attachment, ConnectionsState, ProposalPicks, UiBlock, UiField, UiForm, UiResponse, Verdict } from "@/lib/types";
-import type { VerdictCall } from "@/lib/verdicts";
+import type { AgentProposal, Attachment, ConnectionsState, ProposalPicks, UiBlock, UiField, UiForm, UiResponse } from "@/lib/types";
 import { ATTACHMENT_TYPES } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
+import { useCardDrafts, type FormDraft } from "./card-drafts";
 
 // Reusable cards for what the agent asks through its show_form and propose_agent tools. They
 // know nothing about any one flow (setup, a template): every field kind and proposal item is
@@ -42,14 +42,9 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             form={block}
             response={responses?.[block.id]}
             onAnswer={onAnswer}
-            onSubmit={async (keepFiles, verdicts) => {
-              const { response } = await api.answerUi(conversationId, block.id, {
-                action: "submit",
-                ...(keepFiles.length ? { keepFiles } : {}),
-                ...(verdicts.length ? { verdicts } : {}),
-              });
-              onResponse?.(messageId, block.id, response);
-            }}
+            conversationId={conversationId}
+            messageId={messageId}
+            onResponse={onResponse}
           />
         ) : (
           <ProposalCard
@@ -81,37 +76,23 @@ const primary =
   "inline-flex h-8 items-center gap-1.5 rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:bg-press disabled:text-fg-4";
 const quiet = "inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg";
 
-function initialValues(form: UiForm): FormValues {
-  const values: FormValues = {};
-  for (const f of form.fields) {
-    if ((f.kind === "choice" || f.kind === "multi_choice") && f.prefill) values[f.id] = f.prefill;
-    else if ((f.kind === "text" || f.kind === "long_text") && f.prefill) values[f.id] = f.prefill;
-    else if (f.kind === "list") values[f.id] = f.prefill?.length ? f.prefill : [{}];
-    else if (f.kind === "rank") values[f.id] = f.prefill ?? f.options.map((o) => o.label);
-    else if (f.kind === "scale" && f.prefill) values[f.id] = String(f.prefill);
-  }
-  return values;
-}
-
 interface FormProps {
   form: UiForm;
   response?: UiResponse;
   onAnswer?: UiCardsProps["onAnswer"];
-  /**
-   * Marks the form answered, first moving the uploads in `keepFiles` onto the agent's shelf and
-   * saving the keep/pass calls from its verdict fields.
-   */
-  onSubmit: (keepFiles: string[], verdicts: VerdictCall[]) => Promise<void>;
+  conversationId: string;
+  messageId: string;
+  onResponse?: UiCardsProps["onResponse"];
 }
 
-/** A form the agent asked the member to fill in. Its answers go out as their next message. */
-export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
-  const [values, setValues] = useState<FormValues>(() => initialValues(form));
-  const [files, setFiles] = useState<Record<string, Attachment[]>>({});
-  const [uploading, setUploading] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
+/**
+ * A form the agent asked the member to fill in. Its answers go out as their next message. What's
+ * filled in lives in the workspace's card drafts, so on a call the card on the stage is this one.
+ */
+export function FormCard({ form, response, onAnswer, conversationId, messageId, onResponse }: FormProps) {
+  const drafts = useCardDrafts();
+  const { values, files, uploading, error, sent, busy, heard } = drafts.form(form);
+  const update = (fn: (d: FormDraft) => FormDraft) => drafts.updateForm(form, fn);
 
   if (!onAnswer || sent || response) {
     const answered = sent || response?.status === "submitted";
@@ -126,39 +107,15 @@ export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
     );
   }
 
-  const set = (id: string, value: FormValues[string]) => setValues((v) => ({ ...v, [id]: value }));
+  const set = (id: string, value: FormValues[string]) =>
+    update((d) => {
+      const { [id]: _, ...stillHeard } = d.heard;
+      return { ...d, error: null, values: { ...d.values, [id]: value }, heard: stillHeard };
+    });
+  const answer = onAnswer;
 
-  async function submit() {
-    if (!onAnswer || sent || busy || uploading > 0) return;
-    const withFiles: FormValues = { ...values };
-    for (const [id, list] of Object.entries(files)) if (list.length) withFiles[id] = list.map((a) => a.name);
-    const missing = missingAnswer(form, withFiles);
-    if (missing) {
-      setError(`Fill in “${missing}” first.`);
-      return;
-    }
-    // Files from "keep" fields move onto the agent's shelf, which sends them with every run
-    // (this one included); the rest ride along on the answer like any attachment.
-    const kept = new Set(form.fields.filter((f) => f.kind === "file" && f.keep).map((f) => f.id));
-    const keepFiles = Object.entries(files).flatMap(([id, list]) => (kept.has(id) ? list.map((a) => a.id) : []));
-    const attachments = Object.entries(files).flatMap(([id, list]) => (kept.has(id) ? [] : list));
-    const verdicts = form.fields.flatMap((f) =>
-      f.kind === "verdict" && Array.isArray(values[f.id])
-        ? (values[f.id] as Record<string, string>[])
-            .filter((c) => c.verdict === "keep" || c.verdict === "pass")
-            .map((c) => ({ fieldId: f.id, itemId: c.id, verdict: c.verdict as Verdict, ...(c.verdict === "pass" && c.reason?.trim() ? { reason: c.reason.trim() } : {}) }))
-        : [],
-    );
-    setBusy(true);
-    try {
-      await onSubmit(keepFiles, verdicts);
-    } catch (e) {
-      setBusy(false);
-      setError(e instanceof ApiError ? e.message : "Couldn't send this. Try again.");
-      return;
-    }
-    setSent(true);
-    onAnswer(formAnswerText(form, withFiles), { attachments });
+  function submit() {
+    void drafts.submitForm({ form, conversationId, messageId, onAnswer: answer, onResponse });
   }
 
   return (
@@ -169,7 +126,7 @@ export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
         // Cmd/Ctrl+Enter sends from anywhere in the form.
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          void submit();
+          submit();
         }
       }}
     >
@@ -179,29 +136,58 @@ export function FormCard({ form, response, onAnswer, onSubmit }: FormProps) {
       </div>
       <div className="flex flex-col gap-4 px-4 pt-3 pb-4">
         {form.fields.map((field) => (
-          <FieldView
-            key={field.id}
-            field={field}
-            value={values[field.id]}
-            files={files[field.id] ?? []}
-            onChange={(v) => {
-              setError(null);
-              set(field.id, v);
-            }}
-            onFiles={(list) => setFiles((all) => ({ ...all, [field.id]: list }))}
-            onUploading={(delta) => setUploading((n) => n + delta)}
-            onError={setError}
-          />
+          <div key={field.id} className="flex flex-col gap-2">
+            <FieldView
+              field={field}
+              value={values[field.id]}
+              files={files[field.id] ?? []}
+              onChange={(v) => set(field.id, v)}
+              onFiles={(list) => update((d) => ({ ...d, files: { ...d.files, [field.id]: list } }))}
+              onUploading={(delta) => update((d) => ({ ...d, uploading: d.uploading + delta }))}
+              onError={(message) => update((d) => ({ ...d, error: message }))}
+            />
+            {heard[field.id] ? (
+              <Heard
+                said={heard[field.id].said}
+                onUse={() => set(field.id, heard[field.id].value)}
+                onDismiss={() =>
+                  update((d) => {
+                    const { [field.id]: _, ...rest } = d.heard;
+                    return { ...d, heard: rest };
+                  })
+                }
+              />
+            ) : null}
+          </div>
         ))}
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
         <span className={`mr-auto pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? formProgress(form, values) ?? "Or type your own answer below."}</span>
-        <button type="button" onClick={() => void submit()} disabled={uploading > 0 || busy} className={primary}>
+        <button type="button" onClick={submit} disabled={uploading > 0 || busy} className={primary}>
           {uploading > 0 || busy ? <span className="spinner size-3.5" aria-hidden="true" /> : <ArrowUp size={14} />}
           {form.submitLabel}
         </button>
       </div>
     </section>
+  );
+}
+
+/**
+ * An answer heard on a call that only loosely matched, or isn't quite what the member said:
+ * nothing changes until they tap "Use it".
+ */
+export function Heard({ said, onUse, onDismiss }: { said: string; onUse: () => void; onDismiss: () => void }) {
+  return (
+    <div role="status" className="flex items-center gap-1.5 rounded-lg bg-accent-soft py-1 pr-1 pl-2.5 text-[12.5px] leading-[1.45] text-fg-2 animate-fade-in">
+      <AudioLines size={13} className="shrink-0 text-accent" aria-hidden="true" />
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">Heard: {said}?</span>
+      <button type="button" onClick={onUse} className={quiet}>
+        Use it
+      </button>
+      <button type="button" aria-label="Not that" onClick={onDismiss} className={`${quiet} px-1.5`}>
+        <X size={13} />
+      </button>
+    </div>
   );
 }
 
@@ -297,7 +283,9 @@ function ChoiceField({
   const multi = field.kind === "multi_choice";
   const labels = new Set(field.options.map((o) => o.label));
   const own = value.find((v) => !labels.has(v));
-  const [other, setOther] = useState(own !== undefined);
+  const [otherOpen, setOther] = useState(own !== undefined);
+  // Their own words can also arrive by voice while the card is open.
+  const other = otherOpen || own !== undefined;
   const toggle = (l: string) => {
     const chosen = value.includes(l);
     onChange(multi ? (chosen ? value.filter((x) => x !== l) : [...value, l]) : chosen ? [] : [l]);

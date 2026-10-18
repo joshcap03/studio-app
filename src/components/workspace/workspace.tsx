@@ -4,6 +4,7 @@ import { ChevronRight, Menu, PanelLeftOpen, Paperclip, SquarePen } from "lucide-
 import { usePathname } from "next/navigation";
 import { Tooltip } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CardDraftsProvider } from "@/components/chat/card-drafts";
 import { Composer, type ComposerHandle } from "@/components/chat/composer";
 import { EmptyState } from "@/components/chat/empty-state";
 import { Thread } from "@/components/chat/thread";
@@ -15,6 +16,7 @@ import { TasksView } from "@/components/tasks/tasks-view";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
+import { Call } from "@/components/voice/call";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
 import { SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
@@ -26,6 +28,7 @@ import type {
   MemoryProposal,
   MessageFeedback,
   MessageSkill,
+  Modality,
   Project,
   ProjectSummary,
   SetupSummary,
@@ -34,6 +37,7 @@ import type {
   WorkspaceSkill,
   WorkspaceSummary,
 } from "@/lib/types";
+import type { VoiceGrant, VoiceStatus } from "@/lib/voice/types";
 
 /** Whether a finished reply still asks the member something: questions or an unsent form. */
 function hasOpenAsk(message: ChatMessage | undefined): boolean {
@@ -41,8 +45,8 @@ function hasOpenAsk(message: ChatMessage | undefined): boolean {
   return Boolean(message.questions?.length) || Boolean(message.ui?.some((b) => b.kind === "form" && !message.uiResponse?.[b.id]));
 }
 
-/** What a message is sent with besides its text. */
-type SendExtras = { skill: MessageSkill | null; attachments: Attachment[] };
+/** What a message is sent with besides its text, and how (on a call, the member spoke it). */
+type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality };
 const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
 type ThreadState =
@@ -78,9 +82,10 @@ interface Props {
   skills: WorkspaceSkill[];
   /** A skill to attach on load (from "Use" on the skills page). */
   initialSkillId: string | null;
-  /** Whether this member sees Tasks (a preview feature). */
   /** The owner's setup interview for this agent; null for other members. */
   setup: SetupSummary | null;
+  /** Voice calls (a preview), when this member has them. */
+  voice: VoiceStatus | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -112,9 +117,18 @@ function provisionalTitle(text: string): string {
 /**
  * Owns conversation state for the whole workspace: the conversation list, loaded threads,
  * and in-flight runs. Runs live here rather than in the thread view, so a conversation keeps
- * streaming while the user reads or starts another one.
+ * streaming while the user reads or starts another one. What's filled in on the agent's cards
+ * lives here too (CardDrafts), shared by the thread and a call's stage.
  */
-export function Workspace({
+export function Workspace(props: Props) {
+  return (
+    <CardDraftsProvider>
+      <WorkspaceShell {...props} />
+    </CardDraftsProvider>
+  );
+}
+
+function WorkspaceShell({
   initialConversations,
   initialThread,
   initialProjects,
@@ -126,6 +140,7 @@ export function Workspace({
   skills,
   initialSkillId,
   setup: initialSetup,
+  voice,
 }: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
@@ -167,6 +182,18 @@ export function Workspace({
   const panelAuto = useRef(true);
 
   const controllers = useRef(new Map<string, AbortController>());
+  /** Who's listening to runs' events as they stream (a call narrating progress). */
+  const streamListeners = useRef(new Set<(conversationId: string, event: StreamEvent) => void>());
+  const subscribe = useCallback((listener: (conversationId: string, event: StreamEvent) => void) => {
+    streamListeners.current.add(listener);
+    return () => {
+      streamListeners.current.delete(listener);
+    };
+  }, []);
+  /** A voice call in progress, and the conversation it's in. */
+  const [call, setCall] = useState<{ grant: VoiceGrant; conversationId: string } | null>(null);
+  const [calling, setCalling] = useState(false);
+  const [callNotice, setCallNotice] = useState<string | null>(null);
   // Streams this tab let go of while the run kept going on the server (the app was hidden).
   const detached = useRef(new WeakSet<AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
@@ -397,6 +424,7 @@ export function Workspace({
       };
 
       const onEvent = (event: StreamEvent) => {
+        for (const listener of streamListeners.current) listener(conversationId, event);
         switch (event.type) {
           case "start": {
             started = true;
@@ -571,6 +599,7 @@ export function Workspace({
           skillId: skill?.id,
           ...(attachmentIds.length ? { attachmentIds } : {}),
           ...(steer ? { steer } : {}),
+          ...(extras.modality ? { modality: extras.modality } : {}),
           // Only creates it there; the server ignores it for a conversation that already exists.
           ...(projectId ? { projectId } : {}),
         },
@@ -799,21 +828,46 @@ export function Workspace({
   }, [navigate]);
 
   // The agent's setup interview: picks up where it left off, or starts it in a new chat with
-  // the setup skill attached (the agent opens with its first question).
+  // the setup skill attached (the agent opens with its first question). Returns its
+  // conversation, or null when there's nothing to start from here.
   const startSetup = useCallback(
-    (fresh = false) => {
+    (fresh = false, modality?: Modality): string | null => {
       if (!fresh && setup?.status === "in_progress" && setup.conversationId) {
         navigate(`/c/${setup.conversationId}`);
-        return;
+        return setup.conversationId;
       }
       // Only offered on the new-chat screen, so this starts a new conversation.
-      if (activeId) return;
-      // Just the skill, no words: the agent speaks first ("Hey!") and opens step 1.
-      send("", { skill: { id: SETUP_SKILL_ID, name: SETUP_SKILL_NAME } });
+      if (activeId) return null;
+      // Just the skill, no words: the agent speaks first ("Hey!", or on a call the voice does)
+      // and opens step 1.
+      const conversationId = crypto.randomUUID();
+      drafts.current.delete("new");
+      sendTo(conversationId, "", true, { skill: { id: SETUP_SKILL_ID, name: SETUP_SKILL_NAME }, attachments: [], ...(modality ? { modality } : {}) });
       setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0, plan: s.plan.map(({ text }) => ({ text, status: "todo" as const })) } : s));
+      return conversationId;
     },
-    [activeId, navigate, send, setup],
+    [activeId, navigate, sendTo, setup],
   );
+
+  /** "Talk it through": the setup interview on a call, from where it is. */
+  const talkItThrough = useCallback(async () => {
+    if (calling || call) return;
+    setCalling(true);
+    setCallNotice(null);
+    try {
+      const { grant } = await api.startVoice();
+      const conversationId = startSetup(false, "call");
+      if (!conversationId) {
+        await api.endVoice(grant.sessionId).catch(() => undefined);
+        return;
+      }
+      setCall({ grant, conversationId });
+    } catch (error) {
+      setCallNotice(error instanceof ApiError ? error.message : "Voice is unavailable right now. Keep going here.");
+    } finally {
+      setCalling(false);
+    }
+  }, [call, calling, startSetup]);
   const skipSetup = useCallback(() => {
     setSetup((s) => (s ? { ...s, status: "skipped" } : s));
     api.skipSetup().catch(() => setSetup(initialSetup));
@@ -1042,7 +1096,7 @@ export function Workspace({
 
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={200}>
-      <div className="flex h-dvh overflow-hidden bg-bg" style={keyboardHeight ? { height: keyboardHeight } : undefined}>
+      <div inert={call ? true : undefined} className="flex h-dvh overflow-hidden bg-bg" style={keyboardHeight ? { height: keyboardHeight } : undefined}>
         {/* Mobile drawer backdrop */}
         <div
           aria-hidden="true"
@@ -1223,6 +1277,9 @@ export function Workspace({
               agentName={workspace.name}
               onSetup={() => startSetup()}
               onSkipSetup={skipSetup}
+              onTalk={voice ? () => void talkItThrough() : undefined}
+              talking={calling}
+              talkNotice={callNotice}
             />
           ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
             <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
@@ -1284,6 +1341,28 @@ export function Workspace({
           />
         ) : null}
       </div>
+      {call ? (
+        <Call
+          grant={call.grant}
+          agentName={workspace.name}
+          conversationId={call.conversationId}
+          messages={threads[call.conversationId]?.messages ?? []}
+          running={running.has(call.conversationId)}
+          plan={setup ? setup.plan : null}
+          onSend={(text, { steer, attachments }) =>
+            sendTo(call.conversationId, text, false, { skill: null, attachments: attachments ?? [], modality: "call" }, steer)
+          }
+          onStop={() => {
+            const id = call.conversationId;
+            api.stopRun(id).catch(() => controllers.current.get(id)?.abort());
+          }}
+          onDecide={decide}
+          onUiResponse={recordUiResponse}
+          onRunTask={runTaskNow}
+          subscribe={subscribe}
+          onEnd={() => setCall(null)}
+        />
+      ) : null}
     </Tooltip.Provider>
   );
 }

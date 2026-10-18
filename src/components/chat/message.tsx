@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CalendarClock, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-react";
+import { AlertCircle, AudioLines, CalendarClock, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
@@ -35,6 +35,12 @@ export const UserMessage = memo(function UserMessage({ message, onEdit }: UserPr
         <span className="inline-flex h-7 max-w-[min(85%,36rem)] items-center gap-1.5 rounded-full border border-line px-2.5 text-[13px] font-medium text-fg-2">
           <CalendarClock size={13} className="shrink-0 text-fg-3" />
           <span className="truncate">Scheduled · {message.origin.title}</span>
+        </span>
+      ) : null}
+      {message.origin?.kind === "voice" ? (
+        <span className="inline-flex items-center gap-1 text-[12px] text-fg-3">
+          <AudioLines size={12} className="shrink-0" />
+          On a call
         </span>
       ) : null}
       {message.skill ? (
@@ -203,7 +209,11 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) : null}
 
       {message.questions?.length ? (
-        <QuestionCard questions={message.questions} onAnswer={onAnswer && message.status === "complete" ? onAnswer : undefined} />
+        <QuestionCard
+          questions={message.questions}
+          draftKey={`${message.id}:questions`}
+          onAnswer={onAnswer && message.status === "complete" ? onAnswer : undefined}
+        />
       ) : null}
 
       {message.ui?.length ? (

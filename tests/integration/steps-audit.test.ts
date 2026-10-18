@@ -4,11 +4,15 @@ import { openingLineIndexes } from "@/lib/agent/langflow";
 import { evidenceFor, interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
 import { linksSeen } from "@/lib/chat/timeline";
 import type { ActivityStep } from "@/lib/types";
+import { initialRelay, relayEvent, speakableGist } from "@/lib/voice/relay";
 
 // Replays every tool call in a real Langflow flow's history through the same interpreter and
 // findings code the app uses, and checks the result reads like it should to a business
 // owner: every finished step says what it found (or failed with a plain reason), and no line
 // leaks raw data or technical text. Covers every tool the agent has used, not just one.
+//
+// The same goes for what the voice says on a call (src/lib/voice/relay.ts): it narrates only
+// labels the agent reported, word for word, and a reply's spoken gist carries no markup or links.
 //
 // Read-only. Needs LANGFLOW_AUDIT_BASE_URL, LANGFLOW_AUDIT_API_KEY, LANGFLOW_AUDIT_FLOW_ID.
 
@@ -57,13 +61,15 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
   it("gives each finished step a plain finding, and never shows raw or technical text", async () => {
     const res = await fetch(`${base}/api/v1/monitor/messages?flow_id=${flow}`, { headers: { "x-api-key": key! } });
     expect(res.ok).toBe(true);
-    const messages = (await res.json()) as { sender?: string; content_blocks?: { contents?: Leaf[] }[] }[];
+    const messages = (await res.json()) as { sender?: string; text?: string; content_blocks?: { contents?: Leaf[] }[] }[];
 
     const missing: string[] = [];
     const unread: string[] = [];
     const technical: string[] = [];
     const uncitable: string[] = [];
+    const spokenBadly: string[] = [];
     let checked = 0;
+    let narrated = 0;
     for (const m of messages) {
       if (m.sender !== "Machine") continue;
       const steps = replyToSteps((m.content_blocks ?? []).flatMap((b) => b.contents ?? []));
@@ -84,6 +90,19 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
         if (TECHNICAL.test(s.label) || (s.detail && TECHNICAL.test(s.detail))) technical.push(`${s.app} step: ${s.label} / ${s.detail ?? ""}`);
       }
       for (const f of findings) if (TECHNICAL.test(f.text)) technical.push(`${f.app} finding: ${f.text}`);
+      // On a call, every step line the voice says is a label the agent reported, and reads well.
+      let relay = initialRelay();
+      for (const s of steps) {
+        const out = relayEvent(relay, { type: "activity", step: s });
+        relay = out.state;
+        for (const line of out.lines) {
+          narrated++;
+          const reported = steps.some((x) => line.text === x.label.trim() || line.text === `${x.label.trim().replace(/[.…]+$/, "")}…`);
+          if (!reported || TECHNICAL.test(line.text) || talksMachinery(line.text)) spokenBadly.push(`${s.app} narration: ${line.text}`);
+        }
+      }
+      const gist = speakableGist(m.text ?? "");
+      if (/[[\]{}<>`*#|]|https?:\/\//.test(gist)) spokenBadly.push(`spoken reply: ${gist}`);
       // Every link a tool returned must come with that result's text, or the agent can't cite
       // it with a checkable quote (src/lib/chat/citations.ts).
       const leaves = (m.content_blocks ?? []).flatMap((b) => b.contents ?? []).filter((l) => l.type === "tool_use");
@@ -96,5 +115,7 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
     expect(missing, missing.join("\n")).toEqual([]);
     expect(unread, unread.join("\n")).toEqual([]);
     expect(uncitable, uncitable.join("\n")).toEqual([]);
+    expect(narrated).toBeGreaterThan(0);
+    expect(spokenBadly, spokenBadly.join("\n")).toEqual([]);
   }, 60_000);
 });

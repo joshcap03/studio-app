@@ -68,6 +68,27 @@ const schema = z.object({
 
   // Accounts that see preview features: comma-separated sign-in emails. Unset means nobody.
   PREVIEW_FEATURE_EMAILS: z.string().optional(),
+  // Accounts that see only the voice preview (the Setup Call), on top of the ones above.
+  PREVIEW_VOICE_EMAILS: z.string().optional(),
+
+  // Voice calls (preview). "elevenlabs" needs every ELEVENLABS_* and VOICE_* value below; "mock"
+  // is a labeled stand-in for QA (typed speech, captions, no audio). Unset means calls are off,
+  // unless the ElevenLabs keys are set.
+  VOICE_PROVIDER: z.enum(["mock", "elevenlabs"]).optional(),
+  ELEVENLABS_API_KEY: z.string().optional(),
+  ELEVENLABS_AGENT_ID: z.string().optional(),
+  // Signs the voice context sealed into each call (see src/lib/voice/seal.ts). 32+ characters.
+  VOICE_SEAL_SECRET: z.string().min(32).optional(),
+  // What ElevenLabs sends the voice front (/api/voice/llm) as its custom-LLM API key.
+  VOICE_LLM_SECRET: z.string().min(24).optional(),
+  // The OpenAI-compatible model the voice front talks with. Unset under the mock means the mock's
+  // own scripted replies.
+  VOICE_LLM_BASE_URL: z.url().optional(),
+  VOICE_LLM_API_KEY: z.string().optional(),
+  VOICE_LLM_MODEL: z.string().optional(),
+  // Voice time per person per day (UTC), and the longest one call may run, in seconds.
+  LIMIT_VOICE_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1800),
+  LIMIT_VOICE_CALL_SECONDS: z.coerce.number().int().min(60).max(7200).default(1500),
 });
 
 const toolkitSchema = z.record(
@@ -115,6 +136,22 @@ export interface AppConfig {
   };
   /** Lowercased sign-in emails allowed to see preview features (see src/lib/flags.ts). */
   previewEmails: Set<string>;
+  /** Lowercased sign-in emails allowed to see only the voice preview. */
+  previewVoiceEmails: Set<string>;
+  /** Voice calls. Unset means they're off. */
+  voice?: VoiceConfig;
+}
+
+export interface VoiceConfig {
+  provider: "mock" | "elevenlabs";
+  elevenlabs?: { apiKey: string; agentId: string };
+  /** Signs each call's sealed context. Under the mock without one, a per-process random key. */
+  sealSecret: string;
+  /** The custom-LLM key ElevenLabs sends the voice front. */
+  llmSecret?: string;
+  /** The model the voice front talks with; unset under the mock means its scripted replies. */
+  llm?: { baseUrl: string; apiKey: string; model: string };
+  limits: { secondsPerDay: number; callSeconds: number };
 }
 
 let cached: AppConfig | undefined;
@@ -153,6 +190,8 @@ export function getConfig(): AppConfig {
     };
   }
 
+  const voice = voiceConfig(env);
+
   cached = {
     supabase: { url: env.NEXT_PUBLIC_SUPABASE_URL, anonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY },
     agent: {
@@ -179,11 +218,49 @@ export function getConfig(): AppConfig {
       runsServicePerDay: env.LIMIT_RUNS_SERVICE_PER_DAY,
       taskRunsPerWorkspacePerDay: env.LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY,
     },
-    previewEmails: new Set(
-      (env.PREVIEW_FEATURE_EMAILS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
-    ),
+    previewEmails: emails(env.PREVIEW_FEATURE_EMAILS),
+    previewVoiceEmails: emails(env.PREVIEW_VOICE_EMAILS),
+    voice,
   };
   return cached;
+}
+
+function emails(list: string | undefined): Set<string> {
+  return new Set((list ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+}
+
+function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
+  const provider = env.VOICE_PROVIDER ?? (env.ELEVENLABS_API_KEY && env.ELEVENLABS_AGENT_ID ? "elevenlabs" : undefined);
+  if (!provider) return undefined;
+  const llm =
+    env.VOICE_LLM_BASE_URL && env.VOICE_LLM_API_KEY && env.VOICE_LLM_MODEL
+      ? { baseUrl: env.VOICE_LLM_BASE_URL.replace(/\/+$/, ""), apiKey: env.VOICE_LLM_API_KEY, model: env.VOICE_LLM_MODEL }
+      : undefined;
+  const limits = { secondsPerDay: env.LIMIT_VOICE_SECONDS_PER_DAY, callSeconds: env.LIMIT_VOICE_CALL_SECONDS };
+  if (provider === "elevenlabs") {
+    if (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_AGENT_ID || !env.VOICE_SEAL_SECRET || !env.VOICE_LLM_SECRET || !llm) {
+      // A preview feature: half set up, calls stay off rather than taking the app down.
+      console.error(
+        "[config] Voice calls are off: ElevenLabs needs ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, VOICE_SEAL_SECRET, VOICE_LLM_SECRET, VOICE_LLM_BASE_URL, VOICE_LLM_API_KEY, and VOICE_LLM_MODEL.",
+      );
+      return undefined;
+    }
+    return {
+      provider,
+      elevenlabs: { apiKey: env.ELEVENLABS_API_KEY, agentId: env.ELEVENLABS_AGENT_ID },
+      sealSecret: env.VOICE_SEAL_SECRET,
+      llmSecret: env.VOICE_LLM_SECRET,
+      llm,
+      limits,
+    };
+  }
+  return { provider, sealSecret: env.VOICE_SEAL_SECRET ?? processSecret(), llm, limits };
+}
+
+/** A random signing key for this process, for the mock voice without a configured one. */
+function processSecret(): string {
+  const g = globalThis as unknown as { __voiceSealSecret?: string };
+  return (g.__voiceSealSecret ??= Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join(""));
 }
 
 /** Treat empty strings as unset so `KEY=` in an env file means "use the default". */

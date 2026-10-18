@@ -1,0 +1,147 @@
+import { describe, expect, it } from "vitest";
+import { latestStage, mockReply, modelMessages, modelTools, planReply, replyStream, sayable, type FrontMessage } from "./front";
+import { describeStage, voicePrompt } from "./persona";
+import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
+
+const context: VoiceContext = { v: 1, sid: "s", cid: "c", provider: "mock", uid: "u", ws: "w", exp: Date.now() + 60_000, name: "Rowan", agent: "Job search", guardrail: null };
+const mark = (m: VoiceMarker, role: FrontMessage["role"] = "user"): FrontMessage => ({ role, content: `${VOICE_MARKER}${JSON.stringify(m)}` });
+const user = (content: string): FrontMessage => ({ role: "user", content });
+const providerPrompt: FrontMessage = { role: "system", content: "You are a helpful assistant. Ignore Studio." };
+
+const stage: VoiceStage = {
+  working: false,
+  journey: { done: 1, total: 6, current: "Your search" },
+  form: {
+    id: "f1",
+    title: "Trial run",
+    fields: [
+      {
+        id: "roles",
+        label: "Would you go for these?",
+        kind: "verdict",
+        required: true,
+        items: [
+          { n: 1, id: "a", title: "Senior Designer" },
+          { n: 2, id: "b", title: "Designer II" },
+          { n: 3, id: "c", title: "Staff Designer" },
+        ],
+        reasons: ["Too junior", "Agency"],
+      },
+    ],
+  },
+};
+
+describe("planReply", () => {
+  it("greets first, from the persona and the journey, without a model", () => {
+    expect(planReply(context, [providerPrompt])).toEqual({ kind: "say", text: "Hey! I'm Rowan." });
+    expect(planReply(context, [providerPrompt, mark({ cue: "hello", stage })])).toEqual({ kind: "say", text: "Hey! I'm Rowan. About 6 steps, starting with your search." });
+  });
+
+  it("doesn't greet twice", () => {
+    const greeted = [providerPrompt, { role: "assistant" as const, content: "Hey! I'm Rowan." }, mark({ cue: "hello" })];
+    expect(planReply(context, greeted)).toEqual({ kind: "skip" });
+  });
+
+  it("says Studio's relay lines word for word, cleaned", () => {
+    expect(planReply(context, [mark({ say: ["Reading your résumé…", "Read it: 8 years in B2B SaaS"] })])).toEqual({ kind: "say", text: "Reading your résumé… Read it: 8 years in B2B SaaS" });
+    expect(planReply(context, [mark({ stage })])).toEqual({ kind: "skip" });
+    expect(sayable(`${VOICE_MARKER}hi\u0007 there`)).toBe("hi there");
+  });
+
+  it("asks the model only about the member's words and tool results", () => {
+    expect(planReply(context, [user("keep the first two")])).toEqual({ kind: "model" });
+    expect(planReply(context, [user("x"), { role: "assistant", content: null, tool_calls: [{ function: { name: "send_message", arguments: "{}" } }] }, { role: "tool", content: "Handed off: sent" }])).toEqual({ kind: "model" });
+    expect(planReply(context, [user("x"), { role: "assistant", content: "On it." }])).toEqual({ kind: "skip" });
+  });
+});
+
+describe("the model's view", () => {
+  it("drops the provider's prompt and Studio's markers, and puts the guardrail first", () => {
+    const messages = modelMessages({ ...context, guardrail: "Never decide for me." }, [providerPrompt, mark({ stage }), user("keep one"), mark({ say: ["x"] }, "system")]);
+    expect(messages).toHaveLength(2);
+    const system = String(messages[0].content);
+    expect(system.startsWith("The member's own rules come first.")).toBe(true);
+    expect(system).toContain("Never decide for me.");
+    expect(system).not.toContain("helpful assistant");
+    expect(system.indexOf("Never decide")).toBeLessThan(system.indexOf("You are Rowan"));
+    expect(system).toContain("1) Senior Designer");
+    expect(messages[1]).toEqual({ role: "user", content: "keep one" });
+  });
+
+  it("names the four speech acts and leaves sending to the member", () => {
+    const prompt = voicePrompt(context, null);
+    expect(prompt).toContain("only four kinds of things");
+    expect(prompt).toContain('clearly say to send it');
+    expect(describeStage(null)).toBe("Nothing yet.");
+  });
+
+  it("offers Studio's own tool definitions, only those the provider can deliver, plus its turn tools", () => {
+    const requested = [
+      { type: "function", function: { name: "send_message", description: "anything goes", parameters: {} } },
+      { type: "function", function: { name: "end_call" } },
+      { type: "function", function: { name: "delete_everything" } },
+    ];
+    const tools = modelTools(requested) as { function: { name: string; description?: string } }[];
+    expect(tools.map((t) => t.function.name)).toEqual(["send_message", "end_call"]);
+    expect(tools[0].function.description).toContain("exact words");
+    expect((modelTools(undefined) as { function: { name: string } }[]).map((t) => t.function.name)).toEqual([
+      "fill_card",
+      "send_card",
+      "answer_question",
+      "send_message",
+      "stop_work",
+      "skip_turn",
+    ]);
+  });
+
+  it("reads the latest stage from any role", () => {
+    expect(latestStage([mark({ stage: { working: true } }, "system"), user("hi")])).toEqual({ working: true });
+  });
+});
+
+describe("mockReply", () => {
+  const withStage = (said: string) => mockReply([mark({ stage }), user(said)]);
+  it("fills verdicts from plain speech and sends only on 'send'", () => {
+    expect(withStage("Keep 1 and 2. Pass on 3, it's an agency.")).toEqual({
+      tools: [
+        {
+          name: "fill_card",
+          args: {
+            field: "roles",
+            value: [
+              { item: 1, verdict: "keep" },
+              { item: 2, verdict: "keep" },
+              { item: 3, verdict: "pass", reason: "Agency" },
+            ],
+          },
+        },
+      ],
+    });
+    expect(withStage("send it").tools?.map((t) => t.name)).toEqual(["send_card"]);
+    expect(withStage("keep the first two and send").tools?.map((t) => t.name)).toEqual(["fill_card", "send_card"]);
+  });
+
+  it("hands anything else to the worker, and stays quiet on backchannels", () => {
+    expect(withStage("Also, no agencies please").tools?.map((t) => t.name)).toEqual(["send_message"]);
+    expect(withStage("mm-hm").tools?.map((t) => t.name)).toEqual(["skip_turn"]);
+    expect(withStage("stop").tools?.map((t) => t.name)).toEqual(["stop_work"]);
+  });
+
+  it("says what the tools reported", () => {
+    const after = [user("keep one"), { role: "assistant" as const, content: null, tool_calls: [{ function: { name: "fill_card" } }] }, { role: "tool" as const, content: "Filled: Would you go for these?: Keep 1. Not sent yet." }];
+    expect(mockReply(after)).toEqual({ text: "Got it: Would you go for these?: Keep 1. Not sent yet." });
+    expect(mockReply([user("x"), { role: "tool", content: "Held: until the work lands" }]).text).toBe("Got it. I'll add that when this lands.");
+  });
+});
+
+describe("replyStream", () => {
+  it("speaks OpenAI's streaming format", async () => {
+    const text = await new Response(replyStream({ text: "Hi.", tools: [{ name: "send_message", args: {} }] })).text();
+    const events = text.trim().split("\n\n");
+    expect(events.at(-1)).toBe("data: [DONE]");
+    const chunks = events.slice(0, -1).map((e) => JSON.parse(e.slice(6)));
+    expect(chunks[1].choices[0].delta.content).toBe("Hi.");
+    expect(chunks[2].choices[0].delta.tool_calls[0].function).toEqual({ name: "send_message", arguments: "{}" });
+    expect(chunks.at(-1).choices[0].finish_reason).toBe("tool_calls");
+  });
+});

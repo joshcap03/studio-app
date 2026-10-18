@@ -80,6 +80,12 @@ raw/technical text.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
+- `src/lib/voice/`: voice calls (preview; `docs/voice.md`). `index.ts` starts and ends calls under
+  the member's session (`claim_voice` caps daily voice time), `seal.ts` seals the call's context,
+  `front.ts` is the voice front ElevenLabs calls (`/api/voice/llm/v1/chat/completions`),
+  `persona.ts` its prompt and tools, `relay.ts` what it may say about a run, `intent.ts` what the
+  member's own words ask for. The call screen is `src/components/voice/call.tsx`; card drafts it
+  shares with the thread are `src/components/chat/card-drafts.tsx`, checked by `src/lib/chat/ui-fill.ts`.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
@@ -104,7 +110,9 @@ raw/technical text.
   member under RLS. `src/lib/elevated-guard.test.ts` enforces this. That session's access token
   goes only to `POST /api/tasks/<id>/runs/<run>`, the one route that accepts a bearer token
   (verified with Supabase Auth; `src/proxy.ts` lets only that route through without a cookie).
-  Every other route takes cookie sessions only.
+  The other cookieless route is the voice front (`/api/voice/llm/v1/chat/completions`), which
+  checks the voice provider's key and the call's sealed context and touches no data. Every other
+  route takes cookie sessions only.
 - Keep provider-specific logic inside its adapter. Declare capabilities honestly; don't
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
 - Never hardcode a tenant, template, or use case into agent or app logic. Templates are
@@ -128,6 +136,20 @@ raw/technical text.
 - Render only what the backend reports: no invented activity, statuses, or artifacts, and no
   artifact parsing from free text. Mock output stays clearly labeled.
 - Secrets stay server-side in `src/lib/config.ts`; only `NEXT_PUBLIC_SUPABASE_*` reach the browser.
+  The only provider credential the browser gets is a short-lived voice session token.
+- The voice front talks and is never a second agent. It may only reflect the member's words back,
+  say what the worker reported (relay lines, the reply, card contents), ask them to clarify, and
+  say a holding line. Anything else goes to the worker in the member's exact words (the
+  speech-to-text transcript, never the voice model's paraphrase). It has no tools that act, no
+  knowledge base, and no memory, and its prompt is built per call on the server, with the
+  member's guardrail first. Its session context is sealed and bound to the call; it reads no data.
+- A card is sent by voice only on the member's clear "send" in their own transcript, and a
+  running job is redirected only on a clear "stop" or "actually…" (redirecting stops it and
+  declines a pending approval); other talk-over is held until it lands. Files, connecting apps,
+  Apply, "Do the first one now", and approvals stay taps. A spoken approval (Phase 3) needs a
+  read-back, the member's yes from speech-to-text, and a visible cancel hold, is stored with
+  their words, and never covers money, deletions, or bulk sends.
+- Studio never stores audio. Screen or camera frames are taken only when the member asks.
 - Navigation in the chat shell is client-side history with the path in `Workspace` state.
 - Design tokens live in `src/app/globals.css`; use the token utilities, not raw colors.
 - Don't add dependencies without need.

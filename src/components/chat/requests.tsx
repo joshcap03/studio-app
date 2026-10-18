@@ -5,6 +5,10 @@ import { useState } from "react";
 import { appName } from "@/lib/apps";
 import type { Approval, MemoryProposal, Question } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
+import { useCardDrafts } from "./card-drafts";
+import { Heard } from "./ui-cards";
+
+export { answerText } from "./card-drafts";
 
 // Cards for what the agent asked of the member: an action to approve before it runs, a
 // question to answer, and a fact to remember. Rendered only from what the backend reported; nothing here acts until
@@ -171,21 +175,17 @@ interface QuestionsProps {
   questions: Question[];
   /** Present only while these can still be answered (the latest reply, agent idle). */
   onAnswer?: (text: string) => void;
-}
-
-/** The message that answers `questions` with the member's picks. */
-export function answerText(questions: Question[], picks: string[][]): string {
-  if (questions.length === 1) return picks[0].join(", ");
-  return questions.map((q, i) => `${q.header ? `${q.header}:` : q.question} ${picks[i].join(", ")}`).join("\n");
+  /** Where the picks are kept in the workspace's card drafts (shared with a call's stage). */
+  draftKey: string;
 }
 
 /**
  * Questions the agent asked, with choices to click. One single-choice question sends on
  * click; otherwise the member picks for each and sends. Typing in the composer answers too.
  */
-export function QuestionCard({ questions, onAnswer }: QuestionsProps) {
-  const [picks, setPicks] = useState<string[][]>(() => questions.map(() => []));
-  const [sent, setSent] = useState(false);
+export function QuestionCard({ questions, onAnswer, draftKey }: QuestionsProps) {
+  const drafts = useCardDrafts();
+  const { picks, sent, heard } = drafts.question(draftKey, questions);
   const instant = questions.length === 1 && !questions[0].multiSelect;
   const complete = picks.every((p) => p.length > 0);
 
@@ -202,10 +202,13 @@ export function QuestionCard({ questions, onAnswer }: QuestionsProps) {
     );
   }
 
+  const answer = onAnswer;
+  const setPicks = (next: string[][]) => drafts.updateQuestion(draftKey, questions, (d) => ({ ...d, picks: next, heard: null }));
+
   function submit(next: string[][]) {
-    if (sent || !onAnswer || !next.every((p) => p.length > 0)) return;
-    setSent(true);
-    onAnswer(answerText(questions, next));
+    if (sent || !next.every((p) => p.length > 0)) return;
+    setPicks(next);
+    drafts.submitQuestions(draftKey, questions, answer);
   }
 
   function pick(qi: number, label: string) {
@@ -265,9 +268,15 @@ export function QuestionCard({ questions, onAnswer }: QuestionsProps) {
           </div>
         </fieldset>
       ))}
+      {heard ? (
+        <div className="px-3 pb-3">
+          <Heard said={heard.said} onUse={() => (instant ? submit(heard.picks) : setPicks(heard.picks))} onDismiss={() => drafts.updateQuestion(draftKey, questions, (d) => ({ ...d, heard: null }))} />
+        </div>
+      ) : null}
       <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
         <span className="mr-auto pl-1 text-[12px] text-fg-3">Or type your own answer below.</span>
-        {instant ? null : (
+        {/* One single-choice question sends on a tap; picked by voice, it waits for Send. */}
+        {instant && !complete ? null : (
           <button
             type="button"
             onClick={() => submit(picks)}

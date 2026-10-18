@@ -154,14 +154,23 @@ export interface RunReport {
   summary: string;
 }
 
-/** Where a message came from when the member didn't type it. */
-export interface MessageOrigin {
-  kind: "task";
-  taskId: string;
-  /** The task's title when the run started, for a "Scheduled · …" label. */
-  title: string;
-  runId: string | null;
-}
+/** Where a message came from when the member didn't type it: a task's run, or their words on a call. */
+export type MessageOrigin =
+  | {
+      kind: "task";
+      taskId: string;
+      /** The task's title when the run started, for a "Scheduled · …" label. */
+      title: string;
+      runId: string | null;
+    }
+  | { kind: "voice" };
+
+/**
+ * How the member is talking to the agent on this turn: typing, a held voice message, or a live
+ * call (where a voice front speaks for the agent and shows its cards).
+ */
+export const MODALITIES = ["text", "voice_note", "call"] as const;
+export type Modality = (typeof MODALITIES)[number];
 
 export interface ChatMessage {
   id: string;

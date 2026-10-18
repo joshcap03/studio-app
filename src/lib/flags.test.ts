@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/config", () => ({
-  getConfig: () => ({ previewEmails: new Set(["preview@example.test"]) }),
+  getConfig: () => ({ previewEmails: new Set(["preview@example.test"]), previewVoiceEmails: new Set(["voice@example.test"]) }),
 }));
 
 const { previewEnabled } = await import("./flags");
@@ -13,5 +13,11 @@ describe("previewEnabled", () => {
     expect(previewEnabled({ email: "someone@example.test" }, "brain")).toBe(false);
     expect(previewEnabled({ email: null }, "brain")).toBe(false);
     expect(previewEnabled({ email: "" }, "brain")).toBe(false);
+  });
+
+  it("turns on only voice for voice-only accounts", () => {
+    expect(previewEnabled({ email: "voice@example.test" }, "voice")).toBe(true);
+    expect(previewEnabled({ email: "voice@example.test" }, "brain")).toBe(false);
+    expect(previewEnabled({ email: "preview@example.test" }, "voice")).toBe(true);
   });
 });

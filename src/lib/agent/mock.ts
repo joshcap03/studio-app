@@ -192,38 +192,8 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
-    // Results to keep or pass on, the way a trial run or a task run asks for a verdict.
-    match: /\b(trial run|keep or pass|judge (these|them))\b/i,
-    steps: [
-      { kind: "text", text: "Here's a trial run (mock): four made-up results. Keep the ones you'd want, pass on the rest." },
-      {
-        kind: "ui",
-        block: {
-          form: {
-            title: "Trial run (mock)",
-            submit_label: "Send verdicts",
-            fields: [
-              {
-                kind: "verdict",
-                id: "roles",
-                label: "Would you go for these?",
-                required: true,
-                reasons: ["Too junior", "Not remote", "Pay too low", "Wrong industry"],
-                items: [
-                  { title: "Senior Product Designer · Example Co (mock)", body: "Remote US, $185k. Design systems team.", link: "https://example.com/jobs/1" },
-                  { title: "Product Designer II · Sample Labs (mock)", body: "Hybrid, NYC. $140k." },
-                  { title: "Staff Designer · Placeholder Inc (mock)", body: "Remote US, $210k. B2B analytics." },
-                  { title: "Design Lead · Demo Systems (mock)", body: "On-site, Austin. Manages 4." },
-                ],
-              },
-            ],
-          },
-        },
-      },
-    ],
-  },
-  {
     // A setup form with every kind of field; the answers arrive as the member's next message.
+    // Ahead of the trial run: the setup skill's own instructions mention a trial run.
     match: /\b(set (me|you) up|set up this agent|show me a form)\b/i,
     steps: [
       { kind: "text", text: "Let's get you set up (mock)." },
@@ -266,6 +236,37 @@ const SCENARIOS: Scenario[] = [
                 prefill: [{ situation: "Signups had stalled for two quarters.", action: "Rebuilt onboarding with the design team.", result: "Activation up 18%." }],
               },
               { kind: "connect", id: "apps", label: "Apps I'll work in", apps: ["gmail", "apollo", "hunter"] },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
+    // Results to keep or pass on, the way a trial run or a task run asks for a verdict.
+    match: /\b(trial run|keep or pass|judge (these|them))\b/i,
+    steps: [
+      { kind: "text", text: "Here's a trial run (mock): four made-up results. Keep the ones you'd want, pass on the rest." },
+      {
+        kind: "ui",
+        block: {
+          form: {
+            title: "Trial run (mock)",
+            submit_label: "Send verdicts",
+            fields: [
+              {
+                kind: "verdict",
+                id: "roles",
+                label: "Would you go for these?",
+                required: true,
+                reasons: ["Too junior", "Not remote", "Pay too low", "Wrong industry"],
+                items: [
+                  { title: "Senior Product Designer · Example Co (mock)", body: "Remote US, $185k. Design systems team.", link: "https://example.com/jobs/1" },
+                  { title: "Product Designer II · Sample Labs (mock)", body: "Hybrid, NYC. $140k." },
+                  { title: "Staff Designer · Placeholder Inc (mock)", body: "Remote US, $210k. B2B analytics." },
+                  { title: "Design Lead · Demo Systems (mock)", body: "On-site, Austin. Manages 4." },
+                ],
+              },
             ],
           },
         },
