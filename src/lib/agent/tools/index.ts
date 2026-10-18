@@ -835,9 +835,12 @@ function humanize(name: string): string {
 /**
  * True when the agent's progress line talks about its machinery ("The search tool isn't
  * callable…") instead of the work. Such lines are kept but never shown while it works.
+ * Quoted text (a job titled “Product Manager (Discovery)”) is the member's content, not
+ * machinery talk, and "discovery" alone is a sales and product word; only tool discovery counts.
  */
 export function talksMachinery(text: string): boolean {
-  return /\b(tools?|tool calls?|toolkits?|schemas?|callable|composio|mcp|discovery)\b/i.test(text);
+  const own = text.replace(/“[^”]*”|"[^"]*"/g, " ");
+  return /\b(tools?|tool calls?|toolkits?|schemas?|callable|composio|mcp|discover_tools)\b/i.test(own);
 }
 
 /** Tools that report on the answer (its sources, charts, questions, what to remember) rather than do the work. */
