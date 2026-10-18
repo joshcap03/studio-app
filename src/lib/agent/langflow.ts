@@ -1,6 +1,6 @@
 import { appForToolkit } from "@/lib/apps";
 import { toMemoryCategory } from "@/lib/types";
-import { evidenceFor, interpretCalls, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
+import { evidenceFor, interpretCalls, keepsBooks, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
@@ -632,12 +632,25 @@ export function friendlyError(detail: string): string {
 
 /**
  * Which entries of a reply are the agent's opening lines: short text followed by a tool call
- * that does work. Text followed only by calls that report on the answer (cite, remember, …)
- * is the answer itself, and long text never reads as an opening line.
+ * that does work. Text followed only by calls that report on the answer (cite, remember, …) or
+ * keep the agent's books (its plan) is the answer itself, and long text never reads as an
+ * opening line.
  */
 export function openingLineIndexes(entries: { type?: string; text?: unknown; name?: string | null; tool_input?: unknown; input?: unknown }[]): number[] {
-  const lastWork = entries.findLastIndex((l) => l.type === "tool_use" && !reportsOnAnswer(l.name ?? "tool", l.tool_input ?? l.input));
-  return entries.flatMap((l, i) => (i < lastWork && l.type === "text" && typeof l.text === "string" && opensWork(l.text) ? [i] : []));
+  // From the end back: a short line is an opening line when work comes next, past any bookkeeping
+  // and other opening lines; the reply (or the end) comes next otherwise.
+  const out: number[] = [];
+  let workNext = false;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const l = entries[i];
+    if (l.type === "tool_use") {
+      if (!keepsBooks(l.name ?? "tool", l.tool_input ?? l.input)) workNext = true;
+    } else if (l.type === "text" && typeof l.text === "string") {
+      if (workNext && opensWork(l.text)) out.unshift(i);
+      else workNext = false;
+    }
+  }
+  return out;
 }
 
 /** The agent's opening lines in a bot message. */
@@ -846,6 +859,20 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         let releasing = false;
         let toolCount = 0;
         const notes: string[] = [];
+        // Notes followed only by calls that keep the agent's books (see keepsBooks) may be part of
+        // its reply after all ("Hey! …", then updating its plan, then its question). They are once
+        // more of the reply is released or the run ends, and are streamed then, where they were
+        // written; real work next makes them opening lines after all. Streamed, never replaced, so
+        // a run resumed after an approval keeps what was said before it.
+        let held: string[] = [];
+        const keepHeld = (more: boolean): AgentEvent[] => {
+          if (held.length === 0) return [];
+          const lines = held;
+          held = [];
+          const text = `${shownText && !/\s$/.test(shownText) ? "\n\n" : ""}${lines.join("\n\n")}${more ? "\n\n" : ""}`;
+          shownText += text;
+          return [...lines.map((line): AgentEvent => ({ type: "note-reply", text: line })), { type: "text-delta", text }];
+        };
         let lastBot: LangflowMessage | undefined;
         const seenArtifacts = new Set<string>();
         const seenProposals = new Set<string>();
@@ -915,6 +942,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   pending += chunk;
                   if (pending.length > OPENING_LINE_MAX || pending.includes("\n\n")) {
                     releasing = true;
+                    yield* keepHeld(true);
                     shownText += pending;
                     yield { type: "text-delta", text: pending };
                     pending = "";
@@ -929,15 +957,21 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               if (uses.length > toolCount) {
                 const fresh = uses.slice(toolCount);
                 toolCount = uses.length;
+                const bookkeeping = fresh.every((t) => keepsBooks(t.name ?? "tool", t.tool_input ?? t.input));
                 // Text before a call that only cites or remembers is the answer, not an opening line.
                 if (fresh.every((t) => reportsOnAnswer(t.name ?? "tool", t.tool_input ?? t.input))) {
                   if (pending) {
+                    yield* keepHeld(true);
                     shownText += pending;
                     yield { type: "text-delta", text: pending };
                   }
                 } else if (pending.trim()) {
                   notes.push(pending.trim());
                   yield { type: "note", text: pending.trim() };
+                  if (bookkeeping) held.push(pending.trim());
+                  else held = [];
+                } else if (!bookkeeping) {
+                  held = [];
                 }
                 pending = "";
                 releasing = false;
@@ -967,7 +1001,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                 }
               }
               const answer = typeof message.text === "string" ? withoutNotes(message.text, notes) : "";
-              if (!tokens && answer && answer !== shownText) {
+              if (!tokens && answer !== shownText && (answer || shownText)) {
                 shownText = answer;
                 yield { type: "message", text: answer };
               }
@@ -982,6 +1016,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                 yield { type: "note", text: pending.trim() };
                 pending = "";
               }
+              held = [];
               // A run paused again before reporting the carried call keeps pointing at it.
               let step = pausedStep(lastBot, request) ?? (carriedFrom === undefined ? carried : undefined);
               if (step && step.id === carriedFrom) step = carried;
@@ -992,6 +1027,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               const detail = (data as { error?: unknown })?.error;
               throw new AgentError(typeof detail === "string" && detail ? friendlyError(detail) : "The agent ran into a problem.");
             } else if (event === "end") {
+              yield* keepHeld(Boolean(pending));
               if (pending) {
                 shownText += pending;
                 yield { type: "text-delta", text: pending };
@@ -1018,6 +1054,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
           if (input.signal.aborted) return;
           // The stream closed without an end: read on from the last event.
         }
+        yield* keepHeld(Boolean(pending));
         if (pending) {
           shownText += pending;
           yield { type: "text-delta", text: pending };

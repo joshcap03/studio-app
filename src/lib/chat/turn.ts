@@ -470,6 +470,15 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               content = event.text;
               send({ type: "text-replace", text: event.text });
               break;
+            case "note-reply": {
+              // Part of the reply first taken for an opening line isn't also shown as a step.
+              const index = activity.findIndex((s) => s.action === "note" && !s.hidden && s.label === event.text.slice(0, 300));
+              if (index >= 0) {
+                activity[index] = { ...activity[index], hidden: true };
+                send({ type: "activity", step: activity[index] });
+              }
+              break;
+            }
             case "note": {
               const at = Date.now();
               const step: ActivityStep = {

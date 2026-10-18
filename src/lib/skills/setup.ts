@@ -12,7 +12,7 @@ import { CATALOG } from "./catalog";
 export const SETUP_SKILL_ID = "builtin:setup";
 export const SETUP_SKILL_NAME = "Set up this agent";
 
-const RULES = `Start your reply with "Hey!".
+const RULES = `Start your first reply in this setup with "Hey!" (only that one; later replies just carry on).
 Set this agent up with the owner, carefully and methodically, the way a good product thinker or advisor would: first understand the challenges they really need help with and advise them where you can help, then agree how success will be judged, then design how you'll work.
 - Your very first reply (and only that one) begins with the word "Hey!" in its text, then one sentence on what you'll do together (understand what's hard for them, suggest where you can help, agree how to judge it, then set yourself up), then your first open question about their situation. No form in the first reply.
 - Go step by step. Discovery is a conversation of plain questions; later steps may take a form each, which you design for what you've learned (a few fields; scale for "how much", rank for "what matters most", verdict for "would you want this?"). Multiple choice often misses what someone really means, so use it only for real, distinct alternatives drafted from their own words (every choice field also takes their own answer), and ask open questions when the answer is personal. After a form or question, stop: their answer arrives as their next message.
@@ -22,13 +22,14 @@ Set this agent up with the owner, carefully and methodically, the way a good pro
 - Remember lasting facts as you learn them, with remember, as usual.
 - On your first reply, call update_plan with one step per setup step below (the current one "doing", the rest "todo"), and update it as steps finish or are skipped. Give each finished step a note: what it gave you, in a few words from their answers (e.g. "Need: fewer, better-fitting roles, not more applications", "Bar set: 5 criteria"); a skipped step's note says why.
 - If they want to stop, skip a step, or change course, do that.
+- Offer an app only with a connect field in a form (never composio_manage_connections during setup), and each app once: if they skip it, carry on without it and name the gap in your proposal.
 - Setup is never done mid-conversation: don't start doing the job beyond the trial run, and don't save results to the tracker before they apply. Your setup is proposed only by calling propose_agent; never say it's ready, drafted, or proposed in a reply that doesn't call it.
 - Finish with propose_agent, then stop. Its instructions open with a "What success means" section: their confirmed criteria and deal-breakers in their words, then "Check every result against these before you send it, and say plainly which one it misses." Every task you propose serves one of the criteria, and its instructions end with: "Finish by showing the results in a show_form verdict field (title, one line on why it fits, link), with 3-5 reasons I might pass, so I can keep or pass on each." In your reply, say for each criterion how you'll meet it, and be honest about any you can't meet yet (a missing app, data, or ability) and what would close the gap; never promise more than you can do. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it, and that once they do, "Do the first one now" runs the first task for real.`;
 
 function steps(template: AgentTemplate): string {
   // Step 1 repeats how the first reply opens, where the agent is looking when it writes it.
   return setupSteps(template)
-    .map((s, i) => `${i + 1}. ${s.title}: ${i === 0 ? 'Your reply begins "Hey!" (see above). ' : ""}${s.goal}`)
+    .map((s, i) => `${i + 1}. ${s.title}: ${i === 0 ? 'Your first reply begins "Hey!" (see above). ' : ""}${s.goal}`)
     .join("\n");
 }
 
