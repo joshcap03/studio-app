@@ -124,6 +124,19 @@ function tone(rising: boolean) {
   }
 }
 
+/**
+ * A tool argument as the model sent it: structured answers arrive as JSON text (the provider's
+ * tool schemas only carry strings), plain answers as text.
+ */
+function argument(value: unknown): unknown {
+  if (typeof value !== "string" || !/^\s*[[{]/.test(value)) return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
 /** What a fill did, for the voice to say. */
 function fillReply(result: FillResult): string {
   if (result.status === "refused") return `Refused: ${result.reason}`;
@@ -311,14 +324,14 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     fill_card: (params) => {
       const { form } = openAsk(live.current.messages, live.current.running);
       if (!form) return live.current.running ? "Refused: no card yet; the worker is still busy." : "Refused: there's no card open on screen.";
-      const result = drafts.fillForm(form, { field: String(params.field ?? ""), value: params.value, sure: params.sure === false ? false : undefined }, cardWords());
+      const result = drafts.fillForm(form, { field: String(params.field ?? ""), value: argument(params.value), sure: params.sure === false ? false : undefined }, cardWords());
       if (result.status !== "refused") consume();
       return fillReply(result);
     },
     answer_question: (params) => {
       const { reply, questions } = openAsk(live.current.messages, live.current.running);
       if (!reply || !questions) return "Refused: there's no question open on screen.";
-      const result = drafts.fillQuestion(`${reply.id}:questions`, questions, params.answers);
+      const result = drafts.fillQuestion(`${reply.id}:questions`, questions, argument(params.answers));
       if (result.status !== "refused") consume();
       return fillReply(result);
     },
