@@ -116,12 +116,12 @@ export const VOICE_TOOLS: Record<VoiceToolName, { description: string; parameter
   },
   fill_card: {
     description:
-      'Fill one field of the card on stage from what the member just said. value: an option label (or list) for choice fields, labels in order for rank, a number for scale, the member\'s words for text, [{item: number, verdict: "keep"|"pass", reason?}] for verdict, {entry, part, text} for list. Nothing is sent.',
+      'Fill one field of the card on stage from what the member just said. value is a string: an option label for a choice, the member\'s words for text, a number for a scale, or JSON for the rest: ["Remote","Hybrid"] for several picks, labels in order for a ranking, [{"item":1,"verdict":"keep"},{"item":3,"verdict":"pass","reason":"…"}] for keep/pass, {"entry":1,"part":"result","text":"…"} for a list. Nothing is sent.',
     parameters: {
       type: "object",
       properties: {
         field: { type: "string", description: "The field's id from the stage." },
-        value: { description: "The answer, shaped for the field's kind." },
+        value: { type: "string", description: "The answer, shaped for the field's kind (JSON where it says so)." },
         sure: { type: "boolean", description: "False when you're guessing what they meant." },
       },
       required: ["field", "value"],
@@ -133,12 +133,8 @@ export const VOICE_TOOLS: Record<VoiceToolName, { description: string; parameter
       type: "object",
       properties: {
         answers: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: { question: { type: "number" }, option: { description: "An option label, or labels for pick-any." } },
-            required: ["option"],
-          },
+          type: "string",
+          description: 'JSON list, one per question answered: [{"question":1,"option":"Repeat buyers"}], with a list of labels as the option for pick-any questions.',
         },
       },
       required: ["answers"],

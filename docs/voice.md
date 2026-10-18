@@ -27,37 +27,39 @@ words. Phase 1 is the Setup Call: "Talk it through" beside "Start" on the setup 
 
 Studio stores no audio. The member's words become their messages, labeled "On a call".
 
-## Setting up the ElevenLabs agent
+## Turning it on
 
-One shared agent serves every member. In the ElevenLabs dashboard (or API):
+1. **ElevenLabs:** an account on a paid plan (calls are billed per minute) and an API key
+   with access to ElevenLabs Agents (Developers → API Keys).
+2. **Two random secrets**, each from `openssl rand -hex 32`: `VOICE_SEAL_SECRET` (signs each
+   call's context) and `VOICE_LLM_SECRET` (the key ElevenLabs sends Studio's voice front).
+3. **The voice's model:** any OpenAI-compatible chat-completions endpoint with streaming and
+   tool calls: `VOICE_LLM_BASE_URL` (up to `/v1`, without `/chat/completions`),
+   `VOICE_LLM_API_KEY`, `VOICE_LLM_MODEL`. It only speaks, so a fast model fits.
+4. **The agent:** run `scripts/voice-agent.mjs` from your own terminal. It creates the one shared
+   agent: custom LLM pointed at the voice front, the two request headers, Studio's client tools,
+   patient turn taking with backchannels ignored, signed tokens only, overrides off except the
+   voice, no audio recording, 30-day retention. It prints the agent id and what ElevenLabs stored.
 
-1. **LLM:** Custom LLM, chat completions, URL `https://<app>/api/voice/llm/v1/chat/completions`,
-   API key = a new ElevenLabs secret holding `VOICE_LLM_SECRET`. Temperature unset.
-2. **Custom LLM request headers:**
-   - `X-Studio-Conversation` → dynamic variable `system__conversation_id`
-   - `X-Studio-Voice-Ctx` → dynamic variable `secret__studio_voice_ctx`
-3. **First message:** empty. The browser cues the greeting; a short `initial_wait_time` works too.
-4. **Client tools** (`expects_response: true`, timeout 10 s, pre-tool speech off), each with no
-   required parameters on the ElevenLabs side (Studio sends the model its own schemas):
-   `fill_card` (params `field`, `value`, `sure`), `answer_question` (`answers`), `send_card`,
-   `send_message`, `stop_work`. Add the system tools `skip_turn` and `end_call`.
-5. **Turn taking:** `turn_eagerness: patient`, `turn_timeout: 20`, `interruption_ignore_terms`
-   with the usual backchannels ("mm-hm", "yeah", "okay", "right", …) and
-   `merge_with_default_ignore_terms: true`. Leave "yes" out of the list.
-6. **Client events:** `user_transcript`, `agent_response`, `interruption`, `client_tool_call`,
-   `agent_response_correction`, `vad_score`.
-7. **Security and privacy:** authentication required (signed tokens only). Overrides off except
-   `tts.voice_id`. `custom_llm_extra_body` off. `record_voice: false`, short retention.
-8. **Voices:** each template's default voice id is in `src/lib/voice/persona.ts`; check they exist
+   ```bash
+   ELEVENLABS_API_KEY=… VOICE_LLM_SECRET=… APP_URL=https://<app> node scripts/voice-agent.mjs
+   ```
+
+   Run it again with `ELEVENLABS_AGENT_ID` set to update that agent instead of making another.
+5. **Vercel (Production):** set `VOICE_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`,
+   `ELEVENLABS_AGENT_ID`, `VOICE_SEAL_SECRET`, `VOICE_LLM_SECRET`, `VOICE_LLM_BASE_URL`,
+   `VOICE_LLM_API_KEY`, `VOICE_LLM_MODEL`, and `PREVIEW_VOICE_EMAILS` for anyone not already in
+   `PREVIEW_FEATURE_EMAILS`. Redeploy so they take effect. If any are missing, calls stay off
+   and the server logs which.
+6. **Voices:** each template's default voice id is in `src/lib/voice/persona.ts`; check they exist
    on the account.
-
-Then set the `VOICE_*` and `ELEVENLABS_*` values from `.env.example` in Vercel and add the
-members to `PREVIEW_VOICE_EMAILS` (or `PREVIEW_FEATURE_EMAILS`).
 
 **Check on the first real call** (the docs don't confirm these yet): that `system__` and
 `secret__` variables arrive as custom-LLM headers, that `sendUserMessage` triggers a turn and
 `sendContextualUpdate` shows up in the request's messages, the header size limit for the sealed
-context, and the Authorization header format of the custom-LLM key.
+context, and the Authorization header format of the custom-LLM key. If the request headers come
+back empty from the script, set them in the dashboard: Agent → LLM → Custom LLM → Request
+headers → Add header, Type: Variable.
 
 ## Testing
 
