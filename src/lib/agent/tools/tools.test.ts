@@ -141,6 +141,14 @@ describe("interpretCalls", () => {
     expect(talksMachinery("The search tool isn't callable directly, so I'll use discovery.")).toBe(true);
     expect(talksMachinery("Shopify is available. Let me load the order-listing tool's details.")).toBe(true);
     expect(talksMachinery("Let me look through your Granola notes for Franzi.")).toBe(false);
+    expect(talksMachinery("I'll run discover_tools to find the right action.")).toBe(true);
+  });
+
+  it("doesn't count quoted titles or work talk about discovery as machinery", () => {
+    expect(talksMachinery("Tracked “Senior Product Manager, Growth (Discovery) - Stash”")).toBe(false);
+    expect(talksMachinery('Tracked "Tools Engineer, MCP Platform"')).toBe(false);
+    expect(talksMachinery("Let me pull your notes from last week's discovery call.")).toBe(false);
+    expect(talksMachinery("The “Acme” search tool isn't callable.")).toBe(true);
   });
 
   it("reads Gmail results through multi-execute and lists what was found", () => {
