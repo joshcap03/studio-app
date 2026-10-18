@@ -197,7 +197,7 @@ export const LOST_LINE = "Sorry, I lost that. Could you say it again?";
  * a spoken line inside the stream, since the provider expects errors there.
  */
 export async function modelStream(
-  llm: { baseUrl: string; apiKey: string; model: string },
+  llm: { baseUrl: string; apiKey: string; model: string; extraBody?: Record<string, unknown> },
   context: VoiceContext,
   request: FrontRequest,
   signal: AbortSignal,
@@ -207,6 +207,8 @@ export async function modelStream(
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${llm.apiKey}` },
       body: JSON.stringify({
+        // Provider-specific settings first, so they can't replace the call's own fields.
+        ...llm.extraBody,
         model: llm.model,
         messages: modelMessages(context, request.messages),
         tools: modelTools(request.tools),

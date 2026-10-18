@@ -75,7 +75,10 @@ function agentBody(secretId, toolIds) {
           prompt: "Studio builds this voice's instructions per call.",
           llm: "custom-llm",
           tool_ids: toolIds,
-          built_in_tools: { end_call: {}, skip_turn: {} },
+          built_in_tools: {
+            end_call: { name: "end_call", description: "", params: { system_tool_type: "end_call" } },
+            skip_turn: { name: "skip_turn", description: "", params: { system_tool_type: "skip_turn" } },
+          },
           custom_llm: {
             url: `${app ?? "https://<APP_URL>"}/api/voice/llm/v1/chat/completions`,
             model_id: "studio-voice",

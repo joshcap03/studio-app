@@ -35,7 +35,10 @@ Studio stores no audio. The member's words become their messages, labeled "On a 
    call's context) and `VOICE_LLM_SECRET` (the key ElevenLabs sends Studio's voice front).
 3. **The voice's model:** any OpenAI-compatible chat-completions endpoint with streaming and
    tool calls: `VOICE_LLM_BASE_URL` (up to `/v1`, without `/chat/completions`),
-   `VOICE_LLM_API_KEY`, `VOICE_LLM_MODEL`. It only speaks, so a fast model fits.
+   `VOICE_LLM_API_KEY`, `VOICE_LLM_MODEL`. It only speaks, so a fast model fits, with thinking
+   off: on OpenRouter set `VOICE_LLM_EXTRA_BODY` to `{"reasoning":{"enabled":false}}` (Claude
+   Haiku 5.5 then answers in under a second; with thinking on, a short reply can spend its whole
+   budget thinking and say nothing).
 4. **The agent:** run `scripts/voice-agent.mjs` from your own terminal. It creates the one shared
    agent: custom LLM pointed at the voice front, the two request headers, Studio's client tools,
    patient turn taking with backchannels ignored, signed tokens only, overrides off except the

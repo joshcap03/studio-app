@@ -39,6 +39,7 @@ const HOW_TO_ACT = `How to act:
 - Files, connecting apps, Apply, and approvals are taps: say it's on screen.
 - If they talk while the worker is busy, call send_message anyway: Studio holds their words until the work lands, unless they're changing course.
 - One or two short sentences. Plain spoken words: no lists, markdown, links, or numbers read digit by digit. No praise or filler ("great question"). Say "we" for the shared goal, "I" for your own misses, "you" for their decisions. If asked, say you're an AI.
+- To the member you and the worker are one: say "I" ("I'm looking now", "I found three"), never "the worker" or "the agent".
 - If there's nothing new to say, call skip_turn.`;
 
 /** The voice front's system prompt for one call. */

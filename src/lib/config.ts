@@ -86,6 +86,9 @@ const schema = z.object({
   VOICE_LLM_BASE_URL: z.url().optional(),
   VOICE_LLM_API_KEY: z.string().optional(),
   VOICE_LLM_MODEL: z.string().optional(),
+  // Extra fields for the voice model's requests, as JSON, e.g. {"reasoning":{"enabled":false}} to
+  // skip thinking on OpenRouter (a voice should answer fast).
+  VOICE_LLM_EXTRA_BODY: jsonRecord,
   // Voice time per person per day (UTC), and the longest one call may run, in seconds.
   LIMIT_VOICE_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1800),
   LIMIT_VOICE_CALL_SECONDS: z.coerce.number().int().min(60).max(7200).default(1500),
@@ -150,7 +153,7 @@ export interface VoiceConfig {
   /** The custom-LLM key ElevenLabs sends the voice front. */
   llmSecret?: string;
   /** The model the voice front talks with; unset under the mock means its scripted replies. */
-  llm?: { baseUrl: string; apiKey: string; model: string };
+  llm?: { baseUrl: string; apiKey: string; model: string; extraBody?: Record<string, unknown> };
   limits: { secondsPerDay: number; callSeconds: number };
 }
 
@@ -234,7 +237,12 @@ function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
   if (!provider) return undefined;
   const llm =
     env.VOICE_LLM_BASE_URL && env.VOICE_LLM_API_KEY && env.VOICE_LLM_MODEL
-      ? { baseUrl: env.VOICE_LLM_BASE_URL.replace(/\/+$/, ""), apiKey: env.VOICE_LLM_API_KEY, model: env.VOICE_LLM_MODEL }
+      ? {
+          baseUrl: env.VOICE_LLM_BASE_URL.replace(/\/+$/, ""),
+          apiKey: env.VOICE_LLM_API_KEY,
+          model: env.VOICE_LLM_MODEL,
+          ...(isPlainObject(env.VOICE_LLM_EXTRA_BODY) ? { extraBody: env.VOICE_LLM_EXTRA_BODY } : {}),
+        }
       : undefined;
   const limits = { secondsPerDay: env.LIMIT_VOICE_SECONDS_PER_DAY, callSeconds: env.LIMIT_VOICE_CALL_SECONDS };
   if (provider === "elevenlabs") {
@@ -255,6 +263,10 @@ function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
     };
   }
   return { provider, sealSecret: env.VOICE_SEAL_SECRET ?? processSecret(), llm, limits };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** A random signing key for this process, for the mock voice without a configured one. */
