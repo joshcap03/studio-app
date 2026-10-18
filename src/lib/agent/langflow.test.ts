@@ -159,6 +159,14 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, bar: undefined }).system_context).not.toContain("member's bar");
   });
 
+  it("keeps the setup instructions in view for the whole interview, not just its first message", () => {
+    const during = templateValues({ ...tenantA, setup: { plan: [], instructions: "SETUP-RULES-XYZ" } }).system_context;
+    expect(during).toContain("How to run the setup interview");
+    expect(during).toContain("SETUP-RULES-XYZ");
+    const after = templateValues({ ...tenantA, setup: { plan: [] } }).system_context;
+    expect(after).not.toContain("How to run the setup interview");
+  });
+
   it("tells the agent when it's in its setup interview, and shows saved reference notes with their fields", () => {
     const system = templateValues({
       ...tenantA,

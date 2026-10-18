@@ -149,7 +149,11 @@ function setupContext(setup: NonNullable<AgentTenantContext["setup"]>): string {
     "This conversation is this agent's setup interview with the member.",
     plan ? `Setup checklist so far:\n${plan}` : "There's no setup checklist yet; write one with update_plan.",
     "Keep the checklist current with update_plan as steps finish or are skipped.",
-  ].join("\n\n");
+    setup.instructions &&
+      `How to run the setup interview (until they apply your proposal, carry on from the current step; you're still setting up, not doing the job):\n${setup.instructions}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 const NOTES_BUDGET = 3000;

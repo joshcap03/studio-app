@@ -4,7 +4,8 @@ import { MAX_SKILL_INSTRUCTIONS_LENGTH, MAX_SKILL_NAME_LENGTH } from "@/lib/type
 
 /**
  * What the agent is sent for a message with a skill attached: the skill's instructions,
- * then the user's own words. Only this message carries them; nothing is added to other runs.
+ * then the user's own words. Only this message carries them; nothing is added to other runs
+ * (except the setup skill, kept in context while setup is in progress; see buildAgentContext).
  */
 export function renderSkillMessage(skill: { name: string; instructions: string }, text: string): string {
   const request = text.trim();

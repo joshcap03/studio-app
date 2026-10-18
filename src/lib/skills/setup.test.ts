@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SUCCESS_STEP, TEMPLATES, setupSteps } from "@/lib/templates";
+import { DISCOVERY_STEP, SUCCESS_STEP, TEMPLATES, setupSteps } from "@/lib/templates";
 import { CATALOG } from "./catalog";
 import { SETUP_SKILL_ID, setupSkill } from "./setup";
 
@@ -12,23 +12,23 @@ describe("setupSkill", () => {
     const at = setupSteps(template).map((s) => skill.instructions.indexOf(`${s.goal}`));
     expect(at.every((i) => i > 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    expect(skill.instructions).toContain(`about ${setupSteps(template).length} quick steps`);
     for (const task of template.tasks) expect(skill.instructions).toContain(`- ${task.id}: ${task.title}`);
     for (const entry of CATALOG) expect(skill.instructions).toContain(`- ${entry.id}: ${entry.name}.`);
     expect(skill.instructions).toContain("Weekdays at 8:00 AM");
   });
 
-  it("opens every setup by having the owner define success, before anything is planned", () => {
+  it("opens every setup with a conversation about what they're after, then their bar, before anything is planned", () => {
     for (const template of TEMPLATES) {
       const skill = setupSkill(template.id).instructions;
-      // Only gathering (e.g. a résumé) may come before the bar; nothing is planned until it's set.
-      expect(skill).toContain(`${(template.setup.before?.length ?? 0) + 1}. ${SUCCESS_STEP.title}: `);
+      expect(skill).toContain(`1. ${DISCOVERY_STEP.title}: `);
+      expect(skill).toContain(template.setup.usualHelp);
+      // Only gathering (e.g. a résumé) sits between discovery and the bar.
+      expect(skill).toContain(`${(template.setup.before?.length ?? 0) + 2}. ${SUCCESS_STEP.title}: `);
       for (const s of template.setup.before ?? []) expect(s.goal).not.toMatch(/propose_agent|update_plan/);
       expect(skill).toContain(template.setup.successExample.crisp);
-      expect(skill).not.toMatch(/\{(vague|crisp|jobs)\}/);
-      // The bar is drawn out with things to react to: the job as one tap, a real trial run to
-      // judge, and criteria to put in order.
-      for (const job of template.setup.jobs) expect(skill).toContain(`"${job}"`);
+      expect(skill).not.toMatch(/\{(vague|crisp|usual)\}/);
+      // Nothing hands them a stock menu of jobs: the agent designs its forms from what it learns.
+      expect(skill).toContain("No form in the first reply");
       expect(skill).toMatch(/Trial run[\s\S]*verdict field/);
       expect(skill).toMatch(/rank field/);
       expect(skill).toContain("Do the first one now");
