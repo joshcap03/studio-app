@@ -137,3 +137,46 @@ describe.skipIf(!(baseUrl && apiKey && gatewayFlowId))("Studio gateway flow agai
     expect(await storedMessages(session)).toEqual([]);
   });
 });
+
+// A flow with the Studio Browser node (langflow/components/studio_browser.py) and a real
+// model and Browserbase key, so it only runs when LANGFLOW_TEST_BROWSER_FLOW_ID is set.
+// Browserbase's hosted server keeps one browser per MCP connection; a shared node gave every
+// tenant the same one. Two conversations browsing at once must get separate browsers.
+const browserFlowId = process.env.LANGFLOW_TEST_BROWSER_FLOW_ID;
+
+describe.skipIf(!(baseUrl && apiKey && browserFlowId))("Studio Browser against a live server", () => {
+  async function browse(t: AgentTenantContext, url: string) {
+    const res = await fetch(`${baseUrl}/api/v1/run/${browserFlowId}?stream=false`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey! },
+      body: JSON.stringify({
+        input_type: "chat",
+        output_type: "chat",
+        session_id: langflowSessionId(t, crypto.randomUUID()),
+        input_value: `Integration test. Call execute_tool with tool_name "start", then navigate to ${url}. Then reply with one word: done.`,
+      }),
+    });
+    expect(res.ok).toBe(true);
+    const raw = await res.text();
+    // Results are JSON inside JSON strings, so quotes arrive escaped to varying depths.
+    const ids = (pattern: RegExp) => [...new Set([...raw.matchAll(pattern)].map((m) => m[1]))];
+    return {
+      raw,
+      sessions: ids(/success\\*"\s*:\s*true\s*,\s*\\*"data\\*"\s*:\s*\{\s*\\*"sessionId\\*"\s*:\s*\\*"([0-9a-f-]{36})/g),
+      pages: ids(/pageId\\*"\s*:\s*\\*"([0-9A-F]{32})/g),
+    };
+  }
+
+  it("gives two conversations browsing at once their own browsers", { timeout: 400_000 }, async () => {
+    const [a, b] = await Promise.all([browse(tenant("alice"), "https://example.com"), browse(tenant("bob"), "https://example.org")]);
+    expect(a.sessions).toHaveLength(1);
+    expect(b.sessions).toHaveLength(1);
+    expect(a.sessions[0]).not.toBe(b.sessions[0]);
+    // The pages each run drove, by Chrome page id: never the other run's.
+    expect(a.pages.filter((p) => b.pages.includes(p))).toEqual([]);
+    // The signed connection URL controls the browser; it never reaches the run's output.
+    for (const run of [a, b]) {
+      expect(run.raw).not.toMatch(/cdpUrl|signingKey=[^\[]/);
+    }
+  });
+});
