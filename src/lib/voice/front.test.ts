@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { latestStage, mockReply, modelMessages, modelTools, planReply, replyStream, sayable, type FrontMessage } from "./front";
+import { describe, expect, it, vi } from "vitest";
+import { latestStage, mockReply, modelMessages, modelStream, modelTools, planReply, replyStream, sayable, type FrontMessage } from "./front";
 import { describeStage, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -143,5 +143,19 @@ describe("replyStream", () => {
     expect(chunks[1].choices[0].delta.content).toBe("Hi.");
     expect(chunks[2].choices[0].delta.tool_calls[0].function).toEqual({ name: "send_message", arguments: "{}" });
     expect(chunks.at(-1).choices[0].finish_reason).toBe("tool_calls");
+  });
+});
+
+describe("modelStream", () => {
+  it("sends the provider's extra settings without letting them replace the call's own fields", async () => {
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200, headers: { "x-body": String(init.body) } }));
+    vi.stubGlobal("fetch", fetch);
+    const llm = { baseUrl: "https://llm.example/v1", apiKey: "k", model: "fast", extraBody: { reasoning: { enabled: false }, model: "other", stream: false } };
+    await modelStream(llm, context, { messages: [user("hi")] }, new AbortController().signal);
+    vi.unstubAllGlobals();
+    const [url, init] = fetch.mock.calls[0];
+    const body = JSON.parse(String(init.body));
+    expect(url).toBe("https://llm.example/v1/chat/completions");
+    expect(body).toMatchObject({ reasoning: { enabled: false }, model: "fast", stream: true });
   });
 });
