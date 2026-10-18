@@ -859,6 +859,18 @@ export function reportsOnAnswer(name: string, input: unknown): boolean {
   return GATEWAY_TOOLS.has(name) && isRecord(input) && typeof input.tool_name === "string" && REPORTING_TOOLS.has(input.tool_name);
 }
 
+/** Calls that only keep the agent's own books (its plan, a task run's outcome) and do no work. */
+const BOOKKEEPING_TOOLS = new Set(["update_plan", "report_run"]);
+
+/**
+ * Whether a call says or does nothing the member waits on. A run that ends with only such calls
+ * after a line of text meant that line as its reply, not as an opening line.
+ */
+export function keepsBooks(name: string, input: unknown): boolean {
+  if (reportsOnAnswer(name, input) || BOOKKEEPING_TOOLS.has(name)) return true;
+  return GATEWAY_TOOLS.has(name) && isRecord(input) && typeof input.tool_name === "string" && BOOKKEEPING_TOOLS.has(input.tool_name);
+}
+
 /** Longest text treated as an opening line ("Let me check your emails") rather than the answer. */
 export const OPENING_LINE_MAX = 280;
 

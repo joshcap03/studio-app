@@ -85,6 +85,23 @@ describe("startTurn", () => {
     expect(await store.getConversation(id)).toMatchObject({ title: "Hi", agentProvider: "scripted", agentThreadId: "t-1" });
   });
 
+  it("doesn't show a reply twice when the adapter first took it for an opening line", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const question = "How do you invoice the cafés now?";
+    const adapter = scripted([
+      { type: "note", text: question },
+      { type: "activity", id: "p", label: "Updated the plan", status: "done", app: "tracker", action: "write", hidden: true },
+      { type: "note-reply", text: question },
+      { type: "text-delta", text: question },
+    ]);
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "Invoices" }));
+    const end = events.at(-1);
+    if (end?.type !== "end") throw new Error("no end event");
+    expect(end.message).toMatchObject({ status: "complete", content: question });
+    expect(end.message.activity.filter((s) => s.action === "note")).toEqual([expect.objectContaining({ label: question, hidden: true })]);
+  });
+
   it("keeps the run's trace id with the reply, out of what the browser gets", async () => {
     const db = createMemoryDb();
     const store = createMemoryStore(scopeA, db);

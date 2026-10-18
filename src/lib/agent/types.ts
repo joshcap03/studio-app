@@ -110,6 +110,8 @@ export type AgentEvent =
   | { type: "message"; text: string }
   /** A short line the agent says about what it's about to do (not part of the answer). */
   | { type: "note"; text: string }
+  /** A note sent earlier was part of the reply after all; it's streamed again as reply text right after. */
+  | { type: "note-reply"; text: string }
   /** A step started, changed, or finished. Re-emit the same id to update it. */
   | {
       type: "activity";

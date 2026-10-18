@@ -387,6 +387,132 @@ describe("Langflow streaming", () => {
     expect(events.some((e) => e.type === "message")).toBe(false);
   });
 
+  const deltas = (events: AgentEvent[]) =>
+    events
+      .filter((e): e is Extract<AgentEvent, { type: "text-delta" }> => e.type === "text-delta")
+      .map((e) => e.text)
+      .join("");
+  const plan = (steps: unknown[] = []) => ({ type: "tool_use", name: "update_plan", tool_input: { steps }, output: "ok", error: null });
+
+  it("keeps a reply written just before a plan update as the reply, when nothing else is said", async () => {
+    const question = "So the invoices are the worst part. How do you invoice the cafés now?";
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: question }),
+        frame("add_message", bot(question, [{ type: "text", text: question }, plan([{ text: "What you're after", status: "doing" }])])),
+        frame("end", end(question)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note")).toEqual([{ type: "note", text: question }]);
+    expect(events).toContainEqual({ type: "note-reply", text: question });
+    expect(deltas(events)).toBe(question);
+    expect(events.some((e) => e.type === "message")).toBe(false);
+  });
+
+  it("keeps a greeting written before a plan update in front of the question that follows it", async () => {
+    const hey = "Hey! First I'll learn what's hard, then suggest where I can help.";
+    const question = "What's been hardest in the bakery lately?";
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: hey }),
+        frame("add_message", bot(hey, [{ type: "text", text: hey }, plan()])),
+        frame("token", { chunk: question }),
+        frame("add_message", bot(hey + question, [{ type: "text", text: hey }, plan(), { type: "text", text: question }])),
+        frame("end", end(hey + question)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note-reply")).toEqual([{ type: "note-reply", text: hey }]);
+    expect(deltas(events)).toBe(`${hey}\n\n${question}`);
+    expect(events.some((e) => e.type === "message")).toBe(false);
+  });
+
+  it("puts a closing line kept back before a run report after the answer it closes", async () => {
+    const answer = `${"Three roles cleared your bar today. ".repeat(9)}\n\nThe best is remote.`;
+    const closing = "Want me to draft the first application?";
+    const report = { type: "tool_use", name: "report_run", tool_input: { outcome: "update", summary: "3 roles" }, output: "ok", error: null };
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: answer }),
+        frame("add_message", bot(answer, [{ type: "text", text: answer }, plan()])),
+        frame("token", { chunk: closing }),
+        frame("add_message", bot(answer + closing, [{ type: "text", text: answer }, plan(), { type: "text", text: closing }, report])),
+        frame("end", end(answer + closing)),
+      ]),
+    );
+    expect(deltas(events)).toBe(`${answer}\n\n${closing}`);
+  });
+
+  it("keeps a run of opening lines out of the reply when real work follows them", async () => {
+    const first = "Let me plan this out.";
+    const second = "Checking your calendar.";
+    const answer = "You have two meetings tomorrow.";
+    const search = { type: "tool_use", name: "GOOGLECALENDAR_FIND_EVENT", tool_input: {}, output: { items: [] }, error: null };
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: first }),
+        frame("add_message", bot(first, [{ type: "text", text: first }, plan()])),
+        frame("token", { chunk: second }),
+        frame("add_message", bot(first + second, [{ type: "text", text: first }, plan(), { type: "text", text: second }, search])),
+        frame("token", { chunk: answer }),
+        frame("end", end(first + second + answer)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note")).toEqual([
+      { type: "note", text: first },
+      { type: "note", text: second },
+    ]);
+    expect(events.some((e) => e.type === "note-reply")).toBe(false);
+    expect(deltas(events)).toBe(answer);
+  });
+
+  it("finds the same opening lines in a whole reply as it does while streaming", () => {
+    const t = (text: string) => ({ type: "text", text });
+    const search = { type: "tool_use", name: "search", tool_input: {}, output: {}, error: null };
+    // A run of short lines before work are opening lines; a line before only a plan update is the reply.
+    expect(openingLineIndexes([t("Let me plan."), plan(), t("Checking now."), search, t("Found two.")])).toEqual([0, 2]);
+    expect(openingLineIndexes([t("Hey! A few steps."), plan(), t("What's hardest?")])).toEqual([]);
+    expect(openingLineIndexes([t("What's hardest?"), plan()])).toEqual([]);
+  });
+
+  it("keeps an opening line out of the reply when a plan update and then real work follow it", async () => {
+    const intro = "Let me look for new roles.";
+    const answer = "Found two that fit.";
+    const search = { type: "tool_use", name: "search", tool_input: { query: "roles" }, output: { results: [] }, error: null };
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: intro }),
+        frame("add_message", bot(intro, [{ type: "text", text: intro }, plan()])),
+        frame("add_message", bot(intro, [{ type: "text", text: intro }, plan(), search])),
+        frame("token", { chunk: answer }),
+        frame("end", end(intro + answer)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note")).toEqual([{ type: "note", text: intro }]);
+    expect(events.some((e) => e.type === "note-reply" || e.type === "message")).toBe(false);
+    expect(deltas(events)).toBe(answer);
+  });
+
+  it("doesn't take an opening line for the reply when real work followed it", async () => {
+    const intro = "Let me look through your invoices.";
+    const search = { type: "tool_use", name: "search", tool_input: { query: "invoices" }, output: { results: [] }, error: null };
+    const plan = { type: "tool_use", name: "update_plan", tool_input: { steps: [] }, output: "ok", error: null };
+    const { events } = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: intro }),
+        frame("add_message", bot(intro, [{ type: "text", text: intro }, plan, search])),
+        frame("end", end(intro)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "note")).toEqual([{ type: "note", text: intro }]);
+    expect(events.some((e) => e.type === "message")).toBe(false);
+  });
+
   it("streams long answers token by token", async () => {
     const long = "word ".repeat(80);
     const { events } = await run(base, streamResponse([frame("token", { chunk: long }), frame("token", { chunk: "more" }), frame("end", end(long + "more"))]));
@@ -404,6 +530,31 @@ describe("Langflow streaming", () => {
     const message = bot(intro + "All clear.", [{ type: "text", text: intro }, { type: "tool_use", name: "search", tool_input: {}, output: { results: [] }, error: null }]);
     const { events } = await run({ ...base, stream: false }, streamResponse([frame("add_message", message), frame("end", { build_duration: 1 })]));
     expect(events).toContainEqual({ type: "message", text: "All clear." });
+  });
+
+  it("keeps a reply written before a plan update as the answer when it isn't streamed", async () => {
+    const question = "How do you invoice the cafés now?";
+    const plan = { type: "tool_use", name: "update_plan", tool_input: { steps: [] }, output: "ok", error: null };
+    const message = bot(question, [{ type: "text", text: question }, plan]);
+    const { events } = await run({ ...base, stream: false }, streamResponse([frame("add_message", message), frame("end", { build_duration: 1 })]));
+    expect(events.filter((e) => e.type === "note")).toEqual([]);
+    expect(events).toContainEqual({ type: "message", text: question });
+  });
+
+  it("takes back a reply that turned out to be an opening line when it isn't streamed", async () => {
+    const intro = "I'll send the invoice to Jo.";
+    const send = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: "GMAIL_SEND_EMAIL", arguments: {} }, output: null, error: null };
+    const steps = { type: "tool_use", name: "update_plan", tool_input: { steps: [] }, output: "ok", error: null };
+    const { events } = await run(
+      { ...base, stream: false },
+      streamResponse([
+        frame("add_message", bot(intro, [{ type: "text", text: intro }, steps])),
+        frame("add_message", bot(intro, [{ type: "text", text: intro }, steps, send])),
+        frame("end", end(intro)),
+      ]),
+    );
+    expect(events.filter((e) => e.type === "message").at(-1)).toEqual({ type: "message", text: "" });
+    expect(events).toContainEqual({ type: "note", text: intro });
   });
 
   it("keeps an answer written before a cite call as the answer, not an opening line", async () => {

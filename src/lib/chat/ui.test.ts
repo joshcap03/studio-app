@@ -361,6 +361,76 @@ describe("choices", () => {
 });
 
 describe("loose verdicts and notes", () => {
+  it("reads a verdict field with no options whose label is the result and its link (recorded shape)", () => {
+    const form = buildUiBlock(
+      {
+        form: {
+          title: "Trial run",
+          fields: [
+            {
+              key: "verdict",
+              type: "verdict",
+              label: "Sr. Product Designer (Remote), Rula: remote US, $180K–$221K base range, direct posting. Link: https://jobs.example.test/rula/30f6",
+              reasons_to_pass: ["Posted outside your last-3-days rule", "Healthcare-focused product"],
+            },
+          ],
+        },
+      },
+      "t",
+    ) as UiForm;
+    expect(form.fields).toEqual([
+      expect.objectContaining({
+        kind: "verdict",
+        label: "Keep or pass on each",
+        reasons: ["Posted outside your last-3-days rule", "Healthcare-focused product"],
+        items: [
+          {
+            id: "sr_product_designer_remote_rula",
+            title: "Sr. Product Designer (Remote), Rula",
+            body: "remote US, $180K–$221K base range, direct posting",
+            link: "https://jobs.example.test/rula/30f6",
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it("cleans a result's link and leftovers out of its title and detail", () => {
+    const item = (label: string, extra: Record<string, unknown> = {}) =>
+      (buildUiBlock({ form: { title: "Trial run", fields: [{ type: "verdict", label, ...extra }] } }, "t") as UiForm).fields[0];
+    expect(item("Senior PM, Acme: remote. See https://jobs.example.test/1.")).toMatchObject({ items: [{ title: "Senior PM, Acme", body: "remote. See", link: "https://jobs.example.test/1" }] });
+    expect(item("[Senior PM, Acme](https://jobs.example.test/1): remote, $200k")).toMatchObject({ items: [{ title: "Senior PM, Acme", body: "remote, $200k", link: "https://jobs.example.test/1" }] });
+    expect(item("Senior PM, Acme (https://jobs.example.test/1): remote")).toMatchObject({ items: [{ title: "Senior PM, Acme", body: "remote", link: "https://jobs.example.test/1" }] });
+    expect(item("Senior PM, Acme: remote. Posting: http://jobs.example.test/1")).toMatchObject({ items: [{ title: "Senior PM, Acme", body: "remote", link: "http://jobs.example.test/1" }] });
+  });
+
+  it("takes a one-result field's own detail as the result's, not the whole card's help", () => {
+    const form = buildUiBlock(
+      {
+        form: {
+          title: "Trial run",
+          fields: [
+            { type: "verdict", label: "Senior PM, Acme", link: "https://jobs.example.test/1", description: "Remote US, $200k base" },
+            { type: "verdict", label: "Staff PM, Beta", url: "https://jobs.example.test/2", why: "Hybrid NYC" },
+          ],
+        },
+      },
+      "t",
+    ) as UiForm;
+    expect(form.fields).toHaveLength(1);
+    expect(form.fields[0]).not.toHaveProperty("help");
+    expect(form.fields[0]).toMatchObject({
+      items: [
+        { title: "Senior PM, Acme", body: "Remote US, $200k base", link: "https://jobs.example.test/1" },
+        { title: "Staff PM, Beta", body: "Hybrid NYC", link: "https://jobs.example.test/2" },
+      ],
+    });
+  });
+
+  it("doesn't turn a verdict prompt with no results into a result", () => {
+    expect(buildUiBlock({ form: { title: "Trial run", fields: [{ type: "verdict", label: "Would you want these?" }] } }, "t")).toBeNull();
+  });
+
   it("gathers one-result verdict fields with Keep/Pass options into one field, and keeps notes in the intro", () => {
     const form = buildUiBlock(
       {

@@ -238,12 +238,36 @@ function field(raw: unknown): Draft<UiField> | null {
       // the label is then the result (buildForm gathers those into one field).
       const listed = verdictItems(raw.items ?? raw.results ?? raw.options);
       const items = listed.filter((i) => !CALLS.test(i.title));
+      const passReasons = raw.reasons ?? raw.pass_reasons ?? raw.passReasons ?? raw.reasons_to_pass ?? raw.reasonsToPass;
       if (items.length === 0 && listed.length > 0) {
-        const reasons = list(raw.reasons).map((r) => line(r, 60)).filter(Boolean).slice(0, MAX_VERDICT_REASONS);
+        const reasons = list(passReasons).map((r) => line(r, 60)).filter(Boolean).slice(0, MAX_VERDICT_REASONS);
         return { ...base, label: "Keep or pass on each", kind, items: [{ id: slug(label) || "item", title: label.slice(0, 160) }], reasons, single: true } as Draft<UiField>;
       }
+      // Or with no options at all, the result and its link written into the label ("Role, Co: why. Link: https://…").
+      // Only a link makes it a result: a bare "Would you want these?" is a prompt, not a result.
+      const written = raw.label ?? raw.question ?? raw.title;
+      const said = (typeof written === "string" ? written : "").replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, "$1 $2");
+      const found = said.match(/https?:\/\/[^\s<>"'\])]+/)?.[0]?.replace(/[.,;:!?]+$/, "");
+      const href = listed.length === 0 ? link(raw.link ?? raw.url ?? raw.href) || link(found) : "";
+      if (href) {
+        const text = (found ? said.split(found).join(" ") : said)
+          .replace(/\b(?:link|url|posting|source|apply here)\s*:\s*/gi, " ")
+          .replace(/\(\s*\)|<\s*>|\[\s*\]|"\s*"/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .replace(/[\s.,;:]+$/, "");
+        const [head, ...rest] = text.split(/:\s+/);
+        const title = line(head, 160);
+        // Its detail may come after the title in the label, or in the field's own description.
+        const body = para(rest.join(": "), 600) || para(raw.body ?? raw.why ?? raw.summary ?? raw.description, 600);
+        const reasons = list(passReasons).map((r) => line(r, 60)).filter(Boolean).slice(0, MAX_VERDICT_REASONS);
+        // Without the field's help: that's this one result's detail, not the merged card's.
+        const { help: _help, ...withoutHelp } = base as typeof base & { help?: string };
+        if (title)
+          return { ...withoutHelp, label: "Keep or pass on each", kind, items: [{ id: slug(title) || "item", title, ...(body ? { body } : {}), link: href }], reasons, single: true } as Draft<UiField>;
+      }
       if (items.length === 0) return null;
-      const reasons = list(raw.reasons ?? raw.pass_reasons ?? raw.passReasons)
+      const reasons = list(passReasons)
         .map((r) => line(r, 60))
         .filter((r, i, all) => r && all.findIndex((o) => o.toLowerCase() === r.toLowerCase()) === i)
         .slice(0, MAX_VERDICT_REASONS);
