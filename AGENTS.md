@@ -61,7 +61,10 @@ raw/technical text.
   every agent as "You're assisting".
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
   composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
-  sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to.
+  sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to, with one
+  exception: while an agent's setup interview is in progress, its setup skill is in the context of
+  every run in that conversation (`buildAgentContext`), since a long interview scrolls the first
+  message out of the agent's view.
 - `src/lib/tasks/`: long-horizon tasks (a goal, a plan, a schedule, a linked conversation) and
   their runs (`index.ts`), the agent's tracker of records per collection (`records.ts`), and
   request validation (`schema.ts`). Private to each member; the API is the "tasks" preview.

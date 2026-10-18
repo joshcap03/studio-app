@@ -208,7 +208,8 @@ FORM_FIELD_SCHEMA = {
         "help": {"type": "string", "description": "Optional: one short line on what to put, or why you ask."},
         "required": {"type": "boolean", "description": "True only when you can't go on without it."},
         "options": {"type": "array", "items": {"type": "string"}, "description": "For choice, multi_choice, and rank: 2-8 choices."},
-        "allow_other": {"type": "boolean", "description": "For choice and multi_choice: true to add a 'Something else' choice they can type."},
+        "allow_other": {"type": "boolean", "description": ("For choice and multi_choice: a 'Something else' choice they can type is "
+                                                         "on by default; false only for a truly closed question (e.g. yes/no).")},
         "steps": {"type": "integer", "description": "For scale: how many points, 3-7 (default 5)."},
         "low": {"type": "string", "description": "For scale: what the first point means, e.g. 'Ask me first'."},
         "high": {"type": "string", "description": "For scale: what the last point means, e.g. 'Just do it'."},

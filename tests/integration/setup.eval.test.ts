@@ -71,7 +71,9 @@ function tenant(): AgentTenantContext {
     memories: [],
     task: null,
     tracker: [],
-    setup: { plan: [] },
+    // The first run has no setup yet: the app marks it under way after that run starts. From
+    // then on the setup instructions ride along (see send()).
+    setup: null,
     notes: [],
     agentFiles: [],
   };
@@ -110,6 +112,26 @@ const BAR: [RegExp, string][] = [
   [/great|judge|good/i, "Remote in the US, $180k base or more, posted in the last 3 days"],
   [/stop using|deal|hate/i, "Agency roles instead of in-house"],
 ];
+/** How the member answers discovery's open questions, in order, as a real person would. */
+const DISCOVERY = [
+  "I'm a senior product designer and I want to move to a new role this year.",
+  "Honestly I waste hours on postings that turn out to be junior, agency, or on-site. I only want to spend time on roles that genuinely fit.",
+  "LinkedIn alerts. They're noisy and I stopped reading them.",
+  "I'd apply to a few great roles a week instead of skimming hundreds, and be sharp when interviews come.",
+  "Don't apply or email anyone without me.",
+];
+let discovered = 0;
+/** The agent giving its own read and recommendation, as discovery ends. */
+const ADVICE = /\b(recommend|suggest|i'd start|help (you )?most|where i (can|could) help|here's my read)\b/i;
+/** The member's reply to a plain question: the next part of their story, or a yes to a playback. */
+function talk(reply: string): string {
+  // The agent's advice: agree with the lead idea, with a nuance of their own.
+  if (discovered >= 2 && ADVICE.test(reply))
+    return "Yes, start with finding roles that really fit. Interview prep matters too, but later.";
+  if (discovered >= 2 && /\b(right|correct|accurate|sound right|fair|is that it|get that right)\?/i.test(reply)) return "Yes, that's exactly it.";
+  return DISCOVERY[discovered++] ?? "Yes, that's right. Go on.";
+}
+
 /** Why the member passes on trial results: a reason distinctive enough to find in their bar. */
 const PASS_REASON = "Agency, not in-house";
 const FROM_PASS = /agenc/i;
@@ -202,7 +224,7 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     for (const e of events) {
       if (e.type === "plan-update") {
         const plan = planFromAgent(e.plan);
-        if (plan) t.setup = { plan: plan.map((s) => ({ text: s.text, status: s.status })) };
+        if (plan) t.setup = { ...t.setup, plan: plan.map((s) => ({ text: s.text, status: s.status, note: s.note })) };
       } else if (e.type === "memory-proposal") {
         t.memories.push(e.content);
       }
@@ -227,6 +249,9 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     }
     const turn = { message, events, reply: replyOf(events), form, proposal, rawProposal };
     turns.push(turn);
+    // As the app does once setup is under way (src/lib/workspace.ts): the setup skill stays in
+    // view on every later run in this conversation.
+    if (!t.setup?.instructions) t.setup = { plan: t.setup?.plan ?? [], instructions: setupSkill("job-search").instructions };
     return turn;
   }
 
@@ -238,7 +263,7 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     }
     const asked = last.events.find((e) => e.type === "questions");
     const questions = asked?.type === "questions" ? buildQuestions(asked.questions) : null;
-    const text = questions ? questions.map((q) => `${q.question} ${q.options[0].label}`).join("\n") : "Sounds good, go on.";
+    const text = questions ? questions.map((q) => `${q.question} ${q.options[0].label}`).join("\n") : talk(last.reply);
     return send(text, opts.resume);
   }
 
@@ -250,37 +275,49 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
 
   const describeTurn = (turn: Turn) => `reply: ${turn.reply.slice(0, 600)}\nevents: ${turn.events.map((e) => e.type).join(", ")}`;
 
-  it("opens with a greeting and a question, not a wall of prose", { timeout: 300_000 }, async () => {
+  it("opens with a greeting and an open question, not a form", { timeout: 300_000 }, async () => {
     const first = await send(renderSkillMessage(setupSkill("job-search"), ""));
-    expect(first.form !== null || first.events.some((e) => e.type === "questions"), describeTurn(first)).toBe(true);
+    expect(first.form, describeTurn(first)).toBeNull();
+    expect(first.reply, describeTurn(first)).toContain("?");
     expect(first.reply.trimStart(), describeTurn(first)).toMatch(/^Hey!/);
     expect(first.reply.length, describeTurn(first)).toBeLessThan(700);
   });
 
-  it("gets to know them (the résumé) before anything else", () => {
-    const first = turns[0];
-    expect(first.form?.fields.some((f) => f.kind === "file"), describeTurn(first)).toBe(true);
+  it("talks through what they're after before showing any form", { timeout: 900_000 }, async () => {
+    let last = turns[turns.length - 1];
+    for (let i = 0; i < 7 && !last.form; i++) last = await answer(last);
+    const firstForm = turns.findIndex((x) => x.form);
+    expect(firstForm, turns.map(describeTurn).join("\n---\n")).toBeGreaterThanOrEqual(2);
+    const talked = turns.slice(0, firstForm);
+    // Discovery is questions in plain words, not menus of what the agent can do (one quick
+    // choice between alternatives their own words raised is fine).
+    for (const x of talked) expect(x.reply, describeTurn(x)).toContain("?");
+    expect(talked.filter((x) => x.events.some((e) => e.type === "questions")).length, "discovery asked through menus").toBeLessThanOrEqual(1);
+    // And it ends with the agent's own advice before any form.
+    expect(talked.some((x) => ADVICE.test(x.reply)), "no advice before the first form").toBe(true);
   });
 
   it("runs a real trial that fits the résumé, for the member to judge", { timeout: 900_000 }, async () => {
     // Answer until the résumé has gone in, then until the trial run shows its results.
     let last = turns[turns.length - 1];
-    for (let i = 0; i < 3 && !t.agentFiles!.includes(RESUME_NAME); i++) last = await answer(last, { resume: i === 1 });
-    expect(t.agentFiles, "the résumé never went in").toContain(RESUME_NAME);
+    for (let i = 0; i < 5 && !t.agentFiles!.includes(RESUME_NAME); i++) last = await answer(last);
+    // The agent itself asked for the résumé (nothing here attaches it unasked).
+    expect(t.agentFiles, "the agent never asked for the résumé").toContain(RESUME_NAME);
     // A search can honestly turn up only two strong matches.
     const isTrial = (x: Turn) => x.form?.fields.some((f) => f.kind === "verdict" && f.items.length >= 2) ?? false;
     for (let i = 0; i < 4 && !isTrial(last); i++) last = await answer(last);
     expect(isTrial(last), describeTurn(last)).toBe(true);
     const results = last.form!.fields.flatMap((f) => (f.kind === "verdict" ? f.items.map((item) => `${item.title} ${item.body ?? ""}`) : []));
     expect(results.join(" | "), "the trial run doesn't fit the résumé").toMatch(FROM_RESUME);
-    // The job was asked with something to tap, not a box to fill.
-    const between = turns.slice(1, turns.indexOf(last));
-    expect(between.some((x) => x.events.some((e) => e.type === "questions") || x.form?.fields.some((f) => f.kind === "choice" || f.kind === "multi_choice"))).toBe(true);
   });
 
   it("turns the member's verdicts into a bar they put in order, before the search details", { timeout: 900_000 }, async () => {
     let last = turns[turns.length - 1];
-    const ranked = (x: Turn) => x.form?.fields.some((f) => f.kind === "rank") ?? false;
+    // The bar comes back for them to confirm, after the trial: as a ranked card, or laid out in
+    // the reply under a "bar" heading with its criteria listed.
+    const listed = (reply: string) => /\byour (fit )?bar\b/i.test(reply) && (reply.match(/^\s*(?:[-*•]|\d+[.)])\s+/gm) ?? []).length >= 3;
+    const ranked = (x: Turn) =>
+      !x.form?.fields.some((f) => f.kind === "verdict") && ((x.form?.fields.some((f) => f.kind === "rank") ?? false) || listed(x.reply));
     for (let i = 0; i < 3 && !ranked(last); i++) last = await answer(last);
     expect(ranked(last), describeTurn(last)).toBe(true);
     const trial = turns.findIndex((x) => x.form?.fields.some((f) => f.kind === "verdict"));
@@ -289,12 +326,18 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
     expect(search === -1 || search > turns.indexOf(last), "asked for search details before the bar").toBe(true);
   });
 
-  it("saves the stories the member sends to the stories tracker", { timeout: 900_000 }, async () => {
+  it("saves the stories the member sends to the stories tracker", { timeout: 900_000 }, async (ctx) => {
     let last = turns[turns.length - 1];
     let saved: Record<string, unknown>[] = [];
     for (let i = 0; i < 5 && saved.length === 0 && !last.proposal; i++) {
       last = await answer(last);
       saved = records(last.events, "stories");
+    }
+    // The member put interview prep off for later, so the agent may rightly skip stories: then
+    // nothing is saved to stories, and this check is skipped rather than passed.
+    if (!turns.some((x) => x.form?.fields.some((f) => f.kind === "list"))) {
+      expect(turns.flatMap((x) => records(x.events, "stories"))).toEqual([]);
+      ctx.skip();
     }
     expect(saved.length, describeTurn(last)).toBeGreaterThan(0);
     for (const r of saved) {
@@ -307,7 +350,7 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
 
   it("ends with a proposal that switches on the template's tasks with valid schedules", { timeout: 900_000 }, async () => {
     let last = turns[turns.length - 1];
-    for (let i = 0; i < 4 && !last.proposal; i++) last = await answer(last);
+    for (let i = 0; i < 6 && !last.proposal; i++) last = await answer(last);
     expect(last.proposal, describeTurn(last)).not.toBeNull();
     // What the app reads from it (the validated card), and what the agent sent.
     const tasks = last.proposal!.tasks;
@@ -360,9 +403,12 @@ describe.skipIf(!enabled)("Job search setup interview against a live flow", () =
           // Read-only notes join the intro; one-result verdict fields become items of one field.
           if (kind === "note" && intro.includes(String(f.value ?? f.text ?? f.label ?? "").trim().slice(0, 40))) return;
           if (kind === "verdict" && judged.includes(String(f.label ?? "").trim())) return;
-          const kept = fields.find((x) => x.label === String(f.label ?? "").trim());
+          // A scale's ends written into its label are shown under it, so its label is shorter.
+          const asked = String(f.label ?? "").trim();
+          const kept = fields.find((x) => x.label === asked || (x.kind === "scale" && asked.startsWith(x.label)));
           if (!kept) lost.push(`form "${raw.form!.title}" field ${i}: ${JSON.stringify(f).slice(0, 200)}`);
-          else if (kind !== "verdict" && ![null, undefined, ""].includes((f.prefill ?? f.value ?? f.items) as string) && !("prefill" in kept && kept.prefill))
+          // A verdict's and a rank's `items` are what it shows, not a prefill.
+          else if (kind !== "verdict" && kind !== "rank" && ![null, undefined, ""].includes((f.prefill ?? f.value ?? f.items) as string) && !("prefill" in kept && kept.prefill))
             lost.push(`form "${raw.form!.title}" prefill of "${kept.label}": ${JSON.stringify(f).slice(0, 200)}`);
         });
       } else if (raw.proposal) {

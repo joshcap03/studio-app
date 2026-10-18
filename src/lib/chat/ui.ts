@@ -102,6 +102,22 @@ const KIND_ALIASES: Record<string, (typeof KINDS)[number]> = {
   samples: "verdict",
 };
 
+const MAX_SCALE_STEPS = 10;
+/** "1 = borderline too, 5 = only clear fits" (or "1: …; 10: …"): a scale's two ends in prose. */
+const SCALE_ENDS = /\(?\s*\b([01])\s*=\s*([^,;=()]+?)\s*[,;]\s*(?:and\s+)?(\d{1,2})\s*=\s*([^,;=()]+?)\s*\)?\s*[.?!]?\s*$/;
+
+/** A scale's ends written as "1 = x, 5 = y" at the end of some prose, when they make a range. */
+function scaleEnds(text: string): { low: string; high: string; first: number; last: number; at: number } | null {
+  const m = SCALE_ENDS.exec(text);
+  if (!m) return null;
+  const first = Number(m[1]);
+  const last = Number(m[3]);
+  return last > first ? { low: m[2], high: m[4], first, last, at: m.index } : null;
+}
+
+/** Prose with its scale ends taken out, and any separator left dangling at its end. */
+const withoutEnds = (text: string, at: number) => text.slice(0, at).replace(/[\s(,:;—–-]+$/, "").trim();
+
 /** An http(s) link, or nothing. */
 function link(raw: unknown): string {
   const s = line(raw, 1000);
@@ -166,7 +182,9 @@ function field(raw: unknown): Draft<UiField> | null {
       if (opts.length < 2) return null;
       const labels = new Set(opts.map((o) => o.label));
       const prefill = (Array.isArray(prefillRaw) ? prefillRaw : [prefillRaw]).map((p) => line(p, 80)).filter((p) => labels.has(p));
-      const allowOther = raw.allow_other === true || raw.allowOther === true || raw.other === true;
+      // Choices rarely cover everything someone means, so every choice takes their own words too,
+      // unless the agent turns that off for a closed question.
+      const allowOther = raw.allow_other !== false && raw.allowOther !== false && raw.other !== false;
       return {
         ...base,
         kind,
@@ -184,12 +202,36 @@ function field(raw: unknown): Draft<UiField> | null {
       return { ...base, kind, options: opts, ...(order.length === opts.length ? { prefill: order } : {}), required: false };
     }
     case "scale": {
-      const steps = Math.max(3, Math.min(count(raw.steps ?? raw.max, 5, 7), 7));
-      const low = line(raw.low ?? raw.low_label ?? raw.lowLabel ?? raw.min_label ?? raw.minLabel ?? raw.left, 60);
-      const high = line(raw.high ?? raw.high_label ?? raw.highLabel ?? raw.max_label ?? raw.maxLabel ?? raw.right, 60);
-      if (!low || !high) return null;
-      const n = typeof prefillRaw === "number" ? Math.round(prefillRaw) : Number.parseInt(String(prefillRaw ?? ""), 10);
-      return { ...base, kind, steps, low, high, ...(n >= 1 && n <= steps ? { prefill: n } : {}) };
+      // Models also give the range as min/max and the ends inside the label or help, as
+      // "1 = show me borderline ones too, 5 = only clear fits".
+      const num = (v: unknown) => (typeof v === "number" ? Math.round(v) : Number.parseInt(String(v ?? ""), 10));
+      const lowGiven = line(raw.low ?? raw.low_label ?? raw.lowLabel ?? raw.min_label ?? raw.minLabel ?? raw.left, 60);
+      const highGiven = line(raw.high ?? raw.high_label ?? raw.highLabel ?? raw.max_label ?? raw.maxLabel ?? raw.right, 60);
+      // Ends in prose are read only when the agent didn't name them, and then aren't repeated.
+      const inHelp = lowGiven && highGiven ? null : scaleEnds(help);
+      const inLabel = lowGiven && highGiven ? null : inHelp ? null : scaleEnds(label);
+      const ends = inHelp ?? inLabel;
+      const low = lowGiven || line(ends?.low, 60) || "Less";
+      const high = highGiven || line(ends?.high, 60) || "More";
+      const question = inLabel ? withoutEnds(label, inLabel.at) || label : label;
+      const plainHelp = inHelp ? line(withoutEnds(help, inHelp.at), 300) : help;
+      // The range: steps, else max - min + 1 (min may be 0), else the numbers the prose used.
+      const min = Number.isFinite(num(raw.min)) && num(raw.min) >= 0 ? num(raw.min) : (ends?.first ?? 1);
+      const span = num(raw.steps) || (Number.isFinite(num(raw.max)) ? num(raw.max) - min + 1 : ends ? ends.last - ends.first + 1 : 5);
+      const steps = Math.max(3, Math.min(span, MAX_SCALE_STEPS));
+      // A prefill on the agent's own range, moved onto 1..steps.
+      const n = num(prefillRaw) - min + 1;
+      return {
+        id: base.id,
+        label: question,
+        ...(plainHelp ? { help: plainHelp } : {}),
+        required: base.required,
+        kind,
+        steps,
+        low,
+        high,
+        ...(n >= 1 && n <= steps ? { prefill: n } : {}),
+      };
     }
     case "verdict": {
       // Models sometimes write one verdict field per result, with Keep and Pass as its options:

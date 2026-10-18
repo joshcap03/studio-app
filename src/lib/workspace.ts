@@ -8,6 +8,7 @@ import { listRecords } from "@/lib/tasks/records";
 import { templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import { setupSkill } from "@/lib/skills/setup";
 import { barScore, recentPasses } from "@/lib/verdicts";
 
 // Workspace-level data: settings, usage, and the per-run agent context. All reads and writes
@@ -173,7 +174,13 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     memories,
     guardrail,
     ...tasks,
-    setup: conversationId && settings.setup?.conversationId === conversationId ? { plan: settings.setup.plan } : null,
+    setup:
+      conversationId && settings.setup?.conversationId === conversationId
+        ? {
+            plan: settings.setup.plan,
+            ...(settings.setup.status === "in_progress" ? { instructions: setupSkill(settings.templateId).instructions } : {}),
+          }
+        : null,
     notes: await notesFor(tenant, settings.templateId),
     bar,
   };

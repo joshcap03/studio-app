@@ -31,7 +31,14 @@ export interface AgentTenantContext {
    */
   tracker?: { collection: string; key: string; title: string; status: string | null }[];
   /** Set when this conversation is the agent's setup interview: its checklist so far. */
-  setup?: { plan: { text: string; status: string; note?: string | null }[] } | null;
+  setup?: {
+    plan: { text: string; status: string; note?: string | null }[];
+    /**
+     * While the interview is under way, how to run it (the setup skill's instructions). Only the
+     * first message carries the skill, and a long interview scrolls it out of the agent's view.
+     */
+    instructions?: string;
+  } | null;
   /**
    * Reference rows the template keeps in view in every chat (e.g. interview stories), with
    * their fields, unlike the tracker's one-line summaries.

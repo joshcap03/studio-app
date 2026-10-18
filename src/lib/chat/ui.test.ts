@@ -37,7 +37,7 @@ describe("buildUiBlock", () => {
       intro: "Why I ask.",
       submitLabel: "Send",
       fields: [
-        { kind: "multi_choice", id: "what_should_i_do", label: "What should I do?", required: true, options: [{ label: "Find roles" }, { label: "Prep" }], prefill: ["Prep"] },
+        { kind: "multi_choice", id: "what_should_i_do", label: "What should I do?", required: true, options: [{ label: "Find roles" }, { label: "Prep" }], prefill: ["Prep"], allowOther: true },
         { kind: "text", id: "roles", label: "Roles", required: false, prefill: "PM" },
         { kind: "text", id: "roles_2", label: "Roles again", required: false },
         { kind: "file", id: "resume", label: "Résumé", required: false, accept: ["pdf"], max: 5, keep: false },
@@ -239,6 +239,8 @@ describe("react-first fields", () => {
           { kind: "rank", label: "Partial order", options: ["A", "B", "C"], prefill: ["B"] },
           { kind: "slider", label: "How hands-on", low: "Ask me first", high: "Just do it", steps: 12, value: "4" },
           { kind: "scale", label: "No ends", steps: 5 },
+          { type: "scale", label: "How strict should I be? 1 = show me borderline roles too, 5 = only near-perfect matches" },
+          { type: "scale", label: "How many roles a batch?", min: 1, max: 10, help: "1 = one strong role, 10 = a full list" },
           {
             kind: "verdict",
             label: "Would you go for these?",
@@ -259,12 +261,18 @@ describe("react-first fields", () => {
   ) as UiForm;
 
   it("keeps rank, scale, verdict, and allow_other, dropping what can't be used", () => {
-    expect(form.fields.map((f) => f.kind)).toEqual(["choice", "rank", "rank", "scale", "verdict"]);
+    expect(form.fields.map((f) => f.kind)).toEqual(["choice", "rank", "rank", "scale", "scale", "scale", "scale", "verdict"]);
     expect(form.fields[0]).toMatchObject({ allowOther: true });
     expect(form.fields[1]).toMatchObject({ prefill: ["Remote", "Pay", "Seniority"], required: false });
     expect(form.fields[2]).not.toHaveProperty("prefill");
-    expect(form.fields[3]).toEqual({ kind: "scale", id: "how_hands_on", label: "How hands-on", required: false, steps: 7, low: "Ask me first", high: "Just do it", prefill: 4 });
-    expect(form.fields[4]).toEqual({
+    expect(form.fields[3]).toEqual({ kind: "scale", id: "how_hands_on", label: "How hands-on", required: false, steps: 10, low: "Ask me first", high: "Just do it", prefill: 4 });
+    // A scale whose ends the model didn't name still asks, with plain ends; ends written into
+    // the question or its help become the scale's ends.
+    expect(form.fields[4]).toMatchObject({ kind: "scale", label: "No ends", steps: 5, low: "Less", high: "More" });
+    expect(form.fields[5]).toMatchObject({ label: "How strict should I be?", steps: 5, low: "show me borderline roles too", high: "only near-perfect matches" });
+    expect(form.fields[6]).toMatchObject({ label: "How many roles a batch?", steps: 10, low: "one strong role", high: "a full list" });
+    expect(form.fields[6]).not.toHaveProperty("help");
+    expect(form.fields[7]).toEqual({
       kind: "verdict",
       id: "would_you_go_for_these",
       label: "Would you go for these?",
@@ -302,12 +310,53 @@ describe("react-first fields", () => {
       [
         "The job: Write my cover letters",
         "What matters most (most important first): 1. Remote; 2. Pay; 3. Seniority",
-        "How hands-on: 2 of 7 (1 = Ask me first, 7 = Just do it)",
+        "How hands-on: 2 of 10 (1 = Ask me first, 10 = Just do it)",
         "Would you go for these?:",
         "- Kept: Senior Designer · Acme <https://example.com/1>",
         "- Passed: Designer II · Beta (Too junior)",
       ].join("\n"),
     );
+  });
+});
+
+describe("scale ends in prose", () => {
+  const scale = (raw: Record<string, unknown>) => (buildUiBlock({ form: { title: "T", fields: [{ kind: "scale", ...raw }] } }, "s") as UiForm).fields[0];
+
+  it("reads 1 = …, N = … ends, and cuts them from the question where they start", () => {
+    expect(scale({ label: "Step 1: How strict? 1 = loose, 5 = strict" })).toMatchObject({ label: "Step 1: How strict?", low: "loose", high: "strict", steps: 5 });
+    expect(scale({ label: "How strict?", help: "How often I check in (1 = rarely, 5 = constantly)" })).toMatchObject({ help: "How often I check in", low: "rarely", high: "constantly" });
+    expect(scale({ label: "How many a batch? 1 = one strong role, 10 = a full list" })).toMatchObject({ label: "How many a batch?", steps: 10 });
+  });
+
+  it("leaves times, ratios, and ends the agent named alone", () => {
+    expect(scale({ label: "How ready are you for 9:00, 10:30 meetings?", low: "x", high: "y" })).toMatchObject({ label: "How ready are you for 9:00, 10:30 meetings?", low: "x", high: "y" });
+    expect(scale({ label: "Ratio 3:1 is fine, 5:1 is ideal" })).toMatchObject({ label: "Ratio 3:1 is fine, 5:1 is ideal", low: "Less", high: "More" });
+    expect(scale({ label: "Pick", help: "Think about mornings, e.g. 7:30, 8:15", low: "a", high: "b" })).toMatchObject({ help: "Think about mornings, e.g. 7:30, 8:15" });
+    expect(scale({ label: "How strict? 1 = loose, 5 = strict", low: "Loose", high: "Strict" })).toMatchObject({ label: "How strict? 1 = loose, 5 = strict" });
+  });
+
+  it("maps a min/max range and its prefill onto 1..steps", () => {
+    expect(scale({ label: "L", low: "a", high: "b", min: 5, max: 10, prefill: 7 })).toMatchObject({ steps: 6, prefill: 3 });
+    expect(scale({ label: "L", low: "a", high: "b", min: 0, max: 10 })).toMatchObject({ steps: 10 });
+    expect(scale({ label: "L", low: "a", high: "b", min: 50, max: 100 })).toMatchObject({ steps: 10 });
+  });
+});
+
+describe("choices", () => {
+  it("take the member's own words too, unless the agent closes the question", () => {
+    const form = buildUiBlock(
+      {
+        form: {
+          title: "T",
+          fields: [
+            { kind: "choice", label: "Open", options: ["A", "B"] },
+            { kind: "choice", label: "Closed", options: ["Yes", "No"], allow_other: false },
+          ],
+        },
+      },
+      "c",
+    ) as UiForm;
+    expect(form.fields.map((f) => "allowOther" in f && f.allowOther)).toEqual([true, false]);
   });
 });
 

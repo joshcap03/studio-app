@@ -46,19 +46,18 @@ export interface TemplateSetup {
    */
   successExample: { vague: string; crisp: string };
   /**
-   * 2-4 jobs an agent like this is usually wanted for, offered as one-tap answers to "What's
-   * the one thing you most want me to do?" (they can type their own). Starting points, not a menu
-   * of everything it does.
+   * What this kind of agent usually helps with, for the agent's own bearings in discovery. Never
+   * shown as a menu: the member says what they're after in their own words.
    */
-  jobs: string[];
+  usualHelp: string;
   /**
-   * Context the success step needs first, e.g. a résumé, so its trial run is a fair test.
-   * Gathering only: nothing here plans or designs anything.
+   * Context the success step needs, after discovery, e.g. a résumé, so a trial run is a fair
+   * test. Gathering only: nothing here plans or designs anything.
    */
   before?: TemplateSetupStep[];
   /**
-   * In order, after SUCCESS_STEP; the agent runs one per reply and skips what it already knows.
-   * The last one proposes the agent's setup.
+   * After SUCCESS_STEP: what else the agent may need to learn. A guide, not a script: the agent
+   * skips or merges what the member's problem doesn't need. The last one proposes the setup.
    */
   steps: TemplateSetupStep[];
 }
@@ -67,36 +66,49 @@ export interface TemplateSetupStep {
   id: string;
   /** A short checklist label, e.g. "Your résumé". */
   title: string;
-  /** What to learn in this step and which card to show, written for the agent. */
+  /** What to learn in this step, written for the agent, which designs any form for it. */
   goal: string;
 }
 
 /**
- * The step every setup opens with: before anything is planned, the member says, as crisply as
- * a product manager writing acceptance criteria, what this agent must do and how they'll judge
- * it. The agent draws it out of them rather than offering a menu of things it could do, and the
- * proposal at the end is built on (and held to) what they confirm.
+ * The step every setup opens with: a conversation, not a form. Like a product manager meeting a
+ * new customer, the agent works out what the member is really trying to get done, and why,
+ * before it assumes anything about how it could help. Nothing is planned or asked in a form
+ * until the member agrees with how it's stated their problem.
+ */
+export const DISCOVERY_STEP: TemplateSetupStep = {
+  id: "discovery",
+  title: "What you're after",
+  goal: `Work out, with them, where they genuinely need help, the way a careful product thinker or a good advisor would. Many people aren't sure yet how they want help, so start from their challenges, not from what you can do. This is a conversation in plain words: open questions in your reply text, one per reply, no forms. Usually 3-5 short exchanges, then your advice.
+  - Open with their situation and what's been hardest about it lately. Don't ask "what do you want me to do?", don't offer options, and don't assume this agent's usual help is what they need (it usually helps with: {usual}; that's background for you, not a menu).
+  - Dig into the one or two challenges that matter most, choosing each next question from what they just said: what makes it hard, why it matters now, what they've tried and what fell short, and what would be different if it got better. When they jump to a solution ("find me jobs"), ask about the need behind it.
+  - Reflect back briefly in their words before each next question, so they can correct you. Question assumptions, including your own.
+  - Then advise. Give your honest read in a few sentences: the problem as you understand it, the 2-3 ways you think you could help most (your recommendation first, and why), what you'd leave alone or couldn't do well, and any tradeoff they should weigh. Ask what feels right, what's missing, or what they'd change. Their answer is free text; don't turn your advice into a multiple choice.
+  - Go back and forth until they agree with how you've put their problem and where you'll help. Then remember it in one line, and the step is done.`,
+};
+
+/**
+ * Before anything is planned, the member says, as crisply as a product manager writing
+ * acceptance criteria, how they'll judge the help they asked for in discovery. The agent designs
+ * the form for their problem (nothing here prescribes its fields), and the proposal at the end
+ * is built on, and held to, what they confirm.
  */
 export const SUCCESS_STEP: TemplateSetupStep = {
   id: "success",
   title: "What success looks like",
-  goal: `Get the owner to define success crisply, the way a product manager writes acceptance criteria, before anything is planned. They have a specific job in mind, and this agent is only worth using if it does that job to their standard. Draw it out of them by giving them things to react to (choices you draft, a scale, real results to judge) rather than empty boxes, and never decide the job or the bar for them. This step takes a few replies.
-  a. The job: ask_user "What's the one thing you most want me to do?" with these as the options: {jobs}. They can type their own instead.
-  b. Picture it: one show_form for the job they named (intro: one sentence on why: so you can hold yourself to their bar). Fields: a choice "When should results land?" (3-4 rhythms that fit the job), a scale "How picky should I be?" (low "Show me anything close", high "Only near-perfect fits"), a multi_choice with allow_other "What makes a result great?" (4-6 concrete, checkable qualities drafted for their job, e.g. a number, a deadline, a must-have detail), a multi_choice with allow_other "What would make you stop using me?" (3-5 likely deal-breakers for their job), and an optional long_text "Anything else, or an example you'd love?". Draft the options from their job and what you know about them; prefill nothing they haven't said.
-  c. Trial run: do the job once, for real, before replying: search with your tools (read and search only; change nothing), using what they've told you, and pick the 3-5 best real results. Show them in a show_form titled "Trial run" with ONE required verdict field whose items are those results (each a title, one line on why it might fit, and its link; the card adds Keep and Pass itself) and whose reasons are 3-5 likely ways a result could miss their bar, drawn from their answers. Say in one sentence it's a quick first try for them to judge. Only if your searches truly turn up nothing usable, or you have no tool for this job, draft 3 realistic examples instead, title the form "Examples to judge", and say they're made up.
-  d. Your bar: read their verdicts like a product manager: what they kept, what they passed on, and why. Draft 3-6 criteria in their words, each one a result can pass or fail (a number, a deadline, a yes/no), sharpened by what they passed on, the deal-breakers among them. show_form titled "Your bar" with a rank field "Put these in order: what matters most?" (each option a criterion of at most 80 characters, its description how you'll check it) and an optional long_text "Anything to change or add?". If anything they said is still vague or can't be checked, add one choice field asking what it means, with 2-4 concrete readings. When they send it back, that's the bar: remember it in one line, and finish the step.
-Coaching example for this kind of agent (an illustration only; their bar is their own): vague "{vague}"; crisp "{crisp}".`,
+  goal: `Turn the problem they agreed on into a bar this agent can be held to, before anything is planned. Design this step yourself around their problem; don't use a stock set of questions.
+  a. Generate one show_form built for what they told you and the help you agreed on, asking only what you still need to judge success: what a great result is for them, when and how often it should come, how strict to be, and what would make them stop using you. Offer choices only where there are real, distinct alternatives you can draft from their own words (they can always add their own); where the answer is personal or you can't foresee it, ask it open. Use a scale where it's a matter of degree. A few fields, not a survey; prefill only what they've said.
+  b. Before drafting the bar, do a trial run: the job once, for real, with your tools (read and search only; change nothing; save nothing), and show the 2-5 best results in a show_form titled "Trial run" with ONE verdict field (the results as its items; the card adds Keep and Pass), with reasons to pass drawn from their answers. Their keeps and passes are the best evidence of what "good" means to them. Skip it only if you have no tool that can do any part of the job, and then say so. Never pass off made-up results as real.
+  c. Draft 3-6 criteria in their words, each one a result can pass or fail (a number, a deadline, a yes/no), sharpened by what they passed on and why. show_form titled "Your bar" with a rank field (each criterion at most 80 characters, how you'll check it as its description) and an optional "Anything to change or add?". Ask about anything still vague with a choice of 2-4 concrete readings. When they send it back, that's the bar: remember it in one line.
+For your own bearings (an illustration only; their bar is their own): vague "{vague}"; crisp "{crisp}".`,
 };
 
 /** The setup steps an agent made from `template` runs, in order. */
 export function setupSteps(template: AgentTemplate): TemplateSetupStep[] {
-  const { jobs, successExample } = template.setup;
-  const goal = SUCCESS_STEP.goal
-    .replace("{jobs}", jobs.map((j) => `"${j}"`).join(", "))
-    .replace("{vague}", successExample.vague)
-    .replace("{crisp}", successExample.crisp);
-  const success = { ...SUCCESS_STEP, goal };
-  return [...(template.setup.before ?? []), success, ...template.setup.steps];
+  const { usualHelp, successExample } = template.setup;
+  const discovery = { ...DISCOVERY_STEP, goal: DISCOVERY_STEP.goal.replace("{usual}", usualHelp) };
+  const success = { ...SUCCESS_STEP, goal: SUCCESS_STEP.goal.replace("{vague}", successExample.vague).replace("{crisp}", successExample.crisp) };
+  return [discovery, ...(template.setup.before ?? []), success, ...template.setup.steps];
 }
 
 export interface TemplateTask {
@@ -167,35 +179,35 @@ export const TEMPLATES: AgentTemplate[] = [
     ],
     contextCollections: ["stories"],
     setup: {
-      intro: "I'll learn exactly what a great job search looks like to you, read your résumé, help you get your stories ready, and then suggest how I'll run your search.",
+      intro: "I'll start by understanding what's been hard about your search, suggest where I can help most, agree with you how to judge it, and then set myself up to work that way.",
       successExample: {
         vague: "Find me good jobs.",
         crisp: "Each weekday by 9am, 3-5 new senior product design roles: remote in the US, $180k+ base, B2B SaaS, posted in the last 3 days, none I've seen before, each with one line on why it fits. If I'd pass on more than 2 of every 5, it isn't working.",
       },
-      jobs: ["Find roles that really fit me", "Tailor my applications", "Reach the right people", "Get me ready for interviews"],
+      usualHelp: "finding roles that fit, tailoring applications, reaching the right people, and preparing for interviews",
       // The trial run is only a fair test once the agent knows their background.
       before: [
         {
           id: "resume",
           title: "Your résumé",
-          goal: `Get their résumé onto this agent's files. If CONTEXT already lists a résumé among their files, say so and skip ahead. Otherwise show_form with a required file field (keep: true, accept pdf, docx, txt, md) and an optional long_text "Anything that isn't on it?". When it arrives, read it, and remember the few facts you'll lean on most (current role, years of experience, strongest areas).`,
+          goal: `If what they're after needs their background (it usually does in a job search), get their résumé onto this agent's files. If CONTEXT already lists one, say so and skip ahead; if their problem doesn't need it, skip this and say why. Otherwise show_form with a file field (keep: true, accept pdf, docx, txt, md) and an open "Anything that isn't on it?". When it arrives, read it, and remember the few facts you'll lean on most.`,
         },
       ],
       steps: [
         {
           id: "search",
           title: "Your search",
-          goal: `Pin down the search, mostly by confirming what you already know. show_form, prefilled from the résumé, their bar, and their trial-run verdicts (skip anything the bar already settles): text "Target roles", choice "Seniority" (from their level, a step up, either), multi_choice "How do you want to work?" (Remote, Hybrid, On-site; they pick every one they'd take), text "Cities" (help: only for hybrid or on-site roles), text "Pay floor", text "Companies you'd love to work at" (optional), and a scale "How hands-on should I be?" (low "Check with me first", high "Just get on with it"). Leave out what their bar already settles.`,
+          goal: `If they want help finding roles, fill in what you still need to search well that their bar doesn't already settle (for example target roles, level, where and how they'll work, pay, companies they love), and how hands-on to be. Design the form from what you know: prefill from the résumé, the bar, and their verdicts so they mostly confirm. Skip this if searching isn't part of what they're after.`,
         },
         {
           id: "stories",
           title: "Your stories",
-          goal: `Get interview stories ready. Draft 3-5 STAR stories from the résumé's strongest bullets (only facts that are there; leave a part empty rather than writing a placeholder), then show_form with one list field: item_label "Story", parts situation, task, action, result (long), and skills (short), prefilled with your drafts, for them to fix and add to. When they send it, save every story they sent right away, gaps and all (say which could use more detail), with save_record: collection "stories", key a short slug of its title, title a few words naming it, fields situation, task, action, result, skills. If CONTEXT has no tracker section, remember one sentence per story instead.`,
+          goal: `If interviews are part of what they're after, get stories ready. Draft 3-5 STAR stories from the résumé's strongest bullets (only facts that are there; leave a part empty rather than writing a placeholder), and show them in a list field (item_label "Story"; parts situation, task, action, result, skills) for them to fix and add to. Save every story they send right away, gaps and all (say which could use more detail), with save_record: collection "stories", key a short slug of its title, title a few words naming it, fields situation, task, action, result, skills. If CONTEXT has no tracker section, remember one sentence per story instead. Skip this if interviews aren't part of it yet.`,
         },
         {
           id: "apps",
           title: "Your apps",
-          goal: `Connect what you'll work in. show_form with a connect field for gmail, calendar, apollo and hunter (with help saying Gmail and Calendar are for replies and interviews, Apollo and Hunter for finding the right people), and another optional connect field for clay. Say they can skip any and connect later.`,
+          goal: `Connect only the apps their bar needs, with a connect field and a line on what each is for: gmail and calendar for replies and interviews, apollo and hunter for finding the right people, clay optionally. Say they can skip any and connect later; skip this if none are needed.`,
         },
         {
           id: "design",
@@ -217,27 +229,27 @@ export const TEMPLATES: AgentTemplate[] = [
     apps: ["gmail", "shopify", "sheets", "quickbooks"],
     tasks: [],
     setup: {
-      intro: "I'll learn exactly what you need me to get right, how your business works, and the tools you run on, and then suggest what I'll take off your plate.",
+      intro: "I'll start by understanding what's taking up your time in the business, suggest where I can help most, agree with you how to judge it, and then set myself up to work that way.",
       successExample: {
         vague: "Help with customer emails.",
         crisp: "Every customer email gets a reply drafted within 2 hours on weekdays, in my tone, with the right order details from Shopify; I send at least 4 of every 5 without editing, and nothing promising a refund goes out without me.",
       },
-      jobs: ["Answer customer emails", "Tell me how sales are doing", "Keep an eye on stock", "Chase unpaid invoices"],
+      usualHelp: "customer emails, sales and money questions, stock, invoices, and marketing",
       steps: [
         {
           id: "business",
           title: "Your business",
-          goal: `Learn the business. show_form, prefilled from what you know: long_text "What you sell and who buys it", multi_choice with allow_other "Where you sell" (Online store, A shop, Markets or events, Wholesale), choice with allow_other "How you talk to customers" (Warm and casual, Friendly but professional, Formal; prefilled from any messages of theirs you've seen), and an optional file field (keep: true) for a price list, menu, or policies.`,
+          goal: `Learn what you need about the business to meet their bar (what they sell and to whom, where, how they talk to customers, anything to keep on hand like a price list), and nothing more. Design the form from what discovery already told you, drafting choices from their words; a file field (keep: true) if a document would help.`,
         },
         {
           id: "apps",
           title: "Your tools",
-          goal: `Connect what they run on. show_form with a connect field for gmail, shopify, sheets and quickbooks (help: say what you'd use each for), and say they can skip any and connect later.`,
+          goal: `Connect only the apps their bar needs (gmail, shopify, sheets, quickbooks), with a line on what you'd use each for. Say they can skip any and connect later.`,
         },
         {
           id: "rhythm",
           title: "When I work",
-          goal: `Find when the work happens. show_form with a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask; prefilled from their bar), a scale "How hands-on should I be?" (low "Check with me first", high "Just get on with it"), and a multi_choice with allow_other "Anything else you dread each week?" (3-5 chores drafted for their business).`,
+          goal: `If the bar doesn't already say, learn when the work happens and how hands-on to be. Skip this if it does.`,
         },
         {
           id: "design",
@@ -257,17 +269,17 @@ export const TEMPLATES: AgentTemplate[] = [
     apps: [],
     tasks: [],
     setup: {
-      intro: "Tell me the job you want done and how you'll judge it, and I'll suggest how to set myself up to meet that bar.",
+      intro: "I'll start by understanding what you're dealing with, suggest where I can help most, agree with you how to judge it, and then set myself up to work that way.",
       successExample: {
         vague: "Keep an eye on flight prices.",
         crisp: "Every Monday, the 3 cheapest nonstop round trips from Boston to Lisbon for the first two weeks of June under $700, with the airline and a link; ping me the same day if one drops below $550.",
       },
-      jobs: ["Keep an eye on something for me", "Research things and report back", "Draft things for me to send", "Keep a running list or tracker"],
+      usualHelp: "anything: keeping an eye on things, research, drafting, keeping a tracker",
       steps: [
         {
           id: "context",
           title: "What I should know",
-          goal: `Gather what you'll need to meet their bar: a show_form with up to 4 fields that matter for it (choices you draft where you can, prefilled from what you know), a choice "How often should I check in?" (Every weekday, Weekly, Only when I ask; prefilled to match their bar if it says), an optional file field (keep: true) for anything to keep on hand, and a connect field for the 1-4 apps that would help most.`,
+          goal: `Gather only what you still need to meet their bar: details, how often to check in if the bar doesn't say, any file worth keeping on hand (keep: true), and the 1-4 apps that would help most (a connect field). Design the form from what you know.`,
         },
         {
           id: "design",

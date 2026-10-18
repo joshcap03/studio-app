@@ -19,9 +19,7 @@ describe("templates", () => {
     for (const t of TEMPLATES) {
       const steps = [...(t.setup.before ?? []), ...t.setup.steps];
       expect(t.setup.intro.trim(), t.id).not.toBe("");
-      // One-tap answers to "What's the one thing you most want me to do?" (ask_user takes 2-4).
-      expect(t.setup.jobs.length, t.id).toBeGreaterThanOrEqual(2);
-      expect(t.setup.jobs.length, t.id).toBeLessThanOrEqual(4);
+      expect(t.setup.usualHelp.trim(), t.id).not.toBe("");
       expect(steps.length, t.id).toBeGreaterThanOrEqual(2);
       expect(new Set(steps.map((s) => s.id)).size, t.id).toBe(steps.length);
       for (const s of steps) {
@@ -29,8 +27,7 @@ describe("templates", () => {
         // Short enough for the checklist the agent keeps with update_plan (200 chars a step).
         expect(s.title.length).toBeLessThanOrEqual(40);
       }
-      // Every step but the last asks with a card; the last proposes the agent's setup.
-      for (const s of steps.slice(0, -1)) expect(s.goal, `${t.id}/${s.id}`).toMatch(/show_form|ask_user/);
+      // Steps say what to learn, not which fields to show; the last proposes the agent's setup.
       expect(steps.at(-1)!.goal, t.id).toContain("propose_agent");
       for (const c of t.contextCollections ?? []) expect(c).toMatch(/^[a-z0-9_-]{1,40}$/);
     }
