@@ -58,6 +58,8 @@ export interface AgentTenantContext {
    * instruction, plus titles of their recent conversations so repeated questions can be noticed.
    */
   guardrail?: { instructions: string; recentChats: string[] } | null;
+  /** How the member is talking on this turn, when it isn't typing (see modalityContext in langflow.ts). */
+  modality?: "voice_note" | "call";
 }
 
 /** A file the member attached to the message being answered. */

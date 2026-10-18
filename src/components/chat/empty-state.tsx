@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowRight, AudioLines, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 import { forwardRef, useEffect } from "react";
 import { JourneyBar } from "@/components/ui/journey";
 import type { SetupSummary, WorkspaceSkill } from "@/lib/types";
@@ -38,6 +38,12 @@ interface Props {
   agentName?: string;
   onSetup?: () => void;
   onSkipSetup?: () => void;
+  /** Present when the member can do the setup on a call ("Talk it through"). */
+  onTalk?: () => void;
+  /** A call is being started. */
+  talking?: boolean;
+  /** Why a call couldn't start. */
+  talkNotice?: string | null;
 }
 
 const chip =
@@ -45,7 +51,7 @@ const chip =
 const SHOWN_SKILLS = 5;
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, onSetup, onSkipSetup },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, onSetup, onSkipSetup, onTalk, talking, talkNotice },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
@@ -76,7 +82,9 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
       </div>
 
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
-        {setup && onSetup ? <SetupBanner setup={setup} agentName={agentName} onSetup={onSetup} onSkip={onSkipSetup} /> : null}
+        {setup && onSetup ? (
+          <SetupBanner setup={setup} agentName={agentName} onSetup={onSetup} onSkip={onSkipSetup} onTalk={onTalk} talking={talking} notice={talkNotice} />
+        ) : null}
         <div className="animate-fade-up [animation-delay:60ms]">
           <Composer
             ref={composerRef}
@@ -123,45 +131,84 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
   );
 });
 
-/** Offers the agent's setup interview until it's done: start it, pick it up again, or not now. */
-function SetupBanner({ setup, agentName, onSetup, onSkip }: { setup: SetupSummary; agentName?: string; onSetup: () => void; onSkip?: () => void }) {
+/**
+ * Offers the agent's setup interview until it's done: start it (typing, or talking it through on a
+ * call, with equal weight), pick it up again, or not now.
+ */
+function SetupBanner({
+  setup,
+  agentName,
+  onSetup,
+  onSkip,
+  onTalk,
+  talking,
+  notice,
+}: {
+  setup: SetupSummary;
+  agentName?: string;
+  onSetup: () => void;
+  onSkip?: () => void;
+  onTalk?: () => void;
+  talking?: boolean;
+  notice?: string | null;
+}) {
   const started = setup.status === "in_progress";
   const name = agentName?.trim() || "this agent";
   return (
-    <section aria-label="Set up this agent" className="mb-3 flex items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3 animate-fade-up">
-      <Sparkles size={17} className="shrink-0 text-accent" />
-      <div className="min-w-0 flex-1">
-        <p className="text-[14px] font-medium text-fg">{started ? `Finish setting up ${name}` : `Set up ${name}`}</p>
-        {started && setup.total > 0 ? (
-          <div className="mt-1.5 flex items-center gap-2.5">
-            <JourneyBar steps={setup.plan} className="max-w-48 flex-1" />
-            <span className="shrink-0 text-[12px] text-fg-3">
-              {setup.done} of {setup.total}
-            </span>
-          </div>
-        ) : (
-          <p className="text-[12.5px] leading-[1.45] text-fg-3">
-            A few quick questions{setup.total ? ` (${setup.total} steps)` : ""} so it works the way you need.
-          </p>
-        )}
+    <section aria-label="Set up this agent" className="mb-3 rounded-xl border border-line bg-surface px-3.5 py-3 animate-fade-up">
+      <div className="flex flex-wrap items-center gap-3">
+        <Sparkles size={17} className="shrink-0 text-accent" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[14px] font-medium text-fg">{started ? `Finish setting up ${name}` : `Set up ${name}`}</p>
+          {started && setup.total > 0 ? (
+            <div className="mt-1.5 flex items-center gap-2.5">
+              <JourneyBar steps={setup.plan} className="max-w-48 flex-1" />
+              <span className="shrink-0 text-[12px] text-fg-3">
+                {setup.done} of {setup.total}
+              </span>
+            </div>
+          ) : (
+            <p className="text-[12.5px] leading-[1.45] text-fg-3">
+              A few quick questions{setup.total ? ` (${setup.total} steps)` : ""} so it works the way you need.
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2 max-sm:w-full max-sm:justify-end">
+          {onSkip ? (
+            <button
+              type="button"
+              onClick={onSkip}
+              className="inline-flex h-8 shrink-0 items-center rounded-lg px-2.5 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+            >
+              Not now
+            </button>
+          ) : null}
+          {onTalk ? (
+            <button
+              type="button"
+              onClick={onTalk}
+              disabled={talking}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line-strong px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover disabled:opacity-60"
+            >
+              {talking ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={14} />}
+              Talk it through
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onSetup}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-inverse px-3 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90"
+          >
+            {started ? "Continue" : "Start"}
+            <ArrowRight size={14} />
+          </button>
+        </div>
       </div>
-      {onSkip ? (
-        <button
-          type="button"
-          onClick={onSkip}
-          className="inline-flex h-8 shrink-0 items-center rounded-lg px-2.5 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg"
-        >
-          Not now
-        </button>
+      {notice ? (
+        <p role="status" className="mt-2 text-[12.5px] text-danger">
+          {notice}
+        </p>
       ) : null}
-      <button
-        type="button"
-        onClick={onSetup}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-inverse px-3 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90"
-      >
-        {started ? "Continue" : "Start"}
-        <ArrowRight size={14} />
-      </button>
     </section>
   );
 }

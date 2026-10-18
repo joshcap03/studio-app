@@ -29,8 +29,13 @@ function hits(path: string, texts: string[]): string[] {
 }
 
 describe("game feel, not game look", () => {
-  it("keeps game words out of the agent's instructions, skills, and templates", () => {
-    const prompts = [join(ROOT, "langflow", "agent_instructions.md"), ...files(join(ROOT, "src", "lib", "skills"), /\.ts$/), ...files(join(ROOT, "src", "lib", "templates"), /\.ts$/)];
+  it("keeps game words out of the agent's instructions, skills, templates, and what its voice says", () => {
+    const prompts = [
+      join(ROOT, "langflow", "agent_instructions.md"),
+      ...files(join(ROOT, "src", "lib", "skills"), /\.ts$/),
+      ...files(join(ROOT, "src", "lib", "templates"), /\.ts$/),
+      ...files(join(ROOT, "src", "lib", "voice"), /\.ts$/),
+    ];
     expect(prompts.flatMap((p) => hits(p, [readFileSync(p, "utf8")]).map(() => `${relative(ROOT, p)}: ${readFileSync(p, "utf8").match(GAME_WORDS)![0]}`))).toEqual([]);
   });
 

@@ -8,6 +8,7 @@ import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
 import { summarizeSetup } from "@/lib/setup-state";
 import { requirePageTenant } from "@/lib/tenant";
+import { voiceStatus } from "@/lib/voice";
 import { getSettings } from "@/lib/workspace";
 
 // One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", and "/tasks[/<task id>]". After the first load the browser
@@ -74,6 +75,7 @@ export default async function WorkspacePage({
       skills={skills}
       initialSkillId={initialSkillId}
       setup={setup}
+      voice={setup ? voiceStatus(tenant) : null}
     />
   );
 }

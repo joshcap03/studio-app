@@ -25,7 +25,7 @@ export async function proxy(request: NextRequest) {
   const { data } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  if (data.user || PUBLIC_PATHS.some((p) => path.startsWith(p)) || isWorkerRunStart(request)) return response;
+  if (data.user || PUBLIC_PATHS.some((p) => path.startsWith(p)) || isWorkerRunStart(request) || isVoiceFront(request)) return response;
 
   if (path.startsWith("/api/")) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   const login = new URL("/login", request.url);
@@ -41,6 +41,15 @@ const WORKER_RUN_START = /^\/api\/tasks\/[0-9a-f-]{36}\/runs\/[0-9a-f-]{36}$/i;
 
 function isWorkerRunStart(request: NextRequest): boolean {
   return request.method === "POST" && WORKER_RUN_START.test(request.nextUrl.pathname) && /^Bearer\s+\S+$/i.test(request.headers.get("authorization") ?? "");
+}
+
+// The voice provider calling the voice front for a call's next line carries its custom-LLM key
+// instead of a cookie. The route checks that key and the call's sealed context itself
+// (src/app/api/voice/llm/v1/chat/completions/route.ts) and reads no member data.
+const VOICE_FRONT = "/api/voice/llm/v1/chat/completions";
+
+function isVoiceFront(request: NextRequest): boolean {
+  return request.method === "POST" && request.nextUrl.pathname === VOICE_FRONT && /^Bearer\s+\S+$/i.test(request.headers.get("authorization") ?? "");
 }
 
 export const config = {

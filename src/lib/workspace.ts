@@ -7,7 +7,7 @@ import { taskContextFor } from "@/lib/tasks/agent";
 import { listRecords } from "@/lib/tasks/records";
 import { templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
-import type { AgentSetup, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import type { AgentSetup, Modality, UsageSummary, WorkspaceSettings } from "@/lib/types";
 import { setupSkill } from "@/lib/skills/setup";
 import { barScore, recentPasses } from "@/lib/verdicts";
 
@@ -150,7 +150,7 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
  * (the member's message) pulls in memories that match it. `conversationId` is the conversation
  * being answered, left out of the recent chats a guardrail run sees.
  */
-export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string): Promise<AgentTenantContext> {
+export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string, modality?: Modality): Promise<AgentTenantContext> {
   const [settings, memories, guardrail, tasks, bar] = await Promise.all([
     getSettings(tenant),
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
@@ -183,6 +183,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
         : null,
     notes: await notesFor(tenant, settings.templateId),
     bar,
+    ...(modality && modality !== "text" ? { modality } : {}),
   };
 }
 

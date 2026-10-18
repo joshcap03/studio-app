@@ -1,0 +1,229 @@
+import { z } from "zod";
+import { mockReplyToResults, mockReplyToSpeech, type BrainReply } from "./mock";
+import { cueLine, greeting, VOICE_TOOLS, voicePrompt } from "./persona";
+import { VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
+
+// The voice front: an OpenAI-compatible chat-completions endpoint the voice provider calls for
+// every turn of a call (ElevenLabs' custom-LLM mode). It ignores the provider's own prompt and
+// builds its own per call, guardrail first. Lines from Studio (relay updates, cues, the
+// greeting) are said word for word, without a model; only the member's speech and tool results
+// go to the model, which may do the four speech acts and call the browser's tools. Pure except
+// for the upstream model call.
+
+const content = z.union([z.string(), z.array(z.object({ type: z.string(), text: z.string().optional() }).loose()), z.null()]).optional();
+
+const message = z
+  .object({
+    role: z.enum(["system", "developer", "user", "assistant", "tool"]),
+    content,
+    tool_calls: z
+      .array(z.object({ id: z.string().optional(), type: z.string().optional(), function: z.object({ name: z.string(), arguments: z.string().optional() }).loose() }).loose())
+      .optional(),
+    tool_call_id: z.string().optional(),
+  })
+  .loose();
+export type FrontMessage = z.infer<typeof message>;
+
+export const frontRequest = z
+  .object({
+    messages: z.array(message).max(500),
+    tools: z.array(z.object({ type: z.string().optional(), function: z.object({ name: z.string() }).loose() }).loose()).max(64).optional(),
+  })
+  .loose();
+export type FrontRequest = z.infer<typeof frontRequest>;
+
+const stageField = z
+  .object({
+    id: z.string().max(80),
+    label: z.string().max(300),
+    kind: z.string().max(30),
+    required: z.boolean(),
+    options: z.array(z.string().max(200)).max(20).optional(),
+    items: z.array(z.object({ n: z.number(), id: z.string().max(80), title: z.string().max(300) })).max(12).optional(),
+    scale: z.object({ steps: z.number(), low: z.string().max(200), high: z.string().max(200) }).optional(),
+    reasons: z.array(z.string().max(200)).max(8).optional(),
+    current: z.string().max(400).optional(),
+    tapOnly: z.boolean().optional(),
+  })
+  .strip();
+const stage = z
+  .object({
+    working: z.boolean(),
+    journey: z.object({ done: z.number(), total: z.number(), current: z.string().max(200).nullable() }).optional(),
+    form: z.object({ id: z.string().max(80), title: z.string().max(300), fields: z.array(stageField).max(10) }).optional(),
+    questions: z.array(z.object({ question: z.string().max(500), options: z.array(z.string().max(200)).max(6), multi: z.boolean() })).max(4).optional(),
+    proposal: z.string().max(600).optional(),
+    approval: z.string().max(600).optional(),
+  })
+  .strip();
+const marker = z.object({ say: z.array(z.string().max(600)).max(8).optional(), stage: stage.optional(), cue: z.enum(VOICE_CUES).optional() }).strip();
+
+export function textOf(c: FrontMessage["content"]): string {
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) return c.map((p) => p.text ?? "").join("");
+  return "";
+}
+
+/** A Studio marker in a message (any role: providers may deliver contextual updates as system or user text). */
+export function readMarker(m: FrontMessage): VoiceMarker | null {
+  const text = textOf(m.content).trim();
+  if (!text.startsWith(VOICE_MARKER)) return null;
+  try {
+    const parsed = marker.safeParse(JSON.parse(text.slice(VOICE_MARKER.length)));
+    return parsed.success ? (parsed.data as VoiceMarker) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The stage the browser last reported. */
+export function latestStage(messages: FrontMessage[]): VoiceStage | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = readMarker(messages[i]);
+    if (m?.stage) return m.stage;
+  }
+  return null;
+}
+
+/** Said word for word: no markup, no control characters, short. */
+export function sayable(text: string, max = 500): string {
+  const line = text
+    .replaceAll(VOICE_MARKER, "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return line.length > max ? `${line.slice(0, max - 1).replace(/\s+\S*$/, "")}…` : line;
+}
+
+export type FrontPlan = { kind: "say"; text: string } | { kind: "skip" } | { kind: "model" };
+
+/**
+ * What to do with this request: say Studio's line verbatim, stay quiet, or ask the model
+ * (only for the member's own speech and tool results).
+ */
+export function planReply(context: VoiceContext, messages: FrontMessage[]): FrontPlan {
+  const turns = messages.filter((m) => m.role !== "system" && m.role !== "developer");
+  const spoken = turns.some((m) => m.role === "assistant" && (textOf(m.content).trim() || m.tool_calls?.length));
+  const stageNow = latestStage(messages);
+  const last = turns.at(-1);
+  if (!last) return { kind: "say", text: greeting(context, stageNow) };
+  const mark = readMarker(last);
+  if (mark) {
+    if (mark.cue === "hello") return spoken ? { kind: "skip" } : { kind: "say", text: greeting(context, stageNow) };
+    if (mark.cue) return { kind: "say", text: cueLine(mark.cue, context, stageNow) };
+    const lines = (mark.say ?? []).map((l) => sayable(l)).filter(Boolean);
+    return lines.length ? { kind: "say", text: sayable(lines.join(" "), 900) } : { kind: "skip" };
+  }
+  if (last.role === "assistant") return { kind: "skip" };
+  if (last.role === "user" && !textOf(last.content).trim()) return { kind: "skip" };
+  return { kind: "model" };
+}
+
+/** The conversation as the model sees it: no provider prompt, no Studio markers. */
+export function modelMessages(context: VoiceContext, messages: FrontMessage[]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [{ role: "system", content: voicePrompt(context, latestStage(messages)) }];
+  for (const m of messages) {
+    if (m.role === "system" || m.role === "developer" || readMarker(m)) continue;
+    if (m.role === "tool") out.push({ role: "tool", tool_call_id: m.tool_call_id ?? "", content: textOf(m.content).slice(0, 2000) });
+    else if (m.role === "assistant") out.push({ role: "assistant", content: textOf(m.content) || null, ...(m.tool_calls?.length ? { tool_calls: m.tool_calls } : {}) });
+    else out.push({ role: "user", content: textOf(m.content).slice(0, 4000) });
+  }
+  return out;
+}
+
+const SYSTEM_TOOLS = new Set(["skip_turn", "end_call"]);
+const SKIP_TURN = {
+  type: "function",
+  function: { name: "skip_turn", description: "Say nothing this turn and wait for the member.", parameters: { type: "object", properties: { reason: { type: "string" } } } },
+};
+
+/**
+ * The tools the model may call: Studio's own definitions of its client tools (only those the
+ * provider can deliver, when it lists any), plus the provider's turn tools (skip_turn, end_call).
+ */
+export function modelTools(requested: FrontRequest["tools"]): Record<string, unknown>[] {
+  const names = new Set((requested ?? []).map((t) => t.function.name));
+  const ours = VOICE_TOOL_NAMES.filter((n) => !requested?.length || names.has(n)).map((name) => ({
+    type: "function",
+    function: { name, description: VOICE_TOOLS[name].description, parameters: VOICE_TOOLS[name].parameters },
+  }));
+  const system = (requested ?? []).filter((t) => SYSTEM_TOOLS.has(t.function.name));
+  return [...ours, ...(system.length ? system : [SKIP_TURN])];
+}
+
+/** The scripted mock's answer to the latest turn. */
+export function mockReply(messages: FrontMessage[]): BrainReply {
+  const turns = messages.filter((m) => m.role !== "system" && m.role !== "developer" && !readMarker(m));
+  const results: string[] = [];
+  for (let i = turns.length - 1; i >= 0 && turns[i].role === "tool"; i--) results.unshift(textOf(turns[i].content));
+  if (results.length) return mockReplyToResults(results);
+  const said = turns.at(-1)?.role === "user" ? textOf(turns.at(-1)!.content) : "";
+  return said.trim() ? mockReplyToSpeech(latestStage(messages), said) : { tools: [{ name: "skip_turn", args: {} }] };
+}
+
+// ------------------------------------------------------------------------------------------
+// Server-sent events, the OpenAI chat-completions streaming format.
+
+const encoder = new TextEncoder();
+
+function chunk(id: string, delta: Record<string, unknown>, finish: string | null = null): Uint8Array {
+  const body = { id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: "studio-voice", choices: [{ index: 0, delta, finish_reason: finish }] };
+  return encoder.encode(`data: ${JSON.stringify(body)}\n\n`);
+}
+
+/** A whole reply (text and/or tool calls) as one short event stream. */
+export function replyStream(reply: BrainReply): ReadableStream<Uint8Array> {
+  const id = `chatcmpl-${crypto.randomUUID()}`;
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(chunk(id, { role: "assistant", content: reply.text ? "" : null }));
+      if (reply.text) controller.enqueue(chunk(id, { content: reply.text }));
+      reply.tools?.forEach((t, index) => {
+        controller.enqueue(
+          chunk(id, { tool_calls: [{ index, id: `call_${crypto.randomUUID().slice(0, 12)}`, type: "function", function: { name: t.name, arguments: JSON.stringify(t.args) } }] }),
+        );
+      });
+      controller.enqueue(chunk(id, {}, reply.tools?.length ? "tool_calls" : "stop"));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+}
+
+export const LOST_LINE = "Sorry, I lost that. Could you say it again?";
+
+/**
+ * Streams the model's reply for this turn from an OpenAI-compatible endpoint. A failure becomes
+ * a spoken line inside the stream, since the provider expects errors there.
+ */
+export async function modelStream(
+  llm: { baseUrl: string; apiKey: string; model: string },
+  context: VoiceContext,
+  request: FrontRequest,
+  signal: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+  try {
+    const res = await fetch(`${llm.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${llm.apiKey}` },
+      body: JSON.stringify({
+        model: llm.model,
+        messages: modelMessages(context, request.messages),
+        tools: modelTools(request.tools),
+        tool_choice: "auto",
+        stream: true,
+        max_tokens: 220,
+        temperature: 0.4,
+      }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      console.error("[voice] model call failed", res.status);
+      return replyStream({ text: LOST_LINE });
+    }
+    return res.body;
+  } catch (e) {
+    if (!signal.aborted) console.error("[voice] model call failed", e);
+    return replyStream({ text: LOST_LINE });
+  }
+}

@@ -8,7 +8,7 @@ import { BUILTIN_SKILL_IDS } from "@/lib/skills/builtin";
 import { SETUP_SKILL_ID } from "@/lib/skills/setup";
 import { getSetup, updateSetup } from "@/lib/setup-state";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
-import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH } from "@/lib/types";
+import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH, MODALITIES } from "@/lib/types";
 
 // Starts a turn and streams it back as NDJSON (one StreamEvent per line). Creating the
 // conversation on first send lets the browser create conversations optimistically. The
@@ -36,6 +36,8 @@ const body = z.discriminatedUnion("kind", [
       steer: z.boolean().optional(),
       // One of the caller's projects to start a new conversation in. Ignored for existing ones.
       projectId: z.uuid().optional(),
+      // How the member is talking: on a call, their words were spoken and the agent writes for the ear.
+      modality: z.enum(MODALITIES).optional(),
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
   z.object({ kind: z.literal("retry") }),

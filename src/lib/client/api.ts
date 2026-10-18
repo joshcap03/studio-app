@@ -1,4 +1,5 @@
-import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
+import type { Attachment, ChatMessage, ConversationSummary, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
+import type { VoiceGrant } from "@/lib/voice/types";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
 import type { AgentRecord, AgentTask, PlanStep, TaskRun } from "@/lib/tasks/types";
 import type { VerdictCall } from "@/lib/verdicts";
@@ -107,6 +108,8 @@ export const api = {
   updateRecord: (id: string, patch: { status?: string | null }) =>
     request<{ record: AgentRecord }>(`/api/records/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteRecord: (id: string) => request<void>(`/api/records/${id}`, { method: "DELETE" }),
+  startVoice: () => request<{ grant: VoiceGrant }>("/api/voice/session", { method: "POST", body: "{}" }),
+  endVoice: (sessionId: string) => request<{ seconds: number }>(`/api/voice/session/${sessionId}/end`, { method: "POST", body: "{}" }),
   /** Stops notifications on this device first, so the next person on it doesn't get them. */
   signOut: async () => {
     await disablePush().catch(() => undefined);
@@ -142,7 +145,7 @@ export async function uploadAgentFile(file: File): Promise<Attachment> {
 }
 
 export type TurnBody =
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject" };

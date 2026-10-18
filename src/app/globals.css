@@ -242,6 +242,28 @@ body {
 .animate-landed {
   animation: landed 500ms ease-out;
 }
+/* The call's orb (src/components/voice/orb.tsx): a soft swell while it speaks, a slow turn while
+   real work streams in. Still when it's the member's call. */
+@keyframes orb-speak {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+.orb-speak {
+  animation: orb-speak 1.1s ease-in-out infinite;
+}
+@keyframes orb-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.orb-turn {
+  animation: orb-turn 3.2s linear infinite;
+}
 .text-shimmer {
   background: linear-gradient(90deg, var(--fg-3) 0%, var(--fg-3) 40%, var(--fg) 50%, var(--fg-3) 60%, var(--fg-3) 100%);
   background-size: 200% 100%;
