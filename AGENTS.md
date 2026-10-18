@@ -86,7 +86,8 @@ raw/technical text.
   worker holds only the Supabase keys and `APP_URL`. `lib/elevated.ts` is the only code with
   the Supabase secret key.
 - `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
-  Context, Member Apps for per-member Composio tools, Load Skill) and `install.py`, which
+  Context, Member Apps for per-member Composio tools, Studio Browser for a Browserbase browser per
+  conversation, Load Skill) and `install.py`, which
   backs up a flow and installs them.
 - `src/app/`: pages (`(workspace)`, `login`, `onboarding`, `settings`) and `api/` routes.
 - `src/components/`: `workspace/` (chat state owner), `chat/`, `sidebar/`, `settings/`, `ui/`.

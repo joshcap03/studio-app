@@ -512,6 +512,14 @@ describe("interpretCalls", () => {
     expect(unavailable.hidden).toBeUndefined();
   });
 
+  it("reads what the hosted browser extracted, however short", () => {
+    const mcp = (payload: unknown) => ({ meta: null, content: [{ type: "text", text: JSON.stringify(payload), annotations: null, meta: null }], structuredContent: null, isError: false });
+    const [step] = interpretCalls([
+      { name: "extract", input: { instruction: "the page title" }, output: mcp({ success: true, data: { result: { extraction: "Example Domain" }, actionId: "00000000-0000-0000-0000-000000000000" } }), error: null },
+    ]);
+    expect(step).toMatchObject({ status: "done", app: "browser", label: "Read the page", preview: { type: "text", text: "Example Domain" } });
+  });
+
   it("hides tool-discovery plumbing but keeps it in the count", () => {
     const steps = interpretCalls([
       { name: "discover_tools", input: { query: "gmail" }, output: {}, error: null },

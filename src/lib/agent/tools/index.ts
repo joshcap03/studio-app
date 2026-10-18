@@ -515,7 +515,11 @@ function browserPage(name: string, result: unknown): Interpretation {
         : { running: "Using the page", done: "Used the page" };
   const value = unwrapResult(result);
   const data = isRecord(value) && "data" in value ? value.data : value;
-  return { labels, app: "browser", action: "browse", preview: readablePreview(data) };
+  // The hosted server nests the answer: { data: { result: { extraction: "…" }, actionId } }.
+  const answer = isRecord(data) && "result" in data ? data.result : data;
+  const extraction = isRecord(answer) && typeof answer.extraction === "string" ? answer.extraction.trim() : "";
+  const preview = extraction && !/^[[{]/.test(extraction) ? textPreview(extraction) : readablePreview(answer);
+  return { labels, app: "browser", action: "browse", preview };
 }
 
 /**

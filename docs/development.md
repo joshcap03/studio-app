@@ -118,6 +118,15 @@ exchange from the session's stored messages.
      valid member id. It reads the Langflow global variable `COMPOSIO_API_KEY`, which must
      be the Composio **project** key (`ak_…`) the app uses, not a consumer key (`ck_…`).
      Connecting apps happens in Settings, not in chat.
+   - **Studio Browser** (`langflow/components/studio_browser.py`) replaces any shared
+     Browserbase MCP node. Browserbase's hosted server keeps one browser per MCP connection and
+     Langflow reuses one connection per URL and key, so a shared node put every tenant in the
+     same browser. Studio Browser opens a connection per conversation (a header hashed from
+     the session id, which survives an approval resume), binds the browser `start` returns to
+     that conversation and passes it on every call (the model never sets `sessionId`), and
+     drops the signed `cdpUrl` from results. It sends the same credential header and Langflow
+     global variable the shared node used. If the plan's concurrent browsers are all in use,
+     `start` ends this process's longest-idle browser (a minute or more) and tries once more.
    - **Load Skill** gets its code from `langflow/components/load_skill.py` (no business names).
    - A literal Exa key moves into the global variable `EXA_API_KEY`.
    - **Python REPL nodes are removed**: they execute in the Langflow server process, next
@@ -165,6 +174,9 @@ Not used yet: polling job status after the fact (`capabilities.runStatus` is fal
 The live tests in `tests/integration/langflow.test.ts` also run against a flow with the
 Studio components when `LANGFLOW_TEST_GATEWAY_FLOW_ID` is set (use a `--strip-apps` copy):
 pause, decline, a stale decision, reading an attached file, and rewind.
+With `LANGFLOW_TEST_BROWSER_FLOW_ID` (a flow with Studio Browser, a real model, and a
+Browserbase key with two free concurrent browsers), two conversations browse at once and must
+get different browsers, and no signed connection URL may appear in either run.
 
 ## Connected apps (Composio)
 
