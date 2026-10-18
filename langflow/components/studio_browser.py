@@ -13,7 +13,7 @@ call; the model never sees or sets a `sessionId` argument. A page tool called be
 opens the conversation's browser first (a new connection has none). Results drop the signed
 CDP URL (`cdpUrl`, full control of the browser) and any other `signingKey`, so neither
 reaches the model, chat history, or traces. When the plan's concurrent browsers are all in
-use, opening one ends the browser idle longest (a minute or more) in this process and tries
+use, opening one ends the browser idle longest (five minutes or more) in this process and tries
 again; nothing else ends a browser early (Browserbase ends each after its session timeout).
 
 Tool names stay Browserbase's (start, end, navigate, act, observe, extract): the Tool Gateway
@@ -48,12 +48,18 @@ SIGNING_KEY = re.compile(r"""signingKey=[^\s"'\\&]+""")
 SCHEMA_TTL_S = 3600
 # One conversation's connection and tools are reused this long between calls.
 CONNECTION_TTL_S = 600
+# At most this many conversations' connections are kept at once (the oldest go first), so the
+# shared process doesn't grow with every conversation that ever browsed.
+MAX_CONNECTIONS = 200
 # A bound browser is forgotten after this long without use (Browserbase ends idle ones).
 BINDING_TTL_S = 3600
 # When the plan's concurrent browsers are all in use, `start` ends this process's browser
 # that has been idle longest, if idle at least this long, and tries once more.
-MIN_IDLE_TO_END_S = 60
+# (Long enough that an owner reading an approval card doesn't lose the browser it's for.)
+MIN_IDLE_TO_END_S = 300
 CONCURRENCY_LIMIT = re.compile(r"concurrent sessions", re.IGNORECASE)
+# How lfx reports a client that lost its MCP session (the browser itself may be fine).
+DISCONNECTED = re.compile(r"not initialized or disconnected", re.IGNORECASE)
 
 
 def conversation_key(session_id: str) -> str:
@@ -163,12 +169,26 @@ class StudioBrowserComponent(ComponentWithCache):
         server = hashlib.sha256(json.dumps([url, header, auth]).encode()).hexdigest()
         bindings_key = f"studio_browser:sessions:{server}"
 
+        connections_key = f"studio_browser:tools:{server}"
+
+        def connections() -> dict:
+            """Each conversation's connection: {conversation: (opened, tools by name, client)}, fresh ones only."""
+            now = time.monotonic()
+            return {k: v for k, v in (safe_cache_get(cache, connections_key) or {}).items() if now - v[0] < CONNECTION_TTL_S}
+
+        def forget_connection(key: str) -> None:
+            """Drops a conversation's connection (after a failed call), so its next call reconnects."""
+            current = connections()
+            if current.pop(key, None) is not None:
+                safe_cache_set(cache, connections_key, current)
+
         async def conversation_tools(key: str) -> dict:
             """One conversation's own MCP tools, connecting its own MCP session if needed."""
-            connection_key = f"studio_browser:tools:{server}:{key}"
-            cached = safe_cache_get(cache, connection_key)
-            if cached and time.monotonic() - cached[0] < CONNECTION_TTL_S:
+            cached = connections().get(key)
+            # A client that lost its session refuses every call until it reconnects.
+            if cached and getattr(cached[2], "_connected", True) is not False:
                 return cached[1]
+            client = MCPStreamableHttpClient(component_cache=cache)
             _, tools, _ = await update_tools(
                 server_name="browserbase",
                 server_config={
@@ -176,11 +196,15 @@ class StudioBrowserComponent(ComponentWithCache):
                     "url": url,
                     "headers": {header: auth, CONVERSATION_HEADER: key},
                 },
-                mcp_streamable_http_client=MCPStreamableHttpClient(component_cache=cache),
+                mcp_streamable_http_client=client,
             )
             by_name = {t.name: t for t in tools}
             if by_name:
-                safe_cache_set(cache, connection_key, (time.monotonic(), by_name))
+                current = connections()
+                current[key] = (time.monotonic(), by_name, client)
+                if len(current) > MAX_CONNECTIONS:
+                    current = dict(sorted(current.items(), key=lambda kv: kv[1][0])[-MAX_CONNECTIONS:])
+                safe_cache_set(cache, connections_key, current)
             return by_name
 
         def bindings() -> dict:
@@ -238,12 +262,13 @@ class StudioBrowserComponent(ComponentWithCache):
             try:
                 return await tool.coroutine(**args)
             except ValueError as exc:
-                if current:
+                if current and not DISCONNECTED.search(str(exc)):
                     # The bound browser ended; start a fresh one for this conversation.
                     bind(None)
                     return await tool.coroutine(**kwargs)
                 if CONCURRENCY_LIMIT.search(str(exc)) and await make_room():
                     return await tool.coroutine(**kwargs)
+                forget_connection(conv)
                 raise
 
         def make_tool(name: str, description: str, model):
@@ -265,11 +290,19 @@ class StudioBrowserComponent(ComponentWithCache):
                 if current is None and name != "end" and "start" in tools:
                     # A new connection has no browser yet; open this conversation's own first.
                     current = started_session(await start(tools["start"], {}))
-                    bind(current)
+                if current:
+                    bind(current)  # In use from now: make_room counts idle time from here.
                 if session_field and current:
                     kwargs[session_field] = current
-                result = await tool.coroutine(**kwargs)
-                bind(None if name == "end" else current)
+                try:
+                    result = await tool.coroutine(**kwargs)
+                except Exception:
+                    forget_connection(conv)
+                    if current and bound() == current:
+                        bind(None)  # Next call opens a fresh browser rather than retrying a dead one.
+                    raise
+                if name == "end" or bound() == current:
+                    bind(None if name == "end" else current)
                 return clean_result(result)
 
             return StructuredTool(
