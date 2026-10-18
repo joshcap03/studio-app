@@ -37,7 +37,7 @@ export interface FormBinding {
   onResponse?: (messageId: string, blockId: string, response: UiResponse) => void;
 }
 
-/** What a voice fill did; `said` names the field (for the voice), the card shows the answer alone. */
+/** What a voice fill did; `said` is the answer in a few words, as the voice says it back. */
 export type FillResult = { status: "filled" | "heard"; said: string } | { status: "refused"; reason: string };
 
 interface CardDraftsValue {
@@ -143,13 +143,13 @@ export function CardDraftsProvider({ children }: { children: React.ReactNode }) 
       if (!out.ok) return { status: "refused", reason: out.reason };
       if (out.heard) {
         updateForm(f, (d) => ({ ...d, heard: { ...d.heard, [out.fieldId]: { value: out.value, said: out.shown } } }));
-        return { status: "heard", said: out.said };
+        return { status: "heard", said: out.shown };
       }
       updateForm(f, (d) => {
         const { [out.fieldId]: _, ...heard } = d.heard;
         return { ...d, error: null, values: { ...d.values, [out.fieldId]: out.value }, heard };
       });
-      return { status: "filled", said: out.said };
+      return { status: "filled", said: out.shown };
     },
     [form, updateForm],
   );

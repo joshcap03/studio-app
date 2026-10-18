@@ -33,29 +33,10 @@ export function mockReplyToSpeech(stage: VoiceStage | null, said: string): Brain
   return { tools: [{ name: "send_message", args: {} }] };
 }
 
-/** The scripted line after the browser ran the tools, from what each one reported. */
-export function mockReplyToResults(results: string[]): BrainReply {
-  const lines = results.map((r) => {
-    const [status, ...rest] = r.split(":");
-    const detail = rest.join(":").trim();
-    switch (status.trim().toLowerCase()) {
-      case "filled":
-        return `Got it: ${detail}`;
-      case "heard":
-        return `I heard ${detail.split("?")[0]}. Tap it on screen if that's right.`;
-      case "sent":
-        return "Sent.";
-      case "handed off":
-        return "On it.";
-      case "held":
-        return "Got it. I'll add that when this lands.";
-      case "stopped":
-        return "Stopped.";
-      default:
-        return detail || r;
-    }
-  });
-  return { text: [...new Set(lines)].join(" ") };
+/** The scripted line when the browser turned a tool call down: why, as it said. */
+export function mockReplyToRefusals(results: string[]): BrainReply {
+  const reasons = results.map((r) => r.replace(/^\s*refused:\s*/i, "").trim()).filter(Boolean);
+  return { text: [...new Set(reasons)].join(" ") };
 }
 
 function formFills(fields: StageField[], said: string): Record<string, unknown>[] {

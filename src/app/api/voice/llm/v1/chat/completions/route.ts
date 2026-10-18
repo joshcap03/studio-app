@@ -2,7 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeSession, jsonError } from "@/lib/tenant";
-import { frontRequest, mockReply, modelStream, planReply, replyStream } from "@/lib/voice/front";
+import { frontRequest, mockReply, modelReply, planReply, replyStream } from "@/lib/voice/front";
+import type { BrainReply } from "@/lib/voice/mock";
 import { openContext } from "@/lib/voice/seal";
 
 // The voice front (see src/lib/voice/front.ts): the model behind a call's voice. ElevenLabs
@@ -38,13 +39,15 @@ export async function POST(request: NextRequest) {
   const parsed = frontRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return jsonError(400, "Invalid request.");
 
+  // Silence is the provider's skip_turn when it offers one, else an empty reply.
+  const canSkip = !parsed.data.tools?.length || parsed.data.tools.some((t) => t.function.name === "skip_turn");
+  const deliver = (reply: BrainReply) => {
+    const silent = !reply.text && reply.tools?.every((t) => t.name === "skip_turn");
+    return new Response(replyStream(silent && !canSkip ? {} : reply), { headers: SSE });
+  };
+
   const plan = planReply(context, parsed.data.messages);
-  if (plan.kind === "say") return new Response(replyStream({ text: plan.text }), { headers: SSE });
-  if (plan.kind === "skip") {
-    // Silence: the provider's skip_turn when it offers one, else an empty reply.
-    const canSkip = !parsed.data.tools?.length || parsed.data.tools.some((t) => t.function.name === "skip_turn");
-    return new Response(replyStream(canSkip ? { tools: [{ name: "skip_turn", args: { reason: "Nothing new to say" } }] } : {}), { headers: SSE });
-  }
-  const body = voice.llm ? await modelStream(voice.llm, context, parsed.data, request.signal) : replyStream(mockReply(parsed.data.messages));
-  return new Response(body, { headers: SSE });
+  if (plan.kind === "say") return deliver({ text: plan.text });
+  if (plan.kind === "skip") return deliver({ tools: [{ name: "skip_turn", args: { reason: "Nothing new to say" } }] });
+  return deliver(voice.llm ? await modelReply(voice.llm, context, parsed.data, request.signal) : mockReply(parsed.data.messages));
 }
