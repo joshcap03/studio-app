@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { latestStage, mockReply, modelMessages, modelStream, modelTools, planReply, replyStream, sayable, type FrontMessage } from "./front";
+import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, replyStream, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
 import { describeStage, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -48,9 +48,12 @@ describe("planReply", () => {
     expect(sayable(`${VOICE_MARKER}hi\u0007 there`)).toBe("hi there");
   });
 
-  it("asks the model only about the member's words and tool results", () => {
+  it("asks the model only about the member's words, and words what follows a tool itself", () => {
     expect(planReply(context, [user("keep the first two")])).toEqual({ kind: "model" });
-    expect(planReply(context, [user("x"), { role: "assistant", content: null, tool_calls: [{ function: { name: "send_message", arguments: "{}" } }] }, { role: "tool", content: "Handed off: sent" }])).toEqual({ kind: "model" });
+    const call = { role: "assistant" as const, content: null, tool_calls: [{ function: { name: "send_message", arguments: "{}" } }] };
+    expect(planReply(context, [user("x"), call, { role: "tool", content: "Handed off: sent to the worker." }])).toEqual({ kind: "say", text: "On it." });
+    // A refusal goes back to the model, to fix its call or ask.
+    expect(planReply(context, [user("x"), call, { role: "tool", content: "Refused: There's no “f” on this card." }])).toEqual({ kind: "model" });
     expect(planReply(context, [user("x"), { role: "assistant", content: "On it." }])).toEqual({ kind: "skip" });
   });
 });
@@ -127,10 +130,8 @@ describe("mockReply", () => {
     expect(withStage("stop").tools?.map((t) => t.name)).toEqual(["stop_work"]);
   });
 
-  it("says what the tools reported", () => {
-    const after = [user("keep one"), { role: "assistant" as const, content: null, tool_calls: [{ function: { name: "fill_card" } }] }, { role: "tool" as const, content: "Filled: Would you go for these?: Keep 1. Not sent yet." }];
-    expect(mockReply(after)).toEqual({ text: "Got it: Would you go for these?: Keep 1. Not sent yet." });
-    expect(mockReply([user("x"), { role: "tool", content: "Held: until the work lands" }]).text).toBe("Got it. I'll add that when this lands.");
+  it("says why a tool was turned down", () => {
+    expect(mockReply([user("send"), { role: "tool", content: "Refused: wait until they say send." }])).toEqual({ text: "wait until they say send." });
   });
 });
 
@@ -146,16 +147,47 @@ describe("replyStream", () => {
   });
 });
 
-describe("modelStream", () => {
+describe("speechForResults", () => {
+  it("says fixed lines built from what the tools reported", () => {
+    expect(speechForResults(["Filled: Keep 1, Keep 2, Pass 3 (Agency). Not sent yet.", "Filled: Remote, Hybrid. Not sent yet."])).toBe("Got it: Keep 1, Keep 2, Pass 3 (Agency); Remote, Hybrid.");
+    expect(speechForResults(["Heard: Tailor applications? It's on screen for them to confirm with a tap."])).toBe("Did you mean Tailor applications? Tap it on screen if so.");
+    expect(speechForResults(["Held: until the current work lands."])).toBe("Got it. I'll add that when this lands.");
+    expect(speechForResults(["Held: it's waiting on their OK on screen; their words go along after."])).toBe("Got it. That goes along after your OK on screen.");
+    expect(speechForResults(["Sent: Trial run."])).toBe("Sent.");
+    expect(speechForResults(["Filled: 4 of 5. Not sent yet.", "Refused: no such field"])).toBeNull();
+  });
+});
+
+describe("spokenText", () => {
+  it("keeps a short plain question and drops talk of machinery", () => {
+    expect(spokenText("Sorry, **which** role did you mean? The first or the second? And one more thing.")).toBe("Sorry, which role did you mean? The first or the second?");
+    expect(spokenText("skip_turn")).toBe("");
+    expect(spokenText("I'll call fill_card now.")).toBe("");
+    expect(spokenText(null)).toBe("");
+  });
+});
+
+describe("modelReply", () => {
+  const llm = { baseUrl: "https://llm.example/v1", apiKey: "k", model: "fast", extraBody: { reasoning: { enabled: false }, model: "other", stream: true } };
+  const answer = (message: unknown) => vi.fn(async () => new Response(JSON.stringify({ choices: [{ message }] }), { status: 200 }));
+
   it("sends the provider's extra settings without letting them replace the call's own fields", async () => {
-    const fetch = vi.fn(async (_url: string, init: RequestInit) => new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200, headers: { "x-body": String(init.body) } }));
+    const fetch = answer({ content: "Which one?" });
     vi.stubGlobal("fetch", fetch);
-    const llm = { baseUrl: "https://llm.example/v1", apiKey: "k", model: "fast", extraBody: { reasoning: { enabled: false }, model: "other", stream: false } };
-    await modelStream(llm, context, { messages: [user("hi")] }, new AbortController().signal);
+    await modelReply(llm, context, { messages: [user("hi")] }, new AbortController().signal);
     vi.unstubAllGlobals();
-    const [url, init] = fetch.mock.calls[0];
-    const body = JSON.parse(String(init.body));
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://llm.example/v1/chat/completions");
-    expect(body).toMatchObject({ reasoning: { enabled: false }, model: "fast", stream: true });
+    expect(JSON.parse(String(init.body))).toMatchObject({ reasoning: { enabled: false }, model: "fast", stream: false });
+  });
+
+  it("keeps only known tool calls and drops the model's words when it calls one", async () => {
+    vi.stubGlobal("fetch", answer({ content: "That sounds frustrating. Let me pass this to the worker.", tool_calls: [{ function: { name: "send_message", arguments: "{}" } }, { function: { name: "rm_rf", arguments: "{}" } }] }));
+    expect(await modelReply(llm, context, { messages: [user("help")] }, new AbortController().signal)).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    vi.stubGlobal("fetch", answer({ content: "skip_turn" }));
+    expect(await modelReply(llm, context, { messages: [user("mm-hm")] }, new AbortController().signal)).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
+    expect((await modelReply(llm, context, { messages: [user("hi")] }, new AbortController().signal)).text).toContain("Sorry");
+    vi.unstubAllGlobals();
   });
 });

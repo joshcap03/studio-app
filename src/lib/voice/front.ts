@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { mockReplyToResults, mockReplyToSpeech, type BrainReply } from "./mock";
+import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
+import { plain } from "./relay";
 import { cueLine, greeting, VOICE_TOOLS, voicePrompt } from "./persona";
 import { VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -97,6 +98,52 @@ export function sayable(text: string, max = 500): string {
 
 export type FrontPlan = { kind: "say"; text: string } | { kind: "skip" } | { kind: "model" };
 
+/** The tool results at the end of the conversation, oldest first. */
+function trailingResults(messages: FrontMessage[]): string[] {
+  const turns = messages.filter((m) => m.role !== "system" && m.role !== "developer" && !readMarker(m));
+  const results: string[] = [];
+  for (let i = turns.length - 1; i >= 0 && turns[i].role === "tool"; i--) results.unshift(textOf(turns[i].content));
+  return results;
+}
+
+/**
+ * What to say after the browser ran the voice's tools, built from what each reported (fixed
+ * words, the member's own answers): "On it.", "Got it: Keep 1, Keep 2.", "Sent.". Null when one
+ * was turned down, so the model can fix its call or ask.
+ */
+export function speechForResults(results: string[]): string | null {
+  const filled: string[] = [];
+  const lines: string[] = [];
+  for (const r of results) {
+    const [status, ...rest] = r.split(":");
+    const detail = rest.join(":").trim();
+    switch (status.trim().toLowerCase()) {
+      case "filled":
+        filled.push(detail.replace(/\.?\s*not sent yet\.?$/i, "").trim());
+        break;
+      case "heard":
+        lines.push(`Did you mean ${detail.split("?")[0].trim()}? Tap it on screen if so.`);
+        break;
+      case "handed off":
+        lines.push("On it.");
+        break;
+      case "held":
+        lines.push(/\bOK\b/.test(detail) ? "Got it. That goes along after your OK on screen." : "Got it. I'll add that when this lands.");
+        break;
+      case "sent":
+        lines.push("Sent.");
+        break;
+      case "stopped":
+        lines.push("Stopped.");
+        break;
+      default:
+        return null;
+    }
+  }
+  if (filled.length) lines.unshift(`Got it: ${filled.filter(Boolean).join("; ")}.`);
+  return lines.length ? sayable([...new Set(lines)].join(" ")) : null;
+}
+
 /**
  * What to do with this request: say Studio's line verbatim, stay quiet, or ask the model
  * (only for the member's own speech and tool results).
@@ -116,6 +163,10 @@ export function planReply(context: VoiceContext, messages: FrontMessage[]): Fron
   }
   if (last.role === "assistant") return { kind: "skip" };
   if (last.role === "user" && !textOf(last.content).trim()) return { kind: "skip" };
+  if (last.role === "tool") {
+    const speech = speechForResults(trailingResults(messages));
+    if (speech) return { kind: "say", text: speech };
+  }
   return { kind: "model" };
 }
 
@@ -154,9 +205,8 @@ export function modelTools(requested: FrontRequest["tools"]): Record<string, unk
 /** The scripted mock's answer to the latest turn. */
 export function mockReply(messages: FrontMessage[]): BrainReply {
   const turns = messages.filter((m) => m.role !== "system" && m.role !== "developer" && !readMarker(m));
-  const results: string[] = [];
-  for (let i = turns.length - 1; i >= 0 && turns[i].role === "tool"; i--) results.unshift(textOf(turns[i].content));
-  if (results.length) return mockReplyToResults(results);
+  const results = trailingResults(messages);
+  if (results.length) return mockReplyToRefusals(results);
   const said = turns.at(-1)?.role === "user" ? textOf(turns.at(-1)!.content) : "";
   return said.trim() ? mockReplyToSpeech(latestStage(messages), said) : { tools: [{ name: "skip_turn", args: {} }] };
 }
@@ -192,16 +242,34 @@ export function replyStream(reply: BrainReply): ReadableStream<Uint8Array> {
 
 export const LOST_LINE = "Sorry, I lost that. Could you say it again?";
 
+const TOOL_WORDS = /\b(skip[_ ]turn|end[_ ]call|send[_ ]message|fill[_ ]card|send[_ ]card|stop[_ ]work|answer[_ ]question|tools?|field id)\b/i;
+
 /**
- * Streams the model's reply for this turn from an OpenAI-compatible endpoint. A failure becomes
- * a spoken line inside the stream, since the provider expects errors there.
+ * What the model may say aloud when it calls no tool (a short question back): plain words, two
+ * sentences at most, and nothing about its machinery. Empty when there's nothing sayable.
  */
-export async function modelStream(
+export function spokenText(raw: unknown): string {
+  const original = typeof raw === "string" ? raw : "";
+  const text = plain(original);
+  if (!text || TOOL_WORDS.test(original) || TOOL_WORDS.test(text)) return "";
+  const sentences = text.match(/[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g)?.map((x) => x.trim()) ?? [text];
+  return sayable(sentences.slice(0, 2).join(" "), 240);
+}
+
+const ALLOWED_CALLS = new Set<string>([...VOICE_TOOL_NAMES, "skip_turn", "end_call"]);
+
+/**
+ * The model's turn, from an OpenAI-compatible endpoint. It chooses what to do; it only gets to
+ * word what's said when it calls no tool. With a tool call its text is dropped: Studio says a
+ * fixed line once the tool reports (speechForResults). A failure is a spoken line, since the
+ * provider expects errors inside the stream.
+ */
+export async function modelReply(
   llm: { baseUrl: string; apiKey: string; model: string; extraBody?: Record<string, unknown> },
   context: VoiceContext,
   request: FrontRequest,
   signal: AbortSignal,
-): Promise<ReadableStream<Uint8Array>> {
+): Promise<BrainReply> {
   try {
     const res = await fetch(`${llm.baseUrl}/chat/completions`, {
       method: "POST",
@@ -213,19 +281,35 @@ export async function modelStream(
         messages: modelMessages(context, request.messages),
         tools: modelTools(request.tools),
         tool_choice: "auto",
-        stream: true,
-        max_tokens: 220,
+        stream: false,
+        // Room for a few fill_card calls at once; what it says is capped separately (spokenText).
+        max_tokens: 600,
         temperature: 0.4,
       }),
       signal,
     });
-    if (!res.ok || !res.body) {
+    if (!res.ok) {
       console.error("[voice] model call failed", res.status);
-      return replyStream({ text: LOST_LINE });
+      return { text: LOST_LINE };
     }
-    return res.body;
+    const body = (await res.json()) as { choices?: { message?: { content?: unknown; tool_calls?: { function?: { name?: string; arguments?: string } }[] } }[] };
+    const message = body.choices?.[0]?.message;
+    const tools = (message?.tool_calls ?? []).flatMap((t) => {
+      const name = t.function?.name ?? "";
+      if (!ALLOWED_CALLS.has(name)) return [];
+      let args: Record<string, unknown> = {};
+      try {
+        args = t.function?.arguments ? (JSON.parse(t.function.arguments) as Record<string, unknown>) : {};
+      } catch {
+        // malformed arguments: the tool sees none
+      }
+      return [{ name, args }];
+    });
+    if (tools.length) return { tools };
+    const text = spokenText(message?.content);
+    return text ? { text } : { tools: [{ name: "skip_turn", args: {} }] };
   } catch (e) {
     if (!signal.aborted) console.error("[voice] model call failed", e);
-    return replyStream({ text: LOST_LINE });
+    return { text: LOST_LINE };
   }
 }
