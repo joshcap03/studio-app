@@ -651,7 +651,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           status = "awaiting";
         } else if (!content.trim() && artifacts.length === 0 && proposals.length === 0 && !questions && !ui) {
           status = "error";
-          error = "The agent finished without a response.";
+          error = "I finished without writing a reply.";
         }
       } catch (e) {
         if (e instanceof AgentError) {
@@ -666,7 +666,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           status = "stopped";
         } else {
           status = "error";
-          error = "Something went wrong while the agent was working.";
+          error = "Something went wrong while I was working.";
           console.error("[turn] agent run failed", e);
         }
       } finally {

@@ -4,8 +4,9 @@ import { describe, expect, it } from "vitest";
 
 // Studio should feel like a game, never look like one: progress, a clear next move and a real
 // first win, without the vocabulary. These words stay out of everything a member reads and out
-// of what the agent is told, so it doesn't pick them up either.
-const GAME_WORDS = /\b(quests?|xp|streaks?|badges?|achievements?|unlock(?:s|ed|ing)?|level(?:s|ed)? up|leaderboards?|confetti)\b/i;
+// of what the agent is told, so it doesn't pick them up either. The companion's CSS classes
+// (cm-sketch) aren't words anyone reads, so the scan skips the cm- prefix.
+const GAME_WORDS = /\b(?<!cm-)(quests?|xp|streaks?|badges?|achievements?|unlock(?:s|ed|ing)?|level(?:s|ed)? up|leaderboards?|confetti|hatch\w*|evolv\w*|sketch\w*)\b/i;
 
 const ROOT = join(__dirname, "..", "..");
 

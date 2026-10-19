@@ -71,7 +71,7 @@ export function WorkPanel({
       >
         {groups.length === 0 ? (
           <p className="mt-2 px-2 text-[13.5px] leading-relaxed text-fg-3">
-            {running ? "What the agent finds and makes will show up here." : "No results in this conversation yet."}
+            {running ? "What I find and make will show up here." : "No results in this conversation yet."}
           </p>
         ) : (
           groups.map((group) => (

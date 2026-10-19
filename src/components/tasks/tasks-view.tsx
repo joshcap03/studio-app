@@ -78,7 +78,7 @@ export function TasksView({ skills, onOpen }: Props) {
         ) : state.tasks.length === 0 ? (
           <div className="mt-8 rounded-xl border border-dashed border-line px-4 py-8 text-center">
             <ListChecks size={20} strokeWidth={1.75} className="mx-auto text-fg-3" />
-            <p className="mt-2 text-[13.5px] text-fg-3">No tasks yet. Give the agent something to keep working on.</p>
+            <p className="mt-2 text-[13.5px] text-fg-3">No tasks yet. Give me something to keep working on.</p>
           </div>
         ) : (
           <ul className="mt-6 divide-y divide-line rounded-xl border border-line bg-surface animate-fade-up [animation-delay:60ms]">

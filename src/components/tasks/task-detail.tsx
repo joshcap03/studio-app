@@ -247,7 +247,7 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
               </button>
             </div>
             <p className={`mt-2 text-[13.5px] leading-relaxed whitespace-pre-wrap ${task.instructions ? "text-fg-2" : "text-fg-3"}`}>
-              {task.instructions || "No instructions yet. The agent works from the title alone."}
+              {task.instructions || "No instructions yet. I'll work from the title alone."}
             </p>
             <dl className="mt-3 grid gap-x-4 gap-y-1 border-t border-line pt-3 text-[13px] sm:grid-cols-[auto_1fr]">
               <dt className="text-fg-3">Skill</dt>
@@ -266,7 +266,7 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
             {runs === null ? (
               <p className="mt-2 text-[13px] text-fg-3">Loading…</p>
             ) : runs.length === 0 ? (
-              <p className="mt-2 text-[13px] text-fg-3">No runs yet.</p>
+              <p className="mt-2 text-[13px] text-fg-3">I haven&apos;t run this yet.</p>
             ) : (
               <ul className="mt-2 divide-y divide-line">
                 {runs.map((run) => (
@@ -355,7 +355,7 @@ function PlanCard({ plan, onSave }: { plan: PlanStep[]; onSave: (plan: PlanStep[
         ) : null}
       </div>
       {steps.length > 0 ? <JourneyBar steps={steps} className="mt-2.5 mb-1" /> : null}
-      {steps.length === 0 ? <p className="mt-2 text-[13px] text-fg-3">No plan yet. The agent writes one when it runs, or add steps yourself.</p> : null}
+      {steps.length === 0 ? <p className="mt-2 text-[13px] text-fg-3">No plan yet. I&apos;ll write one when I run, or you can add steps yourself.</p> : null}
       <ul className="mt-2">
         {steps.map((step) => (
           <PlanItem
@@ -537,7 +537,7 @@ function Tracker({
         <h2 id="task-tracker" className="text-[13.5px] font-medium text-fg">
           Tracker
         </h2>
-        <p className="mt-2 text-[13px] text-fg-3">{records ? "Nothing tracked yet. The agent adds what it finds here as it works." : "Loading…"}</p>
+        <p className="mt-2 text-[13px] text-fg-3">{records ? "Nothing tracked yet. I'll add what I find here as I work." : "Loading…"}</p>
       </section>
     );
   }
