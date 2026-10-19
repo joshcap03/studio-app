@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Companion as CompanionInfo, CompanionLook, CompanionStage } from "@/lib/types";
 
 // The agent as one member knows it, drawn from the Studio diamond. A sketch in faint pencil at
@@ -89,6 +89,13 @@ export function Companion({
   const px = size <= 22 ? 1.3 : size <= 48 ? 1.5 : 2;
   const sw = (px * 32) / size;
   const [tracing, setTracing] = useState(false);
+  // Arriving while the member is here: it's inked in, once.
+  const was = useRef(stage);
+  const [arriving, setArriving] = useState(false);
+  useEffect(() => {
+    if (was.current !== "arrived" && stage === "arrived") setArriving(true);
+    was.current = stage;
+  }, [stage]);
 
   useEffect(() => {
     if (stage !== "ready" || !seenKey) return;
@@ -120,7 +127,7 @@ export function Companion({
       className={`cm cm-${stage} cm-mood-${mood} shrink-0 overflow-visible ${className}`}
     >
       {stage === "arrived" ? (
-        <g className="cm-body">
+        <g className={arriving ? "cm-ink" : "cm-body"} onAnimationEnd={arriving ? () => setArriving(false) : undefined}>
           <path d={rounded(points, round)} className="cm-fill" />
           <path d={rounded(points, round)} className="stroke-fg opacity-20" strokeWidth={sw * 0.7} transform="translate(0.3 0.25)" />
           <g className="cm-look">

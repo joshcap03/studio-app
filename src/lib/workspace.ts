@@ -1,4 +1,5 @@
 import { storeFor } from "@/lib/chat/store-for";
+import { getCompanion } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
@@ -151,7 +152,7 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
  * being answered, left out of the recent chats a guardrail run sees.
  */
 export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string, modality?: Modality): Promise<AgentTenantContext> {
-  const [settings, memories, guardrail, tasks, bar] = await Promise.all([
+  const [settings, memories, guardrail, tasks, bar, self] = await Promise.all([
     getSettings(tenant),
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
     guardrailForRun(tenant, conversationId),
@@ -161,6 +162,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
       return {};
     }),
     barFor(tenant, conversationId),
+    selfFor(tenant),
   ]);
   return {
     workspaceId: tenant.workspace.id,
@@ -184,7 +186,20 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     notes: await notesFor(tenant, settings.templateId),
     bar,
     ...(modality && modality !== "text" ? { modality } : {}),
+    ...(self ? { self } : {}),
   };
+}
+
+/** Who the agent is to this member, when companions are on; a run goes ahead without it on error. */
+async function selfFor(tenant: Tenant): Promise<AgentTenantContext["self"]> {
+  if (!previewEnabled(tenant, "companion")) return null;
+  try {
+    const { name, manner } = await getCompanion(tenant);
+    return { name, manner };
+  } catch (e) {
+    console.error("[context] couldn't load who the agent is to the member", e);
+    return null;
+  }
 }
 
 /** The member's bar in practice (see src/lib/verdicts.ts); a run goes ahead without it on error. */

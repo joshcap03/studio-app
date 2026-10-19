@@ -1,4 +1,5 @@
 import { firstName } from "@/lib/setup-words";
+import { getCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
 import type { Tenant } from "@/lib/tenant-core";
@@ -17,6 +18,7 @@ export { VoiceUnavailable, type VoiceStatus };
 
 const MOCK_CAPABILITIES: VoiceCapabilities = { audio: false, bargeIn: true, verbatimTranscripts: true };
 const GUARDRAIL_CHARS = 4000;
+const MANNER_CHARS = 600;
 
 /** Whether this member can call: null when calls are off for them. */
 export function voiceStatus(tenant: Pick<Tenant, "email">): VoiceStatus | null {
@@ -57,8 +59,12 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
     throw e instanceof VoiceUnavailable ? e : new VoiceUnavailable("Couldn't open the call.", { cause: e });
   }
 
-  const [settings, guardrail] = await Promise.all([getSettings(tenant), getGuardrail(tenant)]);
-  const persona = personaFor(settings.templateId);
+  const [settings, guardrail, self] = await Promise.all([
+    getSettings(tenant),
+    getGuardrail(tenant),
+    previewEnabled(tenant, "companion") ? getCompanion(tenant).catch(() => null) : null,
+  ]);
+  const persona = personaFor(settings.templateId, self?.name);
   // A little past the call's limit, for the last words and the hang-up.
   const exp = Date.now() + (claim.max_seconds + 120) * 1000;
   const context = sealContext(
@@ -74,6 +80,7 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
       member: firstName(tenant.account.name),
       agent: agentLabel(settings.templateId, settings.name),
       guardrail: guardrail ? guardrail.slice(0, GUARDRAIL_CHARS) : null,
+      ...(self?.manner ? { manner: self.manner.slice(0, MANNER_CHARS) } : {}),
     },
     voice.sealSecret,
   );

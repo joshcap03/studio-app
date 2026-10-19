@@ -245,6 +245,26 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // "Say hello": the agent introduces itself and suggests a name; nothing changes until the
+    // member keeps one.
+    match: /^Introduce yourself to /m,
+    steps: [
+      {
+        kind: "text",
+        text: "Hi Sam (mock). You like a short list first and the reasoning after, and you'd rather pass on a role than stretch your bar. I'll keep bringing you fewer, better options.",
+      },
+      {
+        kind: "ui",
+        block: {
+          proposal: {
+            summary: "How I'd like you to know me (mock).",
+            identity: { name: "Juniper", manner: "I keep it short and lead with what I found. I tell you plainly when something misses your bar." },
+          },
+        },
+      },
+    ],
+  },
+  {
     // Results to keep or pass on, the way a trial run or a task run asks for a verdict.
     match: /\b(trial run|keep or pass|judge (these|them))\b/i,
     steps: [

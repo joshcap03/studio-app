@@ -5,6 +5,7 @@ import { getAgentAdapter } from "@/lib/agent";
 import { listAgentFiles } from "@/lib/agent-files";
 import { requirePageTenant } from "@/lib/tenant";
 import { brainMemories, listPromotions } from "@/lib/brain";
+import { getCompanion } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { listMemories, memoryEnabled } from "@/lib/memory";
 import { barScore, describeScore } from "@/lib/verdicts";
@@ -23,13 +24,15 @@ export default async function AgentPage() {
       })
     : Promise.resolve(null);
   const promotions = brain && memoryEnabled() ? listPromotions(tenant).catch(() => []) : Promise.resolve(null);
-  const [settings, initialMemories, usage, initialPromotions, files, score] = await Promise.all([
+  const companion = previewEnabled(tenant, "companion") ? getCompanion(tenant).catch(() => null) : Promise.resolve(null);
+  const [settings, initialMemories, usage, initialPromotions, files, score, initialCompanion] = await Promise.all([
     getSettings(tenant),
     memories,
     getUsage(tenant),
     promotions,
     listAgentFiles(tenant),
     barScore(tenant).then(describeScore, () => null),
+    companion,
   ]);
 
   return (
@@ -51,6 +54,7 @@ export default async function AgentPage() {
           initialFiles={files}
           allowFiles={getAgentAdapter().capabilities.attachments}
           score={score}
+          initialCompanion={initialCompanion}
         />
       </div>
     </main>

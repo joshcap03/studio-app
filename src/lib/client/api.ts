@@ -66,6 +66,8 @@ export const api = {
   stopRun: (id: string) => request<void>(`/api/conversations/${id}/stop`, { method: "POST" }),
   getSetup: () => request<{ setup: SetupSummary | null }>("/api/agent/setup"),
   getCompanion: () => request<{ companion: Companion | null }>("/api/agent/companion"),
+  updateCompanion: (patch: { name?: string; manner?: string }) =>
+    request<{ companion: Companion }>("/api/agent/companion", { method: "PATCH", body: JSON.stringify(patch) }),
   skipSetup: () => request<{ ok: true }>("/api/agent/setup", { method: "POST", body: JSON.stringify({ status: "skipped" }) }),
   decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss" | "undo") =>
     request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {

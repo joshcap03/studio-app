@@ -102,6 +102,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.account?.name.trim() && `You're assisting: ${tenant.account.name.trim()}`,
     tenant.account?.about.trim() && `About them:\n${tenant.account.about.trim()}`,
     `This agent: ${tenant.workspaceName}`,
+    tenant.self && selfContext(tenant.self),
     tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
     tenant.agentFiles?.length && `Your files (the member's, attached to every message with this agent): ${tenant.agentFiles.join(", ")}`,
     project && projectContext(project),
@@ -130,6 +131,20 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     personal_guardrail: guardrail,
     system_context: system,
   };
+}
+
+/** Who the agent is to the member: the name they kept and how it talks with them, or not yet. */
+export function selfContext(self: NonNullable<AgentTenantContext["self"]>): string {
+  if (!self.name) {
+    return "You don't have a name of your own with them yet. If they ask, say so plainly; if they offer you one, suggest it with propose_agent (identity) so they can keep it. Never make one up.";
+  }
+  return [
+    `Who you are to them: you go by ${self.name}.`,
+    self.manner && `How you talk with them, in your own words: ${self.manner}`,
+    "Let it show in how you say things, never in how much you say, and never make a show of it.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /**

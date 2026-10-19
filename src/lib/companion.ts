@@ -37,6 +37,29 @@ export function companionStage({ runs, days, conversations, setupSettled }: Comp
   return runs >= KNOWS_YOU.drawnRuns ? "drawn" : "sketch";
 }
 
+export const MAX_COMPANION_NAME = 40;
+export const MAX_MANNER = 600;
+const NAME = /^\p{L}[\p{L}\p{M}' -]*$/u;
+
+/** A name as the agent or member wrote it, tidied, or null when it isn't one (a sentence, a link, an emoji). */
+export function companionName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^["'\u201c\u2018]+|["'\u201d\u2019.!]+$/g, "")
+    .trim();
+  return name && name.length <= MAX_COMPANION_NAME && NAME.test(name) ? name : null;
+}
+
+/** Why a name won't do for this member's agent, or null when it's fine. */
+export function nameProblem(name: string, { member, taken }: { member: string | null; taken: string[] }): string | null {
+  const same = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base" }) === 0;
+  if (member && same(name, member)) return "That's your own name. Pick another for it.";
+  if (taken.some((t) => same(t, name))) return "Another of your agents goes by that name. Pick another.";
+  return null;
+}
+
 export function stageRank(stage: CompanionStage): number {
   return COMPANION_STAGES.indexOf(stage);
 }
@@ -160,4 +183,47 @@ export async function refreshCompanion(tenant: Tenant, setup: AgentSetup | null)
   if (stageRank(earned) <= stageRank(current.stage)) return current;
   await saveRow(tenant, Boolean(row), { stage: earned });
   return { ...current, stage: earned };
+}
+
+/** The names the member's other agents go by, so two never share one. */
+async function takenNames(tenant: Tenant): Promise<string[]> {
+  const all = await getCompanions(tenant);
+  return Object.values(all).flatMap((c) => (c.workspaceId !== tenant.workspace.id && c.name ? [c.name] : []));
+}
+
+export type NameResult = { ok: true; companion: Companion } | { ok: false; error: string };
+
+/**
+ * The member kept a name (the one the agent suggested, or their own pick): the agent arrives
+ * with it and its manner. Also how a member renames it later. `suggested` is what the agent
+ * offered, kept to see how often members keep it.
+ */
+export async function nameCompanion(
+  tenant: Tenant,
+  { name: raw, manner, suggested, member }: { name: string; manner?: string; suggested?: string; member: string | null },
+): Promise<NameResult> {
+  const name = companionName(raw);
+  if (!name) return { ok: false, error: "Use a short name: letters, spaces, hyphens or apostrophes." };
+  const problem = nameProblem(name, { member, taken: await takenNames(tenant) });
+  if (problem) return { ok: false, error: problem };
+  const row = await loadRow(tenant);
+  const arriving = row?.stage !== "arrived";
+  const kept = manner === undefined ? row?.manner ?? null : manner.trim().slice(0, MAX_MANNER) || null;
+  await saveRow(tenant, Boolean(row), {
+    stage: "arrived",
+    name,
+    manner: kept,
+    ...(suggested !== undefined ? { suggested_name: companionName(suggested) } : {}),
+    ...(arriving ? { arrived_at: new Date().toISOString() } : {}),
+  });
+  return { ok: true, companion: { ...toCompanion(tenant.workspace.id, tenant.userId, undefined), stage: "arrived", name, manner: kept } };
+}
+
+/** The member rewrote how it talks with them. Only once it has arrived. */
+export async function setCompanionManner(tenant: Tenant, manner: string): Promise<Companion | null> {
+  const row = await loadRow(tenant);
+  if (row?.stage !== "arrived") return null;
+  const kept = manner.trim().slice(0, MAX_MANNER) || null;
+  await saveRow(tenant, true, { manner: kept });
+  return toCompanion(tenant.workspace.id, tenant.userId, { ...row, manner: kept });
 }

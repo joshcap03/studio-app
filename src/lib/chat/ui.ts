@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { APPS, appForToolkit } from "@/lib/apps";
+import { MAX_MANNER, companionName } from "@/lib/companion";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { TEMPLATES } from "@/lib/templates";
@@ -462,6 +463,9 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
   const uniqueSkills = skills.filter((s, i) => !("catalogId" in s) || skills.findIndex((o) => "catalogId" in o && o.catalogId === s.catalogId) === i);
   const tasks = list(raw.tasks).map(task).filter((t): t is ProposedTask => Boolean(t));
   const memories = [...new Set(list(raw.memories).map((m) => line(m, 500)).filter(Boolean))];
+  const self = isRecord(raw.identity) ? raw.identity : null;
+  const name = self ? companionName(self.name) : null;
+  const identity = name ? { name, manner: para(self?.manner, MAX_MANNER) } : undefined;
   const proposal: AgentProposal = {
     kind: "proposal",
     id,
@@ -471,8 +475,9 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
     skills: uniqueSkills.slice(0, MAX_PROPOSED_ITEMS),
     tasks: tasks.slice(0, MAX_PROPOSED_ITEMS),
     memories: memories.slice(0, MAX_PROPOSED_ITEMS),
+    ...(identity ? { identity } : {}),
   };
-  const empty = !profile && !instructions && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length;
+  const empty = !profile && !instructions && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length && !identity;
   return empty ? null : proposal;
 }
 
@@ -498,4 +503,5 @@ export const proposalPicksSchema = z.strictObject({
   skills: z.array(z.number().int().min(0).max(MAX_PROPOSED_ITEMS)).max(MAX_PROPOSED_ITEMS),
   tasks: z.array(z.number().int().min(0).max(MAX_PROPOSED_ITEMS)).max(MAX_PROPOSED_ITEMS),
   memories: z.array(z.number().int().min(0).max(MAX_PROPOSED_ITEMS)).max(MAX_PROPOSED_ITEMS),
+  identity: z.boolean().optional(),
 });

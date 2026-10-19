@@ -2,6 +2,7 @@
 
 import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, Combine, ExternalLink, FileUp, GripVertical, Paperclip, Pin, Plug, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Companion, useCompanion } from "@/components/ui/companion";
 import { appName, toolkitForApp } from "@/lib/apps";
 import type { ConnectStatus, FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
@@ -845,7 +846,7 @@ interface ProposalProps {
   proposal: AgentProposal;
   response?: UiResponse;
   canApply: boolean;
-  onApply: (picks: ProposalPicks, edits: { profile?: string; instructions?: string }) => Promise<void>;
+  onApply: (picks: ProposalPicks, edits: { profile?: string; instructions?: string; name?: string }) => Promise<void>;
   onRunTask?: UiCardsProps["onRunTask"];
 }
 
@@ -859,7 +860,10 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
     skills: every(proposal.skills.length),
     tasks: every(proposal.tasks.length),
     memories: every(proposal.memories.length),
+    ...(proposal.identity ? { identity: true } : {}),
   }));
+  const [name, setName] = useState(proposal.identity?.name ?? "");
+  const companion = useCompanion();
   const [profile, setProfile] = useState(proposal.profile ?? "");
   const [instructions, setInstructions] = useState(proposal.instructions ?? "");
   const [editing, setEditing] = useState<"profile" | "instructions" | null>(null);
@@ -873,7 +877,10 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
 
   const toggle = (key: "skills" | "tasks" | "memories", i: number) =>
     setPicks((p) => ({ ...p, [key]: p[key].includes(i) ? p[key].filter((x) => x !== i) : [...p[key], i] }));
-  const nothing = !picks.profile && !picks.instructions && !picks.skills.length && !picks.tasks.length && !picks.memories.length;
+  const nothing = !picks.profile && !picks.instructions && !picks.skills.length && !picks.tasks.length && !picks.memories.length && !picks.identity;
+  // Only a name: the agent introducing itself, which the member keeps rather than applies.
+  const introduction =
+    proposal.identity !== undefined && proposal.profile === undefined && proposal.instructions === undefined && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length;
 
   async function apply() {
     setBusy(true);
@@ -882,6 +889,7 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
       await onApply(picks, {
         ...(picks.profile ? { profile } : {}),
         ...(picks.instructions ? { instructions } : {}),
+        ...(picks.identity && name.trim() !== proposal.identity?.name ? { name: name.trim() } : {}),
       });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn't apply this. Try again.");
@@ -929,6 +937,55 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
       </div>
     ) : null;
 
+  const kept = applied?.applied.name;
+  const identity =
+    proposal.identity && chosen(Boolean(shown.identity)) ? (
+      <div className={`flex items-center gap-3.5 ${introduction ? "" : "rounded-lg bg-subtle px-3 py-2.5"}`}>
+        {introduction ? null : check(Boolean(shown.identity), () => setPicks((p) => ({ ...p, identity: !p.identity })), "Its name")}
+        {companion ? <Companion stage={kept ? "arrived" : companion.stage} look={companion.look} size={introduction ? 48 : 32} /> : null}
+        <div className="min-w-0 flex-1">
+          <label htmlFor={`name-${proposal.id}`} className="text-[12px] font-medium tracking-[0.01em] text-fg-3">
+            {kept ? "You call me" : "Call me"}
+          </label>
+          {live ? (
+            <input
+              id={`name-${proposal.id}`}
+              value={name}
+              maxLength={40}
+              autoComplete="off"
+              onChange={(e) => setName(e.target.value)}
+              className="block w-full border-b border-line bg-transparent pb-0.5 font-display text-[24px] leading-tight tracking-[-0.01em] text-fg focus:border-line-strong focus:outline-none"
+            />
+          ) : (
+            <p className="font-display text-[24px] leading-tight tracking-[-0.01em] text-fg">{kept ?? proposal.identity.name}</p>
+          )}
+          {proposal.identity.manner ? <p className="mt-1 text-[13px] leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">{proposal.identity.manner}</p> : null}
+        </div>
+      </div>
+    ) : null;
+
+  if (introduction) {
+    return (
+      <section aria-label="My name" className={applied ? "mt-4 overflow-hidden rounded-xl border border-line animate-fade-up" : card}>
+        <div className="px-4 pt-4 pb-4">{identity}</div>
+        {applied ? (
+          <p className="flex items-center gap-1.5 border-t border-line px-4 py-2 text-[12.5px] text-success">
+            <Check size={13} className="settle-check" />
+            {kept ? "Kept. You can change it on the agent's page." : appliedText(applied.applied)}
+          </p>
+        ) : live ? (
+          <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
+            <span className={`mr-auto pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? "Keep it, or type the name you'd like."}</span>
+            <button type="button" onClick={() => void apply()} disabled={busy || !name.trim()} className={primary}>
+              {busy ? <span className="spinner size-3.5" aria-hidden="true" /> : <Check size={14} />}
+              Keep
+            </button>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
   return (
     <section aria-label="Suggested setup" className={applied ? "mt-4 overflow-hidden rounded-xl border border-line animate-fade-up" : card}>
       <div className="flex items-start gap-3 px-4 pt-3.5">
@@ -939,6 +996,7 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
         </div>
       </div>
       <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
+        {identity}
         {textItem("profile", "What this agent is for", profile, setProfile)}
         {textItem("instructions", "Standing instructions", instructions, setInstructions)}
         {proposal.tasks.map((t, i) =>
@@ -1028,6 +1086,7 @@ function FirstRun({ taskId, title, onRun }: { taskId: string; title?: string; on
 
 function appliedText(a: Extract<UiResponse, { status: "applied" }>["applied"]): string {
   const parts = [
+    a.name ? `named ${a.name}` : "",
     a.settings ? "updated what it's for and how it works" : "",
     a.tasks ? `${a.tasks} task${a.tasks === 1 ? "" : "s"} on` : "",
     a.skills ? `${a.skills} skill${a.skills === 1 ? "" : "s"} added` : "",
