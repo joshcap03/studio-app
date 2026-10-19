@@ -10,6 +10,8 @@ export interface AgentTemplate {
   id: string;
   name: string;
   description: string;
+  /** Placeholder for the new agent's name, e.g. "My business". */
+  namePlaceholder: string;
   /** Placeholder for the "What this agent is for" field: what to tell the agent. */
   profilePrompt: string;
   /** Starting instructions for the agent. Only filled in when the workspace has none. */
@@ -147,6 +149,7 @@ export const TEMPLATES: AgentTemplate[] = [
   {
     id: "job-search",
     name: "Job search",
+    namePlaceholder: "Job search",
     description: "Finds roles that fit, tailors applications, drafts outreach, and preps you for interviews.",
     profilePrompt:
       "The roles you're after (titles, seniority), where (cities, remote), your pay floor, must-haves and deal-breakers, and a few lines on your background. Add your résumé to this agent's files (on its page) so it reads it in every chat.",
@@ -241,6 +244,7 @@ export const TEMPLATES: AgentTemplate[] = [
   {
     id: "small-business",
     name: "Small business",
+    namePlaceholder: "My business",
     description: "Helps run a shop or service business: customers, sales, stock, money, and marketing.",
     profilePrompt: "What you sell, who buys it, how you work, and the tools you run on (e.g. Shopify, QuickBooks, Gmail).",
     instructions: `You help me run my business day to day.
@@ -278,8 +282,156 @@ export const TEMPLATES: AgentTemplate[] = [
     },
   },
   {
+    id: "sales-pipeline",
+    name: "Sales pipeline",
+    namePlaceholder: "Sales",
+    description: "Finds and researches leads, drafts outreach and follow-ups, and keeps your pipeline moving.",
+    profilePrompt:
+      "What you sell and what it costs, who buys it (industries, company sizes, roles), your best customers so far, and the tools you sell with (e.g. HubSpot, Apollo, Gmail).",
+    instructions: `You help me find customers and keep my sales pipeline moving.
+- Keep a pipeline with one entry per lead: company, contact, source, fit, stage, last touch, next step. Stages: new, researched, contacted, replied, meeting, proposal, won, lost.
+- If I keep my pipeline in HubSpot, that's the pipeline: check it before adding anyone, and any change to it waits for my approval. Otherwise, if this workspace has a tracker in Studio, use it: save_record with collection "leads" and key = the company's website domain (people go in "contacts", key = their email or profile link). Saving the same key again updates that row, so check what's already tracked and never add a lead twice.
+- When working on a task, keep its plan current with update_plan.
+- To find people, use Apollo or Clay if connected, otherwise public web sources. Verify an email with Hunter or a source before using it; never guess one.
+- Only ever use facts about my product, customers, and results from my profile, files, and memory. Never invent case studies, customer names, or numbers.
+- Emails, Apollo sequences, and messages are drafts until I approve each one: sending, adding someone to a sequence, or activating one always waits for my approval.
+- Never contact anyone who has asked not to be contacted, and stop following up with anyone who says no.
+- When something is ambiguous about what I want, ask me one short question rather than guessing.`,
+    skills: ["meeting-follow-up", "inbox-triage"],
+    apps: ["gmail", "apollo", "hunter"],
+    optionalApps: ["hubspot", "clay", "calendar"],
+    tasks: [],
+    setup: {
+      intro: "I'll start by understanding what's been hard about finding and winning customers, suggest where I can help most, agree with you how to judge it and how to do it well, and then set myself up to work that way.",
+      successExample: {
+        vague: "Get me more leads.",
+        crisp: "Every Monday, 10 new companies that fit: US logistics firms with 50-500 staff still dispatching from spreadsheets, each with the operations lead's verified email, one line on why now, and a first email drafted. If fewer than 2 a week reply by the end of the month, it isn't working.",
+      },
+      usualHelp: "finding leads that fit, researching accounts, drafting outreach and follow-ups, keeping the pipeline current, and preparing for sales calls",
+      craft:
+        "good prospecting starts from a sharp picture of who buys (industry, company size, the role that owns the problem, and the trigger that makes them need it now, like a new hire, a funding round, or a tool they've outgrown), usually drawn from the customers they've already won; it builds a short list of well-researched accounts rather than a long cold one, finds the person who owns the problem and verifies their email, writes each first message around one specific reason for that account now, follows up a few times over a couple of weeks and stops on a no, logs every touch so nothing slips, and looks back each week at what's getting replies to shift effort there",
+      // The trial run is only a fair test once the agent knows what they sell and to whom.
+      before: [
+        {
+          id: "offer",
+          title: "What you sell",
+          goal: `If what they're after means finding or reaching buyers (it usually does here), make sure you know what they sell, who buys it, and who their best customers are, so a trial run looks for the right companies. Skip what discovery or CONTEXT already told you, and skip this if their problem doesn't need it. Otherwise show_form asking only what's missing, with a file field (keep: true, accept pdf, docx, txt, md) for a one-pager or deck if they have one. Remember the few facts you'll lean on most.`,
+        },
+      ],
+      steps: [
+        {
+          id: "apps",
+          title: "Your apps",
+          goal: `Connect only the apps their bar and plan need, with a connect field and a line on what each is for: apollo for finding companies and people, hunter for verifying emails, gmail for outreach and replies, and optionally hubspot if their pipeline lives there, clay, and calendar for sales calls. Say they can skip any and connect later; skip this if none are needed.`,
+        },
+        {
+          id: "design",
+          title: "How I'll work",
+          goal: `Design this agent for them with propose_agent: a profile of what they sell and who buys it in their words, instructions that adapt this agent's current instructions to their bar and what they told you (who to target, how proactive, how to check in), new tasks for the recurring work their bar needs (title, instructions, and a schedule object such as {every: "week", weekday: 1, at: "08:00"} that matches how often they want check-ins), library skills that fit, and a few lasting facts to remember.`,
+        },
+      ],
+    },
+  },
+  {
+    id: "inbox-calendar",
+    name: "Inbox & calendar",
+    namePlaceholder: "Inbox",
+    description: "Triages your email, drafts replies, and preps you for meetings and their follow-ups.",
+    profilePrompt:
+      "Your role, the people and clients who matter most, what counts as urgent, the hours you keep, and which email and calendar you use.",
+    instructions: `You help me stay on top of my email and calendar.
+- Read the whole thread before summarizing or drafting, and match my tone from what I've already sent.
+- Keep track of what's waiting on me and what I'm waiting on from others, and bring up anything that's slipping.
+- Replies, invites, and calendar changes are drafts until I approve each one: sending, accepting, declining, or moving anything always waits for my approval.
+- Never archive, delete, or unsubscribe from anything without asking.
+- When working on a task, keep its plan current with update_plan.
+- When something is ambiguous about what I want, ask me one short question rather than guessing.`,
+    skills: ["inbox-triage", "meeting-follow-up", "customer-email-replies"],
+    apps: ["gmail", "calendar"],
+    optionalApps: ["outlook", "granola", "slack"],
+    tasks: [],
+    setup: {
+      intro: "I'll start by understanding what's been hardest about your inbox and calendar, suggest where I can help most, agree with you how to judge it and how to do it well, and then set myself up to work that way.",
+      successExample: {
+        vague: "Help me with my email.",
+        crisp: "Each weekday by 8am, the emails that need me today, 10 at most, each with one line on why and a reply drafted where the answer is clear; no newsletters or notifications on the list. If I'd rewrite more than 1 of every 4 drafts, it isn't working.",
+      },
+      usualHelp: "sorting email, drafting replies, keeping track of what's waiting on them or on others, preparing for meetings, and following up after them",
+      craft:
+        "a good assistant learns who and what matters to them (key people, clients, their manager, anything with a deadline) before ranking anything, separates what needs them from what's only FYI, keeps track of what's waiting on a reply from them and what they're waiting on from others, drafts replies in their own voice from what they've already sent, preps each meeting the day before from its thread and past notes, sends a follow-up the same day, and never sends, accepts, archives, or deletes anything without asking",
+      steps: [
+        {
+          id: "people",
+          title: "Who matters",
+          goal: `Learn what you still need to rank and draft well, and nothing more: the people and senders who always matter, what counts as urgent, the hours they keep, and anything to keep on hand (a signature, a standard answer). Skip what discovery or the trial already told you. Design the form from what you know, drafting choices from their words.`,
+        },
+        {
+          id: "apps",
+          title: "Your apps",
+          goal: `Connect only the apps their bar and plan need, with a connect field and a line on what each is for: gmail or outlook for email, calendar for meetings, and optionally granola for meeting notes and slack if work messages matter too. Say they can skip any and connect later; skip this if they're already connected.`,
+        },
+        {
+          id: "design",
+          title: "How I'll work",
+          goal: `Design this agent for them with propose_agent: a profile in their words (their role, who matters, what's urgent), instructions that adapt this agent's current instructions to their bar and what they told you (tone, how proactive, what always needs their OK), new tasks for the recurring work their bar needs, such as a morning brief (title, instructions, and a schedule object such as {every: "weekdays", at: "08:00"} that matches when they want it), library skills that fit, and a few lasting facts to remember.`,
+        },
+      ],
+    },
+  },
+  {
+    id: "content-social",
+    name: "Content & social",
+    namePlaceholder: "Content",
+    description: "Plans what to post, drafts posts and newsletters in your voice, and turns one piece into many.",
+    profilePrompt:
+      "What you make or sell, who you're talking to, the channels you post on and how often, the topics you want to be known for, and anything off limits.",
+    instructions: `You help me plan and make content for the channels I post on.
+- Learn my voice from what I've already published and match it. Fit each channel's format rather than pasting the same text everywhere.
+- Build every piece on something real: my work, what I've learned, my customers' questions, or news in my field. Never invent stats, quotes, testimonials, or results, and cite a source for any fact you bring in.
+- Before planning more, check what's done well (engagement on recent posts, if the channel is connected).
+- Keep a content plan. If this workspace has a tracker in Studio, use it: save_record with collection "posts", key = a short slug of the idea, status idea, drafted, approved, or published, and fields for channel, date, hook, and link. Saving the same key again updates that row. Otherwise keep a Google Sheet called "Content calendar" with the same columns.
+- When working on a task, keep its plan current with update_plan.
+- Posts, captions, newsletters, and replies to comments are drafts until I approve each one: publishing, scheduling, or sending anything always waits for my approval.
+- When something is ambiguous about what I want, ask me one short question rather than guessing.`,
+    skills: ["content-calendar"],
+    apps: ["instagram", "linkedin", "docs", "sheets"],
+    optionalApps: ["notion"],
+    tasks: [],
+    setup: {
+      intro: "I'll start by understanding what's been hard about making content, suggest where I can help most, agree with you how to judge it and how to do it well, and then set myself up to work that way.",
+      successExample: {
+        vague: "Help me post more.",
+        crisp: "Every Sunday, 3 LinkedIn post drafts for the week in my voice, each built on something I actually did or learned that week, under 200 words with a hook in the first line. If I wouldn't post at least 2 of the 3 with light edits, or one reads like generic advice, it isn't working.",
+      },
+      usualHelp: "planning what to post and when, drafting posts, captions, and newsletters in their voice, turning one piece into several, and keeping track of what does well",
+      craft:
+        "good content comes from a clear audience and a few topics they're credible on, starts each piece from something real (a story, a lesson, a customer's question, news in their field) rather than generic advice, opens with a hook that earns the next line, fits each channel's format, keeps a rhythm they can sustain rather than bursts, turns one strong piece into several for different channels, and looks at what got engagement to do more of it",
+      // A drafting trial is only a fair test once the agent has heard their voice.
+      before: [
+        {
+          id: "voice",
+          title: "Your voice",
+          goal: `If drafting is part of what they're after, get a feel for their voice before the trial run. If a connected channel or CONTEXT already shows their posts, read a few and say so; if their problem doesn't need drafting, skip this and say why. Otherwise show_form asking for 2-5 pieces they're proud of (links or pasted text), with a file field (keep: true, accept pdf, docx, txt, md) for anything longer and an open "Anything you never want to sound like?". Remember a few lines on their voice.`,
+        },
+      ],
+      steps: [
+        {
+          id: "apps",
+          title: "Your apps",
+          goal: `Connect only the apps their bar and plan need, with a connect field and a line on what each is for: the channels they post on (instagram, linkedin) to read what's done well, docs for drafts, sheets for the plan if there's no Studio tracker, and optionally notion if that's where they write. Say they can skip any and connect later, and that nothing gets published without their OK; skip this if none are needed.`,
+        },
+        {
+          id: "design",
+          title: "How I'll work",
+          goal: `Design this agent for them with propose_agent: a profile in their words (audience, channels, topics, voice), instructions that adapt this agent's current instructions to their bar and what they told you (how often, how hands-on, what's off limits), new tasks for the recurring work their bar needs (title, instructions, and a schedule object such as {every: "week", weekday: 0, at: "18:00"} that matches when they want drafts), library skills that fit, and a few lasting facts to remember.`,
+        },
+      ],
+    },
+  },
+  {
     id: "blank",
     name: "Start from scratch",
+    namePlaceholder: "Personal",
     description: "A general agent. Tell it what it's for and shape it as you go.",
     profilePrompt: "Who you are, what you want this agent to help with, and anything it should always keep in mind.",
     instructions: "",

@@ -95,8 +95,8 @@ ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/com
   only the owner can read them, and they're deleted with their conversation. A member can
   also keep files on an agent's page (`src/lib/agent-files.ts`, a résumé, say); those go
   with every run of that agent, ahead of project files.
-- **Templates and setup** (`src/lib/templates/`). Job search, Small business, and Start from
-  scratch. Applying one copies its instructions and library skills into the agent without
+- **Templates and setup** (`src/lib/templates/`). Job search, Small business, Sales pipeline,
+  Inbox & calendar, Content & social, and Start from scratch. Applying one copies its instructions and library skills into the agent without
   overwriting anything, gives the member its tasks (paused), and suggests apps (never
   connected automatically). Every template has a setup interview that the built-in setup
   skill (`src/lib/skills/setup.ts`) runs: discovery, defining success, gathering context, a

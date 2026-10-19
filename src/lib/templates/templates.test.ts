@@ -68,6 +68,15 @@ describe("templates", () => {
     ]);
   });
 
+  it("each suggest a name for the new agent, and list Start from scratch last", () => {
+    for (const t of TEMPLATES) {
+      expect(t.namePlaceholder.trim(), t.id).not.toBe("");
+      // The agent name field takes 80 characters.
+      expect(t.namePlaceholder.length, t.id).toBeLessThanOrEqual(80);
+    }
+    expect(TEMPLATES.at(-1)!.id).toBe("blank");
+  });
+
   it("include the default and look up by id", () => {
     expect(templateById(DEFAULT_TEMPLATE_ID)).toBeDefined();
     expect(templateById("nope")).toBeUndefined();
