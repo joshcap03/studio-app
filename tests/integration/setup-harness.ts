@@ -57,6 +57,10 @@ export interface ScriptedMember {
   file?: { name: string; mimeType: string; content: string };
   /** A personal guardrail, as a member would write it. */
   guardrail?: string;
+  /** How they're talking: "call" puts them on a live voice call, their words as speech-to-text. */
+  modality?: "call";
+  /** Names their eval log when one template has several members (e.g. "call.rambler"). */
+  id?: string;
 }
 
 export type Turn = {
@@ -68,6 +72,8 @@ export type Turn = {
   rawProposal: unknown;
   /** How long the run took, start to last event. */
   ms: number;
+  /** When each event arrived, in ms from the start of the run (parallel to events). */
+  eventMs: number[];
 };
 
 export function replyOf(events: AgentEvent[]): string {
@@ -161,6 +167,7 @@ export function setupSession(member: ScriptedMember) {
     notes: [],
     agentFiles: [],
     guardrail: member.guardrail ? { instructions: member.guardrail, recentChats: [] } : null,
+    modality: member.modality,
   };
   let config: LangflowConfig | undefined;
   let discovered = 0;
@@ -188,6 +195,7 @@ export function setupSession(member: ScriptedMember) {
     config ??= { baseUrl: baseUrl!, apiKey: apiKey!, flowId: flowId!, stream: true, tweaks: await tweaks() };
     if (withFile && member.file && !tenant.agentFiles!.includes(member.file.name)) tenant.agentFiles!.push(member.file.name);
     const events: AgentEvent[] = [];
+    const eventMs: number[] = [];
     const started = Date.now();
     for await (const e of createLangflowAdapter(config).run({
       conversationId,
@@ -200,6 +208,7 @@ export function setupSession(member: ScriptedMember) {
       signal: AbortSignal.timeout(280_000),
     })) {
       events.push(e);
+      eventMs.push(Date.now() - started);
     }
     const ms = Date.now() - started;
     for (const e of events) {
@@ -228,7 +237,7 @@ export function setupSession(member: ScriptedMember) {
         rawProposal = (e.block as { proposal: unknown }).proposal;
       }
     }
-    const turn = { message, events, reply: replyOf(events), form, proposal, rawProposal, ms };
+    const turn = { message, events, reply: replyOf(events), form, proposal, rawProposal, ms, eventMs };
     turns.push(turn);
     // As the app does once setup is under way (src/lib/workspace.ts): the setup skill stays in
     // view on every later run in this conversation.
@@ -330,8 +339,8 @@ export function setupSession(member: ScriptedMember) {
     console.log(`${label}: ${t.turns} turns, p50 ${t.p50}s, p90 ${t.p90}s, max ${t.max}s`);
     const log = process.env.SETUP_EVAL_LOG;
     if (!log) return;
-    const path = log.replace(/(\.json)?$/, `.${member.templateId}${member.guardrail ? ".guardrail" : ""}.json`);
-    writeFileSync(path, JSON.stringify({ timing: t, turns: turns.map(({ events, ...rest }) => ({ ...rest, events: events.filter((e) => e.type !== "text-delta") })) }, null, 2));
+    const path = log.replace(/(\.json)?$/, `.${member.templateId}${member.guardrail ? ".guardrail" : ""}${member.id ? `.${member.id}` : ""}.json`);
+    writeFileSync(path, JSON.stringify({ timing: t, turns: turns.map(({ events, eventMs, ...rest }) => ({ ...rest, events: events.filter((e) => e.type !== "text-delta") })) }, null, 2));
   }
 
   return { tenant, turns, start, send, answer, writeLog, last: () => turns[turns.length - 1] };
