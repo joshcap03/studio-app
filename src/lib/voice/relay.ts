@@ -54,7 +54,16 @@ function stepLine(step: ActivityStep): RelayLine | null {
   if (step.hidden || bookkeeping(step) || !speakableLabel(step.label)) return null;
   if (step.action === "note") return { kind: "note", text: step.label.trim(), droppable: true };
   if (step.status !== "running") return null;
-  return { kind: "progress", text: `${step.label.trim().replace(/[.…]+$/, "")}…`, droppable: true };
+  return { kind: "progress", text: spokenStep(step.label), droppable: true };
+}
+
+/**
+ * A step as someone would say it: "Searching the web" becomes "I'm searching the web.", in the
+ * step's own words. A label that doesn't open with what's being done stays as it is.
+ */
+export function spokenStep(label: string): string {
+  const text = label.trim().replace(/[.…]+$/, "");
+  return /^\p{Lu}\p{Ll}+ing\b/u.test(text) ? `I'm ${text.charAt(0).toLowerCase()}${text.slice(1)}.` : `${text}…`;
 }
 
 /** What finishing a journey step gave the agent, said once as the rail fills in. */

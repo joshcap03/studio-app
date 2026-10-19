@@ -22,7 +22,7 @@ describe("scoreCallTurn", () => {
     const text = "Hey! Where do you live? What do you do? What pays the bills? Anything else on your mind today?";
     const s = scoreCallTurn(turn([plan, { type: "text-delta", text }], [800, 6000], 7000));
     expect(s).toMatchObject({ greeted: true, questions: 4, booksFirst: true, answerS: 7 });
-    // The voice drops the greeting and every question but the one the reply ends on.
+    // The voice drops the greeting and asks one thing, the closing question; the rest is on screen.
     expect(s.spoken).toBe("The rest is on screen. Anything else on your mind today?");
   });
 

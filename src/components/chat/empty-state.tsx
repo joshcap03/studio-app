@@ -3,6 +3,7 @@
 import { ArrowRight, AudioLines, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 import { forwardRef, useEffect } from "react";
 import { JourneyBar } from "@/components/ui/journey";
+import { stepName } from "@/lib/setup-words";
 import type { SetupSummary, WorkspaceSkill } from "@/lib/types";
 import { Composer, type ComposerHandle, type MessageExtras } from "./composer";
 
@@ -36,6 +37,10 @@ interface Props {
   /** The owner's setup, while it isn't done or set aside: offered above the composer. */
   setup?: SetupSummary | null;
   agentName?: string;
+  /** What the member goes by, for the greeting. */
+  member?: string | null;
+  /** The voice's name, when the member has calls. */
+  greeter?: string | null;
   onSetup?: () => void;
   onSkipSetup?: () => void;
   /** Present when the member can do the setup on a call ("Talk it through"). */
@@ -51,10 +56,12 @@ const chip =
 const SHOWN_SKILLS = 5;
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, onSetup, onSkipSetup, onTalk, talking, talkNotice },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
+  // Until setup is done, the agent greets them and offers to guide them through it.
+  const greeting = Boolean(setup && onSetup);
 
   function attach(skill: WorkspaceSkill) {
     composer?.current?.attachSkill({ id: skill.id, name: skill.name });
@@ -77,13 +84,13 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:justify-center md:px-8 md:pb-[12vh]">
       <div className="flex flex-1 items-center justify-center md:flex-none">
         <h1 className="animate-fade-up text-center font-display text-[30px] leading-tight tracking-[-0.015em] text-fg md:text-[36px]">
-          What should we work on?
+          {greeting ? `Hey${member ? ` ${member}` : ""}!` : "What should we work on?"}
         </h1>
       </div>
 
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
         {setup && onSetup ? (
-          <SetupBanner setup={setup} agentName={agentName} onSetup={onSetup} onSkip={onSkipSetup} onTalk={onTalk} talking={talking} notice={talkNotice} />
+          <SetupGreeting setup={setup} agentName={agentName} greeter={greeter} onSetup={onSetup} onSkip={onSkipSetup} onTalk={onTalk} talking={talking} notice={talkNotice} />
         ) : null}
         <div className="animate-fade-up [animation-delay:60ms]">
           <Composer
@@ -132,12 +139,14 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
 });
 
 /**
- * Offers the agent's setup interview until it's done: start it (typing, or talking it through on a
- * call, with equal weight), pick it up again, or not now.
+ * The agent's greeting until its setup is done: what it would like to do with them (or where they
+ * left off), and one clear way in. With calls, talking it through comes first; typing is the
+ * other way, with equal footing; "Not now" sets it aside.
  */
-function SetupBanner({
+function SetupGreeting({
   setup,
   agentName,
+  greeter,
   onSetup,
   onSkip,
   onTalk,
@@ -146,6 +155,7 @@ function SetupBanner({
 }: {
   setup: SetupSummary;
   agentName?: string;
+  greeter?: string | null;
   onSetup: () => void;
   onSkip?: () => void;
   onTalk?: () => void;
@@ -153,56 +163,60 @@ function SetupBanner({
   notice?: string | null;
 }) {
   const started = setup.status === "in_progress";
-  const name = agentName?.trim() || "this agent";
+  const at = setup.plan.findIndex((s) => s.status === "doing" || s.status === "needs_you");
+  const index = at >= 0 ? at : setup.plan.findIndex((s) => s.status !== "done");
+  const current = index >= 0 ? setup.plan[index] : null;
+  const who = greeter ? `It's ${greeter}.` : `Let's set up ${agentName?.trim() || "your agent"}.`;
+  const title = started ? "Welcome back. Let's pick up where we left off." : `${who} Before I get to work, let's make sure I work the way you need.`;
+  const detail = started
+    ? current
+      ? `Step ${index + 1}: ${stepName(current.text)}.`
+      : "Almost there."
+    : "A few minutes on what you're after. I'll guide you through it, one step at a time.";
+  const primary = "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-inverse px-3.5 text-[13.5px] font-medium text-on-inverse transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.97] disabled:opacity-60";
+  const secondary = "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line-strong px-3.5 text-[13.5px] font-medium text-fg transition-[background-color,transform] duration-150 hover:bg-hover active:scale-[0.97]";
   return (
-    <section aria-label="Set up this agent" className="mb-3 rounded-xl border border-line bg-surface px-3.5 py-3 animate-fade-up">
-      <div className="flex flex-wrap items-center gap-3">
-        <Sparkles size={17} className="shrink-0 text-accent" />
+    <section aria-label="Set up this agent" className="mb-3 rounded-xl border border-line bg-surface px-4 py-3.5 animate-fade-up">
+      <div className="flex items-start gap-3">
+        <Sparkles size={17} className="mt-0.5 shrink-0 text-accent" />
         <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium text-fg">{started ? `Finish setting up ${name}` : `Set up ${name}`}</p>
-          {started && setup.total > 0 ? (
-            <div className="mt-1.5 flex items-center gap-2.5">
+          <p className="text-[14.5px] font-medium leading-[1.45] text-fg">{title}</p>
+          {started && setup.plan.length > 0 ? (
+            <div className="mt-2 flex items-center gap-2.5">
               <JourneyBar steps={setup.plan} className="max-w-48 flex-1" />
-              <span className="shrink-0 text-[12px] text-fg-3">
-                {setup.done} {setup.done === 1 ? "step" : "steps"} done
-              </span>
+              <span className="min-w-0 truncate text-[12.5px] text-fg-3">{detail}</span>
             </div>
           ) : (
-            <p className="text-[12.5px] leading-[1.45] text-fg-3">
-              A short conversation about what you need, so it works the way you need.
-            </p>
+            <p className="mt-0.5 text-[13px] leading-[1.45] text-fg-3">{detail}</p>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2 max-sm:w-full max-sm:justify-end">
-          {onSkip ? (
-            <button
-              type="button"
-              onClick={onSkip}
-              className="inline-flex h-8 shrink-0 items-center rounded-lg px-2.5 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg"
-            >
-              Not now
-            </button>
-          ) : null}
-          {onTalk ? (
-            <button
-              type="button"
-              onClick={onTalk}
-              disabled={talking}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line-strong px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover disabled:opacity-60"
-            >
-              {talking ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={14} />}
-              Talk it through
-            </button>
-          ) : null}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        {onSkip ? (
           <button
             type="button"
-            onClick={onSetup}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-inverse px-3 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90"
+            onClick={onSkip}
+            className="mr-auto inline-flex h-9 shrink-0 items-center rounded-lg px-2 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg"
           >
-            {started ? "Continue" : "Start"}
+            Not now
+          </button>
+        ) : null}
+        {onTalk ? (
+          <>
+            <button type="button" onClick={onSetup} className={secondary}>
+              {started ? "Continue typing" : "Type instead"}
+            </button>
+            <button type="button" onClick={onTalk} disabled={talking} className={primary}>
+              {talking ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={15} />}
+              Talk it through
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={onSetup} className={primary}>
+            {started ? "Continue" : "Let's start"}
             <ArrowRight size={14} />
           </button>
-        </div>
+        )}
       </div>
       {notice ? (
         <p role="status" className="mt-2 text-[12.5px] text-danger">

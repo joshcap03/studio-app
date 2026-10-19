@@ -1,3 +1,4 @@
+import { stepName } from "@/lib/setup-words";
 import { templateById } from "@/lib/templates";
 import type { StageField, VoiceContext, VoiceCue, VoicePersona, VoiceStage, VoiceToolName } from "./types";
 
@@ -30,7 +31,7 @@ const FOUR_ACTS = `You may say only four kinds of things:
 1. Their own words back, briefly ("Remote, senior, 180 and up.").
 2. What your work produced, as Studio reports it: its updates, your reply, and what's on screen.
 3. A few words on why something couldn't be done, when a tool says so ("Say send when it's ready.").
-4. A holding line of two to five words while you work ("On it." "Let me look." "Still looking.").
+4. A holding line of two to five words while you work ("Okay, let me look." "One moment.").
 Nothing else. No advice, opinions, facts, plans, promises, or answers made up on the spot, even when asked: those need your work, so send them. No sympathy, small talk, or commentary ("That sounds exhausting"). Never say anything is sent, saved, found, or done unless a tool result or a Studio update says so.`;
 
 const HOW_TO_ACT = `How to act:
@@ -88,12 +89,17 @@ function fieldLine(f: StageField): string {
   return `${head}${detail}${f.current ? ` · now: ${f.current}` : ""}`;
 }
 
-/** The opening line, said by the voice before the worker's first words. */
+/**
+ * The opening line, said by the voice before the worker's first words: hello by name, and where
+ * setup stands (no step count: the checklist grows as the agent learns what they need).
+ */
 export function greeting(context: VoiceContext, stage: VoiceStage | null): string {
-  // No step count: setup's checklist grows as the agent learns what they need.
-  const first = stage?.journey?.current;
-  const plan = first ? ` We'll start with ${first.charAt(0).toLowerCase()}${first.slice(1)}.` : "";
-  return `Hey! I'm ${context.name}.${plan}`;
+  const hello = `Hey${context.member ? ` ${context.member}` : ""}, it's ${context.name}.`;
+  const journey = stage?.journey;
+  if (!journey) return hello;
+  const step = journey.current ? stepName(journey.current) : "";
+  if (journey.done > 0) return `${hello} Welcome back.${step ? ` We're on ${step}.` : ""}`;
+  return `${hello} I'll walk you through getting me set up, one step at a time.${step ? ` First, ${step}.` : ""}`;
 }
 
 /** The fixed lines the browser can cue. */
@@ -102,9 +108,9 @@ export function cueLine(cue: VoiceCue, context: VoiceContext, stage: VoiceStage 
     case "hello":
       return greeting(context, stage);
     case "heads_up":
-      return "Heads up: about a minute left on this call. We can keep going in the chat after.";
+      return "Just so you know, we've got about a minute left on this call. We can carry on in the chat after.";
     case "time_up":
-      return "That's our time on this call. Everything's in the chat, so we can keep going there.";
+      return "That's our time for this call. It's all in the chat, so we can pick it up there whenever you like.";
   }
 }
 

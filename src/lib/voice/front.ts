@@ -170,12 +170,57 @@ function trailingResults(messages: FrontMessage[]): string[] {
   return results;
 }
 
+// What the voice says while the work starts, the way someone listening would: a short
+// acknowledgement that fits what just happened, never the same one twice running. Fixed words, so
+// nothing is promised that the work hasn't done.
+const HOLDING = {
+  /** They answered the voice's question. */
+  answer: ["Got it.", "Okay.", "Mm, okay.", "Right, okay.", "Okay, thanks."],
+  /** They asked for something. */
+  request: ["Sure, one moment.", "Okay, let me look.", "Sure.", "Let me see."],
+  /** They spoke while the work was under way. */
+  held: ["Got it. I'll bring that in once this is done.", "Okay, I'll add that when this finishes.", "Noted. I'll fold that in next."],
+  /** They spoke while a request waits on their OK. */
+  approval: ["Got it. That goes along once you've OK'd the request on screen."],
+  sent: ["Okay, that's sent.", "Sent."],
+  stopped: ["Okay, I've stopped."],
+  stopping: ["Okay, stopping."],
+} as const;
+export type HoldingKind = keyof typeof HOLDING;
+
+/** What the voice has said aloud on this call, oldest first. */
+function voiceLines(messages: FrontMessage[]): string[] {
+  return callTurns(messages)
+    .filter((m) => m.role === "assistant")
+    .map((m) => textOf(m.content).trim())
+    .filter(Boolean);
+}
+
+/** A holding line of this kind, varied by how far into the call it is and never the last one said. */
+export function holdingLine(kind: HoldingKind, messages: FrontMessage[] = []): string {
+  const lines: readonly string[] = HOLDING[kind];
+  const said = voiceLines(messages);
+  const pick = lines[said.length % lines.length];
+  return pick === said.at(-1) && lines.length > 1 ? lines[(said.length + 1) % lines.length] : pick;
+}
+
+/** Whether what they just said answers something: the voice's last words, Studio's or its own, asked them. */
+function answering(messages: FrontMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const mark = readMarker(m);
+    const text = mark ? (mark.say ?? []).join(" ") : m.role === "assistant" ? textOf(m.content) : "";
+    if (text.trim()) return /\?["”’)]*\s*$/.test(text.trim());
+  }
+  return false;
+}
+
 /**
  * What to say after the browser ran the voice's tools, built from what each reported (fixed
- * words, the member's own answers): "On it.", "Got it: Keep 1, Keep 2.", "Sent.". Null when one
- * was turned down, so the model can fix its call or ask.
+ * words, the member's own answers): "Okay.", "Got it: Keep 1, Keep 2.", "Okay, that's sent.".
+ * Null when one was turned down, so the model can fix its call or ask.
  */
-export function speechForResults(results: string[]): string | null {
+export function speechForResults(results: string[], messages: FrontMessage[] = []): string | null {
   const filled: string[] = [];
   const lines: string[] = [];
   for (const r of results) {
@@ -189,16 +234,16 @@ export function speechForResults(results: string[]): string | null {
         lines.push(`Did you mean ${detail.split("?")[0].trim()}? Tap it on screen if so.`);
         break;
       case "handed off":
-        lines.push("On it.");
+        lines.push(holdingLine(answering(messages) ? "answer" : "request", messages));
         break;
       case "held":
-        lines.push(/\bOK\b/.test(detail) ? "Got it. That goes along after your OK on screen." : "Got it. I'll add that when this lands.");
+        lines.push(holdingLine(/\bOK\b/.test(detail) ? "approval" : "held", messages));
         break;
       case "sent":
-        lines.push("Sent.");
+        lines.push(holdingLine("sent", messages));
         break;
       case "stopped":
-        lines.push("Stopped.");
+        lines.push(holdingLine("stopped", messages));
         break;
       default:
         return null;
@@ -213,11 +258,17 @@ export function speechForResults(results: string[]): string | null {
  * (only for the member's own speech and tool results).
  */
 export function planReply(context: VoiceContext, messages: FrontMessage[]): FrontPlan {
-  const turns = callTurns(messages, { markers: true });
+  const all = callTurns(messages, { markers: true });
+  // A stage update isn't a turn: what's owed is whatever came before it. (One arriving while a
+  // line is being worded makes the provider drop that reply and ask again.)
+  const turns = all.filter((m) => {
+    const mark = readMarker(m);
+    return !mark || mark.cue || mark.say?.length;
+  });
   const spoken = turns.some((m) => m.role === "assistant" && !readMarker(m) && (textOf(m.content).trim() || m.tool_calls?.length));
   const stageNow = latestStage(messages);
   const last = turns.at(-1);
-  if (!last) return { kind: "say", text: greeting(context, stageNow) };
+  if (!last) return all.length ? { kind: "skip" } : { kind: "say", text: greeting(context, stageNow) };
   const mark = readMarker(last);
   if (mark) {
     if (mark.cue === "hello") return spoken ? { kind: "skip" } : { kind: "say", text: greeting(context, stageNow) };
@@ -231,7 +282,7 @@ export function planReply(context: VoiceContext, messages: FrontMessage[]): Fron
     const results = trailingResults(messages);
     // The line already went out with the call (quickRoute), and the result is what it said.
     if (alreadySaid(messages) && results.every((r) => /^\s*(handed off|held|stopped):/i.test(r))) return { kind: "skip" };
-    const speech = speechForResults(results);
+    const speech = speechForResults(results, messages);
     if (speech) return { kind: "say", text: speech };
   }
   return { kind: "model" };
@@ -340,10 +391,10 @@ export function quickRoute(messages: FrontMessage[]): BrainReply | null {
   // The holding line goes out with the hand-off, in one turn rather than two.
   const call = reply.tools?.[0]?.name;
   if (call === "send_message") {
-    const held = stage?.approval ? "Got it. That goes along after your OK on screen." : stage?.working && !isRedirect(said) ? "Got it. I'll add that when this lands." : "On it.";
-    return { ...reply, text: held };
+    const kind: HoldingKind = stage?.approval ? "approval" : stage?.working && !isRedirect(said) ? "held" : answering(messages) ? "answer" : "request";
+    return { ...reply, text: holdingLine(kind, messages) };
   }
-  if (call === "stop_work") return stage?.working ? { ...reply, text: "Stopping." } : { tools: [{ name: "skip_turn", args: {} }] };
+  if (call === "stop_work") return stage?.working ? { ...reply, text: holdingLine("stopping", messages) } : { tools: [{ name: "skip_turn", args: {} }] };
   return reply;
 }
 

@@ -31,11 +31,11 @@ describe("setupSkill", () => {
       expect(skill).toContain("No form in the first reply");
       // On a call the voice has greeted them already, so the first reply just asks.
       const call = setupSkill(template.id, { call: true }).instructions;
-      expect(skill).toContain('begins with the word "Hey!"');
-      expect(call).not.toContain("Hey!");
+      expect(skill).toContain("begins with that greeting");
+      expect(call).not.toMatch(/\bHey\b/);
       expect(call).not.toContain(template.setup.intro);
       expect(call).toContain("just your first open question");
-      expect(call.slice(call.indexOf("- Go step by step"))).toBe(skill.slice(skill.indexOf("- Go step by step")).replace(` ${template.setup.intro}`, "").replace('Your first reply begins "Hey!" (see above). ', "Your first reply is just your first question (see above). "));
+      expect(call.slice(call.indexOf("- Go step by step"))).toBe(skill.slice(skill.indexOf("- Go step by step")).replace(` ${template.setup.intro}`, "").replace("Your first reply opens with your greeting (see above). ", "Your first reply is just your first question (see above). "));
       expect(skill).toMatch(/Trial run[\s\S]*verdict field/);
       expect(skill).toMatch(/rank field/);
       expect(skill).toContain("Do the first one now");
