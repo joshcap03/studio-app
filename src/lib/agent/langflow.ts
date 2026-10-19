@@ -1,4 +1,5 @@
 import { appForToolkit } from "@/lib/apps";
+import { seamBetween } from "@/lib/chat/seam";
 import { toMemoryCategory } from "@/lib/types";
 import { evidenceFor, interpretCalls, keepsBooks, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
@@ -717,6 +718,38 @@ export function leadingNotes(message: LangflowMessage): string[] {
   return openingLineIndexes(all).map((i) => (all[i].text as string).trim());
 }
 
+/**
+ * A bot message's text with the parts on either side of each tool call kept apart (see
+ * seamBetween in src/lib/chat/seam.ts). Langflow's text is every part joined end to end; its
+ * content blocks keep the parts, in order, with the tool calls between them, so a seam is only
+ * ever placed where a tool call really fell, never guessed from the prose.
+ */
+export function separateAroundTools(text: string, message: LangflowMessage): string {
+  let out = text;
+  let from = 0;
+  let previous: string | null = null;
+  let toolSince = false;
+  for (const leaf of leaves(message)) {
+    if (leaf.type === "tool_use") {
+      if (previous !== null) toolSince = true;
+      continue;
+    }
+    if (leaf.type !== "text" || typeof leaf.text !== "string" || !leaf.text) continue;
+    if (previous !== null && toolSince) {
+      const at = out.indexOf(previous + leaf.text, from);
+      if (at >= 0) {
+        const cut = at + previous.length;
+        const seam = seamBetween(previous, leaf.text);
+        out = out.slice(0, cut) + seam + out.slice(cut);
+        from = cut + seam.length;
+      }
+    }
+    previous = leaf.text;
+    toolSince = false;
+  }
+  return out;
+}
+
 /** Langflow prefixes the final text with any opening lines; strip them from the answer. */
 export function withoutNotes(text: string, notes: string[]): string {
   let rest = text;
@@ -958,6 +991,15 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
           shownText += text;
           return [...lines.map((line): AgentEvent => ({ type: "note-reply", text: line })), { type: "text-delta", text }];
         };
+        // Text streamed after a tool call is a new part of the reply: keep it apart from the part
+        // before the call (see seamBetween), as separateAroundTools does for the final text.
+        let afterTool = false;
+        const stream = (text: string): AgentEvent => {
+          const seam = afterTool ? seamBetween(shownText, text) : "";
+          if (text) afterTool = false;
+          shownText += seam + text;
+          return { type: "text-delta", text: seam + text };
+        };
         let lastBot: LangflowMessage | undefined;
         const seenArtifacts = new Set<string>();
         const seenProposals = new Set<string>();
@@ -1021,15 +1063,13 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               if (typeof chunk === "string" && chunk) {
                 tokens = true;
                 if (releasing) {
-                  shownText += chunk;
-                  yield { type: "text-delta", text: chunk };
+                  yield stream(chunk);
                 } else {
                   pending += chunk;
                   if (pending.length > OPENING_LINE_MAX || pending.includes("\n\n")) {
                     releasing = true;
                     yield* keepHeld(true);
-                    shownText += pending;
-                    yield { type: "text-delta", text: pending };
+                    yield stream(pending);
                     pending = "";
                   }
                 }
@@ -1047,8 +1087,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                 if (fresh.every((t) => reportsOnAnswer(t.name ?? "tool", t.tool_input ?? t.input))) {
                   if (pending) {
                     yield* keepHeld(true);
-                    shownText += pending;
-                    yield { type: "text-delta", text: pending };
+                    yield stream(pending);
                   }
                 } else if (pending.trim()) {
                   notes.push(pending.trim());
@@ -1060,6 +1099,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                 }
                 pending = "";
                 releasing = false;
+                afterTool = true;
               }
               if (!tokens) {
                 for (const note of leadingNotes(message)) {
@@ -1085,7 +1125,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   yield p;
                 }
               }
-              const answer = typeof message.text === "string" ? withoutNotes(message.text, notes) : "";
+              const answer = typeof message.text === "string" ? withoutNotes(separateAroundTools(message.text, message), notes) : "";
               if (!tokens && answer !== shownText && (answer || shownText)) {
                 shownText = answer;
                 yield { type: "message", text: answer };
@@ -1114,12 +1154,11 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
             } else if (event === "end") {
               yield* keepHeld(Boolean(pending));
               if (pending) {
-                shownText += pending;
-                yield { type: "text-delta", text: pending };
+                yield stream(pending);
                 pending = "";
               }
               const final = resultMessage((data as { result?: unknown })?.result) ?? lastBot;
-              const text = typeof final?.text === "string" ? withoutNotes(final.text, notes) : "";
+              const text = typeof final?.text === "string" ? withoutNotes(separateAroundTools(final.text, final), notes) : "";
               if (text && text !== shownText && !tokens) yield { type: "message", text };
               if (final) {
                 yield* activityFor(final, lastBot?.id ?? final.id ?? "message");
@@ -1140,10 +1179,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
           // The stream closed without an end: read on from the last event.
         }
         yield* keepHeld(Boolean(pending));
-        if (pending) {
-          shownText += pending;
-          yield { type: "text-delta", text: pending };
-        }
+        if (pending) yield stream(pending);
         if (!shownText) throw new AgentError("The agent stopped before finishing.");
       } finally {
         input.signal.removeEventListener("abort", onAbort);

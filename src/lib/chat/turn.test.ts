@@ -460,6 +460,26 @@ describe("approvals", () => {
     expect(messages[1].activity.map((s) => s.label)).toEqual(["Found the thread"]);
   });
 
+  it("keeps what the agent said before the pause apart from what it says once the member decides", async () => {
+    const before: AgentEvent[] = [{ type: "text-delta", text: "Here's the reply to Jo. Okay to send?" }, ...paused];
+    const seen: AgentRunInput[] = [];
+    const adapter = pausing(seen);
+    // Says something before it pauses, then carries on with the default "Sent it." once resumed.
+    const asking: AgentAdapter = {
+      ...adapter,
+      async *run(input) {
+        if (input.resume) return yield* adapter.run(input);
+        seen.push(input);
+        yield* before;
+      },
+    };
+    const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), seen, asking);
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" }));
+    expect(events.filter((e) => e.type === "text").map((e) => (e as { delta: string }).delta).join("")).toBe("\n\nSent it.");
+    const [, reply] = await store.listMessages(id);
+    expect(reply.content).toBe("Here's the reply to Jo. Okay to send?\n\nSent it.");
+  });
+
   describe("the step the run paused on", () => {
     const connecting: AgentEvent = { type: "activity", id: "msg-1:2", label: "Connecting Gmail", status: "running", app: "gmail", action: "connect" };
     const pausedOnStep: AgentEvent[] = [connecting, { type: "approval", summary: "Connect Gmail", app: "gmail", details: [], state: { jobId: "job-1", requestId: "r-1" } }];
