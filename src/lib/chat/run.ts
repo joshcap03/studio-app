@@ -76,7 +76,7 @@ export async function buildTurnDeps(
     .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId, modality));
   context.catch(() => undefined);
   const adapter = getAgentAdapter();
-  const loadSkill = (id: string) => getSkill(tenant, id);
+  const loadSkill = (id: string) => getSkill(tenant, id, { call: modality === "call" });
   // A conversation's project is the one it was started in (or moved to) by its member.
   const loadProject = async () => {
     const conversation = await store.getConversation(conversationId);

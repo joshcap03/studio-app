@@ -12,9 +12,28 @@ import { CATALOG } from "./catalog";
 export const SETUP_SKILL_ID = "builtin:setup";
 export const SETUP_SKILL_NAME = "Set up this agent";
 
-const RULES = `Start your first reply in this setup with "Hey!" (only that one; later replies just carry on).
+/**
+ * How the interview opens: typed, with "Hey!" and what you'll do together; on a call, where the
+ * voice has greeted them already, with just the question (and no template intro to recite).
+ */
+const OPENERS = {
+  text: {
+    start: `Start your first reply in this setup with "Hey!" (only that one; later replies just carry on).`,
+    first: `Your very first reply (and only that one) begins with the word "Hey!" in its text, then one sentence on what you'll do together (understand what's hard for them, suggest where you can help, agree how to judge it, then set yourself up), then your first open question about their situation.`,
+    lead: 'Your first reply begins "Hey!" (see above). ',
+  },
+  call: {
+    start: "This setup happens on a live call, and the voice has already greeted them.",
+    first: "Your very first reply is just your first open question about their situation, in one sentence: no greeting, nothing on how you'll work together, and nothing more once you've kept your books.",
+    lead: "Your first reply is just your first question (see above). ",
+  },
+};
+
+type Opener = (typeof OPENERS)["text"];
+
+const rules = (opener: Opener) => `${opener.start}
 Set this agent up with the owner, carefully and methodically, the way a good product thinker or advisor would: first understand the challenges they really need help with and advise them where you can help, then agree how success will be judged, then design how you'll work.
-- Your very first reply (and only that one) begins with the word "Hey!" in its text, then one sentence on what you'll do together (understand what's hard for them, suggest where you can help, agree how to judge it, then set yourself up), then your first open question about their situation. No form in the first reply.
+- ${opener.first} No form in the first reply.
 - Go step by step. Discovery is a conversation of plain questions; later steps may take a form each, which you design for what you've learned (a few fields; scale for "how much", rank for "what matters most", verdict for "would you want this?"). Multiple choice often misses what someone really means, so use it only for real, distinct alternatives drafted from their own words (every choice field also takes their own answer), and ask open questions when the answer is personal. After a form or question, stop: their answer arrives as their next message.
 - The steps below are a guide, not a script: skip or merge any that what they're after doesn't need (say so in a few words), and never ask what you already know (CONTEXT: about them, what this agent is for, its instructions, memory, their files, the tracker).
 - Don't plan, suggest tasks, or design anything until they've agreed on their problem and confirmed their bar, and build every later step on both.
@@ -26,13 +45,13 @@ Set this agent up with the owner, carefully and methodically, the way a good pro
 - Setup is never done mid-conversation: don't start doing the job beyond the trial run, and don't save results to the tracker before they apply. Your setup is proposed only by calling propose_agent; never say it's ready, drafted, or proposed in a reply that doesn't call it.
 - Finish with propose_agent, then stop. Its instructions open with a "What success means" section: their confirmed criteria and deal-breakers in their words, then "Check every result against these before you send it, and say plainly which one it misses." Every task you propose serves one of the criteria, and its instructions end with: "Finish by showing the results in a show_form verdict field (title, one line on why it fits, link), with 3-5 reasons I might pass, so I can keep or pass on each." In your reply, say for each criterion how you'll meet it, and be honest about any you can't meet yet (a missing app, data, or ability) and what would close the gap; never promise more than you can do. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it, and that once they do, "Do the first one now" runs the first task for real.`;
 
-function steps(template: AgentTemplate): string {
+function steps(template: AgentTemplate, opener: Opener): string {
   // Step 1 repeats how the first reply opens, where the agent is looking when it writes it; the
   // steps after the bar say so, so none goes on their checklist before they've confirmed it.
   const bar = setupSteps(template).findIndex((s) => s.id === SUCCESS_STEP.id);
   return setupSteps(template)
     .map((s, i) => {
-      const lead = i === 0 ? 'Your first reply begins "Hey!" (see above). ' : i > bar ? "Only once their bar is confirmed (not on their checklist before then). " : "";
+      const lead = i === 0 ? opener.lead : i > bar ? "Only once their bar is confirmed (not on their checklist before then). " : "";
       return `${i + 1}. ${s.title}: ${lead}${s.goal}`;
     })
     .join("\n");
@@ -50,20 +69,21 @@ function library(): string {
   return `\n\nLibrary skills you can propose (by id):\n${CATALOG.map((e) => `- ${e.id}: ${e.name}. ${e.description}`).join("\n")}`;
 }
 
-/** The setup skill for an agent made from `templateId` (the blank template when unknown). */
-export function setupSkill(templateId: string | null | undefined): WorkspaceSkill {
+/** The setup skill for an agent made from `templateId` (the blank template when unknown), as said on a `call` or typed. */
+export function setupSkill(templateId: string | null | undefined, { call = false }: { call?: boolean } = {}): WorkspaceSkill {
   const template = templateById(templateId) ?? templateById(DEFAULT_TEMPLATE_ID)!;
+  const opener = call ? OPENERS.call : OPENERS.text;
   return {
     id: SETUP_SKILL_ID,
     catalogId: null,
     name: SETUP_SKILL_NAME,
     description: template.setup.intro,
-    instructions: `${RULES.replace("{count}", String(setupSteps(template).length))}
+    instructions: `${rules(opener).replace("{count}", String(setupSteps(template).length))}
 
-This agent started from the "${template.name}" template. ${template.setup.intro}
+This agent started from the "${template.name}" template.${call ? "" : ` ${template.setup.intro}`}
 
 What setup may cover, in order (your guide, not their checklist):
-${steps(template)}${templateTasks(template)}${library()}`,
+${steps(template, opener)}${templateTasks(template)}${library()}`,
     createdAt: 0,
   };
 }

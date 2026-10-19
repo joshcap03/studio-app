@@ -29,6 +29,13 @@ describe("setupSkill", () => {
       expect(skill).not.toMatch(/\{(vague|crisp|usual)\}/);
       // Nothing hands them a stock menu of jobs: the agent designs its forms from what it learns.
       expect(skill).toContain("No form in the first reply");
+      // On a call the voice has greeted them already, so the first reply just asks.
+      const call = setupSkill(template.id, { call: true }).instructions;
+      expect(skill).toContain('begins with the word "Hey!"');
+      expect(call).not.toContain("Hey!");
+      expect(call).not.toContain(template.setup.intro);
+      expect(call).toContain("just your first open question");
+      expect(call.slice(call.indexOf("- Go step by step"))).toBe(skill.slice(skill.indexOf("- Go step by step")).replace(` ${template.setup.intro}`, "").replace('Your first reply begins "Hey!" (see above). ', "Your first reply is just your first question (see above). "));
       expect(skill).toMatch(/Trial run[\s\S]*verdict field/);
       expect(skill).toMatch(/rank field/);
       expect(skill).toContain("Do the first one now");

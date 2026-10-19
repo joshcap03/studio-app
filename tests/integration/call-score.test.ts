@@ -22,8 +22,8 @@ describe("scoreCallTurn", () => {
     const text = "Hey! Where do you live? What do you do? What pays the bills? Anything else on your mind today?";
     const s = scoreCallTurn(turn([plan, { type: "text-delta", text }], [800, 6000], 7000));
     expect(s).toMatchObject({ greeted: true, questions: 4, booksFirst: true, answerS: 7 });
-    // The voice drops the greeting and says the first two sentences and the closing question.
-    expect(s.spoken).toBe("Where do you live? What do you do? The rest is on screen. Anything else on your mind today?");
+    // The voice drops the greeting and every question but the one the reply ends on.
+    expect(s.spoken).toBe("The rest is on screen. Anything else on your mind today?");
   });
 
   it("counts a card as handing back the floor, even with no question in the reply", () => {
@@ -33,8 +33,19 @@ describe("scoreCallTurn", () => {
     expect(s.spoken).toMatch(/say “send” when it's right/);
   });
 
+  it("catches a reply written again after the books, greeting partway", () => {
+    const s = scoreCallTurn(turn([{ type: "text-delta", text: "What's been hardest?" }, plan, { type: "text-delta", text: "\n\nHey! Let's do this in steps. What's been hardest?" }], [900, 1200, 5000]));
+    expect(s).toMatchObject({ greeted: true, wroteAgain: true, booksFirst: false, answerS: 1.2 });
+    expect(s.spoken).toBe("Let's do this in steps. What's been hardest?");
+  });
+
   it("flags a turn that leaves them on a silent line", () => {
     expect(scoreCallTurn(turn([{ type: "text-delta", text: "Saved that." }], [500])).handsBack).toBe(false);
+  });
+
+  it("counts a closing question with a hint after it as handing back the floor", () => {
+    const s = scoreCallTurn(turn([{ type: "text-delta", text: "What does a right company look like to you? Think about the work, the stage, the people." }], [500]));
+    expect(s).toMatchObject({ handsBack: true, questions: 1 });
   });
 
   it("sums up turns in one line", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep, ChatMessage, StreamEvent } from "@/lib/types";
-import { cardLine, initialRelay, plain, relayEvent, relayJourney, relayReply, speakableGist, type RelayState } from "./relay";
+import { cardLine, closingQuestion, initialRelay, plain, relayEvent, relayJourney, relayReply, speakableGist, type RelayState } from "./relay";
 
 const step = (patch: Partial<ActivityStep>): ActivityStep => ({ id: "s1", label: "Searching the web", status: "running", app: "web", startedAt: 0, ...patch });
 const activity = (s: ActivityStep): StreamEvent => ({ type: "activity", step: s });
@@ -88,6 +88,55 @@ describe("relayReply", () => {
       "Let me start a checklist. Got it: you want to meet people. The rest is on screen. Which is harder, the roles or the people?",
     );
     expect(speakableGist("Is it remote? I'll check. Here's what I found.")).toBe("Is it remote? I'll check. The rest is on screen.");
+  });
+
+  it("says the question the last paragraph ends on, with a short hint after it, so the line is never silent", () => {
+    expect(speakableGist("What does a right company look like to you? Think about the work, the stage, the people.")).toBe(
+      "What does a right company look like to you? Think about the work, the stage, the people.",
+    );
+    const noise =
+      "So the problem is noise, not a shortage of roles. Most postings are wrong in some way.\n\nIf you could only see roles you'd consider, what would they need? Think about the non-negotiables, like pay, remote, or stack.";
+    expect(speakableGist(noise)).toBe(
+      "So the problem is noise, not a shortage of roles. Most postings are wrong in some way. If you could only see roles you'd consider, what would they need? Think about the non-negotiables, like pay, remote, or stack.",
+    );
+    // A hint too long to say goes on screen; the question is still said last.
+    const long = `Got it. That's a clear target. What would a role need to clear? ${"Pay, remote, stack, team size, and the rest of what you'd weigh, ".repeat(3)}all of it.`;
+    expect(speakableGist(long)).toBe("Got it. That's a clear target. The rest is on screen. What would a role need to clear?");
+  });
+
+  it("says its lead before a hint when there's room for only one, and never cuts the lead short", () => {
+    const lead = "Got it: I won't contact anyone for you, and I'll leave the outreach part to you. I'll note that as a standing rule.";
+    const question = "Now, back to the fit question: what would a role need to clear for you to call it a fit?";
+    const hint = "Give me the pay floor, remote or location, the stack you want to keep using, and whether a smaller team is a must or just a preference.";
+    expect(speakableGist(`${lead}\n\n${question} ${hint}`)).toBe(`${lead} The rest is on screen. ${question}`);
+  });
+
+  it("says a reply written twice once, and a greeting in the middle not at all", () => {
+    const twice = "Got it, so the title matters less than the company. Would a senior role be a step back?";
+    expect(speakableGist(`${twice}${twice}`)).toBe(twice);
+    expect(speakableGist("I'll learn what's hard first.\n\nWhat's hardest?Hey! Let's do this in steps.\n\nWhat's hardest?")).toBe(
+      "I'll learn what's hard first. Let's do this in steps. What's hardest?",
+    );
+  });
+
+  it("keeps a question that leans on the one before it whole", () => {
+    expect(closingQuestion("The problem is the filter. Did the searches keep sending the wrong roles? Or did the volume alone wear you down?")).toBe(
+      "Did the searches keep sending the wrong roles? Or did the volume alone wear you down?",
+    );
+  });
+
+  it("asks nothing when the last paragraph moves on after its question", () => {
+    expect(closingQuestion("What's hardest?\n\nHere's what I found. Three roles fit. I'll keep looking.")).toBeNull();
+    expect(closingQuestion("Is it remote? I'll check. Here's what I found.")).toBeNull();
+  });
+
+  it("stays within its length, question and all", () => {
+    const detail = Array.from({ length: 6 }, (_, i) => `Point ${i + 1} is about the roles you've seen and why they missed, in some detail.`).join(" ");
+    const question = `Which of these is a hard no for you, ${"the stack, the level, the pay, ".repeat(4)}or company size?`;
+    const gist = speakableGist(`${detail}\n\n${question}`);
+    expect(gist.length).toBeLessThanOrEqual(320);
+    expect(gist.endsWith(question)).toBe(true);
+    expect(gist).toContain("The rest is on screen.");
   });
 
   it("reads a card's own words and says how to answer", () => {

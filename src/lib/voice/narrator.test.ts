@@ -114,6 +114,28 @@ describe("CallNarrator", () => {
     expect(saidOnce(c.spoken)).toBe(true);
   });
 
+  it("says a closing question with its hint once, read as soon as it was written", () => {
+    const asks = "Got it, the company matters more than the title. What does a right company look like to you? Think about the work, the stage, the people.";
+    const c = call();
+    c.feed([start, text(asks), activity({ id: "plan", label: "Updating the plan", app: "tracker", action: "write" })]);
+    c.flush(true);
+    c.narrator.reply(message({ content: asks }));
+    c.flush();
+    expect(c.spoken).toEqual([asks]);
+  });
+
+  it("adds nothing when the hint was left on screen to make room for the reply's lead", () => {
+    const lead = "Got it: I won't contact anyone for you, and I'll leave the outreach part to you. I'll note that as a standing rule.";
+    const asks = `${lead}\n\nNow, back to the fit question: what would a role need to clear for you to call it a fit? Give me the pay floor, remote or location, the stack you want to keep using, and whether a smaller team is a must or just a preference.`;
+    const c = call();
+    c.feed([start, text(asks), activity({ id: "plan", label: "Updating the plan", app: "tracker", action: "write" })]);
+    c.flush(true);
+    c.narrator.reply(message({ content: asks }));
+    c.flush();
+    expect(c.spoken).toHaveLength(1);
+    expect(c.spoken[0]).toMatch(/call it a fit\?$/);
+  });
+
   it("reads a reply caught up on joining once, even when its run's end arrives too", () => {
     const c = call();
     const done = message({ content: ANSWER });
