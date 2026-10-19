@@ -133,6 +133,38 @@ describe("form answers", () => {
     expect(text).toBe("Jobs: Find, Prep\nNotes:\nLine one\nLine two\nRésumé: added cv.pdf to this agent's files\nOther files: attached notes.txt\nStories:\nStory 1\n- Situation: Stalled\n- Result: Up 18%");
     expect(formAnswerText(form, {})).toBe("Setup: nothing to add.");
   });
+
+  describe("apps to connect", () => {
+    const apps = buildUiBlock(
+      {
+        form: {
+          title: "Your tools",
+          fields: [
+            { kind: "connect", id: "qb", label: "Connect QuickBooks", app: "quickbooks" },
+            { kind: "connect", id: "mail", label: "Email and calendar", apps: ["gmail", "calendar"] },
+          ],
+        },
+      },
+      "f",
+    ) as UiForm;
+
+    it("says plainly which were connected and which were skipped", () => {
+      const text = formAnswerText(apps, {
+        qb: [{ app: "quickbooks", status: "not_connected" }],
+        mail: [
+          { app: "gmail", status: "connected" },
+          { app: "calendar", status: "not_connected" },
+        ],
+      });
+      expect(text).toBe("Connect QuickBooks: skipped for now, not connected\nEmail and calendar: Gmail connected; Google Calendar skipped for now, not connected");
+    });
+
+    it("never sends a card with only apps as nothing to add", () => {
+      expect(formAnswerText(apps, { qb: [{ app: "quickbooks", status: "connected" }] })).toBe("Connect QuickBooks: connected\nEmail and calendar: Gmail skipped for now; Google Calendar skipped for now");
+      expect(formAnswerText(apps, { qb: [{ app: "quickbooks", status: "unavailable" }] })).toMatch(/^Connect QuickBooks: not available yet, not connected\n/);
+      expect(missingAnswer(apps, {})).toBeNull();
+    });
+  });
 });
 
 describe("loose agent output", () => {

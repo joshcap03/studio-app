@@ -5,7 +5,21 @@ vi.mock("@/lib/config", () => ({
   getConfig: () => ({ supermemory: { apiKey: "sm_test", baseUrl: "https://sm.example" } }),
 }));
 
-const { forget, forgetConversations, listMemories, moveLegacyPersonal, namespaceFor, parseMemoryId, recall, recallQuery, remember, replaceMemory, resetMoves } = await import("./memory");
+const {
+  forget,
+  forgetConversations,
+  listMemories,
+  mergeMemories,
+  moveLegacyPersonal,
+  namespaceFor,
+  parseMemoryId,
+  recall,
+  recallQuery,
+  remember,
+  replaceMemory,
+  resetMoves,
+  unmergeMemories,
+} = await import("./memory");
 
 const WS = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -118,6 +132,113 @@ describe("replaceMemory", () => {
     const memory = await replaceMemory(tenant("owner"), "workspace:w1", { category: "voice" });
     expect(calls[1].body).toMatchObject({ metadata: { createdBy: "someone-else", category: "voice" } });
     expect(memory?.mine).toBe(false);
+  });
+});
+
+describe("mergeMemories", () => {
+  /** Documents by id, as Supermemory would return them. */
+  const docs: Record<string, Record<string, unknown>> = {
+    w1: { text: "Sequoia counts as top tier.", createdBy: USER, category: "suppliers", savedAt: 1000, sourceConversation: "c1", sourceMessage: "m1" },
+    w2: { text: "a16z counts as top tier.", createdBy: USER, category: "suppliers", savedAt: 3000, pinned: true },
+    w3: { text: "Benchmark is top tier too.", createdBy: USER, category: "other", savedAt: 2000, sourceConversation: "c3", sourceMessage: "m3" },
+    x1: { text: "Someone else's fact.", createdBy: "someone-else", category: "suppliers", savedAt: 500 },
+    p1: { text: "Only mine.", createdBy: USER, category: "suppliers", savedAt: 100 },
+  };
+  beforeEach(() => {
+    reply = (call) => {
+      if (call.method === "GET") {
+        const id = call.url.split("/").at(-1)!;
+        return docs[id] ? Response.json({ id, metadata: docs[id] }) : new Response("", { status: 404 });
+      }
+      if (call.method === "POST") return Response.json({ id: "merged1" });
+      return Response.json({ count: (call.body as { ids: string[] }).ids.length });
+    };
+  });
+
+  it("saves one fact that keeps any pin, the newest time and source, and the author, then removes the originals", async () => {
+    const result = await mergeMemories(tenant(), ["workspace:w1", "workspace:w2", "workspace:w3"], "Sequoia, a16z, and Benchmark count as top tier.", "suppliers");
+    expect(calls.map((c) => c.method)).toEqual(["GET", "GET", "GET", "POST", "DELETE"]);
+    expect(calls[3]).toMatchObject({
+      url: `https://sm.example/ns/ws_${WS}/document`,
+      body: {
+        content: "Sequoia, a16z, and Benchmark count as top tier.",
+        metadata: { createdBy: USER, category: "suppliers", pinned: true, savedAt: 3000, sourceConversation: "c3", sourceMessage: "m3" },
+      },
+    });
+    expect(calls[4].body).toEqual({ ids: ["w1", "w2", "w3"] });
+    expect(result?.memory).toMatchObject({ id: "workspace:merged1", pinned: true, mine: true, createdAt: 3000 });
+    expect(result?.originals.map((o) => [o.id, o.content, o.pinned, o.savedAt])).toEqual([
+      ["workspace:w1", "Sequoia counts as top tier.", false, 1000],
+      ["workspace:w2", "a16z counts as top tier.", true, 3000],
+      ["workspace:w3", "Benchmark is top tier too.", false, 2000],
+    ]);
+  });
+
+  it("files it under the topic most of them share when none is given", async () => {
+    await mergeMemories(tenant(), ["workspace:w1", "workspace:w3", "workspace:w2"], "Merged.");
+    expect(calls[3].body).toMatchObject({ metadata: { category: "suppliers" } });
+  });
+
+  it("never merges shared facts with ones only the member sees", async () => {
+    await expect(mergeMemories(tenant(), ["workspace:w1", "personal:p1"], "x")).rejects.toMatchObject({ status: 400 });
+    await expect(mergeMemories(tenant(), ["workspace:w1"], "x")).rejects.toMatchObject({ status: 400 });
+    expect(calls).toEqual([]);
+  });
+
+  it("lets a member merge only shared facts they saved, and an owner any, crediting a mixed merge to the owner", async () => {
+    await expect(mergeMemories(tenant(), ["workspace:w1", "workspace:x1"], "x")).rejects.toMatchObject({ status: 403 });
+    expect(calls.some((c) => c.method !== "GET")).toBe(false);
+    calls = [];
+    const result = await mergeMemories(tenant("owner"), ["workspace:w1", "workspace:x1"], "x");
+    expect(calls[2].body).toMatchObject({ metadata: { createdBy: USER } });
+    expect(result?.originals[1].createdBy).toBe("someone-else");
+  });
+
+  it("changes nothing when one of the facts is gone", async () => {
+    await expect(mergeMemories(tenant(), ["workspace:w1", "workspace:gone"], "x")).resolves.toBeNull();
+    expect(calls.map((c) => c.method)).toEqual(["GET", "GET"]);
+  });
+
+  it("merges the member's personal facts, old per-workspace ones included, into their own namespace", async () => {
+    await mergeMemories(tenant(), ["personal:p1", "legacy:w1"], "Both.");
+    expect(calls[2].url).toBe(`https://sm.example/ns/u_${USER}/document`);
+    expect(calls.slice(3).map((c) => [c.url, c.body])).toEqual([
+      [`https://sm.example/ns/u_${USER}/document`, { ids: ["p1"] }],
+      [`https://sm.example/ns/ws_${WS}_u_${USER}/document`, { ids: ["w1"] }],
+    ]);
+  });
+});
+
+describe("unmergeMemories", () => {
+  const originals = [
+    { id: "workspace:w1", content: "One.", scope: "workspace" as const, category: "team" as const, pinned: true, source: { conversationId: "c1", messageId: "m1" }, createdBy: "someone-else", savedAt: 1000 },
+    { id: "workspace:w2", content: "Two.", scope: "workspace" as const, category: "team" as const, pinned: false, createdBy: "someone-else", savedAt: 2000 },
+  ];
+
+  it("saves the originals again as they were, then removes the merged fact", async () => {
+    let n = 0;
+    reply = (call) =>
+      call.method === "GET" ? Response.json({ id: "m1", metadata: { text: "Merged", createdBy: USER } }) : call.method === "POST" ? Response.json({ id: `r${++n}` }) : Response.json({ count: 1 });
+    const restored = await unmergeMemories(tenant("owner"), "workspace:m1", originals);
+    expect(calls.map((c) => c.method)).toEqual(["GET", "POST", "POST", "DELETE"]);
+    expect(calls[1].body).toMatchObject({
+      content: "One.",
+      metadata: { createdBy: "someone-else", category: "team", pinned: true, savedAt: 1000, sourceConversation: "c1", sourceMessage: "m1" },
+    });
+    expect(calls[3].body).toEqual({ ids: ["m1"] });
+    expect(restored?.map((m) => m.id)).toEqual(["workspace:r1", "workspace:r2"]);
+  });
+
+  it("restores shared facts as the member's own when they aren't the owner", async () => {
+    reply = (call) => (call.method === "GET" ? Response.json({ id: "m1", metadata: { createdBy: USER } }) : Response.json({ id: "r", count: 1 }));
+    await unmergeMemories(tenant(), "workspace:m1", originals);
+    expect(calls[1].body).toMatchObject({ metadata: { createdBy: USER } });
+  });
+
+  it("changes nothing when the merged fact was edited or removed since", async () => {
+    reply = () => new Response("", { status: 404 });
+    await expect(unmergeMemories(tenant(), "workspace:m1", originals)).resolves.toBeNull();
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
   });
 });
 

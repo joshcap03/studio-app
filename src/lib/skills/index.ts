@@ -1,8 +1,11 @@
+import { previewEnabled } from "@/lib/flags";
+import { listMemories, memoryEnabled } from "@/lib/memory";
 import type { Tenant } from "@/lib/tenant-core";
 import { MAX_SKILLS, type WorkspaceSkill } from "@/lib/types";
 import { builtinSkill } from "./builtin";
 import { catalogEntry } from "./catalog";
 import { SETUP_SKILL_ID, setupSkill } from "./setup";
+import { tidyCategory, tidySkill } from "./tidy";
 
 // A workspace's skills. Reads and writes go through the tenant's RLS-bound client, filtered
 // by the tenant's workspace; the database also refuses writes from anyone but an owner.
@@ -60,6 +63,12 @@ export async function getSkill(tenant: Tenant, id: string, { call = false }: { c
       await tenant.db.from("workspace_settings").select("template_id").eq("workspace_id", tenant.workspace.id).maybeSingle(),
     ) as { template_id: string | null } | null;
     return setupSkill(row?.template_id, { call });
+  }
+  const topic = tidyCategory(id);
+  if (topic) {
+    // "Tidy up" on a Brain topic: that topic's facts as memory holds them now.
+    if (!previewEnabled(tenant, "brain") || !memoryEnabled()) return null;
+    return tidySkill(topic, await listMemories(tenant), { owner: tenant.workspace.role === "owner" });
   }
   if (id.startsWith("builtin:")) return builtinSkill(tenant, id);
   const row = check(

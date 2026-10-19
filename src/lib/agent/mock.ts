@@ -702,6 +702,29 @@ async function readAttachments(input: AgentRunInput): Promise<Step[]> {
   ];
 }
 
+/**
+ * The "Tidy up" skill: merges the first few facts it lists in each scope (shared, then the
+ * member's own), using the ids and text the skill sent. Null for any other message.
+ */
+function tidySteps(message: string): Step[] | null {
+  if (!message.includes("Tidy up what this agent remembers in one topic")) return null;
+  const facts = [...message.matchAll(/^- \[((workspace|personal|legacy):[A-Za-z0-9_-]+)\](?: \(pinned\))? (.+)$/gm)].map((m) => ({
+    id: m[1],
+    shared: m[2] === "workspace",
+    text: m[3].replace(/\.$/, ""),
+  }));
+  const merges = [true, false].flatMap((shared) => {
+    const group = facts.filter((f) => f.shared === shared).slice(0, 3);
+    return group.length >= 2 ? [{ replaces: group.map((f) => f.id), text: `${group.map((f) => f.text).join("; ")}.`.slice(0, 500) }] : [];
+  });
+  if (merges.length === 0) return [{ kind: "text", text: "This topic is already tidy (mock)." }];
+  const count = merges.reduce((n, m) => n + m.replaces.length, 0);
+  return [
+    { kind: "text", text: `${count} facts could be ${merges.length} (mock).` },
+    { kind: "ui", block: { memory_merge: { summary: `${count} overlapping facts become ${merges.length} (mock).`, merges } } },
+  ];
+}
+
 export function createMockAdapter(options: MockOptions): AgentAdapter {
   const pace = options.pace ?? 1;
   return {
@@ -727,7 +750,7 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
       if (input.resume) {
         steps = input.resume.decision === "approve" ? AFTER_APPROVAL : AFTER_DECLINE;
       } else {
-        steps = SCENARIOS.find((s) => s.match.test(input.message))?.steps ?? FALLBACK;
+        steps = tidySteps(input.message) ?? SCENARIOS.find((s) => s.match.test(input.message))?.steps ?? FALLBACK;
         if (input.attachments.length > 0) steps = [...(await readAttachments(input)), ...(steps === FALLBACK ? ATTACHMENTS_ONLY : steps)];
       }
       const streaming = options.streaming && !/non-?streaming/i.test(input.message);

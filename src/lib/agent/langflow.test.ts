@@ -625,7 +625,7 @@ describe("Langflow streaming", () => {
     const intro = { type: "text", text: "Let me check." };
     const answer = { type: "text", text: "Here's what I found." };
     const work = { type: "tool_use", name: "search", tool_input: {} };
-    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "remember", "propose_memory"]) {
+    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "remember", "propose_memory"]) {
       const direct = { type: "tool_use", name, tool_input: {} };
       const viaGateway = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: name, arguments: {} } };
       expect(openingLineIndexes([intro, work, answer, direct])).toEqual([0]);
@@ -967,7 +967,7 @@ describe("Langflow approvals", () => {
     expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ hidden: true });
   });
 
-  it("passes on forms and proposals only from structured show_form and propose_agent output, and hides the steps", async () => {
+  it("passes on forms and proposals only from structured show_form, propose_agent, and merge_memories output, and hides the steps", async () => {
     const form = { title: "Your search", fields: [{ kind: "text", label: "Role" }] };
     const proposal = { summary: "s", instructions: "Be brief." };
     const call = (name: string, id: string, content: unknown) => ({
@@ -977,12 +977,15 @@ describe("Langflow approvals", () => {
       output: { type: "tool", tool_call_id: id, content: JSON.stringify(content) },
       error: null,
     });
+    const memory_merge = { summary: "s", merges: [{ text: "A and B.", replaces: ["workspace:a", "workspace:b"] }] };
     const show = call("show_form", "c4", { form, note: "x" });
     const propose = call("propose_agent", "c5", { proposal, note: "x" });
+    const merge = call("merge_memories", "c6", { memory_merge, note: "x" });
     const chatter = { type: "tool_use", name: "search", tool_input: {}, output: JSON.stringify({ form }), error: null };
-    expect(toolUi(bot("", [show, propose]) as never)).toEqual([
+    expect(toolUi(bot("", [show, propose, merge]) as never)).toEqual([
       { type: "ui", block: { form } },
       { type: "ui", block: { proposal } },
+      { type: "ui", block: { memory_merge } },
     ]);
     expect(toolUi(bot("", [{ ...show, error: "boom" }]) as never)).toEqual([]);
     const { events } = await run(base, streamResponse([frame("add_message", bot("A few things.", [show, chatter])), frame("end", {})]));
