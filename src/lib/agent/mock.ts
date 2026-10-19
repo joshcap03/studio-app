@@ -54,6 +54,57 @@ const CITE_JOBS = "https://acme-atelier.example/careers";
 
 const SCENARIOS: Scenario[] = [
   {
+    // A setup form with every kind of field; the answers arrive as the member's next message.
+    // First: the setup skill's own instructions mention sources and a trial run.
+    match: /\b(set (me|you) up|set up this agent|show me a form)\b/i,
+    steps: [
+      { kind: "text", text: "Let's get you set up (mock)." },
+      {
+        kind: "plan",
+        plan: [
+          { text: "What success looks like", status: "done", note: "Bar set: 5 criteria, 2 deal-breakers (mock)" },
+          { text: "Your résumé", status: "done", note: "Read it: 8 years in B2B SaaS design (mock)" },
+          { text: "Your search", status: "doing" },
+          { text: "Your stories", status: "todo" },
+          { text: "Your apps", status: "todo" },
+          { text: "How I'll work", status: "todo" },
+        ],
+      },
+      {
+        kind: "ui",
+        block: {
+          form: {
+            title: "Your search (mock)",
+            intro: "A few things so I can look in the right places. I filled in what I could guess.",
+            submit_label: "Next",
+            fields: [
+              { kind: "choice", id: "job", label: "The one thing you most want from me", options: ["Find roles that fit", "Tailor applications", "Reach out to people"], allow_other: true, required: true },
+              { kind: "text", id: "roles", label: "Target roles", placeholder: "e.g. Product manager, growth", prefill: "Product manager" },
+              { kind: "multi_choice", id: "where", label: "Where", options: ["Remote", "Hybrid", "On-site"] },
+              { kind: "scale", id: "hands_on", label: "How hands-on should I be?", low: "Ask me first", high: "Just do it", prefill: 2 },
+              { kind: "rank", id: "matters", label: "What matters most?", options: ["Pay", "Remote", "Seniority", "Industry"] },
+              { kind: "file", id: "resume", label: "Your résumé", accept: ["pdf", "docx"], max: 1, keep: true },
+              {
+                kind: "list",
+                id: "stories",
+                label: "Stories for interviews",
+                item_label: "Story",
+                max: 4,
+                parts: [
+                  { id: "situation", label: "Situation", long: true },
+                  { id: "action", label: "What you did", long: true },
+                  { id: "result", label: "Result" },
+                ],
+                prefill: [{ situation: "Signups had stalled for two quarters.", action: "Rebuilt onboarding with the design team.", result: "Activation up 18%." }],
+              },
+              { kind: "connect", id: "apps", label: "Apps I'll work in", apps: ["gmail", "apollo", "hunter"] },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
     // Numbered citations: two verified quotes, one link-only, and one link no tool returned.
     match: /\b(cite|citations|sources)\b/i,
     steps: [
@@ -190,57 +241,6 @@ const SCENARIOS: Scenario[] = [
       {
         kind: "text",
         text: "This is a mock investigation. Most likely, the gold huggies (your top seller) were out of stock from Oct 5 because the clasp shipment slipped, and a $212 refund landed the same day. I couldn't check ad spend; no ads app is connected.",
-      },
-    ],
-  },
-  {
-    // A setup form with every kind of field; the answers arrive as the member's next message.
-    // Ahead of the trial run: the setup skill's own instructions mention a trial run.
-    match: /\b(set (me|you) up|set up this agent|show me a form)\b/i,
-    steps: [
-      { kind: "text", text: "Let's get you set up (mock)." },
-      {
-        kind: "plan",
-        plan: [
-          { text: "What success looks like", status: "done", note: "Bar set: 5 criteria, 2 deal-breakers (mock)" },
-          { text: "Your résumé", status: "done", note: "Read it: 8 years in B2B SaaS design (mock)" },
-          { text: "Your search", status: "doing" },
-          { text: "Your stories", status: "todo" },
-          { text: "Your apps", status: "todo" },
-          { text: "How I'll work", status: "todo" },
-        ],
-      },
-      {
-        kind: "ui",
-        block: {
-          form: {
-            title: "Your search (mock)",
-            intro: "A few things so I can look in the right places. I filled in what I could guess.",
-            submit_label: "Next",
-            fields: [
-              { kind: "choice", id: "job", label: "The one thing you most want from me", options: ["Find roles that fit", "Tailor applications", "Reach out to people"], allow_other: true, required: true },
-              { kind: "text", id: "roles", label: "Target roles", placeholder: "e.g. Product manager, growth", prefill: "Product manager" },
-              { kind: "multi_choice", id: "where", label: "Where", options: ["Remote", "Hybrid", "On-site"] },
-              { kind: "scale", id: "hands_on", label: "How hands-on should I be?", low: "Ask me first", high: "Just do it", prefill: 2 },
-              { kind: "rank", id: "matters", label: "What matters most?", options: ["Pay", "Remote", "Seniority", "Industry"] },
-              { kind: "file", id: "resume", label: "Your résumé", accept: ["pdf", "docx"], max: 1, keep: true },
-              {
-                kind: "list",
-                id: "stories",
-                label: "Stories for interviews",
-                item_label: "Story",
-                max: 4,
-                parts: [
-                  { id: "situation", label: "Situation", long: true },
-                  { id: "action", label: "What you did", long: true },
-                  { id: "result", label: "Result" },
-                ],
-                prefill: [{ situation: "Signups had stalled for two quarters.", action: "Rebuilt onboarding with the design team.", result: "Activation up 18%." }],
-              },
-              { kind: "connect", id: "apps", label: "Apps I'll work in", apps: ["gmail", "apollo", "hunter"] },
-            ],
-          },
-        },
       },
     ],
   },
