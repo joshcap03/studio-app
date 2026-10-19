@@ -410,21 +410,6 @@ body {
 .wa-link {
   animation: wa-link 0.8s linear infinite;
 }
-@keyframes wa-dot {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.35;
-  }
-  30% {
-    transform: translateY(-3px);
-    opacity: 0.9;
-  }
-}
-.wa-dot {
-  animation: wa-dot 1.2s ease-in-out infinite;
-}
 
 /* The companion (src/components/ui/companion.tsx): a pencil sketch that breathes faintly, a
    pencil still drawing while it works, a brass trace the first time it's ready, then an inked

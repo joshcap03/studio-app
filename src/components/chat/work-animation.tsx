@@ -2,7 +2,8 @@ import type { StepAction } from "@/lib/types";
 
 // Small animated vignettes for what the agent is doing right now. Each one shows the *kind*
 // of step that is actually running (searching, reading, writing, …), never progress or
-// results, so it can't misstate anything. Pure SVG + CSS; still under reduced motion.
+// results, so it can't misstate anything. Between steps there is nothing to show: the
+// status line already says it's thinking. Pure SVG + CSS; still under reduced motion.
 
 const TINTS: Record<string, string> = {
   gmail: "text-[#c5432f]",
@@ -21,9 +22,9 @@ const TINTS: Record<string, string> = {
   slack: "text-[#7a3f7a]",
 };
 
-type Scene = "search" | "read" | "grid" | "write" | "run" | "remember" | "browse" | "connect" | "think";
+type Scene = "search" | "read" | "grid" | "write" | "run" | "remember" | "browse" | "connect";
 
-function sceneFor(action: StepAction | undefined, app: string | undefined): Scene {
+function sceneFor(action: StepAction | undefined, app: string | undefined): Scene | null {
   switch (action) {
     case "search":
       return "search";
@@ -40,12 +41,13 @@ function sceneFor(action: StepAction | undefined, app: string | undefined): Scen
     case "connect":
       return "connect";
     default:
-      return app === "code" ? "run" : app === "memory" ? "remember" : app === "browser" ? "browse" : "think";
+      return app === "code" ? "run" : app === "memory" ? "remember" : app === "browser" ? "browse" : null;
   }
 }
 
 export function WorkAnimation({ action, app }: { action?: StepAction; app?: string }) {
   const scene = sceneFor(action, app);
+  if (!scene) return null;
   const tint = (app && TINTS[app]) || "text-fg-3";
   return (
     <span key={scene} aria-hidden="true" className={`wa inline-flex h-5 w-7 shrink-0 items-center justify-center animate-fade-in ${tint}`}>
@@ -141,14 +143,6 @@ const SCENES: Record<Scene, React.ReactNode> = {
       <circle cx="6" cy="10" r="3" className="fill-current opacity-70" />
       <circle cx="22" cy="10" r="3" className="fill-current opacity-70" />
       <path d="M9 10h10" className="wa-link stroke-current" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="2 2.5" />
-    </>
-  ),
-  // Deciding what to do next.
-  think: (
-    <>
-      {[0, 1, 2].map((i) => (
-        <circle key={i} cx={8 + i * 6} cy="10" r="2" className="wa-dot fill-current" style={{ animationDelay: `${i * 0.16}s` }} />
-      ))}
     </>
   ),
 };
