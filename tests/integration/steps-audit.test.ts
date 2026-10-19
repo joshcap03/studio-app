@@ -4,7 +4,7 @@ import { openingLineIndexes } from "@/lib/agent/langflow";
 import { evidenceFor, interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
 import { linksSeen } from "@/lib/chat/timeline";
 import type { ActivityStep } from "@/lib/types";
-import { initialRelay, relayEvent, speakableGist } from "@/lib/voice/relay";
+import { initialRelay, relayEvent, speakableGist, spokenStep } from "@/lib/voice/relay";
 
 // Replays every tool call in a real Langflow flow's history through the same interpreter and
 // findings code the app uses, and checks the result reads like it should to a business
@@ -97,7 +97,7 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
         relay = out.state;
         for (const line of out.lines) {
           narrated++;
-          const reported = steps.some((x) => line.text === x.label.trim() || line.text === `${x.label.trim().replace(/[.…]+$/, "")}…`);
+          const reported = steps.some((x) => line.text === x.label.trim() || line.text === spokenStep(x.label));
           if (!reported || TECHNICAL.test(line.text) || talksMachinery(line.text)) spokenBadly.push(`${s.app} narration: ${line.text}`);
         }
       }

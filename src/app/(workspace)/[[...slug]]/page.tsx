@@ -8,7 +8,9 @@ import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
 import { summarizeSetup } from "@/lib/setup-state";
 import { requirePageTenant } from "@/lib/tenant";
+import { firstName } from "@/lib/setup-words";
 import { voiceStatus } from "@/lib/voice";
+import { personaFor } from "@/lib/voice/persona";
 import { getSettings } from "@/lib/workspace";
 
 // One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", and "/tasks[/<task id>]". After the first load the browser
@@ -55,6 +57,8 @@ export default async function WorkspacePage({
   // The owner's setup interview: how far along it is, for the "Finish setting up" banner.
   const setup = summarizeSetup(tenant, settings.setup, settings.templateId);
 
+  const voice = setup ? voiceStatus(tenant) : null;
+
   let initialThread: InitialThread | null = null;
   if (conversationId) {
     initialThread = conversation
@@ -75,7 +79,9 @@ export default async function WorkspacePage({
       skills={skills}
       initialSkillId={initialSkillId}
       setup={setup}
-      voice={setup ? voiceStatus(tenant) : null}
+      voice={voice}
+      member={firstName(tenant.account.name)}
+      greeter={voice ? personaFor(settings.templateId).name : null}
     />
   );
 }

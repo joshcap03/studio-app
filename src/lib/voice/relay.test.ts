@@ -29,9 +29,14 @@ const reply = (patch: Partial<ChatMessage>): ChatMessage => ({
 });
 
 describe("relayEvent", () => {
+  it("says a step the way someone would, in its own words", () => {
+    expect(run([activity(step({ label: "Checking Gmail for replies" }))])).toEqual(["I'm checking Gmail for replies."]);
+    expect(run([activity(step({ label: "Gmail search" }))])).toEqual(["Gmail search…"]);
+  });
+
   it("says each step once, when it starts, in the step's own words", () => {
     const lines = run([activity(step({})), activity(step({ status: "done", label: "Searched the web" })), activity(step({ id: "s2", label: "Reading your résumé", app: "agent" }))]);
-    expect(lines).toEqual(["Searching the web…", "Reading your résumé…"]);
+    expect(lines).toEqual(["I'm searching the web.", "I'm reading your résumé."]);
   });
 
   it("says the agent's own opening lines, but never hidden steps or talk of its machinery", () => {
@@ -50,11 +55,11 @@ describe("relayEvent", () => {
       activity(step({ id: "m", label: "Updating memory", app: "memory", action: "remember" })),
       activity(step({ id: "w", label: "Searching the web" })),
     ]);
-    expect(lines).toEqual(["Searching the web…"]);
+    expect(lines).toEqual(["I'm searching the web."]);
   });
 
   it("starts over on a new turn", () => {
-    expect(run([activity(step({})), { type: "start" } as StreamEvent, activity(step({}))])).toEqual(["Searching the web…", "Searching the web…"]);
+    expect(run([activity(step({})), { type: "start" } as StreamEvent, activity(step({}))])).toEqual(["I'm searching the web.", "I'm searching the web."]);
   });
 });
 

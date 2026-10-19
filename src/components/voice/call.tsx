@@ -231,6 +231,8 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
   }, [ask.form, ask.questions, ask.reply, drafts, latestReply, plan, questionsKey, running]);
   const stageRef = useRef(stage);
   stageRef.current = stage;
+  /** The stage the voice last heard, with a line or as an update. */
+  const sentStage = useRef("");
 
   const caption = useCallback((who: Caption["who"], text: string) => {
     captionId.current += 1;
@@ -384,6 +386,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       if (next === "connected") {
         tone(true);
         greetingAt.current = Date.now();
+        sentStage.current = JSON.stringify(stageRef.current);
         link.current?.cue("hello", stageRef.current);
       } else if (next === "ended") {
         hangUp();
@@ -460,10 +463,13 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     lastPlan.current = plan;
   }, [narrator, plan]);
 
-  // The voice's view of the stage, kept current.
+  // The voice's view of the stage, kept current. Not again when a line just carried it: an update
+  // arriving while the voice words a line makes the provider drop that line.
   const stageJson = JSON.stringify(stage);
   useEffect(() => {
-    if (status === "connected") link.current?.stage(JSON.parse(stageJson) as VoiceStage);
+    if (status !== "connected" || stageJson === sentStage.current) return;
+    sentStage.current = stageJson;
+    link.current?.stage(JSON.parse(stageJson) as VoiceStage);
   }, [stageJson, status]);
 
   // Saying queued lines: never over the voice itself, and progress at a calm pace.
@@ -477,6 +483,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       const lines = narrator.take(now, { running: live.current.running, quietMs: now - lastSpeechAt.current });
       if (!lines.length) return;
       lastSpeechAt.current = now;
+      sentStage.current = JSON.stringify(stageRef.current);
       link.current.say(lines, stageRef.current);
     }, 400);
     return () => clearInterval(timer);
@@ -496,6 +503,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     if (status !== "connected" || ended.current) return;
     const cue = narrator.clock(elapsed, grant.maxSeconds);
     if (!cue) return;
+    sentStage.current = JSON.stringify(stageRef.current);
     link.current?.cue(cue, stageRef.current);
     if (cue === "time_up") closingTimer.current = setTimeout(() => hangUp(), 7000);
   }, [elapsed, grant.maxSeconds, hangUp, narrator, status]);

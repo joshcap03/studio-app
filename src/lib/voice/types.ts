@@ -66,6 +66,8 @@ export interface VoiceContext {
   /** Expiry, ms since epoch. */
   exp: number;
   name: string;
+  /** What the member goes by (their first name, from their account), for the greeting. */
+  member?: string | null;
   /** What the agent is, e.g. "Job search", for the voice's own bearings. */
   agent: string;
   /** The member's personal guardrail, which comes first and overrides everything else. */

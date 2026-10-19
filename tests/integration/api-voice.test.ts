@@ -109,7 +109,9 @@ describe("voice calls over the API", () => {
   it("answer the voice front only for the call's own member, conversation, and seal", async () => {
     const grant = await start(alice);
     const greeting = await front(alice, grant, [{ role: "user", content: `${MARKER}${JSON.stringify({ cue: "hello" })}` }]);
-    expect(greeting).toMatchObject({ status: 200, text: `Hey! I'm ${grant.persona.name}.` });
+    // By first name when the account has one.
+    expect(greeting.status).toBe(200);
+    expect(greeting.text).toMatch(new RegExp(`^Hey(?: [\\p{L}'’-]+)?, it's ${grant.persona.name}\\.$`, "u"));
 
     // Bob's session with Alice's sealed context.
     expect((await front(bob, grant, [])).status).toBe(401);

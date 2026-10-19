@@ -12,9 +12,11 @@ import { CATALOG } from "./catalog";
 export const SETUP_SKILL_ID = "builtin:setup";
 export const SETUP_SKILL_NAME = "Set up this agent";
 
-const RULES = `Start your first reply in this setup with "Hey!" (only that one; later replies just carry on).
+const RULES = `Start your first reply in this setup with "Hey" and their first name when you know it ("Hey Sam!", or just "Hey!"); only that one, later replies just carry on.
 Set this agent up with the owner, carefully and methodically, the way a good product thinker or advisor would: first understand the challenges they really need help with and advise them where you can help, then agree how success will be judged, then design how you'll work.
-- Your very first reply (and only that one) begins with the word "Hey!" in its text, then one sentence on what you'll do together (understand what's hard for them, suggest where you can help, agree how to judge it, then set yourself up), then your first open question about their situation. No form in the first reply.
+- Your very first reply (and only that one) begins with that greeting, then one sentence on what you'll do together (understand what's hard for them, suggest where you can help, agree how to judge it, then set yourself up), then your first open question about their situation. No form in the first reply.
+- Guide them by the hand the whole way, so they never wonder what's happening or what to do. Every reply: first, what you heard, briefly in their own words ("So the hard part is reaching people, not finding roles."); when a step is done, say so and what's next in plain words ("That's what you're after, settled. Next, how we'll judge it."); then end with exactly one question or one clear next move for them. Never two questions in one reply.
+- Before anything that takes more than a moment (reading a file, a search, drafting), say in one short sentence what you're doing for them and why ("Let me read your résumé, so I don't ask what's already in it."), then do it.
 - Go step by step. Discovery is a conversation of plain questions; later steps may take a form each, which you design for what you've learned (a few fields; scale for "how much", rank for "what matters most", verdict for "would you want this?"). Multiple choice often misses what someone really means, so use it only for real, distinct alternatives drafted from their own words (every choice field also takes their own answer), and ask open questions when the answer is personal. After a form or question, stop: their answer arrives as their next message.
 - The steps below are a guide, not a script: skip or merge any that what they're after doesn't need (say so in a few words), and never ask what you already know (CONTEXT: about them, what this agent is for, its instructions, memory, their files, the tracker).
 - Don't plan, suggest tasks, or design anything until they've agreed on their problem and confirmed their bar, and build every later step on both.
@@ -32,7 +34,7 @@ function steps(template: AgentTemplate): string {
   const bar = setupSteps(template).findIndex((s) => s.id === SUCCESS_STEP.id);
   return setupSteps(template)
     .map((s, i) => {
-      const lead = i === 0 ? 'Your first reply begins "Hey!" (see above). ' : i > bar ? "Only once their bar is confirmed (not on their checklist before then). " : "";
+      const lead = i === 0 ? "Your first reply opens with your greeting (see above). " : i > bar ? "Only once their bar is confirmed (not on their checklist before then). " : "";
       return `${i + 1}. ${s.title}: ${lead}${s.goal}`;
     })
     .join("\n");

@@ -1,3 +1,4 @@
+import { firstName } from "@/lib/setup-words";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
 import type { Tenant } from "@/lib/tenant-core";
@@ -70,6 +71,7 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
       ws: tenant.workspace.id,
       exp,
       name: persona.name,
+      member: firstName(tenant.account.name),
       agent: agentLabel(settings.templateId, settings.name),
       guardrail: guardrail ? guardrail.slice(0, GUARDRAIL_CHARS) : null,
     },
