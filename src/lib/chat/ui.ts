@@ -476,6 +476,14 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
   return empty ? null : proposal;
 }
 
+/**
+ * Whether a card the agent asked for is a proposed merge of remembered facts (`{memory_merge}`).
+ * Those are checked against the member's memory (src/lib/memory-merge.ts), not here.
+ */
+export function isMergeRequest(raw: unknown): raw is { memory_merge: Record<string, unknown> } {
+  return isRecord(raw) && isRecord(raw.memory_merge);
+}
+
 /** Validates one card the agent asked for (`{form}` or `{proposal}`). Null when nothing is usable. */
 export function buildUiBlock(raw: unknown, id: string = crypto.randomUUID()): UiBlock | null {
   if (!isRecord(raw)) return null;

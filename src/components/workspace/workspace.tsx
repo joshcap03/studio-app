@@ -21,6 +21,7 @@ import { Call } from "@/components/voice/call";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
 import { SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
+import { TIDY_SKILL_NAME, tidyRequest, tidySkillId } from "@/lib/skills/tidy";
 import type {
   AgentStatus,
   Attachment,
@@ -39,6 +40,7 @@ import type {
   WorkspaceSkill,
   WorkspaceSummary,
 } from "@/lib/types";
+import { MEMORY_CATEGORIES } from "@/lib/types";
 import type { VoiceGrant, VoiceStatus } from "@/lib/voice/types";
 
 /** Whether a finished reply still asks the member something: questions or an unsent form. */
@@ -936,6 +938,18 @@ function WorkspaceShell({
     if (wanted === "talk" && voice) void talkItThrough({ waitForTap: true });
     else startSetup(wanted === "new");
   }, [setup, startSetup, talkItThrough, voice]);
+
+  // "Tidy up" on a Brain topic arrives as ?tidy=<topic>: a new chat with that topic's tidy
+  // skill attached, where the agent suggests facts to combine.
+  const tidyRequested = useRef(false);
+  useEffect(() => {
+    if (tidyRequested.current) return;
+    const topic = MEMORY_CATEGORIES.find((c) => c === new URLSearchParams(window.location.search).get("tidy"));
+    if (!topic) return;
+    tidyRequested.current = true;
+    window.history.replaceState(null, "", window.location.pathname);
+    sendTo(crypto.randomUUID(), tidyRequest(topic), true, { skill: { id: tidySkillId(topic), name: TIDY_SKILL_NAME }, attachments: [] });
+  }, [sendTo]);
 
   const rename = useCallback(
     (id: string, title: string) => {

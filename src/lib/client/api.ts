@@ -77,7 +77,9 @@ export const api = {
     blockId: string,
     body:
       | { action: "submit"; keepFiles?: string[]; verdicts?: VerdictCall[] }
-      | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string },
+      | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string }
+      | { action: "merge"; picks: number[]; edits?: Record<string, string> }
+      | { action: "undo" },
   ) =>
     request<{ response: UiResponse }>(`/api/conversations/${conversationId}/ui/${blockId}`, {
       method: "POST",

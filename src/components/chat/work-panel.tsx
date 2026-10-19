@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage, Timeline } from "@/lib/types";
 import { formatSeconds } from "./activity";
 import { AppGlyph } from "./app-glyph";
-import { findingsForReply, type Finding } from "./findings";
+import { chunkFindings, findingsForReply, type Chunk, type Finding, type ResearchChunk } from "./findings";
 import { StepPreview } from "./step-preview";
 import { VisualView } from "./visuals";
 
@@ -71,7 +71,7 @@ export function WorkPanel({
       >
         {groups.length === 0 ? (
           <p className="mt-2 px-2 text-[13.5px] leading-relaxed text-fg-3">
-            {running ? "What the agent finds and makes will show up here." : "No results in this conversation yet."}
+            {running ? "What I find and make will show up here." : "No results in this conversation yet."}
           </p>
         ) : (
           groups.map((group) => (
@@ -83,11 +83,7 @@ export function WorkPanel({
               {group.timeline && (group.timeline.entries.length > 0 || group.timeline.causes.length > 0) ? (
                 <TimelineView timeline={group.timeline} />
               ) : null}
-              <ol className="space-y-0.5">
-                {group.findings.map((finding) => (
-                  <FindingRow key={finding.id} finding={finding} />
-                ))}
-              </ol>
+              <Chunks chunks={chunkFindings(group.findings)} />
             </section>
           ))
         )}
@@ -188,6 +184,73 @@ function formatWhen(when: string): string {
   const date = new Date(at);
   const day = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
   return dateOnly ? day : `${day}, ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** Results this many deep show the first few and fold the rest behind "Show more". */
+const FOLD_AFTER = 8;
+const FOLDED_SHOW = 6;
+
+function Chunks({ chunks }: { chunks: Chunk[] }) {
+  const [all, setAll] = useState(false);
+  const results = chunks.filter((c) => c.kind === "finding").length;
+  const hide = !all && results > FOLD_AFTER ? results - FOLDED_SHOW : 0;
+  let shown = 0;
+  return (
+    <ol className="space-y-0.5">
+      {chunks.map((chunk) => {
+        if (chunk.kind === "research") return <ResearchRow key={chunk.id} chunk={chunk} />;
+        if (hide && shown++ >= FOLDED_SHOW) {
+          return shown === FOLDED_SHOW + 1 ? (
+            <li key="more">
+              <button
+                type="button"
+                onClick={() => setAll(true)}
+                className="w-full rounded-lg py-1.5 pr-2 pl-[38px] text-left text-[12.5px] text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+              >
+                Show {hide} more
+              </button>
+            </li>
+          ) : null;
+        }
+        return <FindingRow key={chunk.finding.id} finding={chunk.finding} />;
+      })}
+    </ol>
+  );
+}
+
+/** The looking behind the results, folded to one line: every source read, or each lookup. */
+function ResearchRow({ chunk }: { chunk: ResearchChunk }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="animate-fade-up">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-[13.5px] leading-snug transition-colors hover:bg-hover"
+      >
+        <AppGlyph app={chunk.app} size={18} className="mt-px" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-fg-2">{chunk.text}</span>
+          {chunk.detail ? <span className="block truncate text-[12px] text-fg-3">{chunk.detail}</span> : null}
+        </span>
+        <ChevronRight size={13} className={`mt-1 shrink-0 text-fg-4 transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open ? (
+        chunk.sources ? (
+          <div className="mt-1 mb-3 mr-2 ml-[38px] animate-fade-in">
+            <StepPreview preview={chunk.sources} size="panel" />
+          </div>
+        ) : (
+          <ol className="mb-2 ml-[28px] space-y-0.5 animate-fade-in">
+            {chunk.findings.map((finding) => (
+              <FindingRow key={finding.id} finding={finding} />
+            ))}
+          </ol>
+        )
+      ) : null}
+    </li>
+  );
 }
 
 function FindingRow({ finding }: { finding: Finding }) {

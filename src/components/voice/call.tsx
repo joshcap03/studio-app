@@ -370,6 +370,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
         return error ? `Refused: ${error}` : "Sent: their answers.";
       }
       if (reply.ui?.some((b) => b.kind === "proposal")) return "Refused: the proposed setup is applied with a tap on screen.";
+      if (reply.ui?.some((b) => b.kind === "memory-merge")) return "Refused: merging facts is done with a tap on screen.";
       return "Refused: there's no card open on screen.";
     },
   };

@@ -319,7 +319,8 @@ export function setupSession(member: ScriptedMember) {
           if (f.prefill?.length) values[f.id] = f.prefill;
           break;
         case "connect":
-          // Connecting is done in the card itself, not in the answer; the member skips it here.
+          // The member skips connecting; the card reports each app as it saw it, as a real one would.
+          values[f.id] = f.apps.map((app) => ({ app, status: "not_connected" }));
           break;
       }
     }

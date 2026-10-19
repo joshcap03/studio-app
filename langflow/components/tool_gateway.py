@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -274,6 +274,25 @@ class ProposeArgs(BaseModel):
     memories: list[str] = Field(default_factory=list, description="Lasting facts to remember about the owner, one sentence each.")
 
 
+MERGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "replaces": {"type": "array", "items": {"type": "string"},
+                     "description": "The ids of the facts this one replaces, exactly as listed (at least two)."},
+        "text": {"type": "string", "description": ("The merged fact: one or two self-contained sentences that keep every "
+                                                   "detail of the facts it replaces, at most 500 characters.")},
+        "category": {"type": "string", "description": "Optional: its topic (customers, suppliers, products, policies, voice, team, or other)."},
+    },
+    "required": ["replaces", "text"],
+}
+
+
+class MergeArgs(BaseModel):
+    summary: str = Field(default="", description="One short sentence on what you'd combine, e.g. '7 facts about pricing become 3'.")
+    merges: list[dict] = Field(description="Each merge: the facts it replaces and the one fact that replaces them.",
+                               json_schema_extra={"items": MERGE_SCHEMA, "minItems": 1, "maxItems": 8})
+
+
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
 DiscoverArgs.model_rebuild()
 ExecuteArgs.model_rebuild()
@@ -285,6 +304,7 @@ VisualArgs.model_rebuild()
 AskArgs.model_rebuild()
 FormArgs.model_rebuild()
 ProposeArgs.model_rebuild()
+MergeArgs.model_rebuild()
 
 
 def words(s):
@@ -911,9 +931,34 @@ class ToolGatewayComponent(Component):
                                       tasks: list | None = None, memories: list | None = None) -> str:
             return propose_agent(summary, profile, instructions, skills, tasks, memories)
 
+        def merge_memories(merges: list, summary: str = "") -> str:
+            # Changes nothing: the app checks each fact id against the owner's memory, shows the
+            # merges as a card, and only the owner's click merges them (with an Undo).
+            def plain(v):
+                return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
+            items = []
+            for m in (plain(m) for m in (merges or [])[:8]):
+                ids = [str(i).strip() for i in (m.get("replaces") or []) if str(i).strip()]
+                text = " ".join(str(m.get("text") or "").split())[:500]
+                if text and len(set(ids)) >= 2:
+                    item = {"replaces": list(dict.fromkeys(ids))[:12], "text": text}
+                    if m.get("category") in MEMORY_CATEGORIES:
+                        item["category"] = m["category"]
+                    items.append(item)
+            if not items:
+                return "Not shown: each merge needs the merged text and at least two fact ids it replaces."
+            return json.dumps({
+                "memory_merge": {"summary": " ".join(str(summary or "").split())[:600], "merges": items},
+                "note": ("The owner now sees these merges and picks which to make; nothing changes until they do. "
+                         "End your reply here with one or two short sentences."),
+            })
+
+        async def merge_memories_async(merges: list, summary: str = "") -> str:
+            return merge_memories(merges, summary)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, report_visual, cite, ask_user, show_form, propose_agent"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1024,5 +1069,14 @@ class ToolGatewayComponent(Component):
                              "Use it once you've learned what they want, e.g. at the end of setup or when they ask "
                              "you to change how you work. The owner reviews it and applies what they want; nothing "
                              "changes until they do. Call it as the last thing in your reply."),
+            ),
+            StructuredTool.from_function(
+                func=merge_memories, coroutine=merge_memories_async, name="merge_memories",
+                args_schema=MergeArgs,
+                description=("Propose combining facts you remember that overlap or repeat into fewer, clearer ones, "
+                             "naming each fact by an id you were given (as when tidying up memory). Each merged fact "
+                             "keeps every detail of the ones it replaces. The owner reviews the merges and makes the "
+                             "ones they want, and can undo them; nothing changes until they do. Call it once, as the "
+                             "last thing in your reply."),
             ),
         ]

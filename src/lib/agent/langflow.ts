@@ -151,13 +151,34 @@ export function modalityContext(modality: NonNullable<AgentTenantContext["modali
 
 /** The member's keep/pass calls lately: their standard in practice, for the agent to aim at. */
 function barContext(bar: NonNullable<AgentTenantContext["bar"]>): string {
-  const passes = bar.passes.map((p) => `- ${p.title}${p.reason ? ` (${p.reason})` : ""}`).join("\n");
+  const batch = bar.lastBatch;
+  const inBatch = new Set(batch?.items.map((i) => i.title) ?? []);
+  const passes = bar.passes
+    .filter((p) => !inBatch.has(p.title))
+    .map((p) => `- ${p.title}${p.reason ? ` (${p.reason})` : ""}`)
+    .join("\n");
   return [
-    `How you're doing against the member's bar: they kept ${bar.kept} of the ${bar.judged} results they judged in the last ${bar.days} days.`,
+    bar.judged > 0 && `How you're doing against the member's bar: they kept ${bar.kept} of the ${bar.judged} results they judged in the last ${bar.days} days.`,
+    batch && missedBatchContext(batch),
     passes && `What they passed on lately, and why (their standard; don't bring them more like these):\n${passes}`,
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * The last results the member judged missed their bar: before looking for more like them, the
+ * agent asks what to look for instead, unless the member has already said.
+ */
+function missedBatchContext(batch: NonNullable<NonNullable<AgentTenantContext["bar"]>["lastBatch"]>): string {
+  const items = batch.items.map((i) => `- ${i.verdict === "keep" ? "Kept" : "Passed"}: ${i.title}${i.reason ? ` (${i.reason})` : ""}`).join("\n");
+  const since = batch.since.map((s) => `- "${s}"`).join("\n");
+  return [
+    `The last results you brought them missed their bar: they passed on ${batch.kept ? `${batch.judged - batch.kept} of the ${batch.judged}` : `all ${batch.judged}`}.\n${items}`,
+    "Before you look for more like these (even when they ask you to find more, and in a scheduled run), ask them what to look for instead: one ask_user with 2-4 concrete readings drawn from what they passed on and why, your best guess first (they can always answer in their own words). Call it last and stop. When they tell you, remember it in one line.",
+    "If they've already told you what to look for instead (earlier in this chat, or in what they've said since, below), don't ask: say in a few words what you'll change, and go ahead.",
+    since ? `What they've said in other chats since then:\n${since}` : "They haven't said anything in other chats since then.",
+  ].join("\n");
 }
 
 /** This conversation is the agent's setup interview: its checklist so far. */
@@ -502,7 +523,10 @@ export function toolEvidence(message: LangflowMessage): AgentEvent[] {
   return items.length > 0 ? [{ type: "evidence", items }] : [];
 }
 
-/** Forms (show_form) and proposed agent setups (propose_agent) for the member (validated by the turn). */
+/**
+ * Forms (show_form), proposed agent setups (propose_agent), and proposed merges of remembered
+ * facts (merge_memories) for the member (validated by the turn).
+ */
 export function toolUi(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
   for (const tool of toolUses(message)) {
@@ -511,6 +535,7 @@ export function toolUi(message: LangflowMessage): AgentEvent[] {
     if (!isRecord(result)) continue;
     if (isRecord(result.form)) events.push({ type: "ui", block: { form: result.form } });
     else if (isRecord(result.proposal)) events.push({ type: "ui", block: { proposal: result.proposal } });
+    else if (isRecord(result.memory_merge)) events.push({ type: "ui", block: { memory_merge: result.memory_merge } });
   }
   return events;
 }

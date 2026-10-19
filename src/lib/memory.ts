@@ -1,6 +1,6 @@
 import { getConfig } from "@/lib/config";
 import type { Tenant } from "@/lib/tenant-core";
-import { toMemoryCategory, type Memory, type MemoryCategory } from "@/lib/types";
+import { toMemoryCategory, type MergedOriginal, type Memory, type MemoryCategory } from "@/lib/types";
 
 // Long-term memory, kept in Supermemory (v5 API). Every call is scoped to a namespace
 // derived from the caller's session: one per workspace (agent) for its shared facts, and one
@@ -395,6 +395,84 @@ export async function replaceMemory(tenant: Tenant, id: string, change: MemoryCh
   });
   await deleteDocument(tenant, parsed.where, parsed.documentId);
   return { ...next, mine: parsed.scope === "personal" || createdBy === tenant.userId };
+}
+
+function fail(status: number, message: string): never {
+  throw Object.assign(new Error(message), { status });
+}
+
+/**
+ * Combines facts into one. The merged fact is saved first (in their scope, pinned if any of
+ * them was, with the newest one's time and source, credited to whoever saved them all or else
+ * the caller), then the originals are removed, so nothing is lost if a step fails. All must be
+ * in one scope and each one the caller may change (documentToModify). Returns null, changing
+ * nothing, when any of them is gone.
+ */
+export async function mergeMemories(
+  tenant: Tenant,
+  ids: string[],
+  content: string,
+  category?: MemoryCategory,
+): Promise<{ memory: Memory; originals: MergedOriginal[] } | null> {
+  const parsed = [...new Set(ids)].map((id) => ({ id, ...parseMemoryId(id) }));
+  if (parsed.length < 2 || parsed.some((p) => !p.where)) fail(400, "Pick at least two facts to merge.");
+  const scope = parsed[0].scope!;
+  if (parsed.some((p) => p.scope !== scope)) fail(400, "Facts only you see merge only with each other.");
+  const docs = await Promise.all(parsed.map((p) => documentToModify(tenant, p.where!, p.documentId!)));
+  if (docs.some((d) => !d)) return null;
+  const originals: MergedOriginal[] = docs.map((doc, i) => {
+    const m = toMemory(tenant, parsed[i].where!, doc!);
+    const createdBy = typeof doc!.metadata?.createdBy === "string" ? doc!.metadata.createdBy : tenant.userId;
+    return { id: parsed[i].id, content: m.content, scope, category: m.category, pinned: m.pinned, source: m.source, createdBy, savedAt: m.createdAt };
+  });
+  const newest = [...originals].sort((a, b) => b.savedAt - a.savedAt);
+  const authors = new Set(originals.map((o) => o.createdBy));
+  const createdBy = authors.size === 1 ? originals[0].createdBy : tenant.userId;
+  const memory = await remember(tenant, content, scope, {
+    category: category ?? mostCommonCategory(originals.map((o) => o.category)),
+    pinned: originals.some((o) => o.pinned),
+    source: newest.find((o) => o.source)?.source,
+    createdBy,
+    savedAt: newest[0].savedAt || undefined,
+  });
+  const byWhere = new Map<Where, string[]>();
+  for (const p of parsed) byWhere.set(p.where!, [...(byWhere.get(p.where!) ?? []), p.documentId!]);
+  for (const [where, documentIds] of byWhere) await call(tenant, where, "document", { method: "DELETE", body: { ids: documentIds } });
+  return { memory: { ...memory, mine: scope === "personal" || createdBy === tenant.userId }, originals };
+}
+
+/** The category most of these facts have. */
+export function mostCommonCategory(categories: MemoryCategory[]): MemoryCategory {
+  const counts = new Map<MemoryCategory, number>();
+  for (const c of categories) counts.set(c, (counts.get(c) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "other";
+}
+
+/**
+ * Undoes a merge: saves the facts it replaced again (keeping who saved them, when, and where
+ * from), then removes the merged fact. Returns null, changing nothing, when the merged fact is
+ * gone (edited or removed since), so an Undo never brings back facts twice. A member who isn't
+ * the owner can only restore shared facts as their own.
+ */
+export async function unmergeMemories(tenant: Tenant, mergedId: string, originals: MergedOriginal[]): Promise<Memory[] | null> {
+  const parsed = parseMemoryId(mergedId);
+  if (!parsed) return null;
+  const doc = await documentToModify(tenant, parsed.where, parsed.documentId);
+  if (!doc) return null;
+  const restored: Memory[] = [];
+  for (const o of originals.filter((o) => o.scope === parsed.scope)) {
+    const createdBy = o.scope === "workspace" && tenant.workspace.role !== "owner" ? tenant.userId : o.createdBy;
+    const memory = await remember(tenant, o.content, o.scope, {
+      category: o.category,
+      pinned: o.pinned,
+      source: o.source,
+      createdBy,
+      savedAt: o.savedAt || undefined,
+    });
+    restored.push({ ...memory, mine: o.scope === "personal" || createdBy === tenant.userId });
+  }
+  await deleteDocument(tenant, parsed.where, parsed.documentId);
+  return restored;
 }
 
 interface ProfileResponse {

@@ -108,6 +108,7 @@ function questionLine(question: string, options: string[], multi: boolean): stri
 /** A card's title (and intro), with how to answer it by voice. Fixed words, the card's own content. */
 export function cardLine(block: UiBlock): string {
   if (block.kind === "proposal") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Apply when it looks right.`;
+  if (block.kind === "memory-merge") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Merge when it looks right.`;
   const intro = block.intro ? ` ${sentence(plain(block.intro))}` : "";
   const taps = block.fields.some((f) => f.kind === "file" || f.kind === "connect");
   return `${sentence(plain(block.title))}${intro} Tell me your answers${taps ? " (files and apps are taps)" : ""}, and say “send” when it's right.`;

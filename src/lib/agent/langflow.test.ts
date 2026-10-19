@@ -157,6 +157,39 @@ describe("Langflow request", () => {
     expect(system).toContain("- Designer II · Beta (Too junior)\n- Lead · Gamma");
     expect(system).toContain("- [done] Your bar (Bar set: 6 criteria)");
     expect(templateValues({ ...tenantA, bar: undefined }).system_context).not.toContain("member's bar");
+    expect(system).not.toContain("missed their bar");
+  });
+
+  it("has the agent ask what to look for instead after the member passed on most of the last results", () => {
+    const lastBatch = {
+      judged: 4,
+      kept: 0,
+      items: [
+        { title: "Senior PM · Coast", verdict: "pass" as const, reason: "Too early-stage" },
+        { title: "PM · Fomo", verdict: "pass" as const, reason: null },
+        { title: "Staff PM · Ramp", verdict: "pass" as const, reason: "Not NYC" },
+        { title: "PM · Brex", verdict: "pass" as const, reason: null },
+      ],
+      since: [],
+    };
+    const bar = { kept: 0, judged: 4, days: 7, passes: [{ title: "PM · Brex", reason: null }, { title: "Lead · Older", reason: "Agency" }], lastBatch };
+    const system = templateValues({ ...tenantA, bar }).system_context;
+    expect(system).toContain("missed their bar: they passed on all 4.\n- Passed: Senior PM · Coast (Too early-stage)\n- Passed: PM · Fomo\n");
+    expect(system).toContain("ask them what to look for instead: one ask_user");
+    expect(system).toContain("They haven't said anything in other chats since then.");
+    // The other passes still show; the batch's own aren't listed twice.
+    expect(system).toContain("- Lead · Older (Agency)");
+    expect(system.match(/PM · Brex/g)).toHaveLength(1);
+
+    const partly = { ...lastBatch, kept: 1, items: [{ ...lastBatch.items[0], verdict: "keep" as const, reason: null }, ...lastBatch.items.slice(1)] };
+    const later = templateValues({ ...tenantA, bar: { ...bar, kept: 1, lastBatch: { ...partly, since: ["Only Series B+ fintech in NYC"] } } }).system_context;
+    expect(later).toContain("they passed on 3 of the 4.\n- Kept: Senior PM · Coast\n");
+    expect(later).toContain(`What they've said in other chats since then:\n- "Only Series B+ fintech in NYC"`);
+
+    // A missed batch from before this week still asks, without a score of nothing.
+    const old = templateValues({ ...tenantA, bar: { kept: 0, judged: 0, days: 7, passes: [], lastBatch } }).system_context;
+    expect(old).toContain("missed their bar");
+    expect(old).not.toContain("they kept 0 of the 0");
   });
 
   it("keeps the setup instructions in view for the whole interview, not just its first message", () => {
@@ -592,7 +625,7 @@ describe("Langflow streaming", () => {
     const intro = { type: "text", text: "Let me check." };
     const answer = { type: "text", text: "Here's what I found." };
     const work = { type: "tool_use", name: "search", tool_input: {} };
-    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "remember", "propose_memory"]) {
+    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "remember", "propose_memory"]) {
       const direct = { type: "tool_use", name, tool_input: {} };
       const viaGateway = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: name, arguments: {} } };
       expect(openingLineIndexes([intro, work, answer, direct])).toEqual([0]);
@@ -934,7 +967,7 @@ describe("Langflow approvals", () => {
     expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ hidden: true });
   });
 
-  it("passes on forms and proposals only from structured show_form and propose_agent output, and hides the steps", async () => {
+  it("passes on forms and proposals only from structured show_form, propose_agent, and merge_memories output, and hides the steps", async () => {
     const form = { title: "Your search", fields: [{ kind: "text", label: "Role" }] };
     const proposal = { summary: "s", instructions: "Be brief." };
     const call = (name: string, id: string, content: unknown) => ({
@@ -944,12 +977,15 @@ describe("Langflow approvals", () => {
       output: { type: "tool", tool_call_id: id, content: JSON.stringify(content) },
       error: null,
     });
+    const memory_merge = { summary: "s", merges: [{ text: "A and B.", replaces: ["workspace:a", "workspace:b"] }] };
     const show = call("show_form", "c4", { form, note: "x" });
     const propose = call("propose_agent", "c5", { proposal, note: "x" });
+    const merge = call("merge_memories", "c6", { memory_merge, note: "x" });
     const chatter = { type: "tool_use", name: "search", tool_input: {}, output: JSON.stringify({ form }), error: null };
-    expect(toolUi(bot("", [show, propose]) as never)).toEqual([
+    expect(toolUi(bot("", [show, propose, merge]) as never)).toEqual([
       { type: "ui", block: { form } },
       { type: "ui", block: { proposal } },
+      { type: "ui", block: { memory_merge } },
     ]);
     expect(toolUi(bot("", [{ ...show, error: "boom" }]) as never)).toEqual([]);
     const { events } = await run(base, streamResponse([frame("add_message", bot("A few things.", [show, chatter])), frame("end", {})]));

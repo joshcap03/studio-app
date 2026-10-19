@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep } from "@/lib/types";
-import { findingFor, findingForArtifact, findingsForReply, summaryFromAgent } from "./findings";
+import { chunkFindings, findingFor, findingForArtifact, findingsForReply, summaryFromAgent } from "./findings";
 
 const step = (overrides: Partial<ActivityStep>): ActivityStep => ({
   id: "s",
@@ -81,5 +81,42 @@ describe("findings", () => {
       text: "Made “Inventory” in Google Sheets",
       app: "sheets",
     });
+  });
+
+  it("puts what was found first and folds the looking into one line per app", () => {
+    const web = (id: string, urls: string[], total?: number) =>
+      step({
+        id,
+        app: "web",
+        preview: { type: "sources", total, items: urls.map((u) => ({ title: u, url: `https://${u}/x`, domain: u })) },
+      });
+    const steps: ActivityStep[] = [
+      web("w1", ["jobs.ashbyhq.com", "linkedin.com"]),
+      step({ id: "g1", app: "granola", preview: { type: "text", text: "raw" } }),
+      web("w2", ["jobs.ashbyhq.com", "builtin.com", "linkedin.com/b"], 5),
+      step({ id: "t1", app: "tracker", label: "Tracked “Acme — PM”", preview: { type: "text", text: "Tracked “Acme — PM” (discovered)" } }),
+      step({ id: "g2", app: "granola", preview: { type: "text", text: "raw" } }),
+      step({ id: "x", app: "gmail", status: "failed", detail: "Gmail timed out." }),
+    ];
+    const chunks = chunkFindings(findingsForReply(steps, [{ id: "a", kind: "document", title: "Shortlist", source: "Google Docs", url: "https://d/x" }]));
+    expect(chunks.map((c) => (c.kind === "finding" ? c.finding.text : c.text))).toEqual([
+      "Tracked “Acme — PM” (discovered)",
+      "Hit a snag: Gmail timed out.",
+      "Made “Shortlist” in Google Docs",
+      // One URL read twice counts once; the second search's unlisted 2 still count.
+      "Read 6 sources across 2 searches",
+      "Looked through Granola 2 times",
+    ]);
+    const research = chunks[3];
+    expect(research.kind === "research" && research.detail).toBe("jobs.ashbyhq.com, linkedin.com, builtin.com and 1 more site");
+    expect(research.kind === "research" && research.sources?.items).toHaveLength(4);
+  });
+
+  it("leaves a lone lookup as its own line", () => {
+    const steps: ActivityStep[] = [
+      step({ id: "w", app: "web", preview: { type: "sources", items: [{ title: "A", url: "https://a.example/", domain: "a.example" }] } }),
+      step({ id: "t", app: "tracker", preview: { type: "text", text: "Tracked “B”" } }),
+    ];
+    expect(chunkFindings(findingsForReply(steps, [])).map((c) => c.kind === "finding" && c.finding.text)).toEqual(["Tracked “B”", "Read 1 source: a.example"]);
   });
 });

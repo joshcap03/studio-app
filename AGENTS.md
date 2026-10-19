@@ -25,7 +25,8 @@ gitignored and stays out of the repo.
 - `npm run typecheck`, `npm test`, `npm run build`
 - `npm run test:integration`: needs local Supabase; API tests also need `qa:serve`;
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
-  with those, `job-search.eval.test.ts` evals the Job search template on the real model.
+  with those, `job-search.eval.test.ts` evals the Job search template and `tidy.eval.test.ts`
+  the Brain's "Tidy up" on the real model.
 - `npx trigger.dev dev`: runs the background worker locally (needs a Trigger.dev login and
   `TRIGGER_PROJECT_REF`); it deploys from GitHub Actions after each Vercel production deploy.
 
@@ -46,7 +47,7 @@ raw/technical text.
 - `src/lib/db/store.ts`: conversation persistence, scoped to one workspace + user.
 - `src/lib/workspace.ts`: settings (the agent profile, "what this agent is for", is stored in
   `workspace_settings.business_context`), usage/limits, and the per-run agent context.
-- `src/lib/templates/`: built-in starting points (Job search, Small business, Blank). Applying
+- `src/lib/templates/`: built-in starting points (Job search, Small business, Sales pipeline, Inbox & calendar, Content & social, Blank). Applying
   one (`apply.ts`) copies instructions and library skills into the workspace without
   overwriting anything, and (with the "tasks" preview) gives the member the template's tasks,
   paused; suggested apps are shown, never connected automatically. Every template ships a
@@ -56,7 +57,9 @@ raw/technical text.
 - `src/lib/memory.ts`: long-term memory in Supermemory, namespaced from the session: `ws_<workspace>`
   for an agent's shared facts, `u_<user>` for the person's own (shared by all their agents). Old
   per-workspace personal namespaces move into `u_<user>` on first use. The flow must not have its
-  own memory connection.
+  own memory connection. `memory-merge.ts` tidies it: "Tidy up" on a Brain topic attaches that
+  topic's tidy skill (`src/lib/skills/tidy.ts`, facts listed by id), the agent proposes merges with
+  `merge_memories`, and the member merges what they pick (keeping pins and sources) or undoes it.
 - `src/lib/companion.ts`: who each agent is to one member (the "companion" preview). It starts as a
   sketch of the Studio diamond (`src/components/ui/companion.tsx`), is drawn in with their chat runs,
   is ready once it knows them (thresholds in `KNOWS_YOU`), and arrives with a name the member keeps.
@@ -135,7 +138,7 @@ raw/technical text.
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
   the member's behalf. Provider resume state stays server-side.
 - Agent-rendered UI is built as reusable gateway tools any skill can call (`ask_user`,
-  `show_form`, `propose_agent`; cards in `src/components/chat/ui-cards.tsx` and
+  `show_form`, `propose_agent`, `merge_memories`; cards in `src/components/chat/ui-cards.tsx` and
   `requests.tsx`), never as UI for one flow or template. They change nothing: a form's
   answers go out as the member's next message, and a proposed setup applies only when the
   member clicks Apply, and the card shows only what took effect.

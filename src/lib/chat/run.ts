@@ -8,6 +8,7 @@ import { getCompanion, refreshCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
 import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
+import { resolveMergeProposal } from "@/lib/memory-merge";
 import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { getSkill } from "@/lib/skills";
@@ -125,6 +126,7 @@ export async function buildTurnDeps(
     },
     projectFiles: files,
     remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
+    resolveMerge: memoryEnabled() ? (raw) => resolveMergeProposal(tenant, raw) : undefined,
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
     claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
