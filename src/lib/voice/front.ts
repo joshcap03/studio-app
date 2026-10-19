@@ -59,6 +59,9 @@ const stage = z
   .strip();
 const marker = z.object({ say: z.array(z.string().max(600)).max(8).optional(), stage: stage.optional(), cue: z.enum(VOICE_CUES).optional() }).strip();
 
+/** The tool calls the voice front deals in; anything else is the provider's own. */
+const ALLOWED_CALLS = new Set<string>([...VOICE_TOOL_NAMES, "skip_turn", "end_call"]);
+
 export function textOf(c: FrontMessage["content"]): string {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) return c.map((p) => p.text ?? "").join("");
@@ -67,14 +70,63 @@ export function textOf(c: FrontMessage["content"]): string {
 
 /** A Studio marker in a message (any role: providers may deliver contextual updates as system or user text). */
 export function readMarker(m: FrontMessage): VoiceMarker | null {
-  const text = textOf(m.content).trim();
-  if (!text.startsWith(VOICE_MARKER)) return null;
+  const text = markerText(m);
+  if (text === null) return null;
   try {
     const parsed = marker.safeParse(JSON.parse(text.slice(VOICE_MARKER.length)));
     return parsed.success ? (parsed.data as VoiceMarker) : {};
   } catch {
     return {};
   }
+}
+
+/**
+ * A message's marker text: its content, or, for ElevenLabs' contextual updates (which reach the
+ * model as an assistant `contextual_update` tool call), a string in the call's arguments.
+ */
+function markerText(m: FrontMessage): string | null {
+  const text = textOf(m.content).trim();
+  if (text.startsWith(VOICE_MARKER)) return text;
+  for (const call of m.tool_calls ?? []) {
+    if (ALLOWED_CALLS.has(call.function.name)) continue;
+    try {
+      const args = JSON.parse(call.function.arguments ?? "{}") as unknown;
+      const found = (args && typeof args === "object" ? Object.values(args) : []).find((v): v is string => typeof v === "string" && v.trim().startsWith(VOICE_MARKER));
+      if (found) return found.trim();
+    } catch {
+      // not JSON: not ours
+    }
+  }
+  return null;
+}
+
+/**
+ * The call as the voice front reads it: no provider prompt, and none of the provider's own tool
+ * traffic (contextual updates arrive as tool calls and their results). With `markers`, Studio's
+ * marked messages stay in.
+ */
+function callTurns(messages: FrontMessage[], { markers = false } = {}): FrontMessage[] {
+  const foreign = new Set<string>();
+  const out: FrontMessage[] = [];
+  for (const m of messages) {
+    if (m.role === "system" || m.role === "developer") continue;
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      for (const call of m.tool_calls) if (!ALLOWED_CALLS.has(call.function.name) && call.id) foreign.add(call.id);
+    }
+    if (m.role === "tool" && m.tool_call_id && foreign.has(m.tool_call_id)) continue;
+    if (readMarker(m)) {
+      if (markers) out.push(m);
+      continue;
+    }
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      const ours = m.tool_calls.filter((call) => ALLOWED_CALLS.has(call.function.name));
+      if (!ours.length && !textOf(m.content).trim()) continue;
+      out.push({ ...m, tool_calls: ours.length ? ours : undefined });
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
 }
 
 /** The stage the browser last reported. */
@@ -100,7 +152,7 @@ export type FrontPlan = { kind: "say"; text: string } | { kind: "skip" } | { kin
 
 /** The tool results at the end of the conversation, oldest first. */
 function trailingResults(messages: FrontMessage[]): string[] {
-  const turns = messages.filter((m) => m.role !== "system" && m.role !== "developer" && !readMarker(m));
+  const turns = callTurns(messages);
   const results: string[] = [];
   for (let i = turns.length - 1; i >= 0 && turns[i].role === "tool"; i--) results.unshift(textOf(turns[i].content));
   return results;
@@ -149,8 +201,8 @@ export function speechForResults(results: string[]): string | null {
  * (only for the member's own speech and tool results).
  */
 export function planReply(context: VoiceContext, messages: FrontMessage[]): FrontPlan {
-  const turns = messages.filter((m) => m.role !== "system" && m.role !== "developer");
-  const spoken = turns.some((m) => m.role === "assistant" && (textOf(m.content).trim() || m.tool_calls?.length));
+  const turns = callTurns(messages, { markers: true });
+  const spoken = turns.some((m) => m.role === "assistant" && !readMarker(m) && (textOf(m.content).trim() || m.tool_calls?.length));
   const stageNow = latestStage(messages);
   const last = turns.at(-1);
   if (!last) return { kind: "say", text: greeting(context, stageNow) };
@@ -173,8 +225,7 @@ export function planReply(context: VoiceContext, messages: FrontMessage[]): Fron
 /** The conversation as the model sees it: no provider prompt, no Studio markers. */
 export function modelMessages(context: VoiceContext, messages: FrontMessage[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [{ role: "system", content: voicePrompt(context, latestStage(messages)) }];
-  for (const m of messages) {
-    if (m.role === "system" || m.role === "developer" || readMarker(m)) continue;
+  for (const m of callTurns(messages)) {
     if (m.role === "tool") out.push({ role: "tool", tool_call_id: m.tool_call_id ?? "", content: textOf(m.content).slice(0, 2000) });
     else if (m.role === "assistant") out.push({ role: "assistant", content: textOf(m.content) || null, ...(m.tool_calls?.length ? { tool_calls: m.tool_calls } : {}) });
     else out.push({ role: "user", content: textOf(m.content).slice(0, 4000) });
@@ -204,7 +255,7 @@ export function modelTools(requested: FrontRequest["tools"]): Record<string, unk
 
 /** The scripted mock's answer to the latest turn. */
 export function mockReply(messages: FrontMessage[]): BrainReply {
-  const turns = messages.filter((m) => m.role !== "system" && m.role !== "developer" && !readMarker(m));
+  const turns = callTurns(messages);
   const results = trailingResults(messages);
   if (results.length) return mockReplyToRefusals(results);
   const said = turns.at(-1)?.role === "user" ? textOf(turns.at(-1)!.content) : "";
@@ -256,7 +307,6 @@ export function spokenText(raw: unknown): string {
   return sayable(sentences.slice(0, 2).join(" "), 240);
 }
 
-const ALLOWED_CALLS = new Set<string>([...VOICE_TOOL_NAMES, "skip_turn", "end_call"]);
 
 /**
  * The model's turn, from an OpenAI-compatible endpoint. It chooses what to do; it only gets to
