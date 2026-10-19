@@ -1319,7 +1319,7 @@ function WorkspaceShell({
                   ) : null}
                   {setup && activeId === setup.conversationId && setup.status !== "skipped" ? (
                     <div className="mb-2 flex items-stretch gap-2 animate-fade-up">
-                      <Journey steps={setup.plan} title="Setting up" className="min-w-0 flex-1" />
+                      <Journey steps={setup.plan} title="Setting up" growing className="min-w-0 flex-1" />
                       {voice && setup.status === "in_progress" ? (
                         <button
                           type="button"

@@ -164,12 +164,12 @@ function SetupBanner({
             <div className="mt-1.5 flex items-center gap-2.5">
               <JourneyBar steps={setup.plan} className="max-w-48 flex-1" />
               <span className="shrink-0 text-[12px] text-fg-3">
-                {setup.done} of {setup.total}
+                {setup.done} {setup.done === 1 ? "step" : "steps"} done
               </span>
             </div>
           ) : (
             <p className="text-[12.5px] leading-[1.45] text-fg-3">
-              A few quick questions{setup.total ? ` (${setup.total} steps)` : ""} so it works the way you need.
+              A short conversation about what you need, so it works the way you need.
             </p>
           )}
         </div>

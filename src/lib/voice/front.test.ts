@@ -34,7 +34,7 @@ const stage: VoiceStage = {
 describe("planReply", () => {
   it("greets first, from the persona and the journey, without a model", () => {
     expect(planReply(context, [providerPrompt])).toEqual({ kind: "say", text: "Hey! I'm Rowan." });
-    expect(planReply(context, [providerPrompt, mark({ cue: "hello", stage })])).toEqual({ kind: "say", text: "Hey! I'm Rowan. About 6 steps, starting with your search." });
+    expect(planReply(context, [providerPrompt, mark({ cue: "hello", stage })])).toEqual({ kind: "say", text: "Hey! I'm Rowan. We'll start with your search." });
   });
 
   it("doesn't greet twice", () => {
@@ -216,7 +216,7 @@ describe("ElevenLabs' contextual updates", () => {
     // And the greeting picks up the stage the update carried.
     expect(planReply(context, [mark({ cue: "hello" }), update, updateResult, mark({ cue: "hello" })])).toEqual({
       kind: "say",
-      text: "Hey! I'm Rowan. About 6 steps, starting with your search.",
+      text: "Hey! I'm Rowan. We'll start with your search.",
     });
   });
 

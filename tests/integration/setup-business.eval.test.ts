@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { carriesRankedBar, describeTurn, liveFlow, setupSession, type ScriptedMember, type Turn } from "./setup-harness";
+import { carriesRankedBar, checklistGrowth, describeTurn, liveFlow, setupSession, type ScriptedMember, type Turn } from "./setup-harness";
 
 // Eval of the Small business setup interview against a live flow with a real model
 // (LANGFLOW_TEST_* env; see setup-harness.ts), for an owner who doesn't know yet what they need:
@@ -63,7 +63,7 @@ const OWNER: ScriptedMember = {
 const FROM_BAR = /monday|9 ?am|friendly|pushy|late fee/i;
 /** Saying what it can't reach yet: their invoices are in an app that isn't connected. */
 const MISSING_APP =
-  /\b(?:(?:isn't|is not|aren't|are not|not)(?: yet)? connected|no (?:\w+ ){0,3}(?:apps?|sheets?|accounts?|tools?) (?:is |are )?(?:yet )?(?:connected|linked)|(?:once|until) (?:you(?:'ve)?|it's|it is|they're)\b[^.]{0,40}\bconnect|connect (?:it|them|quickbooks|google sheets|your)|(?:can't|cannot|couldn't) (?:see|reach|read|access)|no access|don't have access|without access)/i;
+  /\b(?:(?:isn't|is not|aren't|are not|not)(?: yet)? connected|no (?:\w+ ){0,3}(?:apps?|sheets?|accounts?|tools?) (?:is |are )?(?:yet )?(?:connected|linked)|(?:once|until) [^.]{0,40}\bconnect|connect (?:it|them|quickbooks|google sheets|your)|(?:can't|cannot|couldn't) (?:see|reach|read|access)|no access|don't have access|without access)/i;
 const plain = (s: string) => s.replace(/[‘’]/g, "'");
 
 const isTrial = (x: Turn) => x.form?.fields.some((f) => f.kind === "verdict" && f.items.length >= 2) ?? false;
@@ -114,6 +114,13 @@ describe.skipIf(!liveFlow)("Small business setup interview against a live flow",
     // Their invoices were never connected, so it can't promise to chase them unseen.
     expect(`${last.reply}\n${instructions}`, "the proposal hides that it can't see their invoices yet").toSatisfy((text: string) => MISSING_APP.test(plain(text)));
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
+  });
+
+  it("lists only what it knows: two steps to start, and nothing past the bar until it's confirmed", () => {
+    const growth = checklistGrowth(turns);
+    expect(growth.first, "no checklist on the first reply").not.toBeNull();
+    expect(growth.first!, "the first checklist laid out the whole setup").toBeLessThanOrEqual(2);
+    expect(growth.early, "the checklist listed later setup before the bar was confirmed").toEqual([]);
   });
 
   it("changes nothing outside the owner's own notes before Apply", () => {

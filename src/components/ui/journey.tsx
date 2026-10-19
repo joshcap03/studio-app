@@ -76,7 +76,18 @@ export function JourneyList({ steps }: { steps: JourneyStep[] }) {
  * The rail with the step under way named beside it ("Step 3 of 6 · Your résumé"); opens into the
  * whole list. `title` names the journey when there's room, e.g. "Setting up".
  */
-export function Journey({ steps, title, className = "" }: { steps: JourneyStep[]; title?: string; className?: string }) {
+export function Journey({
+  steps,
+  title,
+  growing = false,
+  className = "",
+}: {
+  steps: JourneyStep[];
+  title?: string;
+  /** The list grows as it goes (setup adds steps once it knows they're needed), so no "of N". */
+  growing?: boolean;
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
   const id = useId();
   if (steps.length === 0) return null;
@@ -94,7 +105,7 @@ export function Journey({ steps, title, className = "" }: { steps: JourneyStep[]
         <span className="flex w-full items-baseline gap-2 text-[12.5px]">
           {title ? <span className="shrink-0 font-medium text-fg-2">{title}</span> : null}
           <span key={finished ? "done" : at} className="min-w-0 flex-1 truncate text-fg-3 animate-fade-in">
-            {finished ? "All steps done" : `Step ${at + 1} of ${steps.length} · ${steps[at].text}`}
+            {finished ? "All steps done" : `Step ${at + 1}${growing ? "" : ` of ${steps.length}`} · ${steps[at].text}`}
           </span>
           <ChevronDown size={14} className={`shrink-0 self-center text-fg-4 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
         </span>

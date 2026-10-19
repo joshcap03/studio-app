@@ -1,5 +1,5 @@
 import { describeSchedule } from "@/lib/tasks/schedule";
-import { DEFAULT_TEMPLATE_ID, setupSteps, templateById, type AgentTemplate } from "@/lib/templates";
+import { DEFAULT_TEMPLATE_ID, SUCCESS_STEP, setupSteps, templateById, type AgentTemplate } from "@/lib/templates";
 import type { WorkspaceSkill } from "@/lib/types";
 import { CATALOG } from "./catalog";
 
@@ -20,16 +20,21 @@ Set this agent up with the owner, carefully and methodically, the way a good pro
 - Don't plan, suggest tasks, or design anything until they've agreed on their problem and confirmed their bar, and build every later step on both.
 - Read any file they add before the next step. Use only facts from their files and answers; never invent experience, numbers, or preferences.
 - Remember lasting facts as you learn them, with remember, as usual.
-- On your first reply, call update_plan with one step per setup step below (the current one "doing", the rest "todo"), and update it as steps finish or are skipped. Give each finished step a note: what it gave you, in a few words from their answers (e.g. "Need: fewer, better-fitting roles, not more applications", "Bar set: 5 criteria"); a skipped step's note says why.
+- Keep their checklist with update_plan, and put on it only what you know you'll do. On your first reply it has two steps: understanding what they're after ("doing") and agreeing how success will be judged ("todo"). Add the others only once you know they're needed, named for their problem: what a fair trial needs (like their résumé) once they've agreed on their problem, then the rest of the setup once they've confirmed their bar, ending with your proposal. Never list a step their problem doesn't need, and never show them the whole guide below as their plan; if the checklist so far lists steps you don't yet know you'll need, cut it back on your next update_plan, keeping finished steps and their notes. Update it as steps finish. Give each finished step a note: what it gave you, in a few words from their answers (e.g. "Need: fewer, better-fitting roles, not more applications", "Bar set: 5 criteria").
 - If they want to stop, skip a step, or change course, do that.
 - Offer an app only with a connect field in a form (never composio_manage_connections during setup), and each app once: if they skip it, carry on without it and name the gap in your proposal.
 - Setup is never done mid-conversation: don't start doing the job beyond the trial run, and don't save results to the tracker before they apply. Your setup is proposed only by calling propose_agent; never say it's ready, drafted, or proposed in a reply that doesn't call it.
 - Finish with propose_agent, then stop. Its instructions open with a "What success means" section: their confirmed criteria and deal-breakers in their words, then "Check every result against these before you send it, and say plainly which one it misses." Every task you propose serves one of the criteria, and its instructions end with: "Finish by showing the results in a show_form verdict field (title, one line on why it fits, link), with 3-5 reasons I might pass, so I can keep or pass on each." In your reply, say for each criterion how you'll meet it, and be honest about any you can't meet yet (a missing app, data, or ability) and what would close the gap; never promise more than you can do. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it, and that once they do, "Do the first one now" runs the first task for real.`;
 
 function steps(template: AgentTemplate): string {
-  // Step 1 repeats how the first reply opens, where the agent is looking when it writes it.
+  // Step 1 repeats how the first reply opens, where the agent is looking when it writes it; the
+  // steps after the bar say so, so none goes on their checklist before they've confirmed it.
+  const bar = setupSteps(template).findIndex((s) => s.id === SUCCESS_STEP.id);
   return setupSteps(template)
-    .map((s, i) => `${i + 1}. ${s.title}: ${i === 0 ? 'Your first reply begins "Hey!" (see above). ' : ""}${s.goal}`)
+    .map((s, i) => {
+      const lead = i === 0 ? 'Your first reply begins "Hey!" (see above). ' : i > bar ? "Only once their bar is confirmed (not on their checklist before then). " : "";
+      return `${i + 1}. ${s.title}: ${lead}${s.goal}`;
+    })
     .join("\n");
 }
 
@@ -57,7 +62,7 @@ export function setupSkill(templateId: string | null | undefined): WorkspaceSkil
 
 This agent started from the "${template.name}" template. ${template.setup.intro}
 
-Steps:
+What setup may cover, in order (your guide, not their checklist):
 ${steps(template)}${templateTasks(template)}${library()}`,
     createdAt: 0,
   };

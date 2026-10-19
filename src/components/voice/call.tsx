@@ -781,7 +781,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
         {/* The stage: only what the backend reported. */}
         <section aria-label="On screen" className="scroll-quiet min-h-0 overflow-y-auto border-t border-line px-4 pt-4 pb-10 md:border-t-0 md:px-8 md:pt-6">
           <div className="mx-auto flex w-full max-w-[40rem] flex-col">
-            {plan?.length ? <Journey steps={plan} title="Setting up" /> : null}
+            {plan?.length ? <Journey steps={plan} title="Setting up" growing /> : null}
             {latestReply?.content.trim() ? (
               <div className="mt-4 text-[14.5px]">
                 <Markdown content={latestReply.content} citations={latestReply.citations} />

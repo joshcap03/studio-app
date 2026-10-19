@@ -102,6 +102,35 @@ export function carriesRankedBar(turns: Turn[], instructions: string): boolean {
   return found.length * 2 >= criteria.length;
 }
 
+/**
+ * The checklist sizes the agent reported, turn by turn, and the turn where the member confirmed
+ * their bar (sent their ranking). A setup lists only what it knows: two steps to start, the rest
+ * once it understands their problem and bar.
+ */
+export function checklistGrowth(turns: Turn[]): { first: number | null; early: string[]; barAt: number } {
+  const plans = turns.map((t) => {
+    const updates = t.events.filter((e): e is Extract<AgentEvent, { type: "plan-update" }> => e.type === "plan-update");
+    return updates.length ? planFromAgent(updates[updates.length - 1].plan) : null;
+  });
+  // The bar is confirmed on the turn the agent marks its bar step done; failing that, at the
+  // member's last ranking, or the proposal.
+  const barDone = plans.findIndex((p) => p?.some((s) => /success|\bbar\b|judg/i.test(s.text) && s.status === "done") ?? false);
+  const lastRanking = turns.map((t) => /most important first\)?:/i.test(t.message)).lastIndexOf(true);
+  const proposal = turns.findIndex((t) => t.proposal);
+  const barAt = [barDone, lastRanking, proposal].find((i) => i >= 0) ?? -1;
+  const until = barAt === -1 ? plans.length : barAt;
+  // Before the bar, only what getting to it needs: their problem, what a fair trial needs (e.g. a
+  // résumé), the trial, the bar itself, and the proposal it ends in. Anything else is later setup.
+  const known = /understand|after|problem|hard|résumé|resume|file|background|trial|success|bar\b|judg|propos/i;
+  const later = /\b(connect|apps?|tools?|stories|define the search|search settings|cadence|schedule|rhythm|when i work|chase day|your business)\b/i;
+  const early = plans
+    .slice(0, until)
+    .flatMap((p) => p ?? [])
+    .map((s) => s.text)
+    .filter((text, i, all) => (later.test(text) || !known.test(text)) && all.indexOf(text) === i);
+  return { first: plans.find((p) => p !== null)?.length ?? null, early, barAt };
+}
+
 /** Median and 90th percentile of how long turns took, in seconds, for the eval log. */
 export function timing(turns: Turn[]): { turns: number; p50: number; p90: number; max: number } {
   const ms = turns.map((t) => t.ms).sort((a, b) => a - b);

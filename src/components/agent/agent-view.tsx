@@ -451,7 +451,7 @@ function SetupInterview({ setup }: { setup: WorkspaceSettings["setup"] }) {
     setup?.status === "done"
       ? "Done. Run it again any time to rethink how this agent works for you."
       : setup?.status === "in_progress"
-        ? `In progress${setup.plan.length ? `: ${done} of ${setup.plan.length} steps done` : ""}.`
+        ? `In progress${setup.plan.length ? `: ${done} ${done === 1 ? "step" : "steps"} done so far` : ""}.`
         : "A short interview: the agent asks what it needs, then suggests how it'll work for you.";
   const resume = setup?.status === "in_progress" && setup.conversationId;
   return (

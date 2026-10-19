@@ -62,7 +62,7 @@ export function describeStage(stage: VoiceStage | null): string {
   if (!stage) return "Nothing yet.";
   const lines: string[] = [stage.working ? "You're working on something now." : "You're not working on anything right now."];
   if (stage.journey) {
-    lines.push(`Setup: ${stage.journey.done} of ${stage.journey.total} steps done${stage.journey.current ? `; now: ${stage.journey.current}` : ""}.`);
+    lines.push(`Setup: ${stage.journey.done} ${stage.journey.done === 1 ? "step" : "steps"} done so far${stage.journey.current ? `; now: ${stage.journey.current}` : ""}.`);
   }
   if (stage.form) {
     lines.push(`Card on screen: "${stage.form.title}"`);
@@ -90,9 +90,9 @@ function fieldLine(f: StageField): string {
 
 /** The opening line, said by the voice before the worker's first words. */
 export function greeting(context: VoiceContext, stage: VoiceStage | null): string {
-  const steps = stage?.journey?.total;
+  // No step count: setup's checklist grows as the agent learns what they need.
   const first = stage?.journey?.current;
-  const plan = steps ? ` About ${steps} steps${first ? `, starting with ${first.charAt(0).toLowerCase()}${first.slice(1)}` : ""}.` : "";
+  const plan = first ? ` We'll start with ${first.charAt(0).toLowerCase()}${first.slice(1)}.` : "";
   return `Hey! I'm ${context.name}.${plan}`;
 }
 
