@@ -139,6 +139,28 @@ describe("listMemories", () => {
       ["workspace:w1", false],
     ]);
   });
+
+  it("reads past the first page, and stops if paging isn't honored or a later page fails", async () => {
+    const page = (c: Call) => Number(new URL(c.url).searchParams.get("page") ?? 1);
+    const rows = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => ({ id: `${prefix}${i}`, metadata: { text: `fact ${prefix}${i}` } }));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    reply = (call) => {
+      if (where(call) === "workspace") return Response.json({ documents: page(call) === 1 ? rows("a", 100) : page(call) === 2 ? rows("b", 30) : [] });
+      // The personal scope ignores `page`: the same first page every time.
+      if (where(call) === "personal") return Response.json({ documents: rows("p", 100) });
+      return Response.json({ documents: [] });
+    };
+    const list = await listMemories(tenant());
+    expect(list.filter((m) => m.scope === "workspace")).toHaveLength(130);
+    expect(list.filter((m) => m.scope === "personal")).toHaveLength(100);
+    expect(calls.filter((c) => where(c) === "personal" && c.url.includes("/list/"))).toHaveLength(2);
+
+    calls = [];
+    reply = (call) =>
+      where(call) === "workspace" && page(call) > 1 ? new Response("down", { status: 500 }) : Response.json({ documents: where(call) === "workspace" ? rows("a", 100) : [] });
+    expect(await listMemories(tenant())).toHaveLength(100);
+    error.mockRestore();
+  });
 });
 
 describe("forget", () => {
