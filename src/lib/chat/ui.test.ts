@@ -167,6 +167,15 @@ describe("form answers", () => {
   });
 });
 
+describe("drafted results", () => {
+  it("keeps a drafted result's text whole, under the names models use for it", () => {
+    const draft = "A client's Saturday food cost hit 38%.\nTuesday was 29%.\n\nCheck your best night first.";
+    const block = buildUiBlock({ form: { title: "Trial run", fields: [{ type: "verdict", label: "Drafts", items: [{ title: "Draft 1", text: draft }, { title: "Draft 2", content: "x".repeat(1200) }] }] } }, "v") as UiForm;
+    const items = block.fields[0].kind === "verdict" ? block.fields[0].items : [];
+    expect(items.map((i) => i.body)).toEqual([draft, "x".repeat(1200)]);
+  });
+});
+
 describe("loose agent output", () => {
   it("reads prefills, ids, and list drafts under the names models often use", () => {
     // As a real model sent them during setup: type/name/value, parts with key and type "long", drafts as items.

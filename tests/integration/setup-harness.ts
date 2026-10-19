@@ -126,8 +126,9 @@ export function checklistGrowth(turns: Turn[]): { first: number | null; early: s
   const barAt = [barDone, lastRanking, proposal].find((i) => i >= 0) ?? -1;
   const until = barAt === -1 ? plans.length : barAt;
   // Before the bar, only what getting to it needs: their problem, what a fair trial needs (e.g. a
-  // résumé), the trial, the bar itself, how to do it well, and the proposal it ends in. Anything else is later setup.
-  const known = /understand|after|problem|hard|résumé|resume|file|background|trial|success|bar\b|judg|how to do|do (?:it|this|the \w+) well|propos/i;
+  // résumé, what they sell, their voice or writing), the trial, the bar itself, how to do it well, and the
+  // proposal it ends in. Anything else is later setup.
+  const known = /understand|after|problem|hard|résumé|resume|file|background|\bsell|\bbuys?\b|customers|\bvoice\b|\bwriting\b|\bsamples\b|where (?:to|i can|i'll) help|trial|success|bar\b|judg|how to do|do (?:it|this|the \w+) well|propos/i;
   const later = /\b(connect|apps?|tools?|stories|define the search|search settings|cadence|schedule|rhythm|when i work|chase day|your business)\b/i;
   const early = plans
     .slice(0, until)
@@ -138,9 +139,9 @@ export function checklistGrowth(turns: Turn[]): { first: number | null; early: s
   return { first: plans.find((p) => p !== null)?.length ?? null, early, barAt };
 }
 
-/** The member has sent their ranked bar, so what comes next is built on it. */
+/** The member has sent their bar (ranked, or answered on a card titled for it), so what comes next is built on it. */
 export function barSent(turns: Turn[]): boolean {
-  return turns.some((t) => /most important first\)?:/i.test(t.message));
+  return turns.some((t, i) => /most important first\)?:/i.test(t.message) || (i > 0 && /\byour bar\b/i.test(turns[i - 1].form?.title ?? "")));
 }
 
 /** A plan written out in the agent's reply: three or more numbered steps. */
@@ -182,6 +183,8 @@ export function setupSession(member: ScriptedMember) {
   };
   let config: LangflowConfig | undefined;
   let discovered = 0;
+  // They agree with the agent's advice once; after that, its replies are the next steps.
+  let agreed = false;
 
   const file = (): AgentAttachment => ({
     id: crypto.randomUUID(),
@@ -262,11 +265,16 @@ export function setupSession(member: ScriptedMember) {
   }
 
   /** The member's reply to a plain question: the next part of their story, or a yes to a playback. */
-  function talk(reply: string): string {
-    const asked = member.reply?.(reply);
+  function talk(said: string): string {
+    const asked = member.reply?.(said);
     if (asked) return asked;
-    // Advice is a considered read with ways to help, not a passing "before I suggest anything".
-    if (discovered >= 2 && reply.length > 250 && member.advice.test(reply)) return member.agree;
+    const reply = said.replace(/[‘’]/g, "'");
+    // Advice is a considered read with ways to help, not a passing "before I suggest anything" or
+    // "let's start with your customers".
+    if (!agreed && discovered >= 2 && reply.length > 400 && member.advice.test(reply) && !/\bbefore i (suggest|recommend|advise)/i.test(reply)) {
+      agreed = true;
+      return member.agree;
+    }
     if (discovered >= 2 && /\b(right|correct|accurate|sound right|fair|is that it|get that right)\?/i.test(reply)) return "Yes, that's exactly it.";
     return member.discovery[discovered++] ?? "Yes, that's right. Go on.";
   }
