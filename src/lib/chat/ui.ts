@@ -145,7 +145,7 @@ function verdictItems(raw: unknown): UiVerdictItem[] {
     const r = isRecord(i) ? i : { title: i };
     const title = line(r.title ?? r.label ?? r.name, 160);
     if (!title) continue;
-    const body = para(r.body ?? r.description ?? r.summary ?? r.why, 600);
+    const body = para(r.body ?? r.description ?? r.summary ?? r.why ?? r.reason, 600);
     const href = link(r.link ?? r.url ?? r.href);
     const rec = isRecord(r.record) ? r.record : r;
     const collection = line(rec.collection, 40);

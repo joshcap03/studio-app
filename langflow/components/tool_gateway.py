@@ -863,9 +863,11 @@ class ToolGatewayComponent(Component):
                 return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
             items = []
             for q in [plain(q) for q in (questions or [])][:3]:
-                options = [{"label": o} if isinstance(o, str) else plain(o) for o in (q.get("options") or [])][:4]
-                if q.get("question") and len(options) >= 2:
-                    items.append({**q, "options": options})
+                # Models sometimes call the options "choices" and the question "text"; ask anyway.
+                options = [{"label": o} if isinstance(o, str) else plain(o) for o in (q.get("options") or q.get("choices") or [])][:4]
+                question = q.get("question") or q.get("text")
+                if question and len(options) >= 2:
+                    items.append({**{k: v for k, v in q.items() if k not in ("choices", "text")}, "question": question, "options": options})
             if not items:
                 return "Nothing to ask: each question needs text and at least two options."
             return json.dumps({
