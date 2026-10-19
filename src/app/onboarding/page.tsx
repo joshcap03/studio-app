@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { getAccount } from "@/lib/account";
 import { ACTIVE_WORKSPACE_COOKIE, getSession, resolveTenant } from "@/lib/tenant";
+import { voiceStatus } from "@/lib/voice";
 import { Onboarding } from "./onboarding";
 
 export const metadata: Metadata = { title: "Get started" };
@@ -29,6 +30,7 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
           account={account}
           workspaceName={creating ? null : tenant!.workspace.name}
           canCancel={!!tenant}
+          canTalk={voiceStatus(session) !== null}
         />
       </div>
     </main>

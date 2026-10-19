@@ -2,9 +2,10 @@
 // reached the worker, whether real progress is coming in, and whether it's waiting on them (it
 // holds still). No faces, no sounds.
 
-export type OrbState = "connecting" | "listening" | "on_it" | "working" | "speaking" | "your_call" | "stuck" | "ended";
+export type OrbState = "ready" | "connecting" | "listening" | "on_it" | "working" | "speaking" | "your_call" | "stuck" | "ended";
 
 export const ORB_LABEL: Record<OrbState, string> = {
+  ready: "Ready when you are",
   connecting: "Connecting…",
   listening: "Listening",
   on_it: "On it",
@@ -19,7 +20,7 @@ export function Orb({ state, size = 148 }: { state: OrbState; size?: number }) {
   const core =
     state === "stuck"
       ? "bg-danger/55"
-      : state === "connecting" || state === "ended"
+      : state === "ready" || state === "connecting" || state === "ended"
         ? "bg-accent/25"
         : state === "listening"
           ? "bg-accent/60 breathe-soft"

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Menu, PanelLeftOpen, Paperclip, SquarePen } from "lucide-react";
+import { AudioLines, ChevronRight, Menu, PanelLeftOpen, Paperclip, SquarePen } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { Tooltip } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -191,7 +191,7 @@ function WorkspaceShell({
     };
   }, []);
   /** A voice call in progress, and the conversation it's in. */
-  const [call, setCall] = useState<{ grant: VoiceGrant; conversationId: string } | null>(null);
+  const [call, setCall] = useState<{ grant: VoiceGrant; conversationId: string; waitForTap: boolean } | null>(null);
   const [calling, setCalling] = useState(false);
   const [callNotice, setCallNotice] = useState<string | null>(null);
   // Streams this tab let go of while the run kept going on the server (the app was hidden).
@@ -849,25 +849,35 @@ function WorkspaceShell({
     [activeId, navigate, sendTo, setup],
   );
 
-  /** "Talk it through": the setup interview on a call, from where it is. */
-  const talkItThrough = useCallback(async () => {
-    if (calling || call) return;
-    setCalling(true);
-    setCallNotice(null);
-    try {
-      const { grant } = await api.startVoice();
-      const conversationId = startSetup(false, "call");
-      if (!conversationId) {
-        await api.endVoice(grant.sessionId).catch(() => undefined);
-        return;
+  /**
+   * "Talk it through": the setup interview on a call, from where it is (the open setup
+   * conversation, the one under way, or a new one). `waitForTap` when no tap on this page
+   * started it (arriving from onboarding).
+   */
+  const talkItThrough = useCallback(
+    async ({ inConversation, waitForTap = false }: { inConversation?: string; waitForTap?: boolean } = {}) => {
+      if (calling || call) return;
+      setCalling(true);
+      setCallNotice(null);
+      setNotice(null);
+      try {
+        const { grant } = await api.startVoice();
+        const conversationId = inConversation ?? startSetup(false, "call");
+        if (!conversationId) {
+          await api.endVoice(grant.sessionId).catch(() => undefined);
+          return;
+        }
+        setCall({ grant, conversationId, waitForTap });
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : "Voice is unavailable right now. Keep going here.";
+        if (inConversation) setNotice(message);
+        else setCallNotice(message);
+      } finally {
+        setCalling(false);
       }
-      setCall({ grant, conversationId });
-    } catch (error) {
-      setCallNotice(error instanceof ApiError ? error.message : "Voice is unavailable right now. Keep going here.");
-    } finally {
-      setCalling(false);
-    }
-  }, [call, calling, startSetup]);
+    },
+    [call, calling, startSetup],
+  );
   const skipSetup = useCallback(() => {
     setSetup((s) => (s ? { ...s, status: "skipped" } : s));
     api.skipSetup().catch(() => setSetup(initialSetup));
@@ -882,7 +892,8 @@ function WorkspaceShell({
     if (ended && setup?.status === "in_progress") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
   }, [running, setup?.status]);
 
-  // Arriving from onboarding (or "Run setup" on the agent's page) with ?setup=1 starts it once.
+  // Arriving from onboarding (or "Run setup" on the agent's page) with ?setup=1 starts it once;
+  // ?setup=talk opens it on a call (typed, for members without voice).
   const setupRequested = useRef(false);
   useEffect(() => {
     if (setupRequested.current || !setup) return;
@@ -891,8 +902,9 @@ function WorkspaceShell({
     if (!wanted) return;
     setupRequested.current = true;
     window.history.replaceState(null, "", window.location.pathname);
-    startSetup(wanted === "new");
-  }, [setup, startSetup]);
+    if (wanted === "talk" && voice) void talkItThrough({ waitForTap: true });
+    else startSetup(wanted === "new");
+  }, [setup, startSetup, talkItThrough, voice]);
 
   const rename = useCallback(
     (id: string, title: string) => {
@@ -1306,7 +1318,21 @@ function WorkspaceShell({
                     </p>
                   ) : null}
                   {setup && activeId === setup.conversationId && setup.status !== "skipped" ? (
-                    <Journey steps={setup.plan} title="Setting up" className="mb-2 animate-fade-up" />
+                    <div className="mb-2 flex items-stretch gap-2 animate-fade-up">
+                      <Journey steps={setup.plan} title="Setting up" className="min-w-0 flex-1" />
+                      {voice && setup.status === "in_progress" ? (
+                        <button
+                          type="button"
+                          onClick={() => void talkItThrough({ inConversation: setup.conversationId! })}
+                          disabled={calling}
+                          aria-label="Talk it through on a call"
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-[13px] font-medium text-fg-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.97] disabled:opacity-60"
+                        >
+                          {calling ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={15} className="text-accent" />}
+                          <span className="max-sm:hidden">Talk it through</span>
+                        </button>
+                      ) : null}
+                    </div>
                   ) : null}
                   <Composer
                     key={draftKey}
@@ -1361,6 +1387,7 @@ function WorkspaceShell({
           onRunTask={runTaskNow}
           subscribe={subscribe}
           onEnd={() => setCall(null)}
+          waitForTap={call.waitForTap}
         />
       ) : null}
     </Tooltip.Provider>

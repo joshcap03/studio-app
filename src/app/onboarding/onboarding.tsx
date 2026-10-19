@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, AudioLines } from "lucide-react";
 import { useState } from "react";
 import { ConnectionsList } from "@/components/settings/connections-list";
 import { appName } from "@/lib/apps";
@@ -23,9 +23,11 @@ interface Props {
   account: AccountProfile | null;
   workspaceName: string | null;
   canCancel: boolean;
+  /** The member can set the agent up on a call (the voice preview). */
+  canTalk: boolean;
 }
 
-export function Onboarding({ initialStep, account, workspaceName, canCancel }: Props) {
+export function Onboarding({ initialStep, account, workspaceName, canCancel, canTalk }: Props) {
   const [step, setStep] = useState<Step>(initialStep);
   const steps = account ? STEPS : STEPS.filter((s) => s.id !== "you");
   const [you, setYou] = useState<AccountProfile>(account ?? { name: "", about: "" });
@@ -240,8 +242,8 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel }: P
           <div className="mt-6">
             <ConnectionsList returnTo="/onboarding" />
           </div>
-          <div className="mt-8 flex items-center gap-4">
-            {/* The agent's setup interview opens next; it asks for anything it still needs. */}
+          <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3">
+            {/* The agent's setup interview opens next, typed or on a call; it asks for anything it still needs. */}
             <a
               href="/?setup=1"
               className="flex h-10 items-center gap-2 rounded-xl bg-inverse px-4 text-[14px] font-medium text-on-inverse transition-opacity hover:opacity-90"
@@ -249,6 +251,15 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel }: P
               Set up your agent
               <ArrowRight size={15} />
             </a>
+            {canTalk ? (
+              <a
+                href="/?setup=talk"
+                className="flex h-10 items-center gap-2 rounded-xl border border-line-strong px-4 text-[14px] font-medium text-fg transition-colors hover:bg-hover"
+              >
+                <AudioLines size={15} className="text-accent" />
+                Talk it through
+              </a>
+            ) : null}
             <span className="text-[12.5px] text-fg-3">You can skip this and connect apps anytime, or during setup.</span>
           </div>
         </div>
