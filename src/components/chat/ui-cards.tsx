@@ -3,7 +3,7 @@
 import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, ExternalLink, FileUp, GripVertical, Paperclip, Plug, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { appName, toolkitForApp } from "@/lib/apps";
-import type { FormValues } from "@/lib/chat/ui-answer";
+import type { ConnectStatus, FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
@@ -248,7 +248,7 @@ function FieldView({ field, value, files, onChange, onFiles, onUploading, onErro
     case "list":
       return <ListField field={field} label={label} value={Array.isArray(value) ? (value as Record<string, string>[]) : [{}]} onChange={onChange} />;
     case "connect":
-      return <ConnectField field={field} label={label} />;
+      return <ConnectField field={field} label={label} onChange={onChange} />;
   }
 }
 
@@ -748,8 +748,19 @@ function ListField({
   );
 }
 
-/** Apps to connect, each with its live status. Connecting opens the provider in a new tab. */
-function ConnectField({ field, label }: { field: Extract<UiField, { kind: "connect" }>; label: React.ReactNode }) {
+/**
+ * Apps to connect, each with its live status. Connecting opens the provider in a new tab. Each
+ * app's status goes into the answer, so sending without connecting tells the agent it was skipped.
+ */
+function ConnectField({
+  field,
+  label,
+  onChange,
+}: {
+  field: Extract<UiField, { kind: "connect" }>;
+  label: React.ReactNode;
+  onChange: (value: Record<string, string>[]) => void;
+}) {
   const [state, setState] = useState<ConnectionsState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
@@ -763,6 +774,19 @@ function ConnectField({ field, label }: { field: Extract<UiField, { kind: "conne
     window.addEventListener("focus", load);
     return () => window.removeEventListener("focus", load);
   }, []);
+  // Reported once the card knows, and again when a connection lands; unknown stays unsaid.
+  const report = useRef(onChange);
+  report.current = onChange;
+  useEffect(() => {
+    if (!state) return;
+    report.current(
+      field.apps.map((app) => {
+        const slug = toolkitForApp(app) ?? app;
+        const status: ConnectStatus = !state.configured ? "unavailable" : state.toolkits.some((t) => t.slug === slug && t.status === "connected") ? "connected" : "not_connected";
+        return { app, status };
+      }),
+    );
+  }, [state, field.apps]);
   async function connect(slug: string) {
     setBusy(slug);
     const tab = window.open("", "_blank");

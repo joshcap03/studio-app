@@ -1,3 +1,4 @@
+import { appName } from "@/lib/apps";
 import type { UiForm } from "@/lib/types";
 
 // Turning a filled-in form into the member's next message. Shared by the form card (browser)
@@ -5,9 +6,19 @@ import type { UiForm } from "@/lib/types";
 
 /**
  * What the member filled in on a form: text per field, picks (a rank's in order), list entries,
- * file names, a scale's point as text, or verdicts as {id, verdict, reason} per judged item.
+ * file names, a scale's point as text, verdicts as {id, verdict, reason} per judged item, or
+ * apps to connect as {app, status} with what the card saw when it was sent.
  */
 export type FormValues = Record<string, string | string[] | Record<string, string>[]>;
+
+/** What a connect field saw for one app: connected, not (skipped), or connections off for now. */
+export type ConnectStatus = "connected" | "not_connected" | "unavailable";
+
+const CONNECT_STATUS: Record<ConnectStatus, string> = {
+  connected: "connected",
+  not_connected: "skipped for now, not connected",
+  unavailable: "not available yet, not connected",
+};
 
 /** The missing required answer, if any, as its label. */
 export function missingAnswer(form: UiForm, values: FormValues): string | null {
@@ -30,6 +41,18 @@ export function formAnswerText(form: UiForm, values: FormValues): string {
   const out: string[] = [];
   for (const f of form.fields) {
     const v = values[f.id];
+    // Apps always get a line, so the agent knows a skipped one was skipped and doesn't offer it again.
+    if (f.kind === "connect") {
+      const seen = Array.isArray(v) ? (v as Record<string, string>[]) : [];
+      const said = f.apps.map((app) => {
+        const status = seen.find((x) => x.app === app)?.status as ConnectStatus | undefined;
+        return { app, text: (status && CONNECT_STATUS[status]) || "skipped for now" };
+      });
+      // "Connect QuickBooks: connected"; a label that doesn't name its one app gets the name.
+      const named = said.length === 1 && f.label.toLowerCase().includes(appName(said[0].app).toLowerCase());
+      out.push(`${f.label}: ${named ? said[0].text : said.map((x) => `${appName(x.app)} ${x.text}`).join("; ")}`);
+      continue;
+    }
     if (v === undefined || (typeof v === "string" ? !v.trim() : v.length === 0)) continue;
     if (f.kind === "list" && Array.isArray(v)) {
       const entries = (v as Record<string, string>[]).filter((e) => Object.values(e).some((x) => x?.trim()));
