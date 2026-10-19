@@ -61,25 +61,32 @@ export function excerpt(markdown: string, max = EXCERPT): string {
 
 /**
  * What to tell the member about a run that ended while they weren't watching, or null when
- * there's nothing to say (they stopped it themselves).
+ * there's nothing to say (they stopped it themselves). `from` is the agent's own name, once it
+ * has one, so a member with several agents can tell which one it is.
  */
-export function notificationFor(message: ChatMessage, conversation: ConversationSummary, report?: RunReport | null): PushNotification | null {
+export function notificationFor(
+  message: ChatMessage,
+  conversation: ConversationSummary,
+  report?: RunReport | null,
+  from?: string | null,
+): PushNotification | null {
   const url = `/c/${conversation.id}`;
   const tag = `conversation:${conversation.id}`;
   const title = conversation.title || "Studio";
+  const by = (text: string) => (from ? `${from}: ${text}` : text);
   switch (message.status) {
     case "complete":
       // A task's run that found nothing new stays quiet; one that needs the member says so.
       if (report?.outcome === "nothing_new") return null;
-      if (report?.outcome === "needs_you") return { title: "Needs you", body: excerpt(report.summary || message.content) || title, url, tag };
-      return { title, body: excerpt(report?.summary || message.content) || "Studio finished.", url, tag };
+      if (report?.outcome === "needs_you") return { title: by("Needs you"), body: excerpt(report.summary || message.content) || title, url, tag };
+      return { title: by(title), body: excerpt(report?.summary || message.content) || "Studio finished.", url, tag };
     case "awaiting": {
       const pending = message.approvals?.find((a) => a.status === "pending");
-      return { title: "Needs your OK", body: excerpt(pending?.summary ?? title), url, tag };
+      return { title: by("Needs your OK"), body: excerpt(pending?.summary ?? title), url, tag };
     }
     case "error":
     case "interrupted":
-      return { title: "Couldn't finish", body: title, url, tag };
+      return { title: by("Couldn't finish"), body: title, url, tag };
     default:
       return null;
   }

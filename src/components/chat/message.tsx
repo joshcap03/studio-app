@@ -2,6 +2,7 @@
 
 import { AlertCircle, AudioLines, CalendarClock, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Companion, companionHint, useCompanion, type CompanionMood } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
 import { MAX_MESSAGE_LENGTH, type Attachment, type ChatMessage, type MessageFeedback, type UiResponse } from "@/lib/types";
@@ -181,6 +182,15 @@ export const AssistantMessage = memo(function AssistantMessage({
   const hasContent = message.content.trim().length > 0;
   // Show live progress until text arrives, and again whenever the agent starts a new step.
   const working = streaming && (!hasContent || message.activity.some((s) => s.status === "running"));
+  // The latest reply carries the agent's mark, showing how things really stand.
+  const companion = useCompanion();
+  const justFinished = useJustFinished(message.status);
+  const presence =
+    companion && isLast && !streaming ? (
+      <span title={companionHint(companion.stage, companion.name)} className="inline-flex size-7 shrink-0 items-center justify-center animate-fade-in">
+        <Companion stage={companion.stage} look={companion.look} mood={replyMood(message, justFinished)} size={18} />
+      </span>
+    ) : null;
 
   return (
     <article className="group/message" aria-busy={streaming || undefined}>
@@ -278,6 +288,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             isLast || feedback || asking ? "opacity-100" : "opacity-0 group-hover/message:opacity-100 focus-within:opacity-100"
           }`}
         >
+          {presence}
           <CopyButton text={message.content} />
           {onFeedback ? <FeedbackButtons feedback={feedback} asking={asking} onRate={rate} /> : null}
           {isLast && message.status === "complete" ? (
@@ -292,6 +303,8 @@ export const AssistantMessage = memo(function AssistantMessage({
           ) : null}
         </div>
       ) : null}
+
+      {presence && !hasContent ? <div className="mt-2 -ml-1.5 flex">{presence}</div> : null}
 
       {!streaming && asking && feedback?.rating === asking && onFeedback ? (
         <FeedbackReasons
@@ -308,6 +321,32 @@ export const AssistantMessage = memo(function AssistantMessage({
     </article>
   );
 });
+
+/** How the agent is, after a reply: waiting on the member, stuck, just done, or at rest. */
+function replyMood(message: ChatMessage, justFinished: boolean): CompanionMood {
+  if (message.status === "awaiting") return "needs_you";
+  if (message.status === "error" || message.status === "interrupted") return "stuck";
+  const unanswered = (message.ui ?? []).some((block) => !message.uiResponse?.[block.id]) || (message.questions?.length ?? 0) > 0;
+  if (message.status === "complete" && unanswered) return "needs_you";
+  return justFinished ? "done" : "idle";
+}
+
+const DONE_FOR_MS = 2400;
+
+/** True for a moment after a reply finishes while the member is here (not on load). */
+function useJustFinished(status: ChatMessage["status"]): boolean {
+  const previous = useRef(status);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const was = previous.current;
+    previous.current = status;
+    if (was !== "streaming" || status !== "complete") return;
+    setDone(true);
+    const timer = setTimeout(() => setDone(false), DONE_FOR_MS);
+    return () => clearTimeout(timer);
+  }, [status]);
+  return done;
+}
 
 function CopyButton({ text }: { text: string }) {
   const [copied, copy] = useCopy();

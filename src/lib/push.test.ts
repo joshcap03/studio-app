@@ -43,6 +43,13 @@ describe("notificationFor", () => {
     expect(notificationFor(reply({ status: "error" }), conversation, { outcome: "nothing_new", summary: "" })).toMatchObject({ title: "Couldn't finish" });
   });
 
+  it("comes from the agent by name once it has one", () => {
+    expect(notificationFor(reply({ content: "Done." }), conversation, null, "Juniper")).toMatchObject({ title: "Juniper: March invoices" });
+    const awaiting = reply({ status: "awaiting", approvals: [{ id: "a", summary: "Send it", details: [], status: "pending", createdAt: 0 }] });
+    expect(notificationFor(awaiting, conversation, null, "Juniper")).toMatchObject({ title: "Juniper: Needs your OK" });
+    expect(notificationFor(reply({ status: "error" }), conversation, null, null)).toMatchObject({ title: "Couldn't finish" });
+  });
+
   it("stays quiet when the member stopped it", () => {
     expect(notificationFor(reply({ status: "stopped" }), conversation)).toBeNull();
   });
