@@ -790,6 +790,20 @@ describe("edits, files, and memory suggestions", () => {
     expect(quiet.some((e) => e.type === "timeline")).toBe(false);
   });
 
+  it("keeps charts and tables for every member, with or without why-timelines", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const adapter = scripted([
+      { type: "visual", visual: { kind: "table", title: "Roles side by side", columns: ["Role", "Pay"], rows: [["Senior PM, Acme", "$200k"]] } },
+      { type: "message", text: "Done." },
+    ]);
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "send", text: "x" }));
+    expect((await store.listMessages(id))[1].timeline?.visuals).toEqual([
+      { kind: "table", title: "Roles side by side", columns: ["Role", "Pay"], rows: [["Senior PM, Acme", "$200k"]] },
+    ]);
+    expect(events.some((e) => e.type === "timeline")).toBe(true);
+  });
+
   it("keeps citations from every cite call in a run, not just the last", async () => {
     const page = "https://news.example/raise";
     const store = createMemoryStore(scopeA);

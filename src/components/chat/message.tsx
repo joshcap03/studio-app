@@ -14,6 +14,7 @@ import { SourceList } from "./citation";
 import { Markdown } from "./markdown";
 import { ApprovalCard, MemoryProposalCard, QuestionCard } from "./requests";
 import { UiCards } from "./ui-cards";
+import { VisualView } from "./visuals";
 
 interface UserProps {
   message: ChatMessage;
@@ -215,6 +216,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         <div className={message.approvals?.length ? "mt-4" : undefined}>
           <Markdown content={message.content} citations={message.citations} />
           {message.citations?.length && !streaming ? <SourceList citations={message.citations} content={message.content} /> : null}
+        </div>
+      ) : null}
+
+      {/* Charts and tables the agent drew sit in the reply, above any card that asks about them. */}
+      {message.timeline?.visuals?.length ? (
+        <div className="mt-4 flex flex-col gap-3 [&>figure]:mb-0">
+          {message.timeline.visuals.map((visual, i) => (
+            <VisualView key={i} visual={visual} />
+          ))}
         </div>
       ) : null}
 

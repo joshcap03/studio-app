@@ -250,6 +250,20 @@ const SCENARIOS: Scenario[] = [
     steps: [
       { kind: "text", text: "Here's a trial run (mock): four made-up results. Keep the ones you'd want, pass on the rest." },
       {
+        kind: "visual",
+        visual: {
+          kind: "table",
+          title: "The four side by side (mock)",
+          columns: ["Role", "Where", "Pay", "Team"],
+          rows: [
+            ["Senior Product Designer · Example Co", "Remote US", "$185k", "Design systems"],
+            ["Product Designer II · Sample Labs", "Hybrid, NYC", "$140k", "Not listed"],
+            ["Staff Designer · Placeholder Inc", "Remote US", "$210k", "B2B analytics"],
+            ["Design Lead · Demo Systems", "On-site, Austin", "Not listed", "Manages 4"],
+          ],
+        },
+      },
+      {
         kind: "ui",
         block: {
           form: {
