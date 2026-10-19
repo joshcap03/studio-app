@@ -119,13 +119,18 @@ export function Companion({
       style={style}
       className={`cm cm-${stage} cm-mood-${mood} shrink-0 overflow-visible ${className}`}
     >
-      {stage === "sketch" ? (
-        <g className="cm-faint stroke-fg-3" strokeWidth={sw} strokeLinecap="round" strokeDasharray={size <= 22 ? undefined : `${6 * sw} ${0.9 * sw}`}>
-          <path d={stroke(l, t, 0.9)} />
-          <path d={stroke(t, r, 0.7, 2.6)} />
-          <path d={stroke(r, b, 0.9)} />
-          <path d={stroke(b, l, 0.6)} />
-          <path d={stroke(toward(l, t, 1.5), toward(t, l, 3), 0)} className="opacity-50" transform="translate(0.5 0.4)" />
+      {stage === "arrived" ? (
+        <g className="cm-body">
+          <path d={rounded(points, round)} className="cm-fill" />
+          <path d={rounded(points, round)} className="stroke-fg opacity-20" strokeWidth={sw * 0.7} transform="translate(0.3 0.25)" />
+          <g className="cm-look">
+            <Eyes shape={look.shape} mood={mood} size={size} />
+          </g>
+        </g>
+      ) : stage === "ready" ? (
+        <g strokeLinejoin="round">
+          <path d={outline} className="fill-accent-soft stroke-accent" strokeWidth={sw} />
+          {tracing ? <path d={outline} pathLength={1} className="cm-trace stroke-accent" strokeWidth={sw * 1.3} strokeLinecap="round" /> : null}
         </g>
       ) : stage === "drawn" ? (
         <g strokeLinecap="round" strokeLinejoin="round">
@@ -136,18 +141,13 @@ export function Companion({
           <path d={outline} className="stroke-fg-2" strokeWidth={sw} />
           <path d={stroke(r, b, 0.8)} className="stroke-fg-2 opacity-60" strokeWidth={sw * 0.8} />
         </g>
-      ) : stage === "ready" ? (
-        <g strokeLinejoin="round">
-          <path d={outline} className="fill-accent-soft stroke-accent" strokeWidth={sw} />
-          {tracing ? <path d={outline} pathLength={1} className="cm-trace stroke-accent" strokeWidth={sw * 1.3} strokeLinecap="round" /> : null}
-        </g>
       ) : (
-        <g className="cm-body">
-          <path d={rounded(points, round)} className="cm-fill" />
-          <path d={rounded(points, round)} className="stroke-fg opacity-20" strokeWidth={sw * 0.7} transform="translate(0.3 0.25)" />
-          <g className="cm-look">
-            <Eyes shape={look.shape} mood={mood} size={size} />
-          </g>
+        <g className="cm-faint stroke-fg-3" strokeWidth={sw} strokeLinecap="round" strokeDasharray={size <= 22 ? undefined : `${6 * sw} ${0.9 * sw}`}>
+          <path d={stroke(l, t, 0.9)} />
+          <path d={stroke(t, r, 0.7, 2.6)} />
+          <path d={stroke(r, b, 0.9)} />
+          <path d={stroke(b, l, 0.6)} />
+          <path d={stroke(toward(l, t, 1.5), toward(t, l, 3), 0)} className="opacity-50" transform="translate(0.5 0.4)" />
         </g>
       )}
       {working && stage !== "arrived" ? (
