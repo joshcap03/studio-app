@@ -23,6 +23,10 @@ words. Phase 1 is the Setup Call: "Talk it through" beside "Start" on the setup 
   `send_card`, `send_message`, `stop_work`. Each checks the member's own speech-to-text
   transcript first: a card is sent only on a clear "send", the work stops only on a clear "stop",
   and talking over a running job is held until it lands unless it's a clear "actually…".
+- The call screen decides what Studio says and when (`src/lib/voice/narrator.ts`). Lines wait
+  while the voice or the member has the floor. A sentence is said once per turn, whichever way it
+  arrived: an opening line, the reply read as soon as it was written, or the same words again in
+  the finished reply. The heads-up and time's-up cues each go once.
 - `POST /api/voice/session/<id>/end` records the call's length.
 
 Studio stores no audio. The member's words become their messages, labeled "On a call".
