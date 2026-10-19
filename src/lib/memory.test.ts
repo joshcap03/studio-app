@@ -5,7 +5,7 @@ vi.mock("@/lib/config", () => ({
   getConfig: () => ({ supermemory: { apiKey: "sm_test", baseUrl: "https://sm.example" } }),
 }));
 
-const { forget, listMemories, moveLegacyPersonal, namespaceFor, parseMemoryId, recall, recallQuery, remember, replaceMemory, resetMoves } = await import("./memory");
+const { forget, forgetConversations, listMemories, moveLegacyPersonal, namespaceFor, parseMemoryId, recall, recallQuery, remember, replaceMemory, resetMoves } = await import("./memory");
 
 const WS = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -156,6 +156,43 @@ describe("forget", () => {
       ["DELETE", `https://sm.example/ns/ws_${WS}/document`, { ids: ["w1"] }],
       ["DELETE", `https://sm.example/ns/u_${USER}/document`, { ids: ["p1"] }],
     ]);
+  });
+});
+
+describe("forgetConversations", () => {
+  const C1 = "c1111111-1111-4111-8111-111111111111";
+
+  it("forgets what was saved from those chats: the caller's shared facts and their personal ones", async () => {
+    reply = (call) =>
+      call.url.includes("/list/documents")
+        ? Response.json({ documents: where(call) === "legacy" ? [] : [{ id: `${where(call)}-1` }] })
+        : Response.json({ count: 1, errors: [] });
+    await expect(forgetConversations(tenant(), [C1])).resolves.toBe(2);
+    const fromC1 = { operator: "or", operands: [{ field: "sourceConversation", operator: "eq", value: C1 }] };
+    const lists = calls.filter((c) => c.url.includes("/list/documents"));
+    expect(lists.map((c) => [where(c), (c.body as { filter: unknown }).filter])).toEqual([
+      ["workspace", { operator: "and", operands: [fromC1, { field: "createdBy", operator: "eq", value: USER }] }],
+      ["personal", fromC1],
+      ["legacy", fromC1],
+    ]);
+    expect(calls.filter((c) => c.method === "DELETE").map((c) => [where(c), c.body])).toEqual([
+      ["workspace", { ids: ["workspace-1"] }],
+      ["personal", { ids: ["personal-1"] }],
+    ]);
+  });
+
+  it("reads on until every page is gone", async () => {
+    let pages = 2;
+    reply = (call) =>
+      call.url.includes("/list/documents")
+        ? Response.json({ documents: where(call) === "personal" && pages-- > 0 ? Array.from({ length: 100 }, (_, i) => ({ id: `p${pages}-${i}` })) : [] })
+        : Response.json({ count: (call.body as { ids: string[] }).ids.length });
+    await expect(forgetConversations(tenant(), [C1])).resolves.toBe(200);
+  });
+
+  it("does nothing without conversations", async () => {
+    await expect(forgetConversations(tenant(), [])).resolves.toBe(0);
+    expect(calls).toHaveLength(0);
   });
 });
 

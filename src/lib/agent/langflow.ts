@@ -79,7 +79,7 @@ export const TEMPLATE_VARIABLES = [
  * run resumes (tweaks are dropped), and the Member Apps node needs it then to rebuild that
  * member's tools.
  */
-export function langflowSessionId(tenant: AgentTenantContext, conversationId: string): string {
+export function langflowSessionId(tenant: Pick<AgentTenantContext, "workspaceId" | "composioUserId">, conversationId: string): string {
   return `${tenant.workspaceId}.${tenant.composioUserId}.${conversationId}`;
 }
 
@@ -694,6 +694,8 @@ function resultMessage(result: unknown): LangflowMessage | undefined {
   return outputs?.[0]?.outputs?.[0]?.results?.message;
 }
 
+const STORED_PAGE = 1000;
+
 function errorFor(status: number): AgentError {
   if (status === 401 || status === 403) return new AgentError("The agent service rejected this app's credentials.", { retryable: false });
   if (status === 404) return new AgentError("The agent flow wasn't found. Check the Langflow flow id.", { retryable: false });
@@ -757,6 +759,31 @@ const RECONNECTS = 2;
 
 export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
   const doFetch = config.fetch ?? fetch;
+
+  // The flow's own chat memory of one conversation, oldest first.
+  async function storedMessages(tenant: Pick<AgentTenantContext, "workspaceId" | "composioUserId">, conversationId: string) {
+    const url = new URL(endpoint(config, "api/v1/monitor/messages"));
+    url.searchParams.set("flow_id", config.flowId);
+    url.searchParams.set("session_id", langflowSessionId(tenant, conversationId));
+    url.searchParams.set("order", "ASC");
+    url.searchParams.set("limit", String(STORED_PAGE));
+    const response = await doFetch(url.toString(), { headers: headers(config) });
+    if (!response.ok) throw errorFor(response.status);
+    return ((await response.json().catch(() => [])) as { id?: unknown; sender?: unknown }[]).filter(
+      (m): m is { id: string; sender?: unknown } => typeof m?.id === "string",
+    );
+  }
+
+  async function deleteMessages(ids: string[]) {
+    if (ids.length === 0) return;
+    const removed = await doFetch(endpoint(config, "api/v1/monitor/messages"), {
+      method: "DELETE",
+      headers: { ...headers(config), "Content-Type": "application/json" },
+      body: JSON.stringify(ids),
+    });
+    if (!removed.ok) throw errorFor(removed.status);
+  }
+
   const acceptsFiles = templateHasFiles(config.tweaks);
 
   async function post(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
@@ -1083,26 +1110,21 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
 
     async rewind({ tenant, conversationId }, turns) {
       if (turns < 1) return;
-      const url = new URL(endpoint(config, "api/v1/monitor/messages"));
-      url.searchParams.set("flow_id", config.flowId);
-      url.searchParams.set("session_id", langflowSessionId(tenant, conversationId));
-      url.searchParams.set("order", "ASC");
-      url.searchParams.set("limit", "1000");
-      const response = await doFetch(url.toString(), { headers: headers(config) });
-      if (!response.ok) throw errorFor(response.status);
-      const messages = ((await response.json().catch(() => [])) as { id?: unknown; sender?: unknown }[]).filter(
-        (m): m is { id: string; sender?: unknown } => typeof m?.id === "string",
-      );
+      const messages = await storedMessages(tenant, conversationId);
       const users = messages.flatMap((m, i) => (m.sender === "User" ? [i] : []));
       if (users.length === 0) return;
       const from = users[Math.max(0, users.length - turns)];
-      const ids = messages.slice(from).map((m) => m.id);
-      const removed = await doFetch(endpoint(config, "api/v1/monitor/messages"), {
-        method: "DELETE",
-        headers: { ...headers(config), "Content-Type": "application/json" },
-        body: JSON.stringify(ids),
-      });
-      if (!removed.ok) throw errorFor(removed.status);
+      await deleteMessages(messages.slice(from).map((m) => m.id));
+    },
+
+    async forget({ tenant, conversationId }) {
+      // A long chat may hold more than one page; each pass deletes what it read.
+      for (let pass = 0; pass < 20; pass++) {
+        const messages = await storedMessages(tenant, conversationId);
+        if (messages.length === 0) return;
+        await deleteMessages(messages.map((m) => m.id));
+        if (messages.length < STORED_PAGE) return;
+      }
     },
 
     async discard(state) {

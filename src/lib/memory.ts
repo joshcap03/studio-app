@@ -295,6 +295,46 @@ async function deleteDocument(tenant: Tenant, where: Where, documentId: string):
   return result.count > 0;
 }
 
+// Supermemory's limits: a filter group takes at most 200 operands, a page at most 100 rows.
+const FILTER_OPERANDS = 200;
+const PAGE = 100;
+const FORGET_MAX_PAGES = 50;
+
+/**
+ * Forgets every fact saved from these conversations (the caller's own, which they just
+ * deleted), in this agent's memory and the person's: what the agent learned in those chats
+ * goes with them. Shared facts go only where the caller saved them. Facts added by hand, or
+ * learned in other conversations, stay. Returns how many were forgotten.
+ */
+export async function forgetConversations(tenant: Tenant, conversationIds: string[]): Promise<number> {
+  if (!memoryEnabled() || conversationIds.length === 0) return 0;
+  let forgotten = 0;
+  for (let i = 0; i < conversationIds.length; i += FILTER_OPERANDS) {
+    const fromThese = {
+      operator: "or",
+      operands: conversationIds.slice(i, i + FILTER_OPERANDS).map((id) => ({ field: "sourceConversation", operator: "eq", value: id })),
+    };
+    for (const where of ["workspace", "personal", "legacy"] as const) {
+      const filter =
+        where === "workspace"
+          ? { operator: "and", operands: [fromThese, { field: "createdBy", operator: "eq", value: tenant.userId }] }
+          : fromThese;
+      // Each page is deleted before the next is read, so the first page is always the rest.
+      for (let page = 0; page < FORGET_MAX_PAGES; page++) {
+        const { documents = [] } = await call<{ documents?: DocumentRow[] }>(tenant, where, `list/documents?limit=${PAGE}`, {
+          method: "POST",
+          body: { filter, include: { memoryCount: false } },
+        });
+        if (documents.length === 0) break;
+        const { count } = await call<{ count: number }>(tenant, where, "document", { method: "DELETE", body: { ids: documents.map((d) => d.id) } });
+        forgotten += count;
+        if (count === 0 || documents.length < PAGE) break;
+      }
+    }
+  }
+  return forgotten;
+}
+
 export interface MemoryChange {
   content?: string;
   category?: MemoryCategory;

@@ -332,10 +332,10 @@ function ChatHistorySection() {
       <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
         <p className="text-[13.5px] text-fg-2">
           {state === "cleared"
-            ? "Your chats with this agent are cleared."
+            ? "Your chats with this agent, and what it learned from them, are cleared."
             : state === "idle"
-              ? "Delete every chat you've had with this agent, including chats in projects. Projects, their files, and memory stay."
-              : "Delete all your chats with this agent? This can't be undone."}
+              ? "Delete every chat you've had with this agent, including chats in projects, and what it learned from them. Projects, their files, and facts you added yourself stay."
+              : "Delete all your chats with this agent and what it learned from them? This can't be undone."}
         </p>
         {state === "idle" ? (
           <button type="button" onClick={() => setState("confirm")} className={`${button} border border-line text-danger hover:bg-hover`}>

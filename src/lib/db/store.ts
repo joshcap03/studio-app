@@ -74,8 +74,10 @@ export interface Store {
   /** Moves a conversation into a project of the caller's, or out of any (null). */
   moveConversation(id: string, projectId: string | null): Promise<ConversationSummary | null>;
   deleteConversation(id: string): Promise<boolean>;
-  /** Deletes every one of the caller's conversations in the workspace; returns how many. */
-  deleteAllConversations(): Promise<number>;
+  /** Ids of every one of the caller's conversations in the workspace. */
+  conversationIds(): Promise<string[]>;
+  /** Deletes every one of the caller's conversations in the workspace; returns their ids. */
+  deleteAllConversations(): Promise<string[]>;
   setAgentThread(conversationId: string, provider: string, threadId: string): Promise<void>;
   touchConversation(conversationId: string): Promise<ConversationSummary>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
@@ -380,11 +382,16 @@ export function createStore(db: Db, scope: Scope): Store {
       return rows.length > 0;
     },
 
+    async conversationIds() {
+      const rows = check(await conversations().select("id").eq("workspace_id", workspaceId).eq("user_id", userId)) as { id: string }[];
+      return rows.map((r) => r.id);
+    },
+
     async deleteAllConversations() {
       const rows = check(
         await conversations().delete().eq("workspace_id", workspaceId).eq("user_id", userId).select("id"),
       ) as { id: string }[];
-      return rows.length;
+      return rows.map((r) => r.id);
     },
 
     async setAgentThread(conversationId, provider, threadId) {

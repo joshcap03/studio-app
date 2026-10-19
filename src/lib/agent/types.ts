@@ -171,7 +171,7 @@ export interface AgentCapabilities {
   approvals: boolean;
   /** The agent can read files attached to a message. */
   attachments: boolean;
-  /** The provider's own conversation memory can be rolled back (rewind). */
+  /** The provider's own conversation memory can be rolled back (rewind) and erased (forget). */
   rewind: boolean;
 }
 
@@ -190,6 +190,11 @@ export interface AgentAdapter {
    * conversation, so a retried or edited message isn't answered with the old one in view.
    */
   rewind?(input: { tenant: AgentTenantContext; conversationId: string; threadId: string | null }, turns: number): Promise<void>;
+  /**
+   * Present only when capabilities.rewind is true. Erases the provider's own memory of a
+   * conversation the member deleted.
+   */
+  forget?(input: { tenant: Pick<AgentTenantContext, "workspaceId" | "composioUserId">; conversationId: string }): Promise<void>;
   /** Abandons a paused run whose approval will never be answered (best effort). */
   discard?(state: unknown): Promise<void>;
 }
