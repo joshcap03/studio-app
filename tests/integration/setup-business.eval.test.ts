@@ -1,5 +1,5 @@
-import { afterAll, describe, expect, it } from "vitest";
-import { carriesRankedBar, checklistGrowth, describeTurn, liveFlow, setupSession, type ScriptedMember, type Turn } from "./setup-harness";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { barSent, carriesRankedBar, checklistGrowth, describeTurn, liveFlow, setupSession, writesPlan, type ScriptedMember, type Turn } from "./setup-harness";
 
 // Eval of the Small business setup interview against a live flow with a real model
 // (LANGFLOW_TEST_* env; see setup-harness.ts), for an owner who doesn't know yet what they need:
@@ -15,6 +15,13 @@ const INVOICES = "Corner Café, #1042, $840, due Sep 30\nBlue Door Coffee, #1047
 const WHERE = `In a Google Sheet. I'd rather not connect it yet, so here are the unpaid ones:\n${INVOICES}`;
 const NO_LINK = "I'd rather not connect or share the sheet yet. Please use the rows I pasted.";
 const ASKS_WHERE = /\bwhere (?:do )?(?:you )?(?:keep|store|track)\b|\bwhere (?:do )?(?:your |the )?invoices live\b|\bwhich (?:app|one) (?:do you|is it)\b/i;
+
+/** The turns so far, for the owner to tell the agent's plan from discovery's advice. */
+let seen: Turn[] = [];
+/** What the owner knows that the agent doesn't, given once when it runs its plan by them. */
+const PLAN_ADVICE = "Mostly right. Mill Street only ever answers WhatsApp, so draft theirs as a short text, not an email.";
+const FROM_PLAN_ADVICE = /whatsapp|text message|as a text/i;
+let advised = false;
 
 const OWNER: ScriptedMember = {
   templateId: "small-business",
@@ -51,7 +58,11 @@ const OWNER: ScriptedMember = {
             : undefined,
   // Asked in plain words where the invoices are, or to share them, they say and paste them.
   reply: (agentText) =>
-    ASKS_WHERE.test(agentText)
+    !advised && barSent(seen) && writesPlan(agentText)
+      ? ((advised = true), PLAN_ADVICE)
+      : barSent(seen) && /\bcontacts?\b[^?]*\?/i.test(agentText)
+        ? "Leave the contacts out for now. I'll add them when I send."
+        : ASKS_WHERE.test(agentText)
       ? WHERE
       : /\b(paste|type)\b[^.?!]*\b(invoices?|rows)\b/i.test(agentText) && /\?|\bhere\b|\bbelow\b/i.test(agentText)
         ? INVOICES
@@ -71,6 +82,9 @@ const isTrial = (x: Turn) => x.form?.fields.some((f) => f.kind === "verdict" && 
 describe.skipIf(!liveFlow)("Small business setup interview against a live flow", () => {
   const session = setupSession(OWNER);
   const { turns, answer } = session;
+  beforeAll(() => {
+    seen = turns;
+  });
 
   afterAll(() => session.writeLog("small business setup"));
 
@@ -106,20 +120,24 @@ describe.skipIf(!liveFlow)("Small business setup interview against a live flow",
 
   it("ends with a proposal held to their bar, honest about what's missing", { timeout: 900_000 }, async () => {
     let last = session.last();
-    for (let i = 0; i < 8 && !last.proposal; i++) last = await answer(last);
+    for (let i = 0; i < 12 && !last.proposal; i++) last = await answer(last);
     expect(last.proposal, describeTurn(last)).not.toBeNull();
     const instructions = last.proposal!.instructions ?? "";
     expect(instructions, "the proposal doesn't say what success means").toMatch(/what success means/i);
+    // Built on the plan they talked through, with their advice in it.
+    expect(advised, "it never wrote out its plan for the owner's advice").toBe(true);
+    expect(instructions, "the proposal has no plan").toMatch(/how i'll do it/i);
+    expect(instructions, "the plan dropped the owner's advice").toMatch(FROM_PLAN_ADVICE);
     expect(FROM_BAR.test(instructions) || carriesRankedBar(turns, instructions), `the proposal dropped the owner's bar: ${instructions.slice(0, 400)}`).toBe(true);
     // Their invoices were never connected, so it can't promise to chase them unseen.
     expect(`${last.reply}\n${instructions}`, "the proposal hides that it can't see their invoices yet").toSatisfy((text: string) => MISSING_APP.test(plain(text)));
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
   });
 
-  it("lists only what it knows: two steps to start, and nothing past the bar until it's confirmed", () => {
+  it("lists only what it knows: three steps to start, and nothing past the bar until it's confirmed", () => {
     const growth = checklistGrowth(turns);
     expect(growth.first, "no checklist on the first reply").not.toBeNull();
-    expect(growth.first!, "the first checklist laid out the whole setup").toBeLessThanOrEqual(2);
+    expect(growth.first!, "the first checklist laid out the whole setup").toBeLessThanOrEqual(3);
     expect(growth.early, "the checklist listed later setup before the bar was confirmed").toEqual([]);
   });
 
@@ -146,6 +164,9 @@ describe.skipIf(!liveFlow)("Small business setup under a guardrail against being
     agree: "Let's do the unpaid invoices first.",
   });
   const { turns, answer } = session;
+  beforeAll(() => {
+    seen = turns;
+  });
 
   afterAll(() => session.writeLog("small business setup, guardrail"));
 

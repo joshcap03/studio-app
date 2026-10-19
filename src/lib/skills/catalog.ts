@@ -27,7 +27,8 @@ export const CATALOG: CatalogEntry[] = [
     category: "Job search",
     apps: ["web", "apollo", "tracker", "sheets"],
     instructions: `Find open roles that fit the target in the agent profile (roles, seniority, locations, pay floor, must-haves, deal-breakers). Ask about anything essential that's missing.
-1. Search job boards and company career pages on the web; if Apollo is connected, its job postings for target companies help too. Prefer the company's own posting over aggregators.
+If the agent's instructions have a plan for finding roles, follow it; otherwise:
+1. Search target companies' own career pages and hiring boards (Greenhouse, Lever, Ashby) as well as job boards on the web, favoring postings from the last few days; if Apollo is connected, its job postings for target companies help too. Prefer the company's own posting over aggregators.
 2. Skip roles already in the job tracker (same link) and any that hit a deal-breaker.
 3. Score each remaining role 1–5 against the profile, with one line on why.
 4. Track the roles scoring 3 or more. With a Studio tracker: save_record, collection "applications", key = the posting's link, title "Company — Role", status "discovered", fields for location, pay if listed, score, and why. Otherwise add them to the "Job search tracker" Google Sheet.

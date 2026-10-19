@@ -51,13 +51,20 @@ export interface TemplateSetup {
    */
   usualHelp: string;
   /**
+   * What doing this job well takes, as a seasoned expert would know it, for the agent's own
+   * bearings when it drafts its plan (PLAN_STEP). Never shown as a checklist: their plan is built
+   * on their bar and their advice.
+   */
+  craft: string;
+  /**
    * Context the success step needs, after discovery, e.g. a résumé, so a trial run is a fair
    * test. Gathering only: nothing here plans or designs anything.
    */
   before?: TemplateSetupStep[];
   /**
-   * After SUCCESS_STEP: what else the agent may need to learn. A guide, not a script: the agent
-   * skips or merges what the member's problem doesn't need. The last one proposes the setup.
+   * After SUCCESS_STEP and PLAN_STEP: what else the agent may need to carry out the plan. A guide,
+   * not a script: the agent skips or merges what the plan doesn't need. The last one proposes the
+   * setup.
    */
   steps: TemplateSetupStep[];
 }
@@ -103,12 +110,29 @@ export const SUCCESS_STEP: TemplateSetupStep = {
 For your own bearings (an illustration only; their bar is their own): vague "{vague}"; crisp "{crisp}".`,
 };
 
+/**
+ * Once their bar is set, the agent works out with the member how to do the job well, as
+ * carefully as they agreed the bar: the bar says what a great result is, this says how to get
+ * there. Like a seasoned expert, it brings a point of view, writes out its plan, and takes the
+ * member's advice on it. The proposal is built on the plan they confirm.
+ */
+export const PLAN_STEP: TemplateSetupStep = {
+  id: "plan",
+  title: "How to do it well",
+  goal: `Work out with them how to do the job well, as carefully as you agreed their bar: the bar says what a great result is, this says how you'll get there. Bring an expert's point of view, and get what they know that you don't. This is a conversation, usually 3-5 short exchanges; use a small show_form only to collect specifics the plan needs (a list of names, say).
+  a. If discovery and the trial haven't already told you how they've gone about it so far, and what has and hasn't worked, ask that first.
+  b. Then write out your plan in your reply, in 3-6 numbered steps, each saying what you'll do and why in plain words: where you'll look or what you'll work from, how you'll pick out the best against their bar, what you'll bring them and how often, how hands-on you'll be, and what you'll leave to them. Build it on their bar, their trial verdicts, what they've told you, and what you know about doing this well ({craft}). Where an expert would go about it differently from how they have been, say so and why. Name any part you can't do yet (a missing app or access) and what it would take, and what else you'll need from them to carry it out (details, a file, an app): the steps after this gather only that.
+  c. Talk it through, one question per reply, on the parts where what they know or think should decide: sources, places, or people you'd miss; the tradeoffs in the plan (wide or narrow, fast or thorough, how often); and what would make them stop trusting how you did it. Take their advice in and say what changed. If a suggestion would cost them against their bar, say so once with your reason and an alternative, then take their call. If their personal rules rule out recommending, lay the approaches out side by side with their tradeoffs and let them choose.
+  d. When they're happy with it, play the whole plan back in its final steps and ask them to confirm it. Their yes to the whole plan makes it the plan (a go-ahead on one part of it isn't that): remember it in one line. Don't move on until then.`,
+};
+
 /** The setup steps an agent made from `template` runs, in order. */
 export function setupSteps(template: AgentTemplate): TemplateSetupStep[] {
-  const { usualHelp, successExample } = template.setup;
+  const { usualHelp, successExample, craft } = template.setup;
   const discovery = { ...DISCOVERY_STEP, goal: DISCOVERY_STEP.goal.replace("{usual}", usualHelp) };
   const success = { ...SUCCESS_STEP, goal: SUCCESS_STEP.goal.replace("{vague}", successExample.vague).replace("{crisp}", successExample.crisp) };
-  return [discovery, ...(template.setup.before ?? []), success, ...template.setup.steps];
+  const plan = { ...PLAN_STEP, goal: PLAN_STEP.goal.replace("{craft}", craft) };
+  return [discovery, ...(template.setup.before ?? []), success, plan, ...template.setup.steps];
 }
 
 export interface TemplateTask {
@@ -179,12 +203,14 @@ export const TEMPLATES: AgentTemplate[] = [
     ],
     contextCollections: ["stories"],
     setup: {
-      intro: "I'll start by understanding what's been hard about your search, suggest where I can help most, agree with you how to judge it, and then set myself up to work that way.",
+      intro: "I'll start by understanding what's been hard about your search, suggest where I can help most, agree with you how to judge it and how to do it well, and then set myself up to work that way.",
       successExample: {
         vague: "Find me good jobs.",
         crisp: "Each weekday by 9am, 3-5 new senior product design roles: remote in the US, $180k+ base, B2B SaaS, posted in the last 3 days, none I've seen before, each with one line on why it fits. If I'd pass on more than 2 of every 5, it isn't working.",
       },
       usualHelp: "finding roles that fit, tailoring applications, reaching the right people, and preparing for interviews",
+      craft:
+        "the best roles often never reach the big job boards, or draw hundreds of applicants within days, so a strong search usually starts from the target roles and level their bar and résumé point to, and a short list of target companies that fit (ones they'd love to work at, peers of companies they've done well at, ones growing or recently funded), checks those companies' own career pages and hiring boards (Greenhouse, Lever, Ashby) as well as the job boards, catches new postings within a few days since early applicants get read, looks for a warm way in to each top role (a former colleague, an alum, the hiring manager) before a cold application, and looks back each week at what's getting replies to shift effort there",
       // The trial run is only a fair test once the agent knows their background.
       before: [
         {
@@ -195,11 +221,6 @@ export const TEMPLATES: AgentTemplate[] = [
       ],
       steps: [
         {
-          id: "search",
-          title: "Your search",
-          goal: `If they want help finding roles, fill in what you still need to search well that their bar doesn't already settle (for example target roles, level, where and how they'll work, pay, companies they love), and how hands-on to be. Design the form from what you know: prefill from the résumé, the bar, and their verdicts so they mostly confirm. Skip this if searching isn't part of what they're after.`,
-        },
-        {
           id: "stories",
           title: "Your stories",
           goal: `If interviews are part of what they're after, get stories ready. Draft 3-5 STAR stories from the résumé's strongest bullets (only facts that are there; leave a part empty rather than writing a placeholder), and show them in a list field (item_label "Story"; parts situation, task, action, result, skills) for them to fix and add to. Save every story they send right away, gaps and all (say which could use more detail), with save_record: collection "stories", key a short slug of its title, title a few words naming it, fields situation, task, action, result, skills. If CONTEXT has no tracker section, remember one sentence per story instead. Skip this if interviews aren't part of it yet.`,
@@ -207,7 +228,7 @@ export const TEMPLATES: AgentTemplate[] = [
         {
           id: "apps",
           title: "Your apps",
-          goal: `Connect only the apps their bar needs, with a connect field and a line on what each is for: gmail and calendar for replies and interviews, apollo and hunter for finding the right people, clay optionally. Say they can skip any and connect later; skip this if none are needed.`,
+          goal: `Connect only the apps their bar and plan need, with a connect field and a line on what each is for: gmail and calendar for replies and interviews, apollo and hunter for finding the right people, clay optionally. Say they can skip any and connect later; skip this if none are needed.`,
         },
         {
           id: "design",
@@ -229,27 +250,24 @@ export const TEMPLATES: AgentTemplate[] = [
     apps: ["gmail", "shopify", "sheets", "quickbooks"],
     tasks: [],
     setup: {
-      intro: "I'll start by understanding what's taking up your time in the business, suggest where I can help most, agree with you how to judge it, and then set myself up to work that way.",
+      intro: "I'll start by understanding what's taking up your time in the business, suggest where I can help most, agree with you how to judge it and how to do it well, and then set myself up to work that way.",
       successExample: {
         vague: "Help with customer emails.",
         crisp: "Every customer email gets a reply drafted within 2 hours on weekdays, in my tone, with the right order details from Shopify; I send at least 4 of every 5 without editing, and nothing promising a refund goes out without me.",
       },
       usualHelp: "customer emails, sales and money questions, stock, invoices, and marketing",
+      craft:
+        "good help in a small business works from the owner's real numbers and real customer messages rather than guesses, learns the owner's voice from what they've already sent, handles the frequent, repetitive cases first and flags the unusual ones, drafts anything that reaches a customer or moves money for the owner to approve, and reports briefly on a rhythm the owner already keeps",
       steps: [
         {
           id: "business",
           title: "Your business",
-          goal: `Learn what you need about the business to meet their bar (what they sell and to whom, where, how they talk to customers, anything to keep on hand like a price list), and nothing more. Design the form from what discovery already told you, drafting choices from their words; a file field (keep: true) if a document would help.`,
+          goal: `Learn what you still need about the business to carry out the plan (what they sell and to whom, where, how they talk to customers, anything to keep on hand like a price list), and nothing more. Design the form from what discovery already told you, drafting choices from their words; a file field (keep: true) if a document would help.`,
         },
         {
           id: "apps",
           title: "Your tools",
-          goal: `Connect only the apps their bar needs (gmail, shopify, sheets, quickbooks), with a line on what you'd use each for. Say they can skip any and connect later.`,
-        },
-        {
-          id: "rhythm",
-          title: "When I work",
-          goal: `If the bar doesn't already say, learn when the work happens and how hands-on to be. Skip this if it does.`,
+          goal: `Connect only the apps their bar and plan need (gmail, shopify, sheets, quickbooks), with a line on what you'd use each for. Say they can skip any and connect later.`,
         },
         {
           id: "design",
@@ -269,17 +287,19 @@ export const TEMPLATES: AgentTemplate[] = [
     apps: [],
     tasks: [],
     setup: {
-      intro: "I'll start by understanding what you're dealing with, suggest where I can help most, agree with you how to judge it, and then set myself up to work that way.",
+      intro: "I'll start by understanding what you're dealing with, suggest where I can help most, agree with you how to judge it and how to do it well, and then set myself up to work that way.",
       successExample: {
         vague: "Keep an eye on flight prices.",
         crisp: "Every Monday, the 3 cheapest nonstop round trips from Boston to Lisbon for the first two weeks of June under $700, with the airline and a link; ping me the same day if one drops below $550.",
       },
       usualHelp: "anything: keeping an eye on things, research, drafting, keeping a tracker",
+      craft:
+        "whatever the job, a good plan says where the information comes from and how fresh and trustworthy it is, how the best is picked out against their bar, what they get and when, and what stays with them",
       steps: [
         {
           id: "context",
           title: "What I should know",
-          goal: `Gather only what you still need to meet their bar: details, how often to check in if the bar doesn't say, any file worth keeping on hand (keep: true), and the 1-4 apps that would help most (a connect field). Design the form from what you know.`,
+          goal: `Gather only what you still need to carry out the plan: details, how often to check in if the bar doesn't say, any file worth keeping on hand (keep: true), and the 1-4 apps that would help most (a connect field). Design the form from what you know.`,
         },
         {
           id: "design",

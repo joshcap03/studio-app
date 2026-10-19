@@ -15,7 +15,8 @@ to learn what you need, then works with your profile, files, memory, and the app
   (paused until you turn them on). It never overwrites anything you've written.
 - **Let it set itself up.** A new agent opens with a setup interview. It asks what you're
   really trying to get done and what success looks like, gathers what it needs (a résumé,
-  say), shows a real trial run for you to judge, then proposes its setup. Nothing changes
+  say), shows a real trial run for you to judge, writes out its plan for the job and asks
+  for your advice on it, then proposes its setup. Nothing changes
   until you click Apply, and "Do the first one now" runs its first task right away.
 - **Get work done in chat.** The agent reads your connected apps (Gmail, Outlook, Google
   Calendar, Sheets, Docs, and Drive, Slack, Notion, Airtable, HubSpot, Shopify, QuickBooks,
