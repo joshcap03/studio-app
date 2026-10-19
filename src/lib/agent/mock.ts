@@ -27,6 +27,8 @@ type Step =
       preview?: StepPreview;
     }
   | { kind: "note"; text: string; ms?: number }
+  /** An opening line that turned out to be part of the reply after all (only books kept since). */
+  | { kind: "released"; text: string }
   | { kind: "artifact"; artifact: Artifact }
   | { kind: "text"; text: string }
   | { kind: "error"; message: string }
@@ -321,6 +323,18 @@ const SCENARIOS: Scenario[] = [
           },
         ],
       },
+    ],
+  },
+  {
+    // The agent's opening line, its plan, then that line released into its reply, the way the
+    // Langflow adapter sends it: a call says the line once.
+    match: /\bnetwork(ing)?\b/i,
+    steps: [
+      { kind: "note", text: "Let me start a checklist for us (mock). What's been the hardest part of your search lately?" },
+      { kind: "activity", id: "plan", running: "Updating the plan", done: "Updated the plan", ms: 700, app: "tracker", action: "write" },
+      { kind: "plan", plan: [{ text: "What you're after (mock)", status: "doing" }, { text: "Your network (mock)", status: "todo" }] },
+      { kind: "released", text: "Let me start a checklist for us (mock). What's been the hardest part of your search lately?" },
+      { kind: "text", text: "Got it (mock): you want to meet people at companies that are hiring. Which is harder right now, finding the roles or reaching the people?" },
     ],
   },
   {
@@ -731,6 +745,9 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "note") {
           await wait((step.ms ?? 600) * pace, signal);
           yield { type: "note", text: step.text };
+        } else if (step.kind === "released") {
+          yield { type: "note-reply", text: step.text };
+          yield { type: "text-delta", text: `${step.text}\n\n` };
         } else if (step.kind === "artifact") {
           yield { type: "artifact", artifact: step.artifact };
         } else if (step.kind === "error") {

@@ -109,31 +109,36 @@ const MAX_GIST = 320;
 /**
  * A reply cleaned for the ear and cut to its first two sentences: links become their text,
  * citation marks, code, tables, and list markers go, and "The rest is on screen" says where the
- * details went. A greeting the voice already said ("Hey!") isn't said twice.
+ * details went. A greeting the voice already said ("Hey!") isn't said twice. A reply that ends by
+ * asking them something gets that question said last, and no other: the call asks one thing,
+ * the thing the chat leaves open.
  */
 export function speakableGist(markdown: string): string {
   const text = plain(markdown).replace(/^(hey|hi|hello)( there)?[!,.]\s*/i, "");
   if (!text) return "";
-  const sentences = text.match(/[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g)?.map((s) => s.trim()).filter(Boolean) ?? [text];
+  const question = closingQuestion(markdown) ?? "";
+  const said = sentences(text).filter((s) => !question || !QUESTION.test(s));
   let gist = "";
-  for (const s of sentences.slice(0, 2)) {
+  for (const s of said.slice(0, 2)) {
     if (gist && gist.length + s.length + 1 > MAX_GIST) break;
     gist = gist ? `${gist} ${s}` : s;
   }
   if (gist.length > MAX_GIST) gist = `${gist.slice(0, MAX_GIST - 1).replace(/\s+\S*$/, "")}…`;
-  // A reply that ends by asking them something always gets that question said, last, so the
-  // call asks exactly what the chat asks.
-  const last = closingQuestion(markdown) ?? "";
-  const question = last && !gist.includes(last) ? last : "";
   const rest = text.length > gist.length + question.length + 2;
   return [gist, rest ? "The rest is on screen." : "", question].filter(Boolean).join(" ");
 }
 
+const QUESTION = /\?["”’)]*$/;
+
 /** The question a reply ends on, in plain words, if it ends on one. */
 export function closingQuestion(markdown: string): string | null {
-  const text = plain(markdown);
-  const last = text.match(/[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g)?.map((s) => s.trim()).filter(Boolean).at(-1) ?? "";
-  return /\?["”’)]*$/.test(last) && last.length <= MAX_GIST ? last : null;
+  const last = sentences(plain(markdown)).at(-1) ?? "";
+  return QUESTION.test(last) && last.length <= MAX_GIST ? last : null;
+}
+
+/** Plain text cut into sentences, each with its closing punctuation. */
+export function sentences(text: string): string[] {
+  return text.match(/[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g)?.map((s) => s.trim()).filter(Boolean) ?? [];
 }
 
 /** Markdown to plain words for speech. */

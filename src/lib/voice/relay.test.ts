@@ -83,6 +83,13 @@ describe("relayReply", () => {
     expect(speakableGist("Got it. What's been hardest lately?")).toBe("Got it. What's been hardest lately?");
   });
 
+  it("asks one question: the one the reply ends on", () => {
+    expect(speakableGist("Let me start a checklist. What's been hardest lately?\n\nGot it: you want to meet people. Which is harder, the roles or the people?")).toBe(
+      "Let me start a checklist. Got it: you want to meet people. The rest is on screen. Which is harder, the roles or the people?",
+    );
+    expect(speakableGist("Is it remote? I'll check. Here's what I found.")).toBe("Is it remote? I'll check. The rest is on screen.");
+  });
+
   it("reads a card's own words and says how to answer", () => {
     const lines = relayReply(
       reply({
