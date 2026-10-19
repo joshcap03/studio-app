@@ -189,7 +189,7 @@ export function BusinessBrain({ initialMemories, initialPromotions, isOwner }: P
       ) : null}
 
       {memories.length === 0 ? (
-        <p className="mt-4 text-[13.5px] text-fg-3">Nothing saved yet. Add something above, or just tell the agent in chat.</p>
+        <p className="mt-4 text-[13.5px] text-fg-3">Nothing saved yet. Add something above, or just tell me in chat.</p>
       ) : (
         <>
           <div className="mt-6 flex flex-wrap items-center gap-2">
