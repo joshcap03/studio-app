@@ -148,6 +148,16 @@ function fillReply(result: FillResult): string {
   return result.status === "filled" ? `Filled: ${result.said}. Not sent yet.` : `Heard: ${result.said}? It's on screen for them to confirm with a tap.`;
 }
 
+/** A call failure in plain words; the browser's own wording for a refused mic is just "Permission denied". */
+export function callProblem(message: string | undefined): string {
+  const text = (message ?? "").trim();
+  if (/permission|not ?allowed|denied/i.test(text)) {
+    return "Studio couldn't use your microphone. Allow it for this site (the icon at the left of the address bar), then start the call again.";
+  }
+  if (/not ?found|no (microphone|audio|device)|requested device/i.test(text)) return "No microphone found. Connect one and start the call again.";
+  return text ? `${text.replace(/[.!]?$/, ".")}` : "The call dropped.";
+}
+
 function clock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -392,7 +402,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       } else if (next === "ended") {
         hangUp();
       } else if (next === "error") {
-        setProblem(message ?? "The call dropped.");
+        setProblem(callProblem(message));
         api.endVoice(grant.sessionId).catch(() => undefined);
       }
     },

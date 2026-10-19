@@ -36,12 +36,12 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
   const [about, setAbout] = useState("");
   const [created, setCreated] = useState(workspaceName);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<false | "continue" | "talk">(false);
 
   async function saveYou(event: React.FormEvent) {
     event.preventDefault();
     if (pending) return;
-    setPending(true);
+    setPending("continue");
     setError(null);
     try {
       await api.updateAccount(you);
@@ -53,28 +53,39 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
     }
   }
 
-  async function createWorkspace(event: React.FormEvent) {
+  /**
+   * Creates the agent, then connects apps, or, talking it through, goes straight into its setup
+   * on a call (which offers apps as they're needed), named for its template until renamed.
+   */
+  async function createWorkspace(event: React.FormEvent, next: "continue" | "talk" = "continue") {
     event.preventDefault();
     if (pending) return;
-    setPending(true);
+    setPending(next);
     setError(null);
+    const agentName = name.trim() || namePlaceholder;
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, profile: about, templateId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+      body: JSON.stringify({ name: agentName, profile: about, templateId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    setPending(false);
     if (!res.ok) {
+      setPending(false);
       setError(body?.error ?? "Couldn't create the agent. Try again.");
       return;
     }
-    setCreated(name.trim());
+    if (next === "talk") {
+      window.location.assign("/?setup=talk");
+      return;
+    }
+    setPending(false);
+    setCreated(agentName);
     setStep("connect");
   }
 
   const current = steps.findIndex((s) => s.id === step);
   const template = templateById(templateId) ?? TEMPLATES[0];
+  const namePlaceholder = template.id === "job-search" ? "Job search" : template.id === "small-business" ? "My business" : "Personal";
   const suggested = created && step === "connect" ? template.apps : [];
 
   return (
@@ -135,7 +146,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
           <div className="mt-2 flex items-center gap-3">
             <button
               type="submit"
-              disabled={!you.name.trim() || pending}
+              disabled={!you.name.trim() || Boolean(pending)}
               className="flex h-10 items-center gap-2 rounded-xl bg-inverse px-4 text-[14px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-30"
             >
               {pending ? "Saving…" : "Continue"}
@@ -188,7 +199,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
             maxLength={80}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={template.id === "job-search" ? "Job search" : template.id === "small-business" ? "My business" : "Personal"}
+            placeholder={namePlaceholder}
             className="mt-1.5 h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-[15px] outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
           />
 
@@ -213,12 +224,24 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
           <div className="mt-2 flex items-center gap-3">
             <button
               type="submit"
-              disabled={!name.trim() || pending}
+              disabled={!name.trim() || Boolean(pending)}
               className="flex h-10 items-center gap-2 rounded-xl bg-inverse px-4 text-[14px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-30"
             >
-              {pending ? "Creating…" : "Continue"}
+              {pending === "continue" ? "Creating…" : "Continue"}
               <ArrowRight size={15} />
             </button>
+            {canTalk ? (
+              // Skip the form: pick a starting point and say the rest on a call.
+              <button
+                type="button"
+                onClick={(e) => void createWorkspace(e, "talk")}
+                disabled={Boolean(pending)}
+                className="flex h-10 items-center gap-2 rounded-xl border border-line-strong px-4 text-[14px] font-medium text-fg transition-colors hover:bg-hover disabled:opacity-50"
+              >
+                {pending === "talk" ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={15} className="text-accent" />}
+                Talk it through
+              </button>
+            ) : null}
             {canCancel ? (
               <a href="/" className="text-[13.5px] text-fg-3 hover:text-fg">
                 Cancel
