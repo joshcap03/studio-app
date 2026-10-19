@@ -263,6 +263,7 @@ describe("Langflow request", () => {
     const call = templateValues({ ...tenantA, guardrail, modality: "call" }).system_context;
     expect(call).toContain("live voice call");
     expect(call).toContain("don't open with \"Hey!\"");
+    expect(call).toContain("write your reply first");
     expect(call.indexOf("no opinions")).toBeLessThan(call.indexOf("live voice call"));
     expect(templateValues({ ...tenantA, modality: "voice_note" }).system_context).toContain("voice message");
     expect(templateValues(tenantA).system_context).not.toContain("voice");
