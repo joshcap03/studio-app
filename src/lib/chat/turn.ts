@@ -5,7 +5,7 @@ import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
 import { buildQuestions } from "./questions";
-import { buildUiBlock } from "./ui";
+import { buildUiBlock, isMergeRequest } from "./ui";
 import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
 import { buildVisual, withVisual } from "./visuals";
@@ -108,6 +108,12 @@ export interface TurnDeps {
    */
   savePlan?: (plan: unknown) => Promise<boolean>;
   saveRecord?: (record: unknown, source: { messageId: string }) => Promise<boolean>;
+  /**
+   * Checks the agent's proposal to merge remembered facts against the member's memory (under
+   * their session) and returns its card, or null when nothing in it holds up. Without it, such
+   * proposals are dropped.
+   */
+  resolveMerge?: (raw: unknown) => Promise<UiBlock | null>;
   /** Whether this member gets investigation timelines and visuals; when false they're dropped. */
   timelines?: boolean;
   /** How often partial output is saved while streaming. */
@@ -569,8 +575,16 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               break;
             }
             case "ui": {
-              // A form or proposed setup; it changes nothing until the member answers or applies it.
-              const built = buildUiBlock(event.block);
+              // A form, proposed setup, or proposed merge of facts; it changes nothing until the
+              // member answers or applies it.
+              const built = !isMergeRequest(event.block)
+                ? buildUiBlock(event.block)
+                : deps.resolveMerge
+                  ? await deps.resolveMerge(event.block).catch((e) => {
+                      console.error("[turn] couldn't check the proposed merge", e);
+                      return null;
+                    })
+                  : null;
               if (built) {
                 ui = [...(ui ?? []), built].slice(-MAX_UI_BLOCKS);
                 send({ type: "ui", ui });

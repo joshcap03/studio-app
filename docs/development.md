@@ -79,7 +79,13 @@ ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/com
   sends them with the run.
   When the agent calls `remember`, the app saves the fact at once and shows it under the
   reply with Undo; if saving fails, it stays a suggestion the member can save. Members manage
-  memory in Settings. (The old `memories` table is no longer used.)
+  memory in Settings. "Tidy up" on a Brain topic starts a chat with that topic's tidy skill
+  (`src/lib/skills/tidy.ts`), which lists the facts the member may change by id; the agent
+  proposes combining overlapping ones with `merge_memories`. The app checks each id against
+  memory under the member's session (`src/lib/memory-merge.ts`) and shows the merges as a card.
+  Merging saves the new fact (pinned if any original was, with the newest source) before
+  removing the originals, never mixes shared facts with personal ones, and lets a member change
+  only shared facts they saved (an owner, any). Undo restores the originals. (The old `memories` table is no longer used.)
 - **Approvals.** When the agent wants to change something (send, create, update, delete),
   the run pauses and the reply shows what it will do. Nothing runs until the member approves;
   a decline is passed to the agent. One undecided request per conversation; new messages
@@ -99,7 +105,7 @@ ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/com
   progress is `workspace_settings.setup` (`src/lib/setup-state.ts`).
 - **Agent-rendered UI.** Cards are reusable gateway tools any skill can call, never UI for
   one flow: `ask_user` (choices, ranking, scale, keep/pass verdicts, "Something else"),
-  `show_form`, and `propose_agent` (`src/components/chat/ui-cards.tsx`, `requests.tsx`).
+  `show_form`, `propose_agent`, and `merge_memories` (`src/components/chat/ui-cards.tsx`, `requests.tsx`).
   They change nothing themselves: a form's answers go out as the member's next message, and
   a proposal applies only when the member clicks Apply. Keep/pass calls are saved as the
   member's verdicts (`src/lib/verdicts.ts`).
@@ -158,7 +164,9 @@ exchange from the session's stored messages.
      API at runtime. Composio's own meta tools (connections, skills, feedback) ask unless
      they're lookups (search, schemas, waiting for a connection). `take_action`
      refuses to run at all if the Agent has no approval checkpoint (nothing paused).
-     It also adds `remember`, whose structured result the app saves to the caller's memory.
+     It also adds `remember`, whose structured result the app saves to the caller's memory,
+     and the card tools (`ask_user`, `show_form`, `propose_agent`, `merge_memories`), which
+     change nothing themselves.
      The installer removes any Supermemory MCP node from the flow: one connection would be
      shared by every workspace, so memory goes through the app instead.
    - **Workspace Context** (`langflow/components/workspace_context.py`) holds the Agent's

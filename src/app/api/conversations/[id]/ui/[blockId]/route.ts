@@ -6,6 +6,7 @@ import { storeFor } from "@/lib/chat/store-for";
 import { proposalPicksSchema } from "@/lib/chat/ui";
 import { isSetupConversation, updateSetup } from "@/lib/setup-state";
 import { memoryEnabled, remember } from "@/lib/memory";
+import { MAX_MERGES, MAX_MERGE_TEXT, applyMerges, undoMerges } from "@/lib/memory-merge";
 import { addFromCatalog, createSkill, listSkills } from "@/lib/skills";
 import { createTask, getTaskForConversation, listTasks, updateTask } from "@/lib/tasks";
 import { timezoneSchema } from "@/lib/tasks/schema";
@@ -44,11 +45,21 @@ const body = z.discriminatedUnion("action", [
       .optional(),
     timezone: timezoneSchema.optional(),
   }),
+  // The member made some or all of a proposed merge of remembered facts, with their own edits
+  // to the merged texts (by the merge's place in the card).
+  z.strictObject({
+    action: z.literal("merge"),
+    picks: z.array(z.number().int().min(0).max(MAX_MERGES - 1)).min(1).max(MAX_MERGES),
+    edits: z.record(z.string().regex(/^\d{1,2}$/), z.string().trim().min(1).max(MAX_MERGE_TEXT)).optional(),
+  }),
+  // The member took back the merges they made from this card.
+  z.strictObject({ action: z.literal("undo") }),
 ]);
 
 /**
  * Answers a card the agent showed under one of the caller's replies. What gets applied is the
- * stored proposal (plus the member's own edits to its texts), never items from the request.
+ * stored proposal (plus the member's own edits to its texts), never items from the request; a
+ * merge is undone from what the stored response says it did.
  */
 export async function POST(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
@@ -85,6 +96,18 @@ export async function POST(request: NextRequest, { params }: Context) {
         }
       }
       response = { status: "submitted", at: Date.now() };
+    } else if (input.action === "merge") {
+      if (block.kind !== "memory-merge") return jsonError(400, "Only proposed merges can be made.");
+      if (previous) return jsonError(409, "These were already merged.");
+      if (!memoryEnabled()) return jsonError(503, "Memory isn't set up for this app yet.");
+      const result = await applyMerges(auth.value, block, input.picks, input.edits ?? {});
+      // Nothing saved, so a second click racing the first can't overwrite what it did.
+      if (result.merges.length === 0) return jsonError(409, "Those facts have changed since, so nothing was merged. Ask for a fresh tidy-up.");
+      response = { status: "merged", at: Date.now(), ...result };
+    } else if (input.action === "undo") {
+      if (block.kind !== "memory-merge" || previous?.status !== "merged") return jsonError(409, "There's nothing to undo here.");
+      if (!memoryEnabled()) return jsonError(503, "Memory isn't set up for this app yet.");
+      response = { status: "undone", at: Date.now(), ...(await undoMerges(auth.value, previous)) };
     } else {
       if (block.kind !== "proposal") return jsonError(400, "Only a proposal can be applied.");
       if (previous) return jsonError(409, "This was already applied.");

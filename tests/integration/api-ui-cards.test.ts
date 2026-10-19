@@ -221,3 +221,79 @@ describe("ui card answers", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// Merging facts the agent proposed (merge_memories). With memory set up on the QA server this
+// runs the whole merge and Undo; without it, only the refusals.
+describe("merging remembered facts", () => {
+  const mergeId = crypto.randomUUID();
+  type Fact = { id: string; content: string; pinned: boolean; scope: string };
+  const listFacts = async () => ((await (await alice.api.json("/api/workspace/memories", "GET")).json()) as { memories: Fact[] }).memories;
+  let memoryOn = false;
+  let facts: Fact[] = [];
+
+  beforeAll(async () => {
+    const add = async (content: string, scope = "workspace") => {
+      const res = await alice.api.json("/api/workspace/memories", "POST", { content, scope, category: "team" });
+      if (res.status === 503) return null;
+      expect(res.status, await res.clone().text()).toBe(201);
+      return ((await res.json()) as { memory: Fact }).memory;
+    };
+    const first = await add(`Merge ${tag}: Ana leads design.`);
+    memoryOn = Boolean(first);
+    if (first) {
+      const second = (await add(`Merge ${tag}: Ana also runs hiring.`))!;
+      const pinned = await alice.api.json(`/api/workspace/memories/${encodeURIComponent(second.id)}`, "PATCH", { pinned: true });
+      expect(pinned.status, await pinned.clone().text()).toBe(200);
+      facts = [first, ((await pinned.json()) as { memory: Fact }).memory];
+    } else {
+      facts = [
+        { id: "workspace:a", content: "A", pinned: false, scope: "workspace" },
+        { id: "workspace:b", content: "B", pinned: false, scope: "workspace" },
+      ];
+    }
+    const card = {
+      kind: "memory-merge",
+      id: mergeId,
+      summary: "2 facts become 1.",
+      merges: [{ text: `Merge ${tag}: Ana leads design and hiring.`, category: "team", scope: "workspace", pinned: true, originals: facts.map(({ id, content, pinned }) => ({ id, content, pinned })) }],
+    };
+    const inserted = await alice.db.from("messages").insert({ conversation_id: conversation, workspace_id: alice.workspaceId, role: "assistant", content: "", status: "complete", ui: [card] });
+    expect(inserted.error).toBeNull();
+  }, 60_000);
+
+  afterAll(async () => {
+    if (!memoryOn) return;
+    for (const m of await listFacts()) if (m.content.includes(tag)) await alice.api.json(`/api/workspace/memories/${encodeURIComponent(m.id)}`, "DELETE");
+  });
+
+  it("are refused for anyone the card wasn't shown to, for other cards, and before anything was merged", async () => {
+    expect((await bob.api.json(url(mergeId), "POST", { action: "merge", picks: [0] })).status).toBe(404);
+    expect((await alice.api.json(url(proposalId), "POST", { action: "merge", picks: [0] })).status).toBe(400);
+    expect((await alice.api.json(url(mergeId), "POST", { action: "apply", picks })).status).toBe(400);
+    expect((await alice.api.json(url(mergeId), "POST", { action: "undo" })).status).toBe(409);
+    expect((await alice.api.json(url(mergeId), "POST", { action: "merge", picks: [] })).status).toBe(400);
+  });
+
+  it("merge the stored facts into one that stays pinned, once, and Undo brings the originals back", async () => {
+    if (!memoryOn) {
+      expect((await alice.api.json(url(mergeId), "POST", { action: "merge", picks: [0] })).status).toBe(503);
+      return;
+    }
+    const edited = `Merge ${tag}: Ana leads design and runs hiring.`;
+    const res = await alice.api.json(url(mergeId), "POST", { action: "merge", picks: [0], edits: { "0": edited } });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const { response } = (await res.json()) as { response: { status: string; skipped: number; merges: { memoryId: string; text: string }[] } };
+    expect(response).toMatchObject({ status: "merged", skipped: 0, merges: [{ text: edited }] });
+    let mine = (await listFacts()).filter((m) => m.content.includes(tag));
+    expect(mine).toEqual([expect.objectContaining({ id: response.merges[0].memoryId, content: edited, pinned: true, scope: "workspace" })]);
+    expect((await alice.api.json(url(mergeId), "POST", { action: "merge", picks: [0] })).status).toBe(409);
+    expect((await bob.api.json(url(mergeId), "POST", { action: "undo" })).status).toBe(404);
+
+    const undo = await alice.api.json(url(mergeId), "POST", { action: "undo" });
+    expect(undo.status, await undo.clone().text()).toBe(200);
+    expect(((await undo.json()) as { response: unknown }).response).toMatchObject({ status: "undone", restored: 2, skipped: 0 });
+    mine = (await listFacts()).filter((m) => m.content.includes(tag));
+    expect(mine.map((m) => [m.content, m.pinned]).sort()).toEqual(facts.map((f) => [f.content, f.pinned]).sort());
+    expect((await alice.api.json(url(mergeId), "POST", { action: "undo" })).status).toBe(409);
+  });
+});

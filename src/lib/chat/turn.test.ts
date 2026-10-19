@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMockAdapter } from "@/lib/agent/mock";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "@/lib/agent/types";
 import { readNdjson } from "@/lib/client/api";
@@ -844,6 +844,28 @@ describe("edits, files, and memory suggestions", () => {
       { kind: "proposal", instructions: "Be brief.", skills: [{ catalogId: "find-roles" }] },
     ]);
     expect(events.filter((e) => e.type === "ui").at(-1)).toEqual({ type: "ui", ui: reply.ui });
+  });
+
+  it("shows a proposed merge of facts only as checked against the member's memory", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const raw = { memory_merge: { summary: "s", merges: [{ text: "A and B.", replaces: ["workspace:a", "workspace:b"] }] } };
+    const adapter = scripted([{ type: "ui", block: raw }, { type: "ui", block: { memory_merge: { merges: [] } } }, { type: "message", text: "Here." }]);
+    const card = {
+      kind: "memory-merge" as const,
+      id: "card",
+      summary: "s",
+      merges: [{ text: "A and B.", category: "team" as const, scope: "workspace" as const, pinned: false, originals: [] }],
+    };
+    const resolveMerge = vi.fn(async (block: unknown) => ((block as typeof raw).memory_merge.merges.length ? card : null));
+    await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, resolveMerge }, { conversationId: id, kind: "send", text: "x" }));
+    expect(resolveMerge).toHaveBeenCalledWith(raw);
+    expect((await store.listMessages(id))[1].ui).toEqual([card]);
+
+    // Without a way to check it (no memory), it isn't shown at all.
+    const other = crypto.randomUUID();
+    await collect(startTurn({ store, adapter: scripted([{ type: "ui", block: raw }]), context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: other, kind: "send", text: "x" }));
+    expect((await store.listMessages(other))[1].ui ?? null).toBeNull();
   });
 
   it("keeps the agent's memory suggestions on the reply, pending, when there's no memory to save to", async () => {

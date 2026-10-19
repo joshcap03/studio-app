@@ -1,18 +1,19 @@
 "use client";
 
-import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, ExternalLink, FileUp, GripVertical, Paperclip, Plug, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, Combine, ExternalLink, FileUp, GripVertical, Paperclip, Pin, Plug, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { appName, toolkitForApp } from "@/lib/apps";
 import type { ConnectStatus, FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
-import type { AgentProposal, Attachment, ConnectionsState, ProposalPicks, UiBlock, UiField, UiForm, UiResponse } from "@/lib/types";
-import { ATTACHMENT_TYPES } from "@/lib/types";
+import type { AgentProposal, Attachment, ConnectionsState, MemoryMergeProposal, ProposalPicks, UiBlock, UiField, UiForm, UiResponse } from "@/lib/types";
+import { ATTACHMENT_TYPES, MEMORY_CATEGORY_LABELS } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
 import { useCardDrafts, type FormDraft } from "./card-drafts";
 
-// Reusable cards for what the agent asks through its show_form and propose_agent tools. They
+// Reusable cards for what the agent asks through its show_form, propose_agent, and
+// merge_memories tools. They
 // know nothing about any one flow (setup, a template): every field kind and proposal item is
 // generic, and any skill can use them. Rendered only from what the backend reported; nothing
 // here acts until the member clicks.
@@ -45,6 +46,17 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             conversationId={conversationId}
             messageId={messageId}
             onResponse={onResponse}
+          />
+        ) : block.kind === "memory-merge" ? (
+          <MergeCard
+            key={block.id}
+            proposal={block}
+            response={responses?.[block.id]}
+            canApply={settled && Boolean(onResponse)}
+            onAnswer={async (body) => {
+              const { response } = await api.answerUi(conversationId, block.id, body);
+              onResponse?.(messageId, block.id, response);
+            }}
           />
         ) : (
           <ProposalCard
@@ -1023,4 +1035,167 @@ function appliedText(a: Extract<UiResponse, { status: "applied" }>["applied"]): 
   ].filter(Boolean);
   const skipped = a.skipped ? ` ${a.skipped} item${a.skipped === 1 ? "" : "s"} couldn't be applied on your account.` : "";
   return (parts.length ? `Applied: ${parts.join(", ")}.` : "Applied. Nothing needed changing.") + skipped;
+}
+
+interface MergeProps {
+  proposal: MemoryMergeProposal;
+  response?: UiResponse;
+  canApply: boolean;
+  onAnswer: (body: { action: "merge"; picks: number[]; edits?: Record<string, string> } | { action: "undo" }) => Promise<void>;
+}
+
+/**
+ * Facts the agent suggests combining, each merged fact over the ones it would replace. Nothing
+ * changes until the member merges the ones they pick (editing the wording first if they like),
+ * and Undo puts the originals back.
+ */
+export function MergeCard({ proposal, response, canApply, onAnswer }: MergeProps) {
+  const [picks, setPicks] = useState<number[]>(() => every(proposal.merges.length));
+  const [texts, setTexts] = useState(() => proposal.merges.map((m) => m.text));
+  const [editing, setEditing] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const merged = response?.status === "merged" ? response : null;
+  const undone = response?.status === "undone" ? response : null;
+  const live = canApply && !response;
+  // Once merged (or undone), what the server reports it saved; until then, the member's picks and wording.
+  const shown = (merged ?? undone)?.merges?.map(({ index, text }) => ({ index, text })) ?? proposal.merges.map((m, index) => ({ index, text: texts[index] }));
+  const replaced = (indexes: number[]) => indexes.reduce((n, i) => n + (proposal.merges[i]?.originals.length ?? 0), 0);
+
+  async function answer(body: Parameters<MergeProps["onAnswer"]>[0]) {
+    setBusy(true);
+    setError(null);
+    try {
+      await onAnswer(body);
+      setEditing(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't do that. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function merge() {
+    const edits = Object.fromEntries(
+      picks.flatMap((i) => (texts[i].trim() && texts[i].trim() !== proposal.merges[i].text ? [[String(i), texts[i].trim()]] : [])),
+    );
+    void answer({ action: "merge", picks: [...picks].sort((a, b) => a - b), ...(Object.keys(edits).length ? { edits } : {}) });
+  }
+
+  const toggle = (i: number) => setPicks((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i]));
+  const title = undone ? "Merge undone" : merged ? "Merged facts" : "Facts to combine";
+
+  return (
+    <section aria-label="Facts to combine" className={response ? "mt-4 overflow-hidden rounded-xl border border-line animate-fade-up" : card}>
+      <div className="flex items-start gap-3 px-4 pt-3.5">
+        <Combine size={17} className="mt-0.5 shrink-0 text-accent" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[12px] font-medium tracking-[0.01em] text-fg-3">{title}</p>
+          <p className="mt-0.5 text-[14.5px] leading-[1.5] text-fg [overflow-wrap:anywhere]">
+            {proposal.summary ||
+              `${replaced(every(proposal.merges.length))} facts become ${proposal.merges.length}.`}
+          </p>
+        </div>
+      </div>
+      <ul className="flex flex-col gap-3 px-4 pt-3 pb-4">
+        {shown.map(({ index, text }) => {
+          const m = proposal.merges[index];
+          if (!m) return null;
+          const on = picks.includes(index);
+          return (
+            <li key={index} className={`flex items-start gap-2.5 ${undone ? "opacity-60" : ""}`}>
+              {live ? (
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={on}
+                  aria-label={`Merge into: ${m.text}`}
+                  onClick={() => toggle(index)}
+                  className={`mt-[3px] flex size-[18px] shrink-0 items-center justify-center rounded-[5px] ${on ? "bg-accent text-on-inverse" : "border border-line-strong"}`}
+                >
+                  {on ? <Check size={12} strokeWidth={2.5} /> : null}
+                </button>
+              ) : (
+                <Check size={14} className={`mt-[3px] shrink-0 ${merged ? "text-success" : "text-fg-4"}`} />
+              )}
+              <div className="min-w-0 flex-1">
+                {editing === index ? (
+                  <textarea
+                    aria-label="Merged fact"
+                    autoFocus
+                    className={`${input} min-h-20 resize-y`}
+                    value={texts[index]}
+                    maxLength={500}
+                    onChange={(e) => setTexts((all) => all.map((t, i) => (i === index ? e.target.value : t)))}
+                  />
+                ) : (
+                  <p className="text-[13.5px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{text}</p>
+                )}
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-fg-3">
+                  <span>{m.scope === "personal" ? "Only me" : "Shared"}</span>
+                  <span>{MEMORY_CATEGORY_LABELS[m.category]}</span>
+                  {m.pinned && !undone ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Pin size={11} /> Stays pinned
+                    </span>
+                  ) : null}
+                  {live ? (
+                    <button type="button" onClick={() => setEditing(editing === index ? null : index)} className={`${quiet} ml-auto -my-1`}>
+                      {editing === index ? "Done" : "Edit"}
+                    </button>
+                  ) : null}
+                </div>
+                <details className="group/originals mt-1.5">
+                  <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[12px] text-fg-3 hover:text-fg [&::-webkit-details-marker]:hidden">
+                    <ChevronDown size={12} className="transition-transform group-open/originals:rotate-180" />
+                    {undone ? "Brought back" : merged ? "Replaced" : "Replaces"} {m.originals.length} facts
+                  </summary>
+                  <ul className="mt-1.5 space-y-1 border-l border-line pl-2.5">
+                    {m.originals.map((o) => (
+                      <li key={o.id} className="text-[12.5px] leading-[1.45] text-fg-3 [overflow-wrap:anywhere]">
+                        {o.content}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {merged || undone ? (
+        <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
+          <p className={`mr-auto flex min-w-0 items-center gap-1.5 pl-1 text-[12.5px] ${error ? "text-danger" : undone ? "text-fg-3" : "text-success"}`}>
+            {error ? null : <Check size={13} className="settle-check shrink-0" />}
+            {error ?? (undone ? undoneText(undone) : mergedText(merged!, replaced(merged!.merges.map((m) => m.index))))}
+          </p>
+          {merged && canApply ? (
+            <button type="button" onClick={() => void answer({ action: "undo" })} disabled={busy} className={quiet}>
+              {busy ? <span className="spinner size-3" aria-hidden="true" /> : <RotateCcw size={13} />}
+              Undo
+            </button>
+          ) : null}
+        </div>
+      ) : live ? (
+        <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
+          <span className={`mr-auto pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? "Nothing changes until you merge."}</span>
+          <button type="button" onClick={merge} disabled={busy || picks.length === 0 || picks.some((i) => !texts[i].trim())} className={primary}>
+            {busy ? <span className="spinner size-3.5" aria-hidden="true" /> : <Combine size={14} />}
+            Merge
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function mergedText(merged: Extract<UiResponse, { status: "merged" }>, replaced: number): string {
+  const n = merged.merges.length;
+  const skipped = merged.skipped ? ` ${merged.skipped} couldn't be merged: those facts changed since.` : "";
+  return `Merged ${replaced} facts into ${n}.${skipped}`;
+}
+
+function undoneText(undone: Extract<UiResponse, { status: "undone" }>): string {
+  const skipped = undone.skipped ? ` ${undone.skipped} merged ${undone.skipped === 1 ? "fact was" : "facts were"} changed since, so ${undone.skipped === 1 ? "it stays" : "they stay"}.` : "";
+  return `Undone: ${undone.restored} ${undone.restored === 1 ? "fact is" : "facts are"} back.${skipped}`;
 }
