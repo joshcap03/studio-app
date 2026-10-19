@@ -20,7 +20,9 @@ Reads LANGFLOW_BASE_URL and LANGFLOW_API_KEY from the environment. Does these th
      conversation. It sends the same credential header, from the same Langflow global
      variable, as the shared node's server config.
   7. Installs Load Skill from langflow/components/load_skill.py if the flow has one.
-  8. Moves a literal Exa key into the Langflow global variable EXA_API_KEY.
+  8. Moves a literal Exa key into the Langflow global variable EXA_API_KEY, and has each Exa
+     search return at least 10 results, so research (a job search, a market scan) draws on
+     more than a handful of sources.
   9. Removes Python REPL nodes: they run code inside the Langflow server, next to every
      tenant's keys. Pass --keep-python only if the server has LANGFLOW_SANDBOX_BACKEND set.
      (Members' code runs in their own Composio workbench instead.)
@@ -46,6 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.environ["LANGFLOW_BASE_URL"].rstrip("/")
 KEY = os.environ["LANGFLOW_API_KEY"]
 MIN_HISTORY = 20
+MIN_SEARCH_RESULTS = 10
 
 
 def call(method, path, body=None):
@@ -211,6 +214,10 @@ def main(argv):
                 call("POST", "/api/v1/variables/", {"name": "EXA_API_KEY", "value": field["value"], "type": "Credential", "default_fields": []})
             field["value"], field["load_from_db"] = "EXA_API_KEY", True
             print("moved the Exa key into the global variable EXA_API_KEY")
+        results = n["data"].get("node", {}).get("template", {}).get("search_num_results")
+        if isinstance(results, dict) and int(results.get("value") or 0) < MIN_SEARCH_RESULTS:
+            results["value"] = MIN_SEARCH_RESULTS
+            print("Exa search now returns", MIN_SEARCH_RESULTS, "results:", n["data"]["id"])
 
     gateway["data"]["node"]["template"]["code"]["value"] = open(os.path.join(HERE, "components/tool_gateway.py")).read()
     chat_input["data"]["node"]["template"]["files"]["api_editable"] = True
