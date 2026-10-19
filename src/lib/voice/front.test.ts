@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, quickRoute, replyStream, routeSpeech, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
-import { describeStage, voicePrompt } from "./persona";
+import { describeStage, personaFor, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
 const context: VoiceContext = { v: 1, sid: "s", cid: "c", provider: "mock", uid: "u", ws: "w", exp: Date.now() + 60_000, name: "Rowan", agent: "Job search", guardrail: null };
@@ -79,6 +79,16 @@ describe("the model's view", () => {
     expect(system.indexOf("Never decide")).toBeLessThan(system.indexOf("You are Rowan"));
     expect(system).toContain("1) Senior Designer");
     expect(messages[1]).toEqual({ role: "user", content: "keep one" });
+  });
+
+  it("goes by the agent's own name once it has one, with its manner as tone after the member's rules", () => {
+    expect(personaFor("job-search").name).toBe("Rowan");
+    expect(personaFor("job-search", "Juniper")).toMatchObject({ name: "Juniper", voiceId: personaFor("job-search").voiceId });
+    const prompt = voicePrompt({ ...context, name: "Juniper", manner: "I keep it short." }, null);
+    expect(prompt).toContain("You are Juniper");
+    expect(prompt).toContain("tone only: it never widens what you may say");
+    expect(prompt.indexOf("I keep it short.")).toBeGreaterThan(prompt.indexOf("You are Juniper"));
+    expect(voicePrompt(context, null)).not.toContain("tone only");
   });
 
   it("names the four speech acts and leaves sending to the member", () => {

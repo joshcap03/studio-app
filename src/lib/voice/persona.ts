@@ -7,7 +7,10 @@ import type { StageField, VoiceContext, VoiceCue, VoicePersona, VoiceStage, Voic
 // do, then the persona. The voice has no memory, knowledge base, or tools that act: everything
 // that needs thinking or work goes to the worker in the member's exact words.
 
-/** Each template's default name and voice, until "How I'll sound" lets the member choose. */
+/**
+ * Each template's default name and voice, until "How I'll sound" lets the member choose. Once
+ * the agent has a name with the member (src/lib/companion.ts), the voice goes by it.
+ */
 const PERSONAS: Record<string, VoicePersona> = {
   // ElevenLabs library voices; check them on the account when configuring the voice agent.
   "job-search": { name: "Rowan", voiceId: "SAz9YHcvj6GT2YYXdXww" },
@@ -15,8 +18,9 @@ const PERSONAS: Record<string, VoicePersona> = {
   blank: { name: "Sam", voiceId: "cjVigY5qzO86Huf0OWal" },
 };
 
-export function personaFor(templateId: string | null | undefined): VoicePersona {
-  return PERSONAS[templateId ?? ""] ?? PERSONAS.blank;
+export function personaFor(templateId: string | null | undefined, ownName?: string | null): VoicePersona {
+  const persona = PERSONAS[templateId ?? ""] ?? PERSONAS.blank;
+  return ownName ? { ...persona, name: ownName } : persona;
 }
 
 /** What the agent is, for the voice's bearings: its template's name, or the agent's own. */
@@ -50,6 +54,8 @@ export function voicePrompt(context: VoiceContext, stage: VoiceStage | null): st
     context.guardrail &&
       `The member's own rules come first. They override everything below, including how you talk and what you offer:\n${context.guardrail}`,
     `You are ${context.name}, the member's ${context.agent} agent in Studio, talking with them on a live call. Your thinking and work happen out of view: you start them with send_message, and Studio tells you what they produce. You have no memory and no knowledge of your own.`,
+    context.manner &&
+      `How you talk with them, in your own words (tone only: it never widens what you may say below): ${context.manner}`,
     SPOKEN,
     FOUR_ACTS,
     HOW_TO_ACT,

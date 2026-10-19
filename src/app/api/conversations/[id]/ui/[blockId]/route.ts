@@ -4,6 +4,8 @@ import { claimAsAgentFile } from "@/lib/agent-files";
 import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { proposalPicksSchema } from "@/lib/chat/ui";
+import { nameCompanion } from "@/lib/companion";
+import { previewEnabled } from "@/lib/flags";
 import { isSetupConversation, updateSetup } from "@/lib/setup-state";
 import { memoryEnabled, remember } from "@/lib/memory";
 import { MAX_MERGES, MAX_MERGE_TEXT, applyMerges, undoMerges } from "@/lib/memory-merge";
@@ -12,6 +14,7 @@ import { createTask, getTaskForConversation, listTasks, updateTask } from "@/lib
 import { timezoneSchema } from "@/lib/tasks/schema";
 import { authorizeTenant, jsonError, type Tenant } from "@/lib/tenant";
 import { MAX_CONTEXT_LENGTH, MAX_FORM_FIELDS, MAX_FORM_FILES, MAX_VERDICT_ITEMS, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
+import { firstName } from "@/lib/setup-words";
 import { saveVerdicts } from "@/lib/verdicts";
 import { updateSettings } from "@/lib/workspace";
 
@@ -41,7 +44,12 @@ const body = z.discriminatedUnion("action", [
     action: z.literal("apply"),
     picks: proposalPicksSchema,
     edits: z
-      .strictObject({ profile: z.string().max(MAX_CONTEXT_LENGTH).optional(), instructions: z.string().max(MAX_CONTEXT_LENGTH).optional() })
+      .strictObject({
+        profile: z.string().max(MAX_CONTEXT_LENGTH).optional(),
+        instructions: z.string().max(MAX_CONTEXT_LENGTH).optional(),
+        // The name the member chose for the agent, when it isn't the one it suggested.
+        name: z.string().max(80).optional(),
+      })
       .optional(),
     timezone: timezoneSchema.optional(),
   }),
@@ -112,7 +120,14 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (block.kind !== "proposal") return jsonError(400, "Only a proposal can be applied.");
       if (previous) return jsonError(409, "This was already applied.");
       const source = { conversationId: ids.data.id, messageId: message.id };
-      const result = await applyProposal(auth.value, block, input.picks, input.edits ?? {}, input.timezone ?? "UTC", source);
+      let result: Awaited<ReturnType<typeof applyProposal>>;
+      try {
+        result = await applyProposal(auth.value, block, input.picks, input.edits ?? {}, input.timezone ?? "UTC", source);
+      } catch (error) {
+        // A name the member picked that won't do: nothing was applied, so they can pick another.
+        if (error instanceof NameRefused) return jsonError(400, error.message);
+        throw error;
+      }
       response = { status: "applied", at: Date.now(), ...result };
       // Applying the proposal is how the setup interview ends.
       if (await isSetupConversation(auth.value, ids.data.id)) await updateSetup(auth.value, { status: "done" });
@@ -126,6 +141,8 @@ export async function POST(request: NextRequest, { params }: Context) {
 
 type Applied = Extract<UiResponse, { status: "applied" }>;
 
+class NameRefused extends Error {}
+
 const unique = (picked: number[], length: number) => [...new Set(picked)].filter((i) => i < length).sort((a, b) => a - b);
 
 /**
@@ -137,13 +154,28 @@ async function applyProposal(
   tenant: Tenant,
   proposal: AgentProposal,
   picks: ProposalPicks,
-  edits: { profile?: string; instructions?: string },
+  edits: { profile?: string; instructions?: string; name?: string },
   timezone: string,
   source: { conversationId: string; messageId: string },
 ): Promise<Pick<Applied, "picks" | "applied" | "taskIds">> {
   const owner = tenant.workspace.role === "owner";
   const done: ProposalPicks = { profile: false, instructions: false, skills: [], tasks: [], memories: [] };
   const taskIds: string[] = [];
+
+  // Its name first, since a name the member typed can be refused before anything else changes.
+  // Who it is to them is theirs, so any member can keep one.
+  let name: string | undefined;
+  if (picks.identity && proposal.identity && previewEnabled(tenant, "companion")) {
+    const kept = await nameCompanion(tenant, {
+      name: edits.name?.trim() || proposal.identity.name,
+      manner: proposal.identity.manner,
+      suggested: proposal.identity.name,
+      member: firstName(tenant.account.name),
+    });
+    if (!kept.ok) throw new NameRefused(kept.error);
+    name = kept.companion.name ?? undefined;
+    done.identity = true;
+  }
 
   const profile = owner && picks.profile && proposal.profile !== undefined ? (edits.profile ?? proposal.profile).trim() : undefined;
   const instructions =
@@ -228,6 +260,7 @@ async function applyProposal(
   }
 
   const count = (p: ProposalPicks, lengths: AgentProposal) =>
+    Number(Boolean(p.identity) && lengths.identity !== undefined) +
     Number(p.profile && lengths.profile !== undefined) +
     Number(p.instructions && lengths.instructions !== undefined) +
     unique(p.skills, lengths.skills.length).length +
@@ -241,6 +274,7 @@ async function applyProposal(
       tasks: done.tasks.length,
       memories: done.memories.length,
       skipped: count(picks, proposal) - count(done, proposal),
+      ...(name ? { name } : {}),
     },
     ...(taskIds.length ? { taskIds } : {}),
   };

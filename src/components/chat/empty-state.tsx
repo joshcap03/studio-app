@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, AudioLines, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
-import { forwardRef, useEffect } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import { Companion, companionHint, useCompanion } from "@/components/ui/companion";
 import { JourneyBar } from "@/components/ui/journey";
 import { stepName } from "@/lib/setup-words";
@@ -50,6 +50,8 @@ interface Props {
   talking?: boolean;
   /** Why a call couldn't start. */
   talkNotice?: string | null;
+  /** Present once the agent knows the member well enough to introduce itself. */
+  onSayHello?: () => void;
 }
 
 const chip =
@@ -57,7 +59,7 @@ const chip =
 const SHOWN_SKILLS = 5;
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, onSayHello },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
@@ -96,6 +98,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
       </div>
 
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
+        {onSayHello && companion ? <Hello workspaceId={companion.workspaceId} onSayHello={onSayHello} /> : null}
         {setup && onSetup ? (
           <SetupGreeting setup={setup} agentName={agentName} greeter={greeter} onSetup={onSetup} onSkip={onSkipSetup} onTalk={onTalk} talking={talking} notice={talkNotice} />
         ) : null}
@@ -231,5 +234,59 @@ function SetupGreeting({
         </p>
       ) : null}
     </section>
+  );
+}
+
+// "Later" hides the offer until tomorrow; after a few, it's only offered on the agent's page.
+const LATER_KEY = "lj.hello-later:";
+const LATER_LIMIT = 3;
+
+function laterState(workspaceId: string): { count: number; until: number } {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(LATER_KEY + workspaceId) ?? "null") as { count?: number; until?: number } | null;
+    return { count: raw?.count ?? 0, until: raw?.until ?? 0 };
+  } catch {
+    return { count: 0, until: 0 };
+  }
+}
+
+/** The agent, once it knows the member, offering to introduce itself. Never inside a chat. */
+function Hello({ workspaceId, onSayHello }: { workspaceId: string; onSayHello: () => void }) {
+  // Decided after hydration, since it depends on this device's storage.
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const later = laterState(workspaceId);
+    setShown(later.count < LATER_LIMIT && Date.now() >= later.until);
+  }, [workspaceId]);
+
+  function later() {
+    const { count } = laterState(workspaceId);
+    const tomorrow = new Date();
+    tomorrow.setHours(24, 0, 0, 0);
+    try {
+      window.localStorage.setItem(LATER_KEY + workspaceId, JSON.stringify({ count: count + 1, until: tomorrow.getTime() }));
+    } catch {
+      // Without storage it just comes back next visit.
+    }
+    setShown(false);
+  }
+
+  if (!shown) return null;
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-center animate-fade-up">
+      <p className="text-[14.5px] text-fg-2">I think I know you well enough to introduce myself.</p>
+      <div className="flex items-center gap-1.5">
+        <button type="button" onClick={later} className="h-8 rounded-lg px-3 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg">
+          Later
+        </button>
+        <button
+          type="button"
+          onClick={onSayHello}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.97]"
+        >
+          Say hello
+        </button>
+      </div>
+    </div>
   );
 }

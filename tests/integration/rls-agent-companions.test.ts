@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { refreshCompanion, getCompanion, getCompanions, KNOWS_YOU } from "@/lib/companion";
+import { refreshCompanion, getCompanion, getCompanions, KNOWS_YOU, nameCompanion, setCompanionManner } from "@/lib/companion";
 import { resolveTenant, sessionFor, type Tenant } from "@/lib/tenant-core";
 import { addMember, createAccount, createWorkspace, type TestAccount } from "./helpers";
 
@@ -77,12 +77,38 @@ describe("agent companions", () => {
     expect(update.data ?? []).toEqual([]);
   });
 
+  it("arrive with the name the member keeps, never theirs or another agent's", async () => {
+    // Bob names his own agent June first.
+    const bobTenant = await tenantFor(bob, (await resolveTenant(sessionFor(bob.client as never, { id: bob.userId })))!.workspace.id);
+    expect((await nameCompanion(bobTenant, { name: "June", member: "Bob" })).ok).toBe(true);
+
+    expect(await nameCompanion(tenant, { name: "Alice", member: "Alice" })).toMatchObject({ ok: false });
+    expect(await nameCompanion(tenant, { name: "http://x.test", member: "Alice" })).toMatchObject({ ok: false });
+    // Another member's names don't count against hers.
+    const kept = await nameCompanion(tenant, { name: "June", manner: "I keep it short.", suggested: "Juniper", member: "Alice" });
+    expect(kept).toMatchObject({ ok: true, companion: { stage: "arrived", name: "June", manner: "I keep it short." } });
+    expect(await getCompanion(tenant)).toMatchObject({ stage: "arrived", name: "June", manner: "I keep it short." });
+    const row = await alice.client.from("agent_companions").select("suggested_name, arrived_at").eq("workspace_id", ws).single();
+    expect(row.data).toMatchObject({ suggested_name: "Juniper" });
+    expect(row.data?.arrived_at).toBeTruthy();
+
+    // A second agent of hers can't share the name.
+    const second = await createWorkspace(alice, "Second");
+    expect(await nameCompanion(await tenantFor(alice, second), { name: "june", member: "Alice" })).toMatchObject({ ok: false });
+
+    expect(await setCompanionManner(tenant, "I lead with what I found.")).toMatchObject({ name: "June", manner: "I lead with what I found." });
+    // An agent that hasn't arrived has no manner to rewrite.
+    expect(await setCompanionManner(await tenantFor(alice, second), "x")).toBeNull();
+    // Refreshing never moves it back.
+    expect((await refreshCompanion(tenant, null)).stage).toBe("arrived");
+  });
+
   it("can't be deleted, moved, or arrive without a name", async () => {
     await alice.client.from("agent_companions").delete().eq("workspace_id", ws);
-    expect((await getCompanion(tenant)).stage).toBe("ready");
+    expect((await getCompanion(tenant)).stage).toBe("arrived");
     const moved = await alice.client.from("agent_companions").update({ workspace_id: crypto.randomUUID() }).eq("workspace_id", ws);
     expect(moved.error).not.toBeNull();
-    const nameless = await alice.client.from("agent_companions").update({ stage: "arrived" }).eq("workspace_id", ws);
+    const nameless = await alice.client.from("agent_companions").update({ name: null }).eq("workspace_id", ws);
     expect(nameless.error).not.toBeNull();
   });
 });

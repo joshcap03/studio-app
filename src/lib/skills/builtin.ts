@@ -1,6 +1,7 @@
 import { previewEnabled } from "@/lib/flags";
 import type { Tenant } from "@/lib/tenant-core";
 import type { WorkspaceSkill } from "@/lib/types";
+import { INTRODUCE_SKILL_ID } from "./introduce";
 import { TIDY_SKILL_IDS } from "./tidy";
 
 // Skills every workspace has without adding them. They live in code, not the database, so
@@ -25,8 +26,9 @@ const BUILTIN: WorkspaceSkill[] = [
 ];
 
 // "builtin:setup" is every agent's setup interview (./setup.ts), loaded per template by getSkill,
-// and "builtin:tidy:<topic>" tidies one topic of the Brain (./tidy.ts), started from the Brain.
-export const BUILTIN_SKILL_IDS: [string, ...string[]] = ["builtin:setup", ...TIDY_SKILL_IDS, ...BUILTIN.map((s) => s.id)];
+// "builtin:tidy:<topic>" tidies one topic of the Brain (./tidy.ts), started from the Brain, and
+// "builtin:introduce" is the agent introducing itself once it knows the member (./introduce.ts).
+export const BUILTIN_SKILL_IDS: [string, ...string[]] = ["builtin:setup", INTRODUCE_SKILL_ID, ...TIDY_SKILL_IDS, ...BUILTIN.map((s) => s.id)];
 
 /** The built-in skills this member can use. */
 export function builtinSkills(tenant: Tenant): WorkspaceSkill[] {

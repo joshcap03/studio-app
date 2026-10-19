@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KNOWS_YOU, companionLook, companionStage, stageRank } from "./companion";
+import { KNOWS_YOU, companionLook, companionName, companionStage, nameProblem, stageRank } from "./companion";
 
 const knowsYou = { runs: KNOWS_YOU.readyRuns, days: KNOWS_YOU.readyDays, conversations: KNOWS_YOU.readyConversations, setupSettled: true };
 
@@ -43,5 +43,25 @@ describe("companionLook", () => {
     const tints = new Set(Array.from({ length: 40 }, (_, i) => companionLook(`ws-${i}`, "user-1").tint));
     expect(shapes.size).toBe(4);
     expect(tints.size).toBe(4);
+  });
+});
+
+describe("names", () => {
+  it("tidies a name and refuses what isn't one", () => {
+    expect(companionName("  Juniper. ")).toBe("Juniper");
+    expect(companionName("\u201cRowan\u201d")).toBe("Rowan");
+    expect(companionName("José")).toBe("José");
+    expect(companionName("Mae-Lin O'Hara")).toBe("Mae-Lin O'Hara");
+    expect(companionName("")).toBeNull();
+    expect(companionName("R2D2")).toBeNull();
+    expect(companionName("x".repeat(41))).toBeNull();
+    expect(companionName(42)).toBeNull();
+  });
+
+  it("won't take the member's own name or another of their agents'", () => {
+    expect(nameProblem("sam", { member: "Sam", taken: [] })).toMatch(/your own name/);
+    expect(nameProblem("June", { member: "Sam", taken: ["june"] })).toMatch(/Another of your agents/);
+    expect(nameProblem("Juniper", { member: "Sam", taken: ["June"] })).toBeNull();
+    expect(nameProblem("Juniper", { member: null, taken: [] })).toBeNull();
   });
 });

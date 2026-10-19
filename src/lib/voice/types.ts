@@ -72,6 +72,8 @@ export interface VoiceContext {
   agent: string;
   /** The member's personal guardrail, which comes first and overrides everything else. */
   guardrail: string | null;
+  /** How the agent talks with this member, in its own words, once it has a name with them (tone only). */
+  manner?: string | null;
 }
 
 /** One field of the card on stage, as the voice sees it. */

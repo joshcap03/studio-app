@@ -1,6 +1,11 @@
+"use client";
+
+import { Companion, useCompanion, type CompanionMood } from "@/components/ui/companion";
+
 // The call's orb. Each state means something real: who has the floor, whether the member's words
 // reached the worker, whether real progress is coming in, and whether it's waiting on them (it
-// holds still). No faces, no sounds.
+// holds still). No sounds. Once the agent has a name with the member, its face is the orb's core,
+// and its mood follows the same states; until then the core stays plain.
 
 export type OrbState = "ready" | "connecting" | "listening" | "on_it" | "working" | "speaking" | "your_call" | "stuck" | "ended";
 
@@ -16,7 +21,21 @@ export const ORB_LABEL: Record<OrbState, string> = {
   ended: "Call ended",
 };
 
+const MOOD: Record<OrbState, CompanionMood> = {
+  ready: "idle",
+  connecting: "idle",
+  listening: "idle",
+  on_it: "working",
+  working: "working",
+  speaking: "idle",
+  your_call: "needs_you",
+  stuck: "stuck",
+  ended: "idle",
+};
+
 export function Orb({ state, size = 148 }: { state: OrbState; size?: number }) {
+  const companion = useCompanion();
+  const face = companion?.stage === "arrived" ? companion : null;
   const core =
     state === "stuck"
       ? "bg-danger/55"
@@ -35,8 +54,16 @@ export function Orb({ state, size = 148 }: { state: OrbState; size?: number }) {
         style={{ background: "conic-gradient(from 0deg, transparent 0deg, var(--accent) 70deg, transparent 140deg)" }}
       />
       <div className={`absolute inset-[3px] rounded-full bg-bg ${state === "your_call" ? "ring-2 ring-accent" : "ring-1 ring-line-strong"} transition-shadow duration-200`} />
-      <div className={`absolute inset-[18%] rounded-full transition-[background-color,transform] duration-200 ${core}`} />
-      {state === "on_it" ? <div className="settle-check absolute inset-[38%] rounded-full bg-bg/70" /> : null}
+      {face ? (
+        <div className={`absolute inset-[16%] flex items-center justify-center ${state === "speaking" ? "orb-speak" : ""}`}>
+          <Companion stage="arrived" look={face.look} mood={MOOD[state]} size={Math.round(size * 0.68)} />
+        </div>
+      ) : (
+        <>
+          <div className={`absolute inset-[18%] rounded-full transition-[background-color,transform] duration-200 ${core}`} />
+          {state === "on_it" ? <div className="settle-check absolute inset-[38%] rounded-full bg-bg/70" /> : null}
+        </>
+      )}
     </div>
   );
 }

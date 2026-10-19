@@ -3,6 +3,7 @@
 import { AlertCircle, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { formatSize, iconFor } from "@/components/chat/attachments";
+import { Companion, companionHint } from "@/components/ui/companion";
 import { JourneyList } from "@/components/ui/journey";
 import { BusinessBrain } from "@/components/settings/business-brain";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "@/components/settings/section";
@@ -13,6 +14,7 @@ import {
   ATTACHMENT_TYPES,
   MAX_AGENT_FILES,
   type Attachment,
+  type Companion as CompanionInfo,
   type Memory,
   type MemoryPromotion,
   type UsageSummary,
@@ -33,6 +35,8 @@ interface Props {
   allowFiles: boolean;
   /** What the caller kept of the results they judged lately ("4 of 5 kept this past week"). */
   score?: string | null;
+  /** Who this agent is to the caller (a preview); null where it isn't shown. */
+  initialCompanion?: CompanionInfo | null;
 }
 
 async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
@@ -47,10 +51,11 @@ async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<Workspa
 }
 
 // Everything about the active agent: who it is, what it knows, and how much it's used.
-export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles, score }: Props) {
+export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles, score, initialCompanion }: Props) {
   const [settings, setSettings] = useState(initialSettings);
   return (
     <>
+      {initialCompanion ? <CompanionPanel initial={initialCompanion} /> : null}
       <AgentName name={settings.name} canEdit={canEdit} onSaved={setSettings} />
       <p className="mt-1 text-[14px] text-fg-3">
         {canEdit ? "What this agent is for and how it works. It reads this before every conversation." : "Only the owner can change this agent."}
@@ -101,6 +106,82 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
         <ChatHistorySection />
       </div>
     </>
+  );
+}
+
+// Who the agent is to this member: still getting to know them, ready to introduce itself, or
+// with the name they kept, which they can change, and how it talks with them, in its words.
+function CompanionPanel({ initial }: { initial: CompanionInfo }) {
+  const [companion, setCompanion] = useState(initial);
+  const [name, setName] = useState(initial.name ?? "");
+  const [manner, setManner] = useState(initial.manner ?? "");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const dirty = companion.stage === "arrived" && (name.trim() !== (companion.name ?? "") || manner.trim() !== (companion.manner ?? ""));
+  useWarnUnsaved(dirty);
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!dirty) return;
+    setStatus("saving");
+    setError(null);
+    try {
+      const { companion: next } = await api.updateCompanion({ name: name.trim(), manner: manner.trim() });
+      setCompanion(next);
+      setName(next.name ?? "");
+      setManner(next.manner ?? "");
+      setStatus("saved");
+    } catch (e) {
+      setStatus("error");
+      setError(e instanceof ApiError ? e.message : "Couldn't save. Try again.");
+    }
+  }
+
+  const mark = <Companion stage={companion.stage} look={companion.look} size={72} seenKey={companion.workspaceId} />;
+  if (companion.stage !== "arrived") {
+    return (
+      <div className="mt-6 flex items-center gap-4">
+        {mark}
+        <div className="min-w-0">
+          <p className="text-[14px] text-fg-2">{companion.stage === "ready" ? "I think I know you well enough to introduce myself." : `${companionHint(companion.stage, null)}.`}</p>
+          {companion.stage === "ready" ? (
+            <a
+              href="/?hello=1"
+              className="mt-2 inline-flex h-8 items-center rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90"
+            >
+              Say hello
+            </a>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <form onSubmit={save} onKeyDown={submitOnModEnter} className="mt-6 flex items-start gap-4">
+      {mark}
+      <div className="min-w-0 flex-1 space-y-3">
+        <div>
+          <label htmlFor="companion-name" className="text-[12.5px] font-medium text-fg-3">
+            You call it
+          </label>
+          <input id="companion-name" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} className={`${input} mt-1 h-10`} />
+        </div>
+        <div>
+          <label htmlFor="companion-manner" className="text-[12.5px] font-medium text-fg-3">
+            How it talks with you, in its words
+          </label>
+          <textarea
+            id="companion-manner"
+            value={manner}
+            maxLength={600}
+            rows={3}
+            onChange={(e) => setManner(e.target.value)}
+            className={`${input} mt-1 resize-y py-2.5 leading-[1.5]`}
+          />
+        </div>
+        <SaveRow dirty={dirty} status={status} error={error} label="Save" disabled={!name.trim()} />
+      </div>
+    </form>
   );
 }
 

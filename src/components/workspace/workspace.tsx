@@ -20,6 +20,7 @@ import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { Call } from "@/components/voice/call";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
+import { INTRODUCE_SKILL_ID, INTRODUCE_SKILL_NAME } from "@/lib/skills/introduce";
 import { SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
 import { TIDY_SKILL_NAME, tidyRequest, tidySkillId } from "@/lib/skills/tidy";
 import type {
@@ -719,10 +720,14 @@ function WorkspaceShell({
     (messageId: string, blockId: string, response: UiResponse) => {
       if (!activeId) return;
       patchMessage(activeId, messageId, (m) => ({ ...m, uiResponse: { ...(m.uiResponse ?? {}), [blockId]: response } }));
-      // Applying the proposed setup can finish the setup interview.
+      // Applying the proposed setup can finish the setup interview, and keeping a name is how
+      // the agent arrives.
       if (response.status === "applied") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
+      if (response.status === "applied" && response.applied.name) {
+        api.getCompanion().then(({ companion: next }) => next && onCompanion(next), () => undefined);
+      }
     },
-    [activeId, patchMessage],
+    [activeId, patchMessage, onCompanion],
   );
 
   /** Rates a reply right away; puts the old rating back if saving fails. */
@@ -924,6 +929,25 @@ function WorkspaceShell({
     }, 1500);
     return () => clearTimeout(timer);
   }, [running, companion, onCompanion]);
+
+  // "Say hello": once it knows the member, the agent introduces itself in a new chat and
+  // suggests a name. Just the skill, no words: it speaks first. From the agent's page it
+  // arrives as ?hello=1.
+  const sayHello = useCallback(() => {
+    if (activeId) return;
+    drafts.current.delete("new");
+    sendTo(crypto.randomUUID(), "", true, { skill: { id: INTRODUCE_SKILL_ID, name: INTRODUCE_SKILL_NAME }, attachments: [] });
+  }, [activeId, sendTo]);
+  // Offered on the new-chat screen once it's ready, unless setup is under way (that comes first).
+  const hello = companion?.stage === "ready" && setup?.status !== "in_progress";
+  const helloRequested = useRef(false);
+  useEffect(() => {
+    if (helloRequested.current || companion?.stage !== "ready") return;
+    if (new URLSearchParams(window.location.search).get("hello") !== "1") return;
+    helloRequested.current = true;
+    window.history.replaceState(null, "", window.location.pathname);
+    sayHello();
+  }, [companion?.stage, sayHello]);
 
   // Arriving from onboarding (or "Run setup" on the agent's page) with ?setup=1 starts it once;
   // ?setup=talk opens it on a call (typed, for members without voice).
@@ -1331,7 +1355,8 @@ function WorkspaceShell({
               canManageSkills={workspace.role === "owner"}
               allowFiles={agent.attachments}
               footnote={footnote}
-              setup={setup && (setup.status === "not_started" || setup.status === "in_progress") ? setup : null}
+              setup={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? setup : null}
+              onSayHello={hello ? sayHello : undefined}
               agentName={workspace.name}
               member={member}
               greeter={greeter}

@@ -132,6 +132,18 @@ describe("Langflow request", () => {
     expect(fillTemplate({ k: "{{unknown}}" }, {})).toEqual({ k: "{{unknown}}" });
   });
 
+  it("tells the agent who it is to the member, or that it has no name yet, only where companions are on", () => {
+    const named = templateValues({ ...tenantA, self: { name: "Juniper", manner: "I keep it short." } }).system_context;
+    expect(named).toContain("you go by Juniper.");
+    expect(named).toContain("How you talk with them, in your own words: I keep it short.");
+    expect(named).toContain("never in how much you say");
+    expect(named.indexOf("you go by Juniper")).toBeGreaterThan(named.indexOf("This agent:"));
+    expect(templateValues({ ...tenantA, self: { name: null, manner: null } }).system_context).toContain("You don't have a name of your own with them yet.");
+    const off = templateValues({ ...tenantA, self: null }).system_context;
+    expect(off).not.toContain("go by");
+    expect(off).not.toContain("name of your own");
+  });
+
   it("tells the agent about its task and the member's tracker, only when there are some", () => {
     const system = templateValues({
       ...tenantA,

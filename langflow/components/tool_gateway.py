@@ -272,6 +272,10 @@ class ProposeArgs(BaseModel):
     tasks: list[dict] = Field(default_factory=list, description="Recurring or on-demand tasks to switch on.",
                               json_schema_extra={"items": PROPOSED_TASK_SCHEMA, "maxItems": 8})
     memories: list[str] = Field(default_factory=list, description="Lasting facts to remember about the owner, one sentence each.")
+    identity: dict = Field(default_factory=dict, description=("Optional: who you are to the member, once you know them, or when "
+                                                             "they offer you a name. A short first name and, in two first-person "
+                                                             "sentences, how you talk with them."),
+                           json_schema_extra={"properties": {"name": {"type": "string"}, "manner": {"type": "string"}}})
 
 
 MERGE_SCHEMA = {
@@ -919,16 +923,20 @@ class ToolGatewayComponent(Component):
             return show_form(title, fields, intro, submit_label)
 
         def propose_agent(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
-                          tasks: list | None = None, memories: list | None = None) -> str:
+                          tasks: list | None = None, memories: list | None = None, identity: dict | None = None) -> str:
             # Changes nothing: the app shows the proposal as a card, and only the owner's Apply
-            # changes this agent's setup.
+            # changes this agent's setup (or, for a name, the member's Keep).
             def plain(v):
                 return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else v
+            self_ = plain(identity) if identity else {}
+            name = " ".join(str((self_ or {}).get("name") or "").split())[:40]
             proposal = {"summary": str(summary or "")[:600], "profile": str(profile or "")[:8000],
                         "instructions": str(instructions or "")[:8000], "skills": [plain(x) for x in (skills or [])][:8],
                         "tasks": [plain(x) for x in (tasks or [])][:8], "memories": [str(m)[:500] for m in (memories or [])][:8]}
-            if not any(proposal[k] for k in ("profile", "instructions", "skills", "tasks", "memories")):
-                return "Not shown: propose at least one change (profile, instructions, skills, tasks, or memories)."
+            if name:
+                proposal["identity"] = {"name": name, "manner": str(self_.get("manner") or "")[:600]}
+            if not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories", "identity")):
+                return "Not shown: propose at least one change (profile, instructions, skills, tasks, memories, or identity)."
             return json.dumps({
                 "proposal": proposal,
                 "note": ("The owner now sees your proposal and can apply all or part of it; nothing changes until "
@@ -936,8 +944,8 @@ class ToolGatewayComponent(Component):
             })
 
         async def propose_agent_async(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
-                                      tasks: list | None = None, memories: list | None = None) -> str:
-            return propose_agent(summary, profile, instructions, skills, tasks, memories)
+                                      tasks: list | None = None, memories: list | None = None, identity: dict | None = None) -> str:
+            return propose_agent(summary, profile, instructions, skills, tasks, memories, identity)
 
         def merge_memories(merges: list, summary: str = "") -> str:
             # Changes nothing: the app checks each fact id against the owner's memory, shows the
@@ -1075,7 +1083,8 @@ class ToolGatewayComponent(Component):
                 func=propose_agent, coroutine=propose_agent_async, name="propose_agent",
                 args_schema=ProposeArgs,
                 description=("Propose how this agent should be set up for the owner: what it's for, its standing "
-                             "instructions, skills to add, tasks to switch on (with schedules), and facts to remember. "
+                             "instructions, skills to add, tasks to switch on (with schedules), facts to remember, and "
+                             "(identity) a name and manner for yourself when you introduce yourself or they offer one. "
                              "Use it once you've learned what they want, e.g. at the end of setup or when they ask "
                              "you to change how you work. The owner reviews it and applies what they want; nothing "
                              "changes until they do. Call it as the last thing in your reply."),

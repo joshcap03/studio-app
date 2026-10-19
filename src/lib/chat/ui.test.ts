@@ -97,6 +97,24 @@ describe("buildUiBlock", () => {
     });
     expect(buildUiBlock({ proposal: { summary: "Nothing to change." } })).toBeNull();
   });
+
+  it("takes a name the agent suggests for itself, alone or with a setup, and drops one that isn't a name", () => {
+    expect(buildUiBlock({ proposal: { summary: "Hi.", identity: { name: ' "Juniper" ', manner: "I keep it short.  I lead with what I found." } } }, "p2")).toEqual({
+      kind: "proposal",
+      id: "p2",
+      summary: "Hi.",
+      skills: [],
+      tasks: [],
+      memories: [],
+      identity: { name: "Juniper", manner: "I keep it short. I lead with what I found." },
+    });
+    expect(buildUiBlock({ proposal: { summary: "Hi.", identity: { name: "Call me at https://x.test", manner: "" } } })).toBeNull();
+    expect(buildUiBlock({ proposal: { summary: "Hi.", identity: { name: "🙂" } } })).toBeNull();
+    expect(buildUiBlock({ proposal: { summary: "s", instructions: "Be brief.", identity: { name: "Mae-Lin O'Hara" } } })).toMatchObject({
+      instructions: "Be brief.",
+      identity: { name: "Mae-Lin O'Hara", manner: "" },
+    });
+  });
 });
 
 describe("form answers", () => {

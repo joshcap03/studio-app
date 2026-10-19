@@ -601,6 +601,11 @@ export interface AgentProposal {
   skills: ProposedSkill[];
   tasks: ProposedTask[];
   memories: string[];
+  /**
+   * Who the agent suggests it is to the member, once it knows them: a name (theirs to keep or
+   * change) and, in its own words, how it talks with them.
+   */
+  identity?: { name: string; manner: string };
 }
 
 /** One proposed merge: facts that overlap, and the one fact that would replace them. */
@@ -657,6 +662,7 @@ export interface ProposalPicks {
   skills: number[];
   tasks: number[];
   memories: number[];
+  identity?: boolean;
 }
 
 /** What the member did with one card, keyed by its id in ChatMessage.uiResponse. */
@@ -668,7 +674,7 @@ export type UiResponse =
       /** What took effect, which can be less than the member picked. */
       picks: ProposalPicks;
       /** `skipped`: picked items that couldn't be applied (not the owner, a preview off, memory not set up). */
-      applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number };
+      applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number; name?: string };
       /** The tasks it switched on or created, in the proposal's order, so the first can run right away. */
       taskIds?: string[];
     }

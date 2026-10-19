@@ -67,6 +67,11 @@ export interface AgentTenantContext {
   guardrail?: { instructions: string; recentChats: string[] } | null;
   /** How the member is talking on this turn, when it isn't typing (see modalityContext in langflow.ts). */
   modality?: "voice_note" | "call";
+  /**
+   * Who the agent is to this member (src/lib/companion.ts): its name and how it talks with them
+   * once they kept one, else nulls. Absent where companions aren't on.
+   */
+  self?: { name: string | null; manner: string | null } | null;
 }
 
 /** A file the member attached to the message being answered. */

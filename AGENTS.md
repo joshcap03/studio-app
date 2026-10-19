@@ -63,7 +63,10 @@ raw/technical text.
 - `src/lib/companion.ts`: who each agent is to one member (the "companion" preview). It starts as a
   sketch of the Studio diamond (`src/components/ui/companion.tsx`), is drawn in with their chat runs,
   is ready once it knows them (thresholds in `KNOWS_YOU`), and arrives with a name the member keeps.
-  Moved forward after each run, never back; it never gates what the agent can do. Members never read
+  Moved forward after each run, never back; it never gates what the agent can do. Once ready, "Say
+  hello" runs `builtin:introduce` (`src/lib/skills/introduce.ts`): the agent introduces itself from what
+  it really knows and suggests a name with `propose_agent` (identity), which the member keeps or changes.
+  Its name and manner then ride in every run's context, on calls and in push titles. Members never read
   the stage words: the change is shown, not announced.
 - `src/lib/account.ts`: the person's profile (Settings → You, onboarding's first step), sent to
   every agent as "You're assisting".

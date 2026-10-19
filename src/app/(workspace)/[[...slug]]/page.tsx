@@ -58,6 +58,7 @@ export default async function WorkspacePage({
     projectId ? getProject(tenant, projectId) : null,
     getSettings(tenant),
   ]);
+  const own = await companions;
   const initialProject: InitialProject | null = projectId ? { id: projectId, project } : null;
   const skills = [...builtinSkills(tenant), ...workspaceSkills];
   const requested = (await searchParams).skill;
@@ -90,8 +91,8 @@ export default async function WorkspacePage({
       setup={setup}
       voice={voice}
       member={firstName(tenant.account.name)}
-      greeter={voice ? personaFor(settings.templateId).name : null}
-      companions={await companions}
+      greeter={voice ? personaFor(settings.templateId, own?.[tenant.workspace.id]?.name).name : null}
+      companions={own}
     />
   );
 }
