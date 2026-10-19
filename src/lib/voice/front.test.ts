@@ -253,10 +253,25 @@ describe("routeSpeech", () => {
 });
 
 describe("quickRoute", () => {
-  it("hands the member's words on without a model when no card is on screen", () => {
-    expect(quickRoute([mark({ stage: { working: false } }), user("Um, networking.")])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+  it("hands the member's words on without a model when no card is on screen, with the holding line in the same turn", () => {
+    const handOff = { name: "send_message", args: {} };
+    expect(quickRoute([mark({ stage: { working: false } }), user("Um, networking.")])).toEqual({ text: "On it.", tools: [handOff] });
+    expect(quickRoute([mark({ stage: { working: true } }), user("Also, no agencies")])).toEqual({ text: "Got it. I'll add that when this lands.", tools: [handOff] });
+    expect(quickRoute([mark({ stage: { working: true } }), user("Actually, remote only")])).toEqual({ text: "On it.", tools: [handOff] });
+    expect(quickRoute([mark({ stage: { working: false, approval: "Send a reply" } }), user("and cc Sam")])).toEqual({
+      text: "Got it. That goes along after your OK on screen.",
+      tools: [handOff],
+    });
     expect(quickRoute([user("...")])).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
-    expect(quickRoute([user("stop")])).toEqual({ tools: [{ name: "stop_work", args: {} }] });
+    expect(quickRoute([mark({ stage: { working: true } }), user("stop")])).toEqual({ text: "Stopping.", tools: [{ name: "stop_work", args: {} }] });
+    expect(quickRoute([mark({ stage: { working: false } }), user("stop")])).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+  });
+
+  it("doesn't say the holding line twice when the tool reports back", () => {
+    const call = { role: "assistant" as const, content: "On it.", tool_calls: [{ id: "c", function: { name: "send_message", arguments: "{}" } }] };
+    expect(planReply(context, [user("Um, networking."), call, { role: "tool", tool_call_id: "c", content: "Handed off: sent to the worker." }])).toEqual({ kind: "skip" });
+    // A result that isn't what was said still gets its line.
+    expect(planReply(context, [user("hm, ok then"), call, { role: "tool", tool_call_id: "c", content: "Refused: they haven't said anything new to pass on." }])).toEqual({ kind: "model" });
   });
   it("leaves card answers and tool results to the model", () => {
     expect(quickRoute([mark({ stage }), user("keep the first two")])).toBeNull();

@@ -1,4 +1,4 @@
-import { talksMachinery } from "@/lib/agent/tools";
+import { PLAN_STEP_LABEL, talksMachinery } from "@/lib/agent/tools";
 import type { ActivityStep, ChatMessage, JourneyStep, StreamEvent, UiBlock } from "@/lib/types";
 
 // What the voice may say about the worker's progress on a call, built only from what the
@@ -45,8 +45,13 @@ export function relayEvent(state: RelayState, event: StreamEvent): { state: Rela
   return { state: { said: [...state.said, event.step.id] }, lines: [line] };
 }
 
+/** The agent keeping its own books (its plan, its memory): shown on screen, not news on a call. */
+function bookkeeping(step: ActivityStep): boolean {
+  return step.action === "remember" || step.app === "memory" || step.label.trim() === PLAN_STEP_LABEL;
+}
+
 function stepLine(step: ActivityStep): RelayLine | null {
-  if (step.hidden || !speakableLabel(step.label)) return null;
+  if (step.hidden || bookkeeping(step) || !speakableLabel(step.label)) return null;
   if (step.action === "note") return { kind: "note", text: step.label.trim(), droppable: true };
   if (step.status !== "running") return null;
   return { kind: "progress", text: `${step.label.trim().replace(/[.…]+$/, "")}…`, droppable: true };
@@ -118,10 +123,17 @@ export function speakableGist(markdown: string): string {
   if (gist.length > MAX_GIST) gist = `${gist.slice(0, MAX_GIST - 1).replace(/\s+\S*$/, "")}…`;
   // A reply that ends by asking them something always gets that question said, last, so the
   // call asks exactly what the chat asks.
-  const last = sentences.at(-1) ?? "";
-  const question = /\?["”’)]*$/.test(last) && !gist.includes(last) && last.length <= MAX_GIST ? last : "";
+  const last = closingQuestion(markdown) ?? "";
+  const question = last && !gist.includes(last) ? last : "";
   const rest = text.length > gist.length + question.length + 2;
   return [gist, rest ? "The rest is on screen." : "", question].filter(Boolean).join(" ");
+}
+
+/** The question a reply ends on, in plain words, if it ends on one. */
+export function closingQuestion(markdown: string): string | null {
+  const text = plain(markdown);
+  const last = text.match(/[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g)?.map((s) => s.trim()).filter(Boolean).at(-1) ?? "";
+  return /\?["”’)]*$/.test(last) && last.length <= MAX_GIST ? last : null;
 }
 
 /** Markdown to plain words for speech. */

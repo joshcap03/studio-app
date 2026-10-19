@@ -11,7 +11,7 @@ import { Journey } from "@/components/ui/journey";
 import type { FormValues } from "@/lib/chat/ui-answer";
 import { api } from "@/lib/client/api";
 import { isBackchannel, isRedirect, isSendIntent, isStopIntent } from "@/lib/voice/intent";
-import { initialRelay, relayEvent, relayJourney, relayReply, type RelayLine } from "@/lib/voice/relay";
+import { closingQuestion, initialRelay, relayEvent, relayJourney, relayReply, speakableGist, type RelayLine } from "@/lib/voice/relay";
 import type { StageField, VoiceGrant, VoiceStage } from "@/lib/voice/types";
 import type { Attachment, ChatMessage, JourneyStep, StreamEvent, UiField, UiForm, UiResponse } from "@/lib/types";
 import type { LinkStatus, VoiceLink, VoiceLinkEvents, VoiceTools } from "./link";
@@ -61,6 +61,8 @@ interface Caption {
 }
 
 const PROGRESS_GAP_MS = 6000;
+/** A run this quiet for this long gets one "Still on it." */
+const STILL_ON_IT_MS = 9000;
 const AFTER_SPEECH_MS = 900;
 /** Studio's lines wait this long after the member last sounded like they were speaking. */
 const AFTER_MEMBER_MS = 900;
@@ -208,6 +210,10 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
   const memberSoundAt = useRef(0);
   /** A redirect stopped the run before this one; its "Stopped" isn't news. */
   const steered = useRef(false);
+  /** This turn's reply as it streams, and its gist once said (as soon as the reply was written). */
+  const turnText = useRef("");
+  const earlyGist = useRef<string | null>(null);
+  const stillSaid = useRef(false);
 
   const live = useRef({ messages, running, conversationId });
   live.current = { messages, running, conversationId };
@@ -251,12 +257,21 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
   /** Each reply is read out once, whether it ended during the call or before it was joined. */
   const readReplies = useRef(new Set<string>());
   const queueReply = useCallback(
-    (message: ChatMessage) => {
+    (message: ChatMessage, saidAlready: string | null = null) => {
       // By status too: a reply paused for an approval is read again when it finishes.
       const key = `${message.id}:${message.status}`;
       if (readReplies.current.has(key)) return;
       readReplies.current.add(key);
-      queue(relayReply(message));
+      let lines = relayReply(message);
+      // Its gist was read as soon as it was written; only a closing question that came after is new.
+      if (saidAlready) {
+        lines = lines.flatMap((line) => {
+          if (line.kind !== "reply") return [line];
+          const question = closingQuestion(message.content);
+          return question && !saidAlready.includes(question) ? [{ ...line, text: question }] : [];
+        });
+      }
+      queue(lines);
     },
     [queue],
   );
@@ -440,6 +455,24 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     () =>
       subscribe((id, event) => {
         if (id !== live.current.conversationId || ended.current) return;
+        if (event.type === "start") {
+          turnText.current = "";
+          earlyGist.current = null;
+          stillSaid.current = false;
+        } else if (event.type === "text") {
+          turnText.current += event.delta;
+        } else if (event.type === "text-replace") {
+          turnText.current = event.text;
+        } else if (event.type === "activity" && earlyGist.current === null && turnText.current.trim()) {
+          // The agent wrote its reply and moved on to its books (its plan, memory): read it now
+          // rather than when the turn ends.
+          const gist = speakableGist(turnText.current);
+          if (gist) {
+            earlyGist.current = gist;
+            pendingProgress.current = null;
+            pendingLines.current.push(gist);
+          }
+        }
         const out = relayEvent(relayState.current, event);
         relayState.current = out.state;
         queue(out.lines);
@@ -450,7 +483,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
             return;
           }
           pendingProgress.current = null;
-          queueReply(event.message);
+          queueReply(event.message, earlyGist.current);
           setOnIt(false);
           cardSince.current = spoken.current.length;
           // Words held while it worked go along with their next message when it asks for one,
@@ -499,6 +532,11 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       // Never over the greeting, the voice itself, or the member mid-sentence.
       if (!greeted.current && greetingAt.current !== null && now - greetingAt.current < GREETING_WAIT_MS) return;
       if (modeRef.current === "speaking" || now - lastSpeechAt.current < AFTER_SPEECH_MS || now - memberSoundAt.current < AFTER_MEMBER_MS) return;
+      // A long quiet stretch while it works gets one short holding line.
+      if (live.current.running && !pendingLines.current.length && !pendingProgress.current && !stillSaid.current && now - lastSpeechAt.current >= STILL_ON_IT_MS) {
+        stillSaid.current = true;
+        pendingLines.current.push("Still on it.");
+      }
       const lines = pendingLines.current.splice(0);
       const progress = pendingProgress.current;
       if (progress && (lines.length || now - lastProgressAt.current >= PROGRESS_GAP_MS)) {
