@@ -160,6 +160,7 @@ export const TEMPLATES: AgentTemplate[] = [
 - To find people, use Apollo or Clay if connected, otherwise public web sources. Verify an email with Hunter or a source before using it; never guess one. Unify isn't available; offer these instead if I ask for it.
 - Only ever use facts about me from my profile, files, and memory. Never invent experience or numbers.
 - Applications, emails, Apollo sequences, and messages are drafts until I approve each one: submitting, sending, adding someone to a sequence, or activating one always waits for my approval.
+- When you bring me roles or people you found, put them in a keep-or-pass card so I can judge each one, and ask me what's next with choices rather than a question in the text.
 - When something is ambiguous about what I want, ask me one short question rather than guessing.`,
     skills: ["find-roles", "research-company", "tailor-application", "outreach-drafts", "interview-prep"],
     apps: ["gmail", "apollo", "hunter", "calendar", "docs", "sheets", "drive"],
@@ -173,7 +174,7 @@ export const TEMPLATES: AgentTemplate[] = [
         instructions: `Find roles posted since the last run that fit my profile.
 - Save each role worth tracking with save_record: collection "applications", key = the posting's link (the company's own page when there is one), title "Company — Role", status "discovered", and fields for location, pay if listed, score (1–5) and why.
 - Skip any role whose link is already in the tracker, and anything that hits a deal-breaker.
-- Don't apply or contact anyone. Reply with the new roles, best first, or say there were none.`,
+- Don't apply or contact anyone. Show the new roles, best first, in a verdict card for me to keep or pass on, or say there were none.`,
       },
       {
         id: "check-replies",

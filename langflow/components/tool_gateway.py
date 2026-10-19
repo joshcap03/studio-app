@@ -752,7 +752,11 @@ class ToolGatewayComponent(Component):
             record = {"collection": collection, "key": key, "title": " ".join(str(title or "").split())[:200],
                       "status": " ".join(str(status or "").split())[:40], "url": str(url or "").strip()[:2000],
                       "fields": {str(k)[:60]: v for k, v in list(extra.items())[:30]}}
-            return json.dumps({"record": record, "note": "Saved to the owner's tracker."})
+            return json.dumps({"record": record, "note": (
+                "Saved to the owner's tracker. If it's a new result you found for them (a role, a lead, an "
+                "option), not their own entry or a status change: once all of this reply's results are saved, "
+                "end with show_form and one verdict field holding them (each with its record, link, and a line "
+                "on why), so they keep or pass each, rather than listing them in your text.")})
 
         async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
             return save_record(collection, key, title, status, url, fields)
@@ -818,7 +822,9 @@ class ToolGatewayComponent(Component):
                 "citations": {"sources": rows},
                 "note": ("Now write your answer. Put [n] right after the sentence or figure each source supports, "
                          "e.g. 'Rated 4.5/5 from 9 reviews [2].' Don't add a list of sources or links at the end: "
-                         "the owner sees them under your answer."),
+                         "the owner sees them under your answer. If you'll end on a question with a few likely "
+                         "answers (whether to go ahead, which first), ask it with ask_user after your answer "
+                         "instead of writing it out."),
             })
 
         async def cite_async(sources: list) -> str:
@@ -877,9 +883,11 @@ class ToolGatewayComponent(Component):
                 return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {}
             items = []
             for q in [plain(q) for q in (questions or [])][:3]:
-                options = [{"label": o} if isinstance(o, str) else plain(o) for o in (q.get("options") or [])][:4]
-                if q.get("question") and len(options) >= 2:
-                    items.append({**q, "options": options})
+                # Models sometimes call the options "choices" and the question "text"; ask anyway.
+                options = [{"label": o} if isinstance(o, str) else plain(o) for o in (q.get("options") or q.get("choices") or [])][:4]
+                question = q.get("question") or q.get("text")
+                if question and len(options) >= 2:
+                    items.append({**{k: v for k, v in q.items() if k not in ("choices", "text")}, "question": question, "options": options})
             if not items:
                 return "Nothing to ask: each question needs text and at least two options."
             return json.dumps({
@@ -1035,19 +1043,20 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=report_visual, coroutine=report_visual_async, name="report_visual",
                 args_schema=VisualArgs,
-                description=("Only when the request asks you to investigate something: after reading the owner's apps, "
-                             "show what you found as a chart (numbers over time or by category), key numbers, or a "
-                             "comparison table. Call it once per visual, only with numbers and facts a tool returned. "
-                             "Changes nothing."),
+                description=("Show what you found, in the owner's apps or in your research, as a chart (numbers over "
+                             "time or by category), key numbers, or a comparison table (e.g. roles or options side by "
+                             "side on what the owner weighs: pay, location, stage, fit), when seeing it beats reading "
+                             "it. Call it once per visual, only with numbers and facts a tool returned. Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=ask_user, coroutine=ask_user_async, name="ask_user",
                 args_schema=AskArgs,
                 description=("Ask the owner a question with a few choices to click, when you need their decision or a "
                              "missing detail and can't sensibly pick a default yourself (which of several matching "
-                             "records, which way to go, a preference). Don't use it for yes/no on an action (take_action "
-                             "already asks), or for things you can look up. Call it as the last thing in your reply; "
-                             "their answer arrives as the next message."),
+                             "records, which way to go, whether to take a next step, a preference). Use it instead of "
+                             "ending your reply on such a question in text. Don't use it to confirm a change to their "
+                             "accounts (take_action already asks), or for things you can look up. Call it as the last "
+                             "thing in your reply; their answer arrives as the next message."),
             ),
             StructuredTool.from_function(
                 func=show_form, coroutine=show_form_async, name="show_form",
@@ -1055,8 +1064,9 @@ class ToolGatewayComponent(Component):
                 description=("Show the owner a short form when you need several details at once, an order of priorities "
                              "(rank), a point on a scale, their verdict on results you found (verdict), longer "
                              "answers, files (a resume, a price list), repeatable entries (stories, contacts), or "
-                             "apps to connect: for example while setting up this agent, or to have them judge a "
-                             "run's results. Draft answers they can react to and prefill what you already know, so "
+                             "apps to connect: for example while setting up this agent. Whenever you bring them "
+                             "results to act on (roles, leads, options you found), show those in one verdict field "
+                             "so they keep or pass each. Draft answers they can react to and prefill what you already know, so "
                              "they mostly pick, order, or fix rather than type. Use ask_user instead for one quick "
                              "choice. Call it as the last thing in your reply; their answers arrive as the next "
                              "message. Changes nothing."),
