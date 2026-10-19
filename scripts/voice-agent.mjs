@@ -80,7 +80,8 @@ function agentBody(secretId, toolIds) {
             skip_turn: { name: "skip_turn", description: "", params: { system_tool_type: "skip_turn" } },
           },
           custom_llm: {
-            url: `${app ?? "https://<APP_URL>"}/api/voice/llm/v1/chat/completions`,
+            // The base URL: ElevenLabs adds /chat/completions itself.
+            url: `${app ?? "https://<APP_URL>"}/api/voice/llm/v1`,
             model_id: "studio-voice",
             api_key: { secret_id: secretId },
             request_headers: {

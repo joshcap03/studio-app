@@ -40,7 +40,8 @@ Studio stores no audio. The member's words become their messages, labeled "On a 
    Haiku 5.5 then answers in under a second; with thinking on, a short reply can spend its whole
    budget thinking and say nothing).
 4. **The agent:** run `scripts/voice-agent.mjs` from your own terminal. It creates the one shared
-   agent: custom LLM pointed at the voice front, the two request headers, Studio's client tools,
+   agent: custom LLM pointed at the voice front (the base URL, `https://<app>/api/voice/llm/v1`;
+   ElevenLabs adds `/chat/completions` itself), the two request headers, Studio's client tools,
    patient turn taking with backchannels ignored, signed tokens only, overrides off except the
    voice, no audio recording, 30-day retention. It prints the agent id and what ElevenLabs stored.
 
