@@ -3,8 +3,11 @@
 How Studio is built, run, and deployed. For what Studio is, see the [README](../README.md).
 
 The agent runs separately (Langflow today). This app is the product around it: accounts,
-workspaces, conversations, streaming, execution activity, artifacts, memory, connected apps,
-limits, and the tenant isolation that keeps businesses apart.
+agents and their templates and setup, conversations, streaming, execution activity,
+artifacts, memory, connected apps, tasks and the background worker, voice calls, limits, and
+the tenant isolation that keeps people apart.
+
+In code and the database an agent is a `workspace`; the UI only ever says "agent".
 
 ## Run it locally
 
@@ -18,7 +21,7 @@ cp .env.example .env.local  # fill NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPA
 npm run dev               # http://127.0.0.1:3000
 ```
 
-Create an account at `/login`, set up a workspace, and start chatting. With
+Create an account at `/login`, create an agent, and start chatting. With
 `AGENT_PROVIDER=mock` replies are simulated and labeled **Mock agent** throughout the UI.
 
 | Command | What it does |
@@ -27,20 +30,29 @@ Create an account at `/login`, set up a workspace, and start chatting. With
 | `npm run typecheck` | TypeScript |
 | `npm test` | Unit tests: turn lifecycle, tenant scoping, Langflow protocol |
 | `npm run test:integration` | Against local Supabase (+ QA server, + Langflow if configured): RLS, API isolation with two accounts, limits, live Langflow |
+| `npm run test:audit` | Replays every tool call in the flow's real history and fails on missing or technical step text (needs `LANGFLOW_AUDIT_*`) |
+| `npx trigger.dev dev` | The background worker, locally (needs a Trigger.dev login and `TRIGGER_PROJECT_REF`) |
 | `npm run build` / `npm start` | Production build / server |
 
 ## Architecture
 
 ```
 browser ── Supabase session cookie ──▶ Next.js app ── tenant context ──▶ agent provider (Langflow)
-            NDJSON event stream          │    │                          shared deployment
-                                         │    └── Composio (per-member user ids)
-                                         └── Supabase Postgres + Auth (RLS on every table)
+            NDJSON event stream          │  │  │  │                       shared deployment
+                                         │  │  │  └── Composio (one user id per person)
+                                         │  │  └── Supermemory (namespaced per agent / person)
+                                         │  └── Supabase Postgres + Auth + Storage (RLS everywhere)
+                                         │
+Trigger.dev worker ── member's session ──┘   (POST /api/tasks/<id>/runs/<run>)
+ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/completions
 ```
 
-- **Tenancy.** Workspaces are the tenant boundary (`workspaces`, `workspace_members`,
-  `workspace_settings`). The MVP has one owner per workspace; membership roles are already
-  modeled for teams. A person can belong to several workspaces and switch between them.
+- **Tenancy.** An agent (`workspaces`, `workspace_members`, `workspace_settings`) is the
+  tenant boundary. One login holds several agents and switches between them; each keeps its
+  own name, template, profile, instructions, chats, tasks, skills, files, and shared memory.
+  What's about the person is shared by all their agents: the account (`accounts`: name,
+  "about you", Composio id) and personal memory. The UI has one owner per agent; membership
+  roles are already modeled for teams.
 - **Identity.** User and workspace come only from the authenticated Supabase session. The
   active workspace is a preference cookie that is honored only after a membership check.
 - **Data isolation, twice.** The app queries Postgres *as the signed-in user*, so Row Level
@@ -60,10 +72,11 @@ browser ── Supabase session cookie ──▶ Next.js app ── tenant conte
 - **Turn runner** (`src/lib/chat/turn.ts`). Persists the user message, builds the tenant's
   agent context, streams events to the browser, checkpoints partial output with a heartbeat,
   enforces an idle timeout, and records the final state however the run ends.
-- **Memory.** Lives in Supermemory (`src/lib/memory.ts`), one namespace per workspace
-  (shared) and one per member of a workspace (personal), both derived from the session; the
-  agent and the browser never name one. Before each reply the app recalls the workspace's
-  and the member's profile plus memories matching the message, and sends them with the run.
+- **Memory.** Lives in Supermemory (`src/lib/memory.ts`): `ws_<workspace>` for an agent's
+  shared facts and `u_<user>` for the person's own, shared by all their agents. Both are
+  derived from the session; the agent and the browser never name one. Before each reply the
+  app recalls the agent's and the person's profile plus memories matching the message, and
+  sends them with the run.
   When the agent calls `remember`, the app saves the fact at once and shows it under the
   reply with Undo; if saving fails, it stays a suggestion the member can save. Members manage
   memory in Settings. (The old `memories` table is no longer used.)
@@ -73,13 +86,50 @@ browser ── Supabase session cookie ──▶ Next.js app ── tenant conte
   wait for it. Retrying, editing, or deleting the conversation abandons it.
 - **Files.** Members attach PDF, Word, CSV, text, and image files (10 MB, 5 per message).
   Bytes live in the private `attachments` Storage bucket under `<workspace>/<member>/`;
-  only the owner can read them, and they're deleted with their conversation.
+  only the owner can read them, and they're deleted with their conversation. A member can
+  also keep files on an agent's page (`src/lib/agent-files.ts`, a résumé, say); those go
+  with every run of that agent, ahead of project files.
+- **Templates and setup** (`src/lib/templates/`). Job search, Small business, and Start from
+  scratch. Applying one copies its instructions and library skills into the agent without
+  overwriting anything, gives the member its tasks (paused), and suggests apps (never
+  connected automatically). Every template has a setup interview that the built-in setup
+  skill (`src/lib/skills/setup.ts`) runs: discovery, defining success, gathering context, a
+  trial run the member judges, and finally a `propose_agent` card the owner applies. Its
+  progress is `workspace_settings.setup` (`src/lib/setup-state.ts`).
+- **Agent-rendered UI.** Cards are reusable gateway tools any skill can call, never UI for
+  one flow: `ask_user` (choices, ranking, scale, keep/pass verdicts, "Something else"),
+  `show_form`, and `propose_agent` (`src/components/chat/ui-cards.tsx`, `requests.tsx`).
+  They change nothing themselves: a form's answers go out as the member's next message, and
+  a proposal applies only when the member clicks Apply. Keep/pass calls are saved as the
+  member's verdicts (`src/lib/verdicts.ts`).
+- **Tasks** (`src/lib/tasks/`). A task has a goal, a plan the agent keeps with `update_plan`,
+  a schedule (`schedule.ts`: daily, weekdays, weekly, or every N hours, in the member's time
+  zone), a linked conversation, and runs. The agent keeps a tracker of records per collection
+  with `save_record` (`records.ts`). Tasks are private to their member. "Run now" and the
+  worker both start a run through `run-task.ts`, as the member.
+- **Background worker** (`trigger/`). Every two minutes `dispatch.ts` claims due tasks and
+  `run-task.ts` signs in as each task's member and asks the app to run it (`POST
+  /api/tasks/<id>/runs/<run>`), so runs use the app's settings and keys. The worker holds only
+  the Supabase keys and `APP_URL`; `trigger/lib/elevated.ts` is the only code with the
+  Supabase secret key, and `src/lib/elevated-guard.test.ts` keeps it that way. It deploys
+  from GitHub Actions after each Vercel production deploy.
+- **Notifications** (`src/lib/push.ts`, `public/sw.js`). Web Push to a member's devices when a
+  run ends or needs approval while they aren't watching. Studio installs as a home-screen app
+  (`src/app/manifest.ts`).
+- **Voice calls** (preview, `src/lib/voice/`). A fast voice in front of the same agent; see
+  [voice.md](voice.md).
+- **Ratings.** Thumbs up/down on a reply, with optional reasons, are stored and, with
+  `LANGSMITH_API_KEY`, attached to the run's LangSmith trace as `user_rating` feedback.
+- **Preview features** (`src/lib/flags.ts`) switch on only for the sign-in emails in
+  `PREVIEW_FEATURE_EMAILS`: Business Brain (sharing personal memories with an agent, owner
+  approved), `/why` investigations (with charts, key numbers, and tables), and voice
+  (`PREVIEW_VOICE_EMAILS` adds voice alone).
 - **Edit and retry.** The latest message can be edited and answered again, and the latest
   reply retried. Both drop the replaced exchange from the provider's own memory too.
-- **Limits.** Per-member messages per minute, concurrent runs, and per-workspace runs per
-  day (counted in Postgres, so they hold across server instances); message, memory, and
-  context size caps; three workspaces per account; Supabase Auth's own sign-up and sign-in
-  rate limits.
+- **Limits.** Per-member messages per minute, concurrent runs, per-agent runs and task runs
+  per day, and a service-wide daily cap (counted in Postgres, so they hold across server
+  instances); voice time per person per day; message, memory, and context size caps; three
+  agents per account; Supabase Auth's own sign-up and sign-in rate limits.
 
 ## Connecting Langflow
 
@@ -140,7 +190,8 @@ exchange from the session's stored messages.
    - `LANGFLOW_TWEAKS` maps per-run values onto component fields. Placeholders:
      `workspace_id`, `workspace_name`, `user_id`, `composio_user_id`, `composio_toolkits`
      (JSON `{slug: auth config id}`), `agent_profile` (alias `business_context`),
-     `agent_instructions`, `memories`, `system_context`, and `files` (a value of exactly
+     `agent_instructions`, `memories`, `project_name`, `project_instructions`,
+     `personal_guardrail`, `system_context`, and `files` (a value of exactly
      `"{{files}}"` becomes the uploaded file paths; without it, attachments are off).
      Runs also send `X-LANGFLOW-GLOBAL-VAR-*` headers, but Langflow 1.12 ignores them for
      background jobs, so anything the flow must read goes through tweaks.
@@ -183,10 +234,11 @@ get different browsers, and no signed connection URL may appear in either run.
 Set `COMPOSIO_API_KEY` (a Composio project key, the same one the flow's Member Apps node
 uses) and `COMPOSIO_TOOLKITS`, with one auth config per app (Composio dashboard → Auth
 Configs). Each
-workspace member gets a stable, opaque Composio user id (`workspace_members.composio_user_id`);
-connecting, listing, and disconnecting always use the caller's own id, and that same id is
-sent to the agent on every run. One person's connections are never visible to, or usable
-by, anyone else.
+person gets one stable, opaque Composio user id (`accounts.composio_user_id`), so all their
+agents see the same connected apps; connecting, listing, and disconnecting always use the
+caller's own id, and that same id is sent to the agent on every run
+(`workspace_members.composio_user_id` is legacy). One person's connections are never visible
+to, or usable by, anyone else.
 
 ## Isolation tests
 
@@ -207,6 +259,9 @@ by, anyone else.
   browser.
 
 ## Deploying (Vercel + Supabase Cloud)
+
+The step-by-step version, with every env var and the background worker, is
+[deploy-checklist.md](deploy-checklist.md). Voice calls are in [voice.md](voice.md).
 
 1. **Supabase.** Create a project and a personal access token (Account → Access Tokens).
    Production builds run `scripts/migrate-production.mjs`, which applies
@@ -233,15 +288,16 @@ by, anyone else.
    route asks for 300 s (`maxDuration`), the Hobby ceiling; raise it on Pro.
 4. **Composio.** Add the production URL to each auth config's allowed redirects; the connect
    flow returns to `/settings`.
-5. **Smoke test.** Sign up with a fresh address, confirm, create a workspace, connect an
+5. **Smoke test.** Sign up with a fresh address, confirm, create an agent, connect an
    app, and ask the agent something that uses it. Then sign up a second account and
    confirm it can't see the first one's apps.
 
 ## Limitations
 
-- A run is tied to the browser request. Closing the tab stops it, and the message shows as
-  interrupted with Retry. Cancellation in Langflow is best effort.
-- One user per workspace in the UI. Invitations and roles beyond owner come next; the
+- A chat run streams inside its request and keeps going if the member closes the app, up to
+  the route's `maxDuration` (300 s on Vercel Hobby); a run cut off there shows as interrupted
+  with Retry. Cancellation in Langflow is best effort.
+- One person per agent in the UI. Invitations and roles beyond owner come next; the
   schema already supports them.
 - Attached files are copied to Langflow under random names with the app's one Langflow key.
   Tenants can't name each other's files, but anyone holding that key could list them, so

@@ -77,11 +77,22 @@ the spec's targets:
 - dead air over 4s;
 - the voice getting cut off;
 - backchannels ignored;
-- failed calls.
+- failed calls;
+- how it talked: words said before the member's next turn, turns that ask more than one question,
+  turns that hand back the floor, and monologues over 60 words.
 
 ```bash
 ELEVENLABS_API_KEY=… ELEVENLABS_AGENT_ID=… node scripts/voice-call-metrics.mjs --calls 20
 ```
+
+Real calls are few, so `tests/integration/setup-call.eval.test.ts` scores the same "how it talked"
+numbers without audio or voice minutes. Made-up callers (one rambles, one answers in a few words,
+one changes their mind) run a setup interview on a call against a live eval flow. Each turn is
+scored from what the voice would say (`relayReply`) and when it could start saying it. The
+scorecard also covers greetings, books kept before the reply, and replies too long to say whole.
+The test fails only on the call's plain rules: at most two questions at once, and every turn
+hands back the floor. Run it like the setup evals (`SETUP_EVAL_LOG` keeps the transcripts and
+each turn's scores), and compare prompt changes by the scorecard over several runs.
 
 Sesame's TurnBench (end-of-turn and interruption detection) scores the provider's turn-taking.
 Its dataset is licensed for non-commercial use only, so running it for Studio needs Sesame's
