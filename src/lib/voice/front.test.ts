@@ -191,3 +191,36 @@ describe("modelReply", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("ElevenLabs' contextual updates", () => {
+  // As the transcript of a real call shows them: an assistant `contextual_update` tool call
+  // (carrying Studio's stage marker) and its result.
+  const update: FrontMessage = {
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id: "ctx_1", type: "function", function: { name: "contextual_update", arguments: JSON.stringify({ text: `${VOICE_MARKER}${JSON.stringify({ stage })}` }) } }],
+  };
+  const updateResult: FrontMessage = { role: "tool", tool_call_id: "ctx_1", content: "Contextual update received" };
+
+  it("don't count as the voice having spoken, so it still greets", () => {
+    // And the greeting picks up the stage the update carried.
+    expect(planReply(context, [mark({ cue: "hello" }), update, updateResult, mark({ cue: "hello" })])).toEqual({
+      kind: "say",
+      text: "Hey! I'm Rowan. About 6 steps, starting with your search.",
+    });
+  });
+
+  it("carry the stage, and never reach the model as an unanswered tool call", () => {
+    expect(latestStage([update, updateResult, user("keep one")])).toEqual(stage);
+    const messages = modelMessages(context, [user("hi"), update, updateResult, user("keep the first two")]);
+    expect(messages.slice(1)).toEqual([
+      { role: "user", content: "hi" },
+      { role: "user", content: "keep the first two" },
+    ]);
+    expect(String(messages[0].content)).toContain('field "roles"');
+  });
+
+  it("leave the voice quiet when one is the latest thing", () => {
+    expect(planReply(context, [user("hi"), { role: "assistant", content: "On it." }, update, updateResult])).toEqual({ kind: "skip" });
+  });
+});
