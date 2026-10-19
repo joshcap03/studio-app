@@ -16,6 +16,8 @@ const TIMEOUT_MS = 8_000;
 /** Recall runs before every reply; past this it is skipped rather than delaying the answer. */
 const RECALL_TIMEOUT_MS = 2_500;
 const RECALL_BUDGET = 6_000;
+/** Supermemory returns at most this many rows per page. */
+const PAGE = 100;
 
 type Scope = Memory["scope"];
 /** Where a document lives: a scope's namespace, or the person's old per-workspace one. */
@@ -149,8 +151,11 @@ export async function remember(tenant: Tenant, content: string, scope: Scope, op
   };
 }
 
+/** How many facts per scope the Brain lists: well past one page. */
+const LIST_MAX = 1_000;
+
 /** What this member can see: the workspace's shared memory and their own. */
-export async function listMemories(tenant: Tenant, limit = 100): Promise<Memory[]> {
+export async function listMemories(tenant: Tenant, limit = LIST_MAX): Promise<Memory[]> {
   const moved = await moveLegacyPersonal(tenant).then(
     () => true,
     (error) => {
@@ -159,21 +164,50 @@ export async function listMemories(tenant: Tenant, limit = 100): Promise<Memory[
     },
   );
   const [shared, personal, legacy] = await Promise.all([
-    listScope(tenant, "workspace", limit),
-    listScope(tenant, "personal", limit),
-    moved ? [] : listScope(tenant, "legacy", limit),
+    listAll(tenant, "workspace", limit),
+    listAll(tenant, "personal", limit),
+    moved ? [] : listAll(tenant, "legacy", limit),
   ]);
   return [...shared, ...personal, ...legacy].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-function listDocuments(tenant: Tenant, where: Where, limit: number, timeoutMs = TIMEOUT_MS): Promise<DocumentRow[]> {
+function listDocuments(tenant: Tenant, where: Where, limit: number, timeoutMs = TIMEOUT_MS, page?: number): Promise<DocumentRow[]> {
   return call<{ documents?: DocumentRow[] }>(
     tenant,
     where,
-    `list/documents?limit=${limit}&sort=createdAt&order=desc`,
+    `list/documents?limit=${limit}&sort=createdAt&order=desc${page ? `&page=${page}` : ""}`,
     { method: "POST", body: {} },
     timeoutMs,
   ).then((r) => r.documents ?? []);
+}
+
+/**
+ * Up to `max` of a scope's facts, newest first, a page at a time. Stops at a short page, or at
+ * one that repeats what it already has (paging not honored), and keeps what it has if a later
+ * page fails: the first page alone is what the Brain listed before.
+ */
+async function listAll(tenant: Tenant, where: Where, max: number): Promise<Memory[]> {
+  const docs: DocumentRow[] = [];
+  const seen = new Set<string>();
+  for (let page = 1; docs.length < max; page++) {
+    const batch =
+      page === 1
+        ? await listDocuments(tenant, where, PAGE)
+        : await listDocuments(tenant, where, PAGE, TIMEOUT_MS, page).catch((error) => {
+            console.error("[memory] couldn't list past the first page", error);
+            return [];
+          });
+    const fresh = batch.filter((d) => !seen.has(d.id));
+    for (const d of fresh) {
+      seen.add(d.id);
+      docs.push(d);
+    }
+    if (batch.length < PAGE || fresh.length < batch.length) break;
+  }
+  return docs
+    .slice(0, max)
+    .map((d) => toMemory(tenant, where, d))
+    .filter((m) => m.content);
 }
 
 function listScope(tenant: Tenant, where: Where, limit: number, timeoutMs = TIMEOUT_MS): Promise<Memory[]> {
@@ -295,9 +329,8 @@ async function deleteDocument(tenant: Tenant, where: Where, documentId: string):
   return result.count > 0;
 }
 
-// Supermemory's limits: a filter group takes at most 200 operands, a page at most 100 rows.
+// Supermemory's limit: a filter group takes at most 200 operands.
 const FILTER_OPERANDS = 200;
-const PAGE = 100;
 const FORGET_MAX_PAGES = 50;
 
 /**
