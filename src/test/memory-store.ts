@@ -57,11 +57,14 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       shared.messages = shared.messages.filter((m) => m.conversationId !== id);
       return true;
     },
+    async conversationIds() {
+      return [...shared.conversations.values()].filter(owns).map((c) => c.id);
+    },
     async deleteAllConversations() {
       const ids = new Set([...shared.conversations.values()].filter(owns).map((c) => c.id));
       for (const id of ids) shared.conversations.delete(id);
       shared.messages = shared.messages.filter((m) => !ids.has(m.conversationId));
-      return ids.size;
+      return [...ids];
     },
     async setAgentThread(id, provider, threadId) {
       const c = shared.conversations.get(id);

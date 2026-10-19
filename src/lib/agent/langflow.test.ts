@@ -1041,6 +1041,25 @@ describe("Langflow rewind", () => {
     expect(JSON.parse(calls[1].init.body as string)).toEqual(["u2", "card", "b2"]);
   });
 
+  it("erases the whole stored conversation when a chat is deleted", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const adapter = createLangflowAdapter({
+      ...base,
+      fetch: (async (url: string, init: RequestInit = {}) => {
+        calls.push({ url, init });
+        if (!init.method || init.method === "GET") {
+          return Response.json(calls.length === 1 ? [{ id: "u1", sender: "User" }, { id: "b1", sender: "Machine" }] : []);
+        }
+        return new Response(null, { status: 204 });
+      }) as unknown as typeof fetch,
+    });
+    await adapter.forget!({ tenant: tenantA, conversationId: "c0ffee00-0000-4000-8000-000000000000" });
+    expect(new URL(calls[0].url).searchParams.get("session_id")).toBe(langflowSessionId(tenantA, "c0ffee00-0000-4000-8000-000000000000"));
+    expect(calls).toHaveLength(2);
+    expect(calls[1].init.method).toBe("DELETE");
+    expect(JSON.parse(calls[1].init.body as string)).toEqual(["u1", "b1"]);
+  });
+
   it("doesn't claim rewind when Langflow scopes memory by end user", () => {
     expect(createLangflowAdapter({ ...base, endUserHeader: "X-End-User" }).capabilities.rewind).toBe(false);
   });
