@@ -15,6 +15,8 @@ export interface VoiceLinkEvents {
   onVoiceText(text: string): void;
   /** The member talked over the voice, which stopped. */
   onInterrupted(): void;
+  /** How likely it is the member is speaking right now (0 to 1), when the provider reports it. */
+  onVoiceActivity?(score: number): void;
 }
 
 /** The client tools; each checks what it's asked against the member's own words and says what happened. */

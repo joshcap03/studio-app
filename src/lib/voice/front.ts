@@ -310,6 +310,20 @@ export function routeSpeech(said: string, stage: VoiceStage | null, tools: Brain
   return chosen.length ? { tools: chosen } : { tools: [{ name: "send_message", args: {} }] };
 }
 
+/**
+ * The turn decided without a model, when there's nothing to interpret: the member spoke and no
+ * card is on screen, so their words go to the work (or stay quiet, or stop it) straight away.
+ * Most of a setup is plain questions, so this is most turns, about a second faster. Null when
+ * the model is needed (a card to fill from what they said).
+ */
+export function quickRoute(messages: FrontMessage[]): BrainReply | null {
+  const last = callTurns(messages).at(-1);
+  if (last?.role !== "user") return null;
+  const stage = latestStage(messages);
+  if (stage?.form || stage?.questions?.length) return null;
+  return routeSpeech(textOf(last.content), stage, []);
+}
+
 const TOOL_WORDS = /\b(skip[_ ]turn|end[_ ]call|send[_ ]message|fill[_ ]card|send[_ ]card|stop[_ ]work|answer[_ ]question|tools?|field id)\b/i;
 
 /**

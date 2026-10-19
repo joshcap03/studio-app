@@ -65,6 +65,25 @@ context, and the Authorization header format of the custom-LLM key. If the reque
 back empty from the script, set them in the dashboard: Agent → LLM → Custom LLM → Request
 headers → Add header, Type: Variable.
 
+## Measuring calls
+
+`scripts/voice-call-metrics.mjs` scores recent real calls from ElevenLabs' own records against
+the spec's targets:
+- how fast the voice answers once the member stops (target under 0.8s);
+- dead air over 4s;
+- the voice getting cut off;
+- backchannels ignored;
+- failed calls.
+
+```bash
+ELEVENLABS_API_KEY=… ELEVENLABS_AGENT_ID=… node scripts/voice-call-metrics.mjs --calls 20
+```
+
+Sesame's TurnBench (end-of-turn and interruption detection) scores the provider's turn-taking.
+Its dataset is licensed for non-commercial use only, so running it for Studio needs Sesame's
+written permission. The dev set is about 890 call minutes (roughly $70). Its MIT-licensed scorer
+can be used on our own recordings.
+
 ## Testing
 
 `npm run qa:serve` runs the mock voice: "Talk it through" opens the call with a labeled mock that

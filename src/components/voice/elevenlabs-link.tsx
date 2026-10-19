@@ -45,6 +45,7 @@ function Session({ grant, events, tools, onReady }: LinkProps) {
     onError: (message: string) => !closed.current && latest.current.events.onStatus("error", message || "The call dropped."),
     onModeChange: ({ mode }: { mode: "speaking" | "listening" }) => latest.current.events.onMode(mode),
     onInterruption: () => latest.current.events.onInterrupted(),
+    onVadScore: ({ vadScore }: { vadScore: number }) => latest.current.events.onVoiceActivity?.(vadScore),
     onMessage: ({ message, role }: { message: string; role: "user" | "agent" }) => {
       if (role !== "user") return latest.current.events.onVoiceText(message);
       if (isMarker(message)) return;
