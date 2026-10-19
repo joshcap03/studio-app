@@ -502,7 +502,10 @@ export function toolEvidence(message: LangflowMessage): AgentEvent[] {
   return items.length > 0 ? [{ type: "evidence", items }] : [];
 }
 
-/** Forms (show_form) and proposed agent setups (propose_agent) for the member (validated by the turn). */
+/**
+ * Forms (show_form), proposed agent setups (propose_agent), and proposed merges of remembered
+ * facts (merge_memories) for the member (validated by the turn).
+ */
 export function toolUi(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
   for (const tool of toolUses(message)) {
@@ -511,6 +514,7 @@ export function toolUi(message: LangflowMessage): AgentEvent[] {
     if (!isRecord(result)) continue;
     if (isRecord(result.form)) events.push({ type: "ui", block: { form: result.form } });
     else if (isRecord(result.proposal)) events.push({ type: "ui", block: { proposal: result.proposal } });
+    else if (isRecord(result.memory_merge)) events.push({ type: "ui", block: { memory_merge: result.memory_merge } });
   }
   return events;
 }

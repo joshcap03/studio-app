@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronRight, MessageSquare, Pencil, Pin, PinOff, Search, Trash2, Users, X } from "lucide-react";
+import { Check, ChevronRight, Combine, MessageSquare, Pencil, Pin, PinOff, Search, Trash2, Users, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   MEMORY_CATEGORIES,
@@ -13,7 +13,8 @@ import {
 // Business Brain: what the agent knows, grouped by what it's about, with where each fact
 // came from. Members edit, pin, and share their own facts; owners review shares. A long Brain
 // stays scannable: topics fold up to a count and their newest fact, show a few at a time, and
-// a search or a Shared / Only me filter narrows everything at once.
+// a search or a Shared / Only me filter narrows everything at once. "Tidy up" on a topic opens
+// a chat where the agent suggests combining overlapping facts, for the member to merge.
 
 interface Props {
   initialMemories: Memory[];
@@ -40,6 +41,8 @@ const select =
 const OPEN_ALL_UP_TO = 12;
 /** Facts an open topic shows before "Show more". */
 const PER_TOPIC = 5;
+/** A topic offers "Tidy up" from this many facts. */
+const TIDY_FROM = 3;
 
 type ScopeFilter = "all" | Memory["scope"];
 
@@ -67,6 +70,9 @@ export function BusinessBrain({ initialMemories, initialPromotions, isOwner }: P
     (g) => g.items.length > 0,
   );
   const bothScopes = memories.some((m) => m.scope === "personal") && memories.some((m) => m.scope === "workspace");
+
+  // A topic can be tidied once it holds a few facts this member may change (pinned ones too).
+  const tidyable = (category: MemoryCategory) => memories.filter((m) => m.category === category && (m.mine || isOwner)).length >= TIDY_FROM;
 
   const replace = (id: string, next: Memory | null) =>
     setMemories((list) => (next ? list.map((m) => (m.id === id ? next : m)) : list.filter((m) => m.id !== id)));
@@ -235,6 +241,7 @@ export function BusinessBrain({ initialMemories, initialPromotions, isOwner }: P
                   items={g.items}
                   startOpen={memories.length <= OPEN_ALL_UP_TO}
                   expanded={filtering}
+                  tidy={tidyable(g.category) ? g.category : undefined}
                 >
                   {row}
                 </Topic>
@@ -254,11 +261,13 @@ interface TopicProps {
   startOpen: boolean;
   /** While searching or filtering, every topic with a match opens and shows all of them. */
   expanded: boolean;
+  /** Offers "Tidy up": a chat where the agent suggests combining this topic's overlapping facts. */
+  tidy?: MemoryCategory;
   children: (m: Memory) => React.ReactNode;
 }
 
 /** One topic: folds to its name, count, and newest fact; opens to a few facts at a time. */
-function Topic({ title, hint, items, startOpen, expanded, children }: TopicProps) {
+function Topic({ title, hint, items, startOpen, expanded, tidy, children }: TopicProps) {
   const [open, setOpen] = useState(startOpen);
   const [limit, setLimit] = useState(PER_TOPIC);
   const isOpen = open || expanded;
@@ -288,14 +297,28 @@ function Topic({ title, hint, items, startOpen, expanded, children }: TopicProps
       {isOpen ? (
         <div className="px-3 pb-1">
           <ul className="divide-y divide-line border-t border-line">{visible.map(children)}</ul>
-          {more > 0 ? (
-            <button
-              type="button"
-              onClick={() => setLimit(items.length)}
-              className="mb-1.5 h-7 rounded-md px-1.5 text-[12.5px] text-fg-2 hover:bg-hover hover:text-fg"
-            >
-              Show {more} more
-            </button>
+          {more > 0 || tidy ? (
+            <div className="mb-1.5 flex items-center gap-1">
+              {more > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setLimit(items.length)}
+                  className="h-7 rounded-md px-1.5 text-[12.5px] text-fg-2 hover:bg-hover hover:text-fg"
+                >
+                  Show {more} more
+                </button>
+              ) : null}
+              {tidy ? (
+                <a
+                  href={`/?tidy=${tidy}`}
+                  title="The agent suggests combining facts that overlap. Nothing changes until you merge them."
+                  className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[12.5px] text-fg-2 hover:bg-hover hover:text-fg"
+                >
+                  <Combine size={13} />
+                  Tidy up
+                </a>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

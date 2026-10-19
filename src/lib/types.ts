@@ -484,7 +484,7 @@ export interface Question {
  * to fill in, whose answers go out as the member's next message, or a proposed setup for the
  * agent, which changes nothing until the member applies it.
  */
-export type UiBlock = UiForm | AgentProposal;
+export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal;
 
 export interface UiOption {
   label: string;
@@ -579,6 +579,53 @@ export interface AgentProposal {
   memories: string[];
 }
 
+/** One proposed merge: facts that overlap, and the one fact that would replace them. */
+export interface MemoryMerge {
+  text: string;
+  category: MemoryCategory;
+  /** The scope every original shares, and the merged fact's. */
+  scope: Memory["scope"];
+  /** Whether the merged fact would be pinned (any original is). */
+  pinned: boolean;
+  /** The facts it replaces, as memory held them when the agent proposed it. */
+  originals: { id: string; content: string; pinned: boolean }[];
+}
+
+/**
+ * The agent's suggestion to combine overlapping facts it remembers into fewer ones (its
+ * merge_memories tool). Nothing changes until the member merges them, and a merge can be undone.
+ */
+export interface MemoryMergeProposal {
+  kind: "memory-merge";
+  id: string;
+  summary: string;
+  merges: MemoryMerge[];
+}
+
+/** A fact a merge replaced, with everything needed to save it again on Undo. */
+export interface MergedOriginal {
+  /** Its id before the merge (gone since). */
+  id: string;
+  content: string;
+  scope: Memory["scope"];
+  category: MemoryCategory;
+  pinned: boolean;
+  source?: Memory["source"];
+  createdBy: string;
+  savedAt: number;
+}
+
+/** A merge that took effect, with what it replaced so it can be undone. */
+export interface AppliedMerge {
+  /** Its place in the proposal. */
+  index: number;
+  /** The merged fact's id. */
+  memoryId: string;
+  /** The text saved, with the member's edits. */
+  text: string;
+  originals: MergedOriginal[];
+}
+
 /** Which parts of a proposal the member chose to apply, by item. */
 export interface ProposalPicks {
   profile: boolean;
@@ -600,7 +647,14 @@ export type UiResponse =
       applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number };
       /** The tasks it switched on or created, in the proposal's order, so the first can run right away. */
       taskIds?: string[];
-    };
+    }
+  /** `skipped`: picked merges that couldn't be made (a fact gone or changed since, or not the member's to change). */
+  | { status: "merged"; at: number; merges: AppliedMerge[]; skipped: number }
+  /**
+   * `skipped`: merges left as they are because the merged fact was edited or removed since;
+   * `merges`: the ones that had been made, as the card showed them.
+   */
+  | { status: "undone"; at: number; restored: number; skipped: number; merges: Pick<AppliedMerge, "index" | "text">[] };
 
 export const MAX_UI_BLOCKS = 2;
 export const MAX_FORM_FIELDS = 8;
