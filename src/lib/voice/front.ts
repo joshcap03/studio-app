@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBackchannel, isSendIntent, isStopIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
 import { plain } from "./relay";
 import { cueLine, greeting, VOICE_TOOLS, voicePrompt } from "./persona";
@@ -293,6 +294,22 @@ export function replyStream(reply: BrainReply): ReadableStream<Uint8Array> {
 
 export const LOST_LINE = "Sorry, I lost that. Could you say it again?";
 
+/**
+ * What happens with what the member said: clear commands and backchannels by fixed rules, the
+ * rest as the model chose. The member's words go to the work whenever the model called nothing,
+ * so the call never asks questions of its own and the chat stays the one record of it.
+ */
+export function routeSpeech(said: string, stage: VoiceStage | null, tools: BrainReply["tools"] = []): BrainReply {
+  const skip = { tools: [{ name: "skip_turn", args: {} }] };
+  if (isBackchannel(said)) return skip;
+  if (isStopIntent(said)) return { tools: [{ name: "stop_work", args: {} }] };
+  const fills = (tools ?? []).filter((t) => t.name === "fill_card" || t.name === "answer_question");
+  // "Send" sends what's on screen; the browser says what's missing if it can't.
+  if (isSendIntent(said) && (stage?.form || stage?.questions?.length)) return { tools: [...fills, { name: "send_card", args: {} }] };
+  const chosen = (tools ?? []).filter((t) => t.name !== "skip_turn" && t.name !== "stop_work" && t.name !== "send_card");
+  return chosen.length ? { tools: chosen } : { tools: [{ name: "send_message", args: {} }] };
+}
+
 const TOOL_WORDS = /\b(skip[_ ]turn|end[_ ]call|send[_ ]message|fill[_ ]card|send[_ ]card|stop[_ ]work|answer[_ ]question|tools?|field id)\b/i;
 
 /**
@@ -355,7 +372,10 @@ export async function modelReply(
       }
       return [{ name, args }];
     });
+    const last = callTurns(request.messages).at(-1);
+    if (last?.role === "user") return routeSpeech(textOf(last.content), latestStage(request.messages), tools);
     if (tools.length) return { tools };
+    // Only after a tool was turned down may the model say why, in a few words.
     const text = spokenText(message?.content);
     return text ? { text } : { tools: [{ name: "skip_turn", args: {} }] };
   } catch (e) {

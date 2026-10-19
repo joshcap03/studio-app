@@ -116,8 +116,12 @@ export function speakableGist(markdown: string): string {
     gist = gist ? `${gist} ${s}` : s;
   }
   if (gist.length > MAX_GIST) gist = `${gist.slice(0, MAX_GIST - 1).replace(/\s+\S*$/, "")}…`;
-  const rest = text.length > gist.length + 2;
-  return rest ? `${gist} The rest is on screen.` : gist;
+  // A reply that ends by asking them something always gets that question said, last, so the
+  // call asks exactly what the chat asks.
+  const last = sentences.at(-1) ?? "";
+  const question = /\?["”’)]*$/.test(last) && !gist.includes(last) && last.length <= MAX_GIST ? last : "";
+  const rest = text.length > gist.length + question.length + 2;
+  return [gist, rest ? "The rest is on screen." : "", question].filter(Boolean).join(" ");
 }
 
 /** Markdown to plain words for speech. */
