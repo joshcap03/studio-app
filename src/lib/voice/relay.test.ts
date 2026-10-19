@@ -44,6 +44,15 @@ describe("relayEvent", () => {
     expect(lines).toEqual(["Let me read your résumé first."]);
   });
 
+  it("leaves the agent's bookkeeping (its plan, its memory) unsaid", () => {
+    const lines = run([
+      activity(step({ id: "p", label: "Updating the plan", app: "tracker", action: "write" })),
+      activity(step({ id: "m", label: "Updating memory", app: "memory", action: "remember" })),
+      activity(step({ id: "w", label: "Searching the web" })),
+    ]);
+    expect(lines).toEqual(["Searching the web…"]);
+  });
+
   it("starts over on a new turn", () => {
     expect(run([activity(step({})), { type: "start" } as StreamEvent, activity(step({}))])).toEqual(["Searching the web…", "Searching the web…"]);
   });

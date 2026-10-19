@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeSession, jsonError } from "@/lib/tenant";
-import { frontRequest, mockReply, modelReply, planReply, replyStream } from "@/lib/voice/front";
+import { frontRequest, mockReply, modelReply, planReply, quickRoute, replyStream } from "@/lib/voice/front";
 import type { BrainReply } from "@/lib/voice/mock";
 import { openContext } from "@/lib/voice/seal";
 
@@ -49,5 +49,7 @@ export async function POST(request: NextRequest) {
   const plan = planReply(context, parsed.data.messages);
   if (plan.kind === "say") return deliver({ text: plan.text });
   if (plan.kind === "skip") return deliver({ tools: [{ name: "skip_turn", args: { reason: "Nothing new to say" } }] });
+  const quick = quickRoute(parsed.data.messages);
+  if (quick) return deliver(quick);
   return deliver(voice.llm ? await modelReply(voice.llm, context, parsed.data, request.signal) : mockReply(parsed.data.messages));
 }

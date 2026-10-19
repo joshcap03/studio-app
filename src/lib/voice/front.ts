@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBackchannel, isSendIntent, isStopIntent } from "./intent";
+import { isBackchannel, isRedirect, isSendIntent, isStopIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
 import { plain } from "./relay";
 import { cueLine, greeting, VOICE_TOOLS, voicePrompt } from "./persona";
@@ -151,6 +151,17 @@ export function sayable(text: string, max = 500): string {
 
 export type FrontPlan = { kind: "say"; text: string } | { kind: "skip" } | { kind: "model" };
 
+/** Whether the voice said something since the member last spoke (with its tool calls). */
+function alreadySaid(messages: FrontMessage[]): boolean {
+  const turns = callTurns(messages);
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const m = turns[i];
+    if (m.role === "user") return false;
+    if (m.role === "assistant" && textOf(m.content).trim()) return true;
+  }
+  return false;
+}
+
 /** The tool results at the end of the conversation, oldest first. */
 function trailingResults(messages: FrontMessage[]): string[] {
   const turns = callTurns(messages);
@@ -217,7 +228,10 @@ export function planReply(context: VoiceContext, messages: FrontMessage[]): Fron
   if (last.role === "assistant") return { kind: "skip" };
   if (last.role === "user" && !textOf(last.content).trim()) return { kind: "skip" };
   if (last.role === "tool") {
-    const speech = speechForResults(trailingResults(messages));
+    const results = trailingResults(messages);
+    // The line already went out with the call (quickRoute), and the result is what it said.
+    if (alreadySaid(messages) && results.every((r) => /^\s*(handed off|held|stopped):/i.test(r))) return { kind: "skip" };
+    const speech = speechForResults(results);
     if (speech) return { kind: "say", text: speech };
   }
   return { kind: "model" };
@@ -308,6 +322,29 @@ export function routeSpeech(said: string, stage: VoiceStage | null, tools: Brain
   if (isSendIntent(said) && (stage?.form || stage?.questions?.length)) return { tools: [...fills, { name: "send_card", args: {} }] };
   const chosen = (tools ?? []).filter((t) => t.name !== "skip_turn" && t.name !== "stop_work" && t.name !== "send_card");
   return chosen.length ? { tools: chosen } : { tools: [{ name: "send_message", args: {} }] };
+}
+
+/**
+ * The turn decided without a model, when there's nothing to interpret: the member spoke and no
+ * card is on screen, so their words go to the work (or stay quiet, or stop it) straight away.
+ * Most of a setup is plain questions, so this is most turns, about a second faster. Null when
+ * the model is needed (a card to fill from what they said).
+ */
+export function quickRoute(messages: FrontMessage[]): BrainReply | null {
+  const last = callTurns(messages).at(-1);
+  if (last?.role !== "user") return null;
+  const stage = latestStage(messages);
+  if (stage?.form || stage?.questions?.length) return null;
+  const said = textOf(last.content);
+  const reply = routeSpeech(said, stage, []);
+  // The holding line goes out with the hand-off, in one turn rather than two.
+  const call = reply.tools?.[0]?.name;
+  if (call === "send_message") {
+    const held = stage?.approval ? "Got it. That goes along after your OK on screen." : stage?.working && !isRedirect(said) ? "Got it. I'll add that when this lands." : "On it.";
+    return { ...reply, text: held };
+  }
+  if (call === "stop_work") return stage?.working ? { ...reply, text: "Stopping." } : { tools: [{ name: "skip_turn", args: {} }] };
+  return reply;
 }
 
 const TOOL_WORDS = /\b(skip[_ ]turn|end[_ ]call|send[_ ]message|fill[_ ]card|send[_ ]card|stop[_ ]work|answer[_ ]question|tools?|field id)\b/i;
