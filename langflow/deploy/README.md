@@ -74,6 +74,12 @@ Python.
   can't answer yet and shuts the old revision down early. Probing `/health` keeps the old
   revision serving until the new one is ready.
 
+  Then schedule the daily prune (`sh langflow/deploy/prune.sh`): a Cloud Run job runs
+  `prune.sql` at 09:17 UTC. Langflow never deletes finished background jobs or their event
+  logs (~50 MB a day here), and Neon's free plan stops every write at 1 GB, which fails
+  every run with a 503 ("The agent service had a problem"). Native tracing is off in the
+  Dockerfile for the same reason.
+
 Health check: `GET /health` (liveness). `GET /health_check` also probes the database.
 
 ## 2. Create an API key

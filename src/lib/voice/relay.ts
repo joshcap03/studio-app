@@ -114,35 +114,81 @@ export function cardLine(block: UiBlock): string {
 }
 
 const MAX_GIST = 320;
+const REST = "The rest is on screen.";
+/** A gist cut short still says at least this much, or nothing. */
+const MIN_LEAD = 40;
+/** A sentence after the closing question ("Think about the work, the stage.") is said with it when it's this short. */
+const MAX_HINT = 140;
 
 /**
- * A reply cleaned for the ear and cut to its first two sentences: links become their text,
- * citation marks, code, tables, and list markers go, and "The rest is on screen" says where the
- * details went. A greeting the voice already said ("Hey!") isn't said twice. A reply that ends by
- * asking them something gets that question said last, and no other: the call asks one thing,
- * the thing the chat leaves open.
+ * A reply cleaned for the ear and cut to its first two sentences, all within MAX_GIST: links
+ * become their text, citation marks, code, tables, and list markers go, and "The rest is on
+ * screen" says where the details went. A greeting the voice already said ("Hey!") isn't said
+ * twice, nor is a sentence the reply repeats. A reply that ends by asking them something gets
+ * that question said last (see closingQuestion), and no other: the call asks one thing, the
+ * thing the chat leaves open. Its hint goes to the screen when there's no room for a lead.
  */
 export function speakableGist(markdown: string): string {
+  return gist(markdown).spoken;
+}
+
+function gist(markdown: string): { spoken: string; question: string } {
   const text = plain(markdown).replace(/^(hey|hi|hello)( there)?[!,.]\s*/i, "");
-  if (!text) return "";
-  const question = closingQuestion(markdown) ?? "";
-  const said = sentences(text).filter((s) => !question || !QUESTION.test(s));
+  const ask = closing(markdown);
+  const asks = ask ? [ask.hint ? `${ask.question} ${ask.hint}` : "", ask.question].filter((a) => a && a.length <= MAX_GIST) : [""];
+  const once = [...new Set(sentences(text))].filter((s) => !GREETING.test(s));
+  const whole = once.join(" ").length;
+  const said = once.filter((s) => !ask || (!QUESTION.test(s) && s !== ask.hint));
+  let out = { spoken: "", question: "" };
+  for (const question of asks) {
+    const room = MAX_GIST - (question ? question.length + 1 : 0);
+    let lines = lead(said, room, !question);
+    const rest = whole > lines.length + question.length + 2;
+    if (rest) lines = lead(said, room - REST.length - 1, !question);
+    out = { spoken: [lines, rest ? REST : "", question].filter(Boolean).join(" "), question };
+    if (lines || !said.length) break;
+  }
+  return out;
+}
+
+const GREETING = /^(hey|hi|hello)( there)?[!,.]*$/i;
+
+/** Up to the first two sentences within `room`; the first cut short if it alone is too long and `cut`. */
+function lead(said: string[], room: number, cut: boolean): string {
   let gist = "";
   for (const s of said.slice(0, 2)) {
-    if (gist && gist.length + s.length + 1 > MAX_GIST) break;
-    gist = gist ? `${gist} ${s}` : s;
+    const next = gist ? `${gist} ${s}` : s;
+    if (next.length > room) break;
+    gist = next;
   }
-  if (gist.length > MAX_GIST) gist = `${gist.slice(0, MAX_GIST - 1).replace(/\s+\S*$/, "")}…`;
-  const rest = text.length > gist.length + question.length + 2;
-  return [gist, rest ? "The rest is on screen." : "", question].filter(Boolean).join(" ");
+  if (!gist && cut && said[0] && room >= MIN_LEAD) gist = `${said[0].slice(0, room - 1).replace(/\s+\S*$/, "")}…`;
+  return gist;
 }
 
 const QUESTION = /\?["”’)]*$/;
+/** A question that leans on the one before it ("Or did…", "Is it…") isn't said without it. */
+const FOLLOW_ON = /^(or|and|is it|was it|is that)\b/i;
 
-/** The question a reply ends on, in plain words, if it ends on one. */
+/**
+ * What a reply's last paragraph asks them, in plain words, if it ends by asking: its last
+ * question (with the one before when it leans on it), and a short hint after it ("Think about
+ * the work, the stage, the people.") when there's room for it: exactly what speakableGist says
+ * last. A paragraph that moves on after its question asks nothing.
+ */
 export function closingQuestion(markdown: string): string | null {
-  const last = sentences(plain(markdown)).at(-1) ?? "";
-  return QUESTION.test(last) && last.length <= MAX_GIST ? last : null;
+  return gist(markdown).question || null;
+}
+
+function closing(markdown: string): { question: string; hint: string | null } | null {
+  const paragraph = markdown.split(/\n\s*\n/).map(plain).filter(Boolean).at(-1) ?? "";
+  const said = sentences(paragraph);
+  const at = said.findLastIndex((s) => QUESTION.test(s));
+  if (at < 0 || said.length - at > 2) return null;
+  const leans = at > 0 && FOLLOW_ON.test(said[at]) && QUESTION.test(said[at - 1]);
+  const question = leans && said[at - 1].length + said[at].length < MAX_GIST ? `${said[at - 1]} ${said[at]}` : said[at];
+  if (question.length > MAX_GIST) return null;
+  const hint = said[at + 1] && said[at + 1].length <= MAX_HINT ? said[at + 1] : null;
+  return { question, hint };
 }
 
 /** Plain text cut into sentences, each with its closing punctuation. */

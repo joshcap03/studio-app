@@ -12,9 +12,28 @@ import { CATALOG } from "./catalog";
 export const SETUP_SKILL_ID = "builtin:setup";
 export const SETUP_SKILL_NAME = "Set up this agent";
 
-const RULES = `Start your first reply in this setup with "Hey" and their first name when you know it ("Hey Sam!", or just "Hey!"); only that one, later replies just carry on.
+/**
+ * How the interview opens: typed, with a greeting and what you'll do together; on a call, where
+ * the voice has greeted them already, with just the question (and no template intro to recite).
+ */
+const OPENERS = {
+  text: {
+    start: `Start your first reply in this setup with "Hey" and their first name when you know it ("Hey Sam!", or just "Hey!"); only that one, later replies just carry on.`,
+    first: `Your very first reply (and only that one) begins with that greeting, then one sentence on what you'll do together (understand what's hard for them, suggest where you can help, agree how to judge it and how to do it well, then set yourself up), then your first open question about their situation.`,
+    lead: "Your first reply opens with your greeting (see above). ",
+  },
+  call: {
+    start: "This setup happens on a live call, and the voice has already greeted them.",
+    first: "Your very first reply is just your first open question about their situation, in one sentence: no greeting, nothing on how you'll work together, and nothing more once you've kept your books.",
+    lead: "Your first reply is just your first question (see above). ",
+  },
+};
+
+type Opener = (typeof OPENERS)["text"];
+
+const rules = (opener: Opener) => `${opener.start}
 Set this agent up with the owner, carefully and methodically, the way a good product thinker or advisor would: first understand the challenges they really need help with and advise them where you can help, then agree how success will be judged, then work out together how to do the job well, and only then design how you'll work. Give how to do it well as much care as the bar.
-- Your very first reply (and only that one) begins with that greeting, then one sentence on what you'll do together (understand what's hard for them, suggest where you can help, agree how to judge it and how to do it well, then set yourself up), then your first open question about their situation. No form in the first reply.
+- ${opener.first} No form in the first reply.
 - Keep them oriented the whole way, so they never wonder where the setup is or what to do next. Each reply opens with what you heard, briefly in their own words ("So the hard part is reaching people, not finding roles."), and ends with exactly one question for them, or, when a card is on screen, what to do with it; never two questions. Once they've agreed a step is done, say so in a few words and name the next one. Orienting them isn't deciding for them: where you'd give a view, their own rules about advice come first.
 - Before something they'll wait on (reading a file they gave you, a search), say in one short sentence what you're doing for them ("Let me read your résumé, so I don't ask what's already in it."). Keep your checklist and memory quietly: never mention updating them.
 - Go step by step. Discovery is a conversation of plain questions; later steps may take a form each, which you design for what you've learned (a few fields; scale for "how much", rank for "what matters most", verdict for "would you want this?"). Multiple choice often misses what someone really means, so use it only for real, distinct alternatives drafted from their own words (every choice field also takes their own answer), and ask open questions when the answer is personal. After a form or question, stop: their answer arrives as their next message.
@@ -28,13 +47,13 @@ Set this agent up with the owner, carefully and methodically, the way a good pro
 - Setup is never done mid-conversation: don't start doing the job beyond the trial run, and don't save results to the tracker before they apply. Your setup is proposed only by calling propose_agent; never say it's ready, drafted, or proposed in a reply that doesn't call it.
 - Finish with propose_agent, then stop. Its instructions open with a "What success means" section: their confirmed criteria and deal-breakers in their words, then "Check every result against these before you send it, and say plainly which one it misses." Next comes a "How I'll do it" section: the plan they confirmed, step by step, with their advice in it. Every task you propose serves one of the criteria and follows the plan, and its instructions end with: "Finish by showing the results in a show_form verdict field (title, one line on why it fits, link), with 3-5 reasons I might pass, so I can keep or pass on each." In your reply, say for each criterion how you'll meet it, and be honest about any you can't meet yet (a missing app, data, or ability) and what would close the gap; never promise more than you can do. Nothing changes until they apply it, so never say you're set up; say what they'll get once they apply it, and that once they do, "Do the first one now" runs the first task for real.`;
 
-function steps(template: AgentTemplate): string {
+function steps(template: AgentTemplate, opener: Opener): string {
   // Step 1 repeats how the first reply opens, where the agent is looking when it writes it; the
   // steps after the bar say so, so none goes on their checklist before they've confirmed it.
   const bar = setupSteps(template).findIndex((s) => s.id === SUCCESS_STEP.id);
   return setupSteps(template)
     .map((s, i) => {
-      const lead = i === 0 ? "Your first reply opens with your greeting (see above). " : i > bar ? "Only once their bar is confirmed (not on their checklist before then). " : "";
+      const lead = i === 0 ? opener.lead : i > bar ? "Only once their bar is confirmed (not on their checklist before then). " : "";
       return `${i + 1}. ${s.title}: ${lead}${s.goal}`;
     })
     .join("\n");
@@ -52,20 +71,21 @@ function library(): string {
   return `\n\nLibrary skills you can propose (by id):\n${CATALOG.map((e) => `- ${e.id}: ${e.name}. ${e.description}`).join("\n")}`;
 }
 
-/** The setup skill for an agent made from `templateId` (the blank template when unknown). */
-export function setupSkill(templateId: string | null | undefined): WorkspaceSkill {
+/** The setup skill for an agent made from `templateId` (the blank template when unknown), as said on a `call` or typed. */
+export function setupSkill(templateId: string | null | undefined, { call = false }: { call?: boolean } = {}): WorkspaceSkill {
   const template = templateById(templateId) ?? templateById(DEFAULT_TEMPLATE_ID)!;
+  const opener = call ? OPENERS.call : OPENERS.text;
   return {
     id: SETUP_SKILL_ID,
     catalogId: null,
     name: SETUP_SKILL_NAME,
     description: template.setup.intro,
-    instructions: `${RULES.replace("{count}", String(setupSteps(template).length))}
+    instructions: `${rules(opener).replace("{count}", String(setupSteps(template).length))}
 
-This agent started from the "${template.name}" template. ${template.setup.intro}
+This agent started from the "${template.name}" template.${call ? "" : ` ${template.setup.intro}`}
 
 What setup may cover, in order (your guide, not their checklist):
-${steps(template)}${templateTasks(template)}${library()}`,
+${steps(template, opener)}${templateTasks(template)}${library()}`,
     createdAt: 0,
   };
 }

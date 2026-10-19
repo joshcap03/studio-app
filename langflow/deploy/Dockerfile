@@ -14,7 +14,10 @@ ENV LANGFLOW_BACKEND_ONLY=true \
     LANGFLOW_CONFIG_DIR=/app/data/langflow \
     LANGFLOW_DO_NOT_TRACK=true \
     LANGFLOW_WORKER_TIMEOUT=0 \
-    LANGFLOW_CREATE_STARTER_PROJECTS=false
+    LANGFLOW_CREATE_STARTER_PROJECTS=false \
+    LANGFLOW_NATIVE_TRACING=false
+# NATIVE_TRACING=false: Langflow's own traces (span/trace tables) are never pruned and grew
+# ~95 MB a day, filling a 1 GB Postgres and failing every run. LangSmith does the tracing.
 # WORKER_TIMEOUT=0 turns off gunicorn's heartbeat check. Hosts that pause the CPU between
 # requests (Cloud Run's default) freeze the heartbeat, and gunicorn then kills the idle
 # worker on the next request and boots a new one (~90s). Agent runs need no worker timeout:

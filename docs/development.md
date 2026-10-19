@@ -179,7 +179,8 @@ exchange from the session's stored messages.
      global variable the shared node used. If the plan's concurrent browsers are all in use,
      `start` ends this process's longest-idle browser (a minute or more) and tries once more.
    - **Load Skill** gets its code from `langflow/components/load_skill.py` (no business names).
-   - A literal Exa key moves into the global variable `EXA_API_KEY`.
+   - A literal Exa key moves into the global variable `EXA_API_KEY`, and Exa search returns
+     at least 10 results (the node's count is fixed per flow; the agent can't raise it per call).
    - **Python REPL nodes are removed**: they execute in the Langflow server process, next
      to every tenant's keys. Keep them (`--keep-python`) only with `LANGFLOW_SANDBOX_BACKEND`
      configured on the server. Members' code runs in their own Composio workbench.

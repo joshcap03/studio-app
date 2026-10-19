@@ -8,8 +8,9 @@ import { describeTurn, liveFlow, setupSession, type ScriptedMember } from "./set
 // their words as speech-to-text gives them (fillers, slips, little punctuation): one rambles, one
 // answers in a few words, one changes their mind mid-answer. Each turn is scored from what the
 // voice would say (call-score.ts), with no audio and no voice minutes. The checks hold only the
-// call's plain rules; the scorecard printed at the end (and written beside SETUP_EVAL_LOG) is the
-// number to compare prompt changes by, over several runs, since one run is noisy.
+// call's plain rules; the scorecard printed at the end (and written beside SETUP_EVAL_LOG, with
+// each turn's scores) is the number to compare prompt changes by, over several runs, since one
+// run is noisy.
 
 const ADVICE = /\b(recommend|suggest|i'd start|start with|help (you )?most|where i (can|could) help|here's my read|i think i (can|could)|i'd leave)\b/i;
 const TURNS = 6;
@@ -70,8 +71,11 @@ const all: { id: string; scores: CallTurnScore[] }[] = [];
 
 afterAll(() => {
   if (!all.length) return;
-  for (const { id, scores } of all) console.log(`${id}: ${callSummary(scores)}`);
-  console.log(`all calls: ${callSummary(all.flatMap((x) => x.scores))}`);
+  const card = [...all.map(({ id, scores }) => `${id}: ${callSummary(scores)}`), `all calls: ${callSummary(all.flatMap((x) => x.scores))}`];
+  for (const line of card) console.log(line);
+  // Vitest may drop console output from a run that passes, so the scorecard is also kept.
+  const log = process.env.SETUP_EVAL_LOG;
+  if (log) writeFileSync(log.replace(/(\.json)?$/, ".scorecard.txt"), `${card.join("\n")}\n`);
 });
 
 describe.skipIf(!liveFlow)("A setup interview on a call, against a live flow", () => {

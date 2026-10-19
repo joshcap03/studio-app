@@ -252,13 +252,13 @@ export function setupSession(member: ScriptedMember) {
     turns.push(turn);
     // As the app does once setup is under way (src/lib/workspace.ts): the setup skill stays in
     // view on every later run in this conversation.
-    if (!tenant.setup?.instructions) tenant.setup = { plan: tenant.setup?.plan ?? [], instructions: setupSkill(member.templateId).instructions };
+    if (!tenant.setup?.instructions) tenant.setup = { plan: tenant.setup?.plan ?? [], instructions: setupSkill(member.templateId, { call: member.modality === "call" }).instructions };
     return turn;
   }
 
   /** The first turn: the setup skill, with no text of the member's own. */
   function start(): Promise<Turn> {
-    return send(renderSkillMessage(setupSkill(member.templateId), ""));
+    return send(renderSkillMessage(setupSkill(member.templateId, { call: member.modality === "call" }), ""));
   }
 
   /** The member's reply to a plain question: the next part of their story, or a yes to a playback. */

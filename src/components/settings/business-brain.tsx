@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, MessageSquare, Pencil, Pin, PinOff, Trash2, Users, X } from "lucide-react";
+import { Check, ChevronRight, MessageSquare, Pencil, Pin, PinOff, Search, Trash2, Users, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   MEMORY_CATEGORIES,
@@ -11,7 +11,9 @@ import {
 } from "@/lib/types";
 
 // Business Brain: what the agent knows, grouped by what it's about, with where each fact
-// came from. Members edit, pin, and share their own facts; owners review shares.
+// came from. Members edit, pin, and share their own facts; owners review shares. A long Brain
+// stays scannable: topics fold up to a count and their newest fact, show a few at a time, and
+// a search or a Shared / Only me filter narrows everything at once.
 
 interface Props {
   initialMemories: Memory[];
@@ -34,17 +36,37 @@ async function send<T>(url: string, method: string, body?: unknown): Promise<{ o
 const select =
   "h-7 rounded-md border border-line bg-surface px-1.5 text-[12.5px] text-fg-2 outline-none transition-colors hover:border-line-strong focus-visible:border-line-strong";
 
+/** Up to this many facts, every topic starts open; past it, topics start folded. */
+const OPEN_ALL_UP_TO = 12;
+/** Facts an open topic shows before "Show more". */
+const PER_TOPIC = 5;
+
+type ScopeFilter = "all" | Memory["scope"];
+
+/** Every word of the query appears in the fact (or its topic's name). */
+function matches(m: Memory, words: string[]): boolean {
+  const text = `${m.content} ${MEMORY_CATEGORY_LABELS[m.category]}`.toLowerCase();
+  return words.every((w) => text.includes(w));
+}
+
 export function BusinessBrain({ initialMemories, initialPromotions, isOwner }: Props) {
   const [memories, setMemories] = useState(initialMemories);
   const [promotions, setPromotions] = useState(initialPromotions);
   const [error, setError] = useState<string | null>(null);
 
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<ScopeFilter>("all");
+
   const pendingShare = useMemo(() => new Set(promotions.filter((p) => p.mine).map((p) => p.memoryId)), [promotions]);
   const review = isOwner ? promotions : [];
-  const pinned = memories.filter((m) => m.pinned);
-  const groups = MEMORY_CATEGORIES.map((c) => ({ category: c, items: memories.filter((m) => !m.pinned && m.category === c) })).filter(
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const filtering = words.length > 0 || scope !== "all";
+  const shown = memories.filter((m) => (scope === "all" || m.scope === scope) && matches(m, words));
+  const pinned = shown.filter((m) => m.pinned);
+  const groups = MEMORY_CATEGORIES.map((c) => ({ category: c, items: shown.filter((m) => !m.pinned && m.category === c) })).filter(
     (g) => g.items.length > 0,
   );
+  const bothScopes = memories.some((m) => m.scope === "personal") && memories.some((m) => m.scope === "workspace");
 
   const replace = (id: string, next: Memory | null) =>
     setMemories((list) => (next ? list.map((m) => (m.id === id ? next : m)) : list.filter((m) => m.id !== id)));
@@ -163,31 +185,120 @@ export function BusinessBrain({ initialMemories, initialPromotions, isOwner }: P
       {memories.length === 0 ? (
         <p className="mt-4 text-[13.5px] text-fg-3">Nothing saved yet. Add something above, or just tell the agent in chat.</p>
       ) : (
-        <div className="mt-6 space-y-6">
-          {pinned.length > 0 ? (
-            <FactGroup title="Pinned" hint="Always given to the agent">
-              {pinned.map(row)}
-            </FactGroup>
-          ) : null}
-          {groups.map((g) => (
-            <FactGroup key={g.category} title={MEMORY_CATEGORY_LABELS[g.category]}>
-              {g.items.map(row)}
-            </FactGroup>
-          ))}
-        </div>
+        <>
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 basis-56">
+              <Search size={14} strokeWidth={1.75} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-fg-3" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setQuery("");
+                }}
+                placeholder={`Search ${memories.length} ${memories.length === 1 ? "fact" : "facts"}`}
+                aria-label="Search what it knows"
+                className="h-8 w-full rounded-lg border border-line bg-surface pr-2.5 pl-8 text-[13px] text-fg outline-none transition-colors placeholder:text-fg-3 hover:border-line-strong focus:border-line-strong focus-visible:outline-none"
+              />
+            </div>
+            {bothScopes ? (
+              <div role="radiogroup" aria-label="Whose facts" className="flex rounded-lg bg-subtle p-0.5 text-[12.5px]">
+                {(["all", "workspace", "personal"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    role="radio"
+                    aria-checked={scope === s}
+                    onClick={() => setScope(s)}
+                    className={`h-7 rounded-md px-2.5 transition-colors ${scope === s ? "bg-surface font-medium text-fg shadow-sm" : "text-fg-3 hover:text-fg"}`}
+                  >
+                    {s === "all" ? "All" : s === "workspace" ? "Shared" : "Only me"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          {shown.length === 0 ? (
+            <p className="mt-4 text-[13.5px] text-fg-3">Nothing matches.</p>
+          ) : (
+            <div className="mt-4 space-y-2">
+              {pinned.length > 0 ? (
+                <Topic title="Pinned" hint="Always given to the agent" items={pinned} startOpen expanded={filtering}>
+                  {row}
+                </Topic>
+              ) : null}
+              {groups.map((g) => (
+                <Topic
+                  key={g.category}
+                  title={MEMORY_CATEGORY_LABELS[g.category]}
+                  items={g.items}
+                  startOpen={memories.length <= OPEN_ALL_UP_TO}
+                  expanded={filtering}
+                >
+                  {row}
+                </Topic>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function FactGroup({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+interface TopicProps {
+  title: string;
+  hint?: string;
+  items: Memory[];
+  startOpen: boolean;
+  /** While searching or filtering, every topic with a match opens and shows all of them. */
+  expanded: boolean;
+  children: (m: Memory) => React.ReactNode;
+}
+
+/** One topic: folds to its name, count, and newest fact; opens to a few facts at a time. */
+function Topic({ title, hint, items, startOpen, expanded, children }: TopicProps) {
+  const [open, setOpen] = useState(startOpen);
+  const [limit, setLimit] = useState(PER_TOPIC);
+  const isOpen = open || expanded;
+  const visible = expanded ? items : items.slice(0, limit);
+  const more = items.length - visible.length;
+
   return (
-    <section>
-      <h3 className="text-[12.5px] font-medium text-fg-3">
-        {title}
-        {hint ? <span className="font-normal text-fg-4"> · {hint}</span> : null}
+    <section className="rounded-xl border border-line bg-surface">
+      <h3>
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          onClick={() => setOpen(!isOpen)}
+          disabled={expanded}
+          className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors enabled:hover:bg-hover"
+        >
+          <ChevronRight size={14} className={`shrink-0 text-fg-3 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+          <span className="shrink-0 text-[13px] font-medium text-fg">{title}</span>
+          <span className="shrink-0 text-[12.5px] tabular-nums text-fg-3">{items.length}</span>
+          {isOpen ? (
+            hint ? <span className="min-w-0 truncate text-[12.5px] text-fg-4">{hint}</span> : null
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">{items[0]?.content}</span>
+          )}
+        </button>
       </h3>
-      <ul className="mt-1 divide-y divide-line">{children}</ul>
+      {isOpen ? (
+        <div className="px-3 pb-1">
+          <ul className="divide-y divide-line border-t border-line">{visible.map(children)}</ul>
+          {more > 0 ? (
+            <button
+              type="button"
+              onClick={() => setLimit(items.length)}
+              className="mb-1.5 h-7 rounded-md px-1.5 text-[12.5px] text-fg-2 hover:bg-hover hover:text-fg"
+            >
+              Show {more} more
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -204,20 +315,33 @@ interface FactRowProps {
 function FactRow({ memory: m, canChange, sharing, onChange, onRemove, onShare }: FactRowProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.content);
+  const [topic, setTopic] = useState(m.category);
+  const [full, setFull] = useState(false);
+  // About two lines at this width; longer facts fold until asked.
+  const long = m.content.length > 160;
   const iconButton =
     "flex size-7 shrink-0 items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-hover hover:text-fg";
 
   function save() {
     const text = draft.trim();
     setEditing(false);
-    if (text && text !== m.content) onChange({ content: text });
+    const patch: Partial<Pick<Memory, "content" | "category">> = {};
+    if (text && text !== m.content) patch.content = text;
     else setDraft(m.content);
+    if (topic !== m.category) patch.category = topic;
+    if (patch.content !== undefined || patch.category !== undefined) onChange(patch);
+  }
+
+  function cancel() {
+    setDraft(m.content);
+    setTopic(m.category);
+    setEditing(false);
   }
 
   return (
-    <li className="group/fact py-3">
+    <li className="group/fact py-2.5">
       {editing ? (
-        <div className="flex items-start gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <label htmlFor={`fact-${m.id}`} className="sr-only">
             Edit memory
           </label>
@@ -225,7 +349,7 @@ function FactRow({ memory: m, canChange, sharing, onChange, onRemove, onShare }:
             id={`fact-${m.id}`}
             autoFocus
             onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
-            rows={2}
+            rows={3}
             maxLength={2000}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -233,45 +357,34 @@ function FactRow({ memory: m, canChange, sharing, onChange, onRemove, onShare }:
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 save();
-              } else if (e.key === "Escape") {
-                setDraft(m.content);
-                setEditing(false);
-              }
+              } else if (e.key === "Escape") cancel();
             }}
-            className="min-w-0 flex-1 resize-y rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-[14px] leading-relaxed outline-none"
+            className="min-w-0 flex-1 basis-full resize-y rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-[14px] leading-relaxed outline-none"
           />
-          <button type="button" onClick={save} aria-label="Save" className={iconButton}>
-            <Check size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setDraft(m.content);
-              setEditing(false);
-            }}
-            aria-label="Cancel"
-            className={iconButton}
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ) : (
-        <p className="text-[14px] leading-relaxed whitespace-pre-wrap text-fg">{m.content}</p>
-      )}
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-fg-3">
-        {canChange ? (
-          <select
-            aria-label="Category"
-            value={m.category}
-            onChange={(e) => onChange({ category: e.target.value as MemoryCategory })}
-            className={select}
-          >
+          <select aria-label="Topic" value={topic} onChange={(e) => setTopic(e.target.value as MemoryCategory)} className={select}>
             {MEMORY_CATEGORIES.map((c) => (
               <option key={c} value={c}>
                 {MEMORY_CATEGORY_LABELS[c]}
               </option>
             ))}
           </select>
+          <span className="ml-auto flex gap-0.5">
+            <button type="button" onClick={save} aria-label="Save" className={iconButton}>
+              <Check size={14} />
+            </button>
+            <button type="button" onClick={cancel} aria-label="Cancel" className={iconButton}>
+              <X size={14} />
+            </button>
+          </span>
+        </div>
+      ) : (
+        <p className={`text-[14px] leading-relaxed whitespace-pre-wrap text-fg ${long && !full ? "line-clamp-2" : ""}`}>{m.content}</p>
+      )}
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-fg-3">
+        {long && !editing ? (
+          <button type="button" onClick={() => setFull(!full)} className="font-medium text-fg-2 hover:text-fg">
+            {full ? "Less" : "More"}
+          </button>
         ) : null}
         <span>{m.scope === "personal" ? "Only me" : "Shared"}</span>
         {m.source ? (
@@ -300,7 +413,7 @@ function FactRow({ memory: m, canChange, sharing, onChange, onRemove, onShare }:
               >
                 {m.pinned ? <PinOff size={14} /> : <Pin size={14} />}
               </button>
-              <button type="button" onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className={iconButton}>
+              <button type="button" onClick={() => setEditing(true)} aria-label="Edit" title="Edit or move to another topic" className={iconButton}>
                 <Pencil size={14} />
               </button>
               <button type="button" onClick={onRemove} aria-label="Forget this" title="Forget this" className={`${iconButton} hover:text-danger`}>

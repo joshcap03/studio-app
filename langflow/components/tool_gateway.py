@@ -356,6 +356,46 @@ def compact_schema(schema):
     return visit(schema)
 
 
+# Web search results get a bigger budget than other tools, shared across every source, so a
+# search reads all the sources it found instead of the first few in full.
+WEB_RESULT_CHARS = 12000
+
+
+def web_results(payload):
+    """The sources in a list of web results (e.g. Exa's search), or None for anything else."""
+    items = getattr(payload, "results", None)
+    if items is None and isinstance(payload, dict):
+        items = payload.get("results")
+    if not isinstance(items, list) or not items:
+        return None
+    field = lambda item, key: item.get(key) if isinstance(item, dict) else getattr(item, key, None)
+    sources = []
+    for item in items:
+        url = field(item, "url")
+        if not isinstance(url, str) or not url.startswith("http"):
+            return None
+        body = next((v for k in ("highlights", "summary", "text", "snippet", "description", "content") if (v := field(item, k))), "")
+        if isinstance(body, list):
+            body = " … ".join(str(b) for b in body)
+        sources.append({"title": " ".join(str(field(item, "title") or "").split()), "url": url,
+                        "published": str(field(item, "published_date") or field(item, "publishedDate") or "")[:10],
+                        "body": " ".join(str(body).split())})
+    return sources
+
+
+def compact_web_results(sources, limit):
+    """Every source as Title/URL/Published/text, each trimmed to its share of the budget."""
+    budget = max(limit, WEB_RESULT_CHARS)
+    share = max(300, budget // len(sources))
+    blocks = []
+    for s in sources:
+        head = f"Title: {s['title']}\nURL: {s['url']}" + (f"\nPublished: {s['published']}" if s["published"] else "")
+        room = max(150, share - len(head))
+        body = s["body"] if len(s["body"]) <= room else s["body"][:room].rsplit(" ", 1)[0] + " …"
+        blocks.append(head + (f"\n{body}" if body else ""))
+    return f"{len(sources)} results\n\n" + "\n\n".join(blocks)
+
+
 def compact_result(result, limit):
     """Prefer structured MCP payloads; avoid duplicating text/structured representations."""
     structured = getattr(result, "structuredContent", None)
@@ -376,6 +416,9 @@ def compact_result(result, limit):
             payload = "\n".join(text_parts) if text_parts else content
         else:
             payload = content if content is not None else result
+    sources = web_results(payload)
+    if sources:
+        return compact_web_results(sources, limit)
     out = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
     if len(out) > limit:
         # Explicit warning so the agent doesn't mistake the excerpt for complete data.

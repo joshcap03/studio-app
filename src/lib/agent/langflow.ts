@@ -143,8 +143,9 @@ export function modalityContext(modality: NonNullable<AgentTenantContext["modali
   }
   return [
     "The member is on a live voice call with you. A voice reads out the gist of your reply and the steps you report, and shows your cards on their screen; their words reach you as they said them (expect speech-to-text slips).",
-    "The voice has already greeted them: don't open with \"Hey!\" or any greeting, even where a skill or setup says to. Lead with the one or two sentences that matter, written to be heard; put details, lists, and choices in your cards or below that.",
-    "They're waiting on the line, so write your reply first and keep your books after it (update_plan, remember): the voice reads your reply the moment it's written.",
+    "The voice has already greeted them: don't open with \"Hey!\" or any greeting, or with how you'll work together, even where a skill or setup says to. Lead with the one or two sentences that matter, written to be heard; put details, lists, and choices in your cards or below that.",
+    "Ask one thing at a time, as on a phone call: at most one question a reply, in one sentence (fold choices into it: \"Is it A, B, or something else?\"), with no second or follow-up question. End your reply on that question.",
+    "They're waiting on the line, so write your reply first and keep your books after it (update_plan, remember): the voice reads your reply the moment it's written. Once your books are kept you're done: don't write your reply again or add to it.",
   ].join(" ");
 }
 
