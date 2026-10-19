@@ -10,9 +10,10 @@ to learn what you need, then works with your profile, files, memory, and the app
   business agent and a job-search agent. Each has its own name, instructions, chats, tasks,
   skills, and files. They all share what you tell Studio about yourself, your personal
   memory, and your connected apps, so you only say it once.
-- **Start from a template.** Pick **Job search**, **Small business**, or **Start from
-  scratch**. A template brings starting instructions, skills, suggested apps, and tasks
-  (paused until you turn them on). It never overwrites anything you've written.
+- **Start from a template.** Pick **Job search**, **Small business**, **Sales pipeline**,
+  **Inbox & calendar**, **Content & social**, or **Start from scratch**. A template brings
+  starting instructions, skills, suggested apps, and sometimes tasks (paused until you turn
+  them on). It never overwrites anything you've written.
 - **Let it set itself up.** A new agent opens with a setup interview. It asks what you're
   really trying to get done and what success looks like, gathers what it needs (a résumé,
   say), shows a real trial run for you to judge, writes out its plan for the job and asks
