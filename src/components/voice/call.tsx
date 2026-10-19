@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Mic, MicOff, PhoneOff, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, AudioLines, Mic, MicOff, PhoneOff, Volume2, VolumeX } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCardDrafts, type FillResult } from "@/components/chat/card-drafts";
@@ -47,6 +47,11 @@ export interface CallProps {
   subscribe: (listener: (conversationId: string, event: StreamEvent) => void) => () => void;
   /** The call is over; the chat takes it from here. */
   onEnd: () => void;
+  /**
+   * Opened without a tap on this page (arriving from onboarding): browsers may block a call's
+   * sound until the member taps, so it waits for "Start call".
+   */
+  waitForTap?: boolean;
 }
 
 interface Caption {
@@ -148,8 +153,9 @@ function clock(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function Call({ grant, agentName, conversationId, messages, running, plan, onSend, onStop, onDecide, onUiResponse, onRunTask, subscribe, onEnd }: CallProps) {
+export function Call({ grant, agentName, conversationId, messages, running, plan, onSend, onStop, onDecide, onUiResponse, onRunTask, subscribe, onEnd, waitForTap = false }: CallProps) {
   const drafts = useCardDrafts();
+  const [joined, setJoined] = useState(!waitForTap);
   const link = useRef<VoiceLink | null>(null);
   const [status, setStatus] = useState<LinkStatus>("connecting");
   const [problem, setProblem] = useState<string | null>(null);
@@ -224,6 +230,18 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       else pendingLines.current.push(line.text);
     }
   }, []);
+  /** Each reply is read out once, whether it ended during the call or before it was joined. */
+  const readReplies = useRef(new Set<string>());
+  const queueReply = useCallback(
+    (message: ChatMessage) => {
+      // By status too: a reply paused for an approval is read again when it finishes.
+      const key = `${message.id}:${message.status}`;
+      if (readReplies.current.has(key)) return;
+      readReplies.current.add(key);
+      queue(relayReply(message));
+    },
+    [queue],
+  );
 
   // ---------------------------------------------------------------------------------------
   // Ending
@@ -407,7 +425,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
             return;
           }
           pendingProgress.current = null;
-          queue(relayReply(event.message));
+          queueReply(event.message);
           setOnIt(false);
           cardSince.current = spoken.current.length;
           // Words held while it worked go along with their next message when it asks for one,
@@ -422,7 +440,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
           }
         }
       }),
-    [queue, send, subscribe],
+    [queue, queueReply, send, subscribe],
   );
 
   // Picking up where it left off: once connected and the conversation is loaded, what's waiting
@@ -432,8 +450,8 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     if (caughtUp.current || status !== "connected" || (!messages.length && !running)) return;
     caughtUp.current = true;
     const { reply } = openAsk(messages, running);
-    if (reply) queue(relayReply(reply));
-  }, [messages, queue, running, status]);
+    if (reply) queueReply(reply);
+  }, [messages, queueReply, running, status]);
 
   // What finishing each journey step gave the agent.
   const lastPlan = useRef(plan);
@@ -518,7 +536,9 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
   }
 
   const lastAssistant = latestReply;
-  const orb: OrbState = problem
+  const orb: OrbState = !joined
+    ? "ready"
+    : problem
     ? "stuck"
     : status === "connecting"
       ? "connecting"
@@ -544,7 +564,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`Call with ${grant.persona.name}`} className="fixed inset-0 z-50 flex flex-col bg-bg animate-fade-in">
-      {grant.join.kind === "elevenlabs" ? (
+      {!joined ? null : grant.join.kind === "elevenlabs" ? (
         <ElevenLabsLink grant={grant} events={events} tools={toolsRef.current} onReady={(l) => (link.current = l)} />
       ) : (
         <MockVoiceLink grant={grant} events={events} tools={toolsRef.current} onReady={(l) => (link.current = l)} />
@@ -607,72 +627,90 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
             </button>
           ) : null}
 
-          <form
-            className="flex w-full max-w-sm items-center gap-1.5 rounded-xl border border-line bg-surface p-1 pl-3 focus-within:border-line-strong"
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitTyped();
-            }}
-          >
-            <label htmlFor="call-type" className="sr-only">
-              {grant.capabilities.audio ? "Type instead" : "Say something"}
-            </label>
-            <input
-              id="call-type"
-              value={typed}
-              disabled={status !== "connected"}
-              onChange={(e) => {
-                // Typing on a real call stops the voice talking right away; the captions carry on.
-                if (grant.capabilities.audio && speaker && !typed) {
-                  link.current?.setMuted({ speaker: true });
-                  setSpeaker(false);
-                }
-                setTyped(e.target.value);
-              }}
-              placeholder={grant.capabilities.audio ? "Type instead…" : "Type what you'd say…"}
-              className="min-w-0 flex-1 bg-transparent text-[14px] text-fg placeholder:text-fg-4 focus:outline-none"
-            />
-            <button type="submit" aria-label="Send" disabled={!typed.trim()} className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-inverse text-on-inverse transition-opacity hover:opacity-90 disabled:bg-press disabled:text-fg-4">
-              <ArrowUp size={15} />
-            </button>
-          </form>
+          {!joined ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setJoined(true)}
+                className="inline-flex h-10 items-center gap-1.5 rounded-full bg-inverse px-5 text-[13.5px] font-medium text-on-inverse transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.97]"
+              >
+                <AudioLines size={16} />
+                Start call
+              </button>
+              <button type="button" onClick={() => hangUp(false)} className="inline-flex h-10 items-center rounded-full px-4 text-[13.5px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg">
+                Not now
+              </button>
+            </div>
+          ) : (
+            <>
+              <form
+                className="flex w-full max-w-sm items-center gap-1.5 rounded-xl border border-line bg-surface p-1 pl-3 focus-within:border-line-strong"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitTyped();
+                }}
+              >
+                <label htmlFor="call-type" className="sr-only">
+                  {grant.capabilities.audio ? "Type instead" : "Say something"}
+                </label>
+                <input
+                  id="call-type"
+                  value={typed}
+                  disabled={status !== "connected"}
+                  onChange={(e) => {
+                    // Typing on a real call stops the voice talking right away; the captions carry on.
+                    if (grant.capabilities.audio && speaker && !typed) {
+                      link.current?.setMuted({ speaker: true });
+                      setSpeaker(false);
+                    }
+                    setTyped(e.target.value);
+                  }}
+                  placeholder={grant.capabilities.audio ? "Type instead…" : "Type what you'd say…"}
+                  className="min-w-0 flex-1 bg-transparent text-[14px] text-fg placeholder:text-fg-4 focus:outline-none"
+                />
+                <button type="submit" aria-label="Send" disabled={!typed.trim()} className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-inverse text-on-inverse transition-opacity hover:opacity-90 disabled:bg-press disabled:text-fg-4">
+                  <ArrowUp size={15} />
+                </button>
+              </form>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label={mic ? "Mute your mic" : "Unmute your mic"}
-              aria-pressed={!mic}
-              onClick={() => {
-                link.current?.setMuted({ mic: mic });
-                setMic(!mic);
-                setAway(false);
-              }}
-              className={control}
-            >
-              {mic ? <Mic size={17} /> : <MicOff size={17} />}
-            </button>
-            <button
-              type="button"
-              aria-label={speaker ? "Mute the voice" : "Unmute the voice"}
-              aria-pressed={!speaker}
-              onClick={() => {
-                link.current?.setMuted({ speaker: speaker });
-                setSpeaker(!speaker);
-                setAway(false);
-              }}
-              className={control}
-            >
-              {speaker ? <Volume2 size={17} /> : <VolumeX size={17} />}
-            </button>
-            <button
-              type="button"
-              onClick={() => hangUp()}
-              className="inline-flex h-10 items-center gap-1.5 rounded-full bg-danger px-4 text-[13.5px] font-medium text-on-inverse transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.97]"
-            >
-              <PhoneOff size={16} />
-              {problem ? "Back to the chat" : "End call"}
-            </button>
-          </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-label={mic ? "Mute your mic" : "Unmute your mic"}
+                  aria-pressed={!mic}
+                  onClick={() => {
+                    link.current?.setMuted({ mic: mic });
+                    setMic(!mic);
+                    setAway(false);
+                  }}
+                  className={control}
+                >
+                  {mic ? <Mic size={17} /> : <MicOff size={17} />}
+                </button>
+                <button
+                  type="button"
+                  aria-label={speaker ? "Mute the voice" : "Unmute the voice"}
+                  aria-pressed={!speaker}
+                  onClick={() => {
+                    link.current?.setMuted({ speaker: speaker });
+                    setSpeaker(!speaker);
+                    setAway(false);
+                  }}
+                  className={control}
+                >
+                  {speaker ? <Volume2 size={17} /> : <VolumeX size={17} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => hangUp()}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-full bg-danger px-4 text-[13.5px] font-medium text-on-inverse transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.97]"
+                >
+                  <PhoneOff size={16} />
+                  {problem ? "Back to the chat" : "End call"}
+                </button>
+              </div>
+            </>
+          )}
         </section>
 
         {/* The stage: only what the backend reported. */}
