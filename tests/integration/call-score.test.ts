@@ -22,8 +22,8 @@ describe("scoreCallTurn", () => {
     const text = "Hey! Where do you live? What do you do? What pays the bills? Anything else on your mind today?";
     const s = scoreCallTurn(turn([plan, { type: "text-delta", text }], [800, 6000], 7000));
     expect(s).toMatchObject({ greeted: true, questions: 4, booksFirst: true, answerS: 7 });
-    // The voice drops the greeting and says the first two sentences and the closing question.
-    expect(s.spoken).toBe("Where do you live? What do you do? The rest is on screen. Anything else on your mind today?");
+    // The voice drops the greeting and asks one thing, the closing question; the rest is on screen.
+    expect(s.spoken).toBe("The rest is on screen. Anything else on your mind today?");
   });
 
   it("counts a card as handing back the floor, even with no question in the reply", () => {

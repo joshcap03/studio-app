@@ -80,7 +80,7 @@ describe.skipIf(!liveFlow)("Job search setup interview against a live flow", () 
     const first = await session.start();
     expect(first.form, describeTurn(first)).toBeNull();
     expect(first.reply, describeTurn(first)).toContain("?");
-    expect(first.reply.trimStart(), describeTurn(first)).toMatch(/^Hey!/);
+    expect(first.reply.trimStart(), describeTurn(first)).toMatch(/^Hey\b/);
     expect(first.reply.length, describeTurn(first)).toBeLessThan(700);
   });
 

@@ -86,6 +86,10 @@ interface Props {
   setup: SetupSummary | null;
   /** Voice calls (a preview), when this member has them. */
   voice: VoiceStatus | null;
+  /** What the member goes by, for the agent's greeting. */
+  member: string | null;
+  /** The voice's name, when the member has calls ("it's Rowan"). */
+  greeter: string | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -141,6 +145,8 @@ function WorkspaceShell({
   initialSkillId,
   setup: initialSetup,
   voice,
+  member,
+  greeter,
 }: Props) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
@@ -1287,6 +1293,8 @@ function WorkspaceShell({
               footnote={footnote}
               setup={setup && (setup.status === "not_started" || setup.status === "in_progress") ? setup : null}
               agentName={workspace.name}
+              member={member}
+              greeter={greeter}
               onSetup={() => startSetup()}
               onSkipSetup={skipSetup}
               onTalk={voice ? () => void talkItThrough() : undefined}

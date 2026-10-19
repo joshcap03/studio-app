@@ -114,6 +114,19 @@ describe("CallNarrator", () => {
     expect(saidOnce(c.spoken)).toBe(true);
   });
 
+  it("says a run's lines once even when the next run starts before they're said", () => {
+    // Held words go along as soon as a run ends, so its reply can still be waiting for the floor.
+    const c = call();
+    c.feed(held(SHORT_OPENING).slice(0, 2));
+    c.flush(true);
+    c.feed(held(SHORT_OPENING).slice(2));
+    c.narrator.reply(heldReply(SHORT_OPENING), { superseded: true });
+    c.feed([start]);
+    c.flush(true);
+    expect(saidOnce(c.spoken)).toBe(true);
+    expect(c.spoken.join(" ")).toContain("meet people there");
+  });
+
   it("reads a reply caught up on joining once, even when its run's end arrives too", () => {
     const c = call();
     const done = message({ content: ANSWER });
@@ -138,16 +151,16 @@ describe("CallNarrator", () => {
     c.feed([start, activity({ id: "a", label: "Searching the web" }), activity({ id: "b", label: "Searching the web" })]);
     c.flush(true);
     c.flush(true);
-    expect(c.spoken).toEqual(["Searching the web…"]);
+    expect(c.spoken).toEqual(["I'm searching the web."]);
     c.feed([start, activity({ id: "a", label: "Searching the web" })]);
     c.flush(true);
-    expect(c.spoken).toEqual(["Searching the web…", "Searching the web…"]);
+    expect(c.spoken).toEqual(["I'm searching the web.", "I'm searching the web."]);
   });
 
   it("gives a quiet run one holding line a turn", () => {
     const narrator = new CallNarrator();
     narrator.event(start);
-    expect(narrator.take(1, { running: true, quietMs: 9500 })).toEqual(["Still on it."]);
+    expect(narrator.take(1, { running: true, quietMs: 9500 })).toEqual(["Still working on it."]);
     expect(narrator.take(2, { running: true, quietMs: 20_000 })).toEqual([]);
   });
 

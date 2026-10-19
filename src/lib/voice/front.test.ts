@@ -33,8 +33,18 @@ const stage: VoiceStage = {
 
 describe("planReply", () => {
   it("greets first, from the persona and the journey, without a model", () => {
-    expect(planReply(context, [providerPrompt])).toEqual({ kind: "say", text: "Hey! I'm Rowan." });
-    expect(planReply(context, [providerPrompt, mark({ cue: "hello", stage })])).toEqual({ kind: "say", text: "Hey! I'm Rowan. We'll start with your search." });
+    expect(planReply(context, [providerPrompt])).toEqual({ kind: "say", text: "Hey, it's Rowan." });
+    expect(planReply(context, [providerPrompt, mark({ cue: "hello", stage })])).toEqual({ kind: "say", text: "Hey, it's Rowan. Welcome back. We're on your search." });
+  });
+
+  it("greets them by name, and says where setup starts", () => {
+    const fresh: VoiceStage = { working: false, journey: { done: 0, total: 2, current: "What you're after: understand the search challenges" } };
+    expect(planReply({ ...context, member: "Josh" }, [mark({ cue: "hello", stage: fresh })])).toEqual({
+      kind: "say",
+      text: "Hey Josh, it's Rowan. I'll walk you through getting me set up, one step at a time. First, what you're after.",
+    });
+    const linked: VoiceStage = { working: false, journey: { done: 1, total: 3, current: "LinkedIn contacts" } };
+    expect(planReply({ ...context, member: "Josh" }, [mark({ cue: "hello", stage: linked })])).toEqual({ kind: "say", text: "Hey Josh, it's Rowan. Welcome back. We're on LinkedIn contacts." });
   });
 
   it("doesn't greet twice", () => {
@@ -51,7 +61,7 @@ describe("planReply", () => {
   it("asks the model only about the member's words, and words what follows a tool itself", () => {
     expect(planReply(context, [user("keep the first two")])).toEqual({ kind: "model" });
     const call = { role: "assistant" as const, content: null, tool_calls: [{ function: { name: "send_message", arguments: "{}" } }] };
-    expect(planReply(context, [user("x"), call, { role: "tool", content: "Handed off: sent to the worker." }])).toEqual({ kind: "say", text: "On it." });
+    expect(planReply(context, [user("x"), call, { role: "tool", content: "Handed off: sent to the worker." }])).toEqual({ kind: "say", text: "Sure, one moment." });
     // A refusal goes back to the model, to fix its call or ask.
     expect(planReply(context, [user("x"), call, { role: "tool", content: "Refused: There's no “f” on this card." }])).toEqual({ kind: "model" });
     expect(planReply(context, [user("x"), { role: "assistant", content: "On it." }])).toEqual({ kind: "skip" });
@@ -151,9 +161,9 @@ describe("speechForResults", () => {
   it("says fixed lines built from what the tools reported", () => {
     expect(speechForResults(["Filled: Keep 1, Keep 2, Pass 3 (Agency). Not sent yet.", "Filled: Remote, Hybrid. Not sent yet."])).toBe("Got it: Keep 1, Keep 2, Pass 3 (Agency); Remote, Hybrid.");
     expect(speechForResults(["Heard: Tailor applications? It's on screen for them to confirm with a tap."])).toBe("Did you mean Tailor applications? Tap it on screen if so.");
-    expect(speechForResults(["Held: until the current work lands."])).toBe("Got it. I'll add that when this lands.");
-    expect(speechForResults(["Held: it's waiting on their OK on screen; their words go along after."])).toBe("Got it. That goes along after your OK on screen.");
-    expect(speechForResults(["Sent: Trial run."])).toBe("Sent.");
+    expect(speechForResults(["Held: until the current work lands."])).toBe("Got it. I'll bring that in once this is done.");
+    expect(speechForResults(["Held: it's waiting on their OK on screen; their words go along after."])).toBe("Got it. That goes along once you've OK'd the request on screen.");
+    expect(speechForResults(["Sent: Trial run."])).toBe("Okay, that's sent.");
     expect(speechForResults(["Filled: 4 of 5. Not sent yet.", "Refused: no such field"])).toBeNull();
   });
 });
@@ -216,7 +226,7 @@ describe("ElevenLabs' contextual updates", () => {
     // And the greeting picks up the stage the update carried.
     expect(planReply(context, [mark({ cue: "hello" }), update, updateResult, mark({ cue: "hello" })])).toEqual({
       kind: "say",
-      text: "Hey! I'm Rowan. We'll start with your search.",
+      text: "Hey, it's Rowan. Welcome back. We're on your search.",
     });
   });
 
@@ -228,6 +238,14 @@ describe("ElevenLabs' contextual updates", () => {
       { role: "user", content: "keep the first two" },
     ]);
     expect(String(messages[0].content)).toContain('field "roles"');
+  });
+
+  it("don't swallow the line they arrived on top of", () => {
+    // A real call: the greeting cue, then the stage update right after it, and the provider asks
+    // again; the greeting is still owed.
+    expect(planReply(context, [mark({ cue: "hello", stage }), update, updateResult])).toEqual({ kind: "say", text: "Hey, it's Rowan. Welcome back. We're on your search." });
+    expect(planReply(context, [user("hi"), mark({ say: ["Reading your résumé…"] }), update, updateResult])).toEqual({ kind: "say", text: "Reading your résumé…" });
+    expect(planReply(context, [mark({ say: ["Reading your résumé…"] }), { role: "assistant", content: "Reading your résumé…" }, update, updateResult])).toEqual({ kind: "skip" });
   });
 
   it("leave the voice quiet when one is the latest thing", () => {
@@ -255,15 +273,32 @@ describe("routeSpeech", () => {
 describe("quickRoute", () => {
   it("hands the member's words on without a model when no card is on screen, with the holding line in the same turn", () => {
     const handOff = { name: "send_message", args: {} };
-    expect(quickRoute([mark({ stage: { working: false } }), user("Um, networking.")])).toEqual({ text: "On it.", tools: [handOff] });
-    expect(quickRoute([mark({ stage: { working: true } }), user("Also, no agencies")])).toEqual({ text: "Got it. I'll add that when this lands.", tools: [handOff] });
-    expect(quickRoute([mark({ stage: { working: true } }), user("Actually, remote only")])).toEqual({ text: "On it.", tools: [handOff] });
+    expect(quickRoute([mark({ stage: { working: false } }), user("Find me roles")])).toEqual({ text: "Sure, one moment.", tools: [handOff] });
+    expect(quickRoute([mark({ stage: { working: true } }), user("Also, no agencies")])).toEqual({ text: "Got it. I'll bring that in once this is done.", tools: [handOff] });
+    expect(quickRoute([mark({ stage: { working: true } }), user("Actually, remote only")])).toEqual({ text: "Sure, one moment.", tools: [handOff] });
     expect(quickRoute([mark({ stage: { working: false, approval: "Send a reply" } }), user("and cc Sam")])).toEqual({
-      text: "Got it. That goes along after your OK on screen.",
+      text: "Got it. That goes along once you've OK'd the request on screen.",
       tools: [handOff],
     });
     expect(quickRoute([user("...")])).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
-    expect(quickRoute([mark({ stage: { working: true } }), user("stop")])).toEqual({ text: "Stopping.", tools: [{ name: "stop_work", args: {} }] });
+    expect(quickRoute([mark({ stage: { working: true } }), user("stop")])).toEqual({ text: "Okay, stopping.", tools: [{ name: "stop_work", args: {} }] });
+  });
+
+  it("acknowledges an answer like someone listening, and never the same way twice running", () => {
+    const handOff = { name: "send_message", args: {} };
+    const asked = mark({ say: ["What's been hardest lately?"], stage: { working: false } });
+    const first = quickRoute([asked, { role: "assistant", content: "What's been hardest lately?" }, user("Um, networking.")]);
+    expect(first).toEqual({ text: "Okay.", tools: [handOff] });
+    const lines = new Set<string>();
+    let messages: FrontMessage[] = [asked];
+    for (let i = 0; i < 6; i++) {
+      messages = [...messages, { role: "assistant", content: "Which part?" }, user("the outreach")];
+      const said = quickRoute(messages)!.text!;
+      expect(said).not.toBe(messages.at(-2)!.content);
+      lines.add(said);
+      messages = [...messages, { role: "assistant", content: said }];
+    }
+    expect(lines.size).toBeGreaterThan(2);
     expect(quickRoute([mark({ stage: { working: false } }), user("stop")])).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
   });
 

@@ -10,8 +10,9 @@ import { closingQuestion, initialRelay, plain, relayEvent, relayJourney, relayRe
 
 /** Progress lines at a calm pace: at most one this often, newest wins. */
 const PROGRESS_GAP_MS = 6000;
-/** A run this quiet for this long gets one "Still on it." */
+/** A run this quiet for this long gets one holding line. */
 const STILL_ON_IT_MS = 9000;
+const STILL_ON_IT = ["Still working on it.", "Bear with me, I'm still on it.", "Still going, one moment."];
 /** Seconds before the end of the call for the heads-up, on calls long enough to need one. */
 const HEADS_UP_S = 60;
 
@@ -19,28 +20,36 @@ const HEADS_UP_S = 60;
 const sameWords = (sentence: string) => plain(sentence).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const FILLER = new Set(["the rest is on screen"]);
 
+interface Queued {
+  text: string;
+  turn: number;
+}
+
 export class CallNarrator {
   private relay = initialRelay();
-  private lines: string[] = [];
-  private progress: string | null = null;
+  /** Lines waiting for the floor, each with the turn it belongs to. */
+  private lines: Queued[] = [];
+  private progress: Queued | null = null;
   private lastProgressAt = 0;
   /** This turn's reply as it streams, and its gist once read (as soon as it was written). */
   private turnText = "";
   private earlyGist: string | null = null;
   private stillSaid = false;
+  private turns = 0;
   /** Replies already read, by id and status (a reply paused for an OK is read again when it ends). */
   private read = new Set<string>();
-  /** Sentences said this turn. */
-  private said = new Set<string>();
+  /** Sentences said, by turn: a turn's lines can still be waiting when the next one starts. */
+  private said = new Map<number, Set<string>>();
   private cued = new Set<VoiceCue>();
 
   /** One streamed event of this conversation's run. The run's end is `reply`'s to read. */
   event(event: StreamEvent): void {
     if (event.type === "start") {
+      this.turns += 1;
+      for (const turn of this.said.keys()) if (turn < this.turns - 1) this.said.delete(turn);
       this.turnText = "";
       this.earlyGist = null;
       this.stillSaid = false;
-      this.said.clear();
     } else if (event.type === "text") {
       this.turnText += event.delta;
     } else if (event.type === "text-replace") {
@@ -99,7 +108,7 @@ export class CallNarrator {
   take(now: number, { running, quietMs }: { running: boolean; quietMs: number }): string[] {
     if (running && !this.lines.length && !this.progress && !this.stillSaid && quietMs >= STILL_ON_IT_MS) {
       this.stillSaid = true;
-      this.lines.push("Still on it.");
+      this.lines.push({ text: STILL_ON_IT[(this.turns - 1 + STILL_ON_IT.length) % STILL_ON_IT.length], turn: this.turns });
     }
     const out = this.lines.splice(0);
     if (this.progress && (out.length || now - this.lastProgressAt >= PROGRESS_GAP_MS)) {
@@ -108,7 +117,7 @@ export class CallNarrator {
       this.lastProgressAt = now;
     }
     return out.flatMap((line) => {
-      const fresh = this.unsaid(line);
+      const fresh = this.unsaid(line.text, line.turn);
       return fresh ? [fresh] : [];
     });
   }
@@ -129,22 +138,24 @@ export class CallNarrator {
   private queue(lines: RelayLine[]): void {
     for (const line of lines) {
       if (line.droppable) {
-        this.progress = line.text;
+        this.progress = { text: line.text, turn: this.turns };
         continue;
       }
       // Older progress isn't news once the reply is here.
       if (line.kind === "reply") this.progress = null;
-      this.lines.push(line.text);
+      this.lines.push({ text: line.text, turn: this.turns });
     }
   }
 
   /** The line without the sentences already said this turn; nothing if only filler is left. */
-  private unsaid(line: string): string | null {
+  private unsaid(line: string, turn: number): string | null {
+    const said = this.said.get(turn) ?? new Set<string>();
+    this.said.set(turn, said);
     const kept = sentences(line).filter((s) => {
       const words = sameWords(s);
       if (!words) return false;
-      if (this.said.has(words)) return false;
-      this.said.add(words);
+      if (said.has(words)) return false;
+      said.add(words);
       return true;
     });
     if (kept.every((s) => FILLER.has(sameWords(s)))) return null;
