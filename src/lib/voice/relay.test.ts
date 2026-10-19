@@ -64,6 +64,16 @@ describe("relayReply", () => {
     expect(text).toBe("Three roles cleared your bar. The best is remote at $195k. The rest is on screen.");
   });
 
+  it("always ends on the reply's own question, so the call asks what the chat asks", () => {
+    const text = relayReply(
+      reply({
+        content: "Thanks, that helps. Networking is where most searches stall. I've seen it a lot.\n\nWhich part is hardest: finding people, reaching out, or following up?",
+      }),
+    )[0].text;
+    expect(text).toBe("Thanks, that helps. Networking is where most searches stall. The rest is on screen. Which part is hardest: finding people, reaching out, or following up?");
+    expect(speakableGist("Got it. What's been hardest lately?")).toBe("Got it. What's been hardest lately?");
+  });
+
   it("reads a card's own words and says how to answer", () => {
     const lines = relayReply(
       reply({

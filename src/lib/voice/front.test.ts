@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, replyStream, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
+import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, replyStream, routeSpeech, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
 import { describeStage, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -186,6 +186,16 @@ describe("modelReply", () => {
     expect(await modelReply(llm, context, { messages: [user("help")] }, new AbortController().signal)).toEqual({ tools: [{ name: "send_message", args: {} }] });
     vi.stubGlobal("fetch", answer({ content: "skip_turn" }));
     expect(await modelReply(llm, context, { messages: [user("mm-hm")] }, new AbortController().signal)).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+    // The member answered and the model asked a question of its own instead: their words go to
+    // the work, so the call and the chat stay in step.
+    vi.stubGlobal("fetch", answer({ content: "Networking. Which part is hardest for you?" }));
+    expect(await modelReply(llm, context, { messages: [{ role: "assistant", content: "What's been hardest lately?" }, user("Um, networking.")] }, new AbortController().signal)).toEqual({
+      tools: [{ name: "send_message", args: {} }],
+    });
+    // After a tool was turned down, a few words on why are fine.
+    vi.stubGlobal("fetch", answer({ content: "Say send when it's ready." }));
+    const refused = [user("send?"), { role: "assistant" as const, content: null, tool_calls: [{ id: "c1", function: { name: "send_card", arguments: "{}" } }] }, { role: "tool" as const, tool_call_id: "c1", content: "Refused: wait until they say send." }];
+    expect(await modelReply(llm, context, { messages: refused }, new AbortController().signal)).toEqual({ text: "Say send when it's ready." });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
     expect((await modelReply(llm, context, { messages: [user("hi")] }, new AbortController().signal)).text).toContain("Sorry");
     vi.unstubAllGlobals();
@@ -222,5 +232,22 @@ describe("ElevenLabs' contextual updates", () => {
 
   it("leave the voice quiet when one is the latest thing", () => {
     expect(planReply(context, [user("hi"), { role: "assistant", content: "On it." }, update, updateResult])).toEqual({ kind: "skip" });
+  });
+});
+
+describe("routeSpeech", () => {
+  const fill = { name: "fill_card", args: { field: "roles", value: "[]" } };
+  it("handles clear commands and backchannels by rule, whatever the model chose", () => {
+    expect(routeSpeech("mm-hm", stage, [{ name: "send_message", args: {} }])).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+    expect(routeSpeech("Stop.", null, [])).toEqual({ tools: [{ name: "stop_work", args: {} }] });
+    expect(routeSpeech("Okay send it.", stage, [{ name: "skip_turn", args: {} }])).toEqual({ tools: [{ name: "send_card", args: {} }] });
+    expect(routeSpeech("keep one and send", stage, [fill])).toEqual({ tools: [fill, { name: "send_card", args: {} }] });
+  });
+  it("sends anything else to the work unless the model filled a card", () => {
+    expect(routeSpeech("Um, networking.", null, [])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(routeSpeech("send it", null, [])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(routeSpeech("keep the first two", stage, [fill])).toEqual({ tools: [fill] });
+    // The model can't stop or send on its own.
+    expect(routeSpeech("that one looks good", stage, [{ name: "send_card", args: {} }])).toEqual({ tools: [{ name: "send_message", args: {} }] });
   });
 });
