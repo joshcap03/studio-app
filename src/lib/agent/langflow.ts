@@ -587,8 +587,8 @@ export function toolQuestions(message: LangflowMessage): AgentEvent[] {
 }
 
 /**
- * Plan updates and tracker rows the agent reported through update_plan and save_record
- * (validated and saved by the turn, under the member's session).
+ * Plan updates, tracker rows, and Library links the agent reported through update_plan,
+ * save_record, and file_link (validated and saved by the turn, under the member's session).
  */
 export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -598,6 +598,7 @@ export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
     if (!isRecord(result)) continue;
     if (isRecord(result.plan_update)) events.push({ type: "plan-update", plan: result.plan_update.steps });
     if (isRecord(result.record)) events.push({ type: "record", record: result.record });
+    if (isRecord(result.library_item)) events.push({ type: "library-item", item: result.library_item });
     if (isRecord(result.run_report)) events.push({ type: "run-report", report: result.run_report });
   }
   return events;

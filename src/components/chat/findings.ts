@@ -82,8 +82,8 @@ export function findingFor(step: ActivityStep, agentSaid?: string): Finding | nu
       return p.steps?.length ? { ...base, text: p.steps.at(-1)! } : { ...base, text: "Worked through the data", generic: true };
     case "text":
       if (step.app === "calculator") return { ...base, text: `Calculated: ${short(p.text)}` };
-      // Written by the step's own interpretation (plan progress, a tracked row), never raw output.
-      if (step.app === "tracker") return { ...base, text: short(p.text) };
+      // Written by the step's own interpretation (plan progress, a tracked row, a filed link), never raw output.
+      if (step.app === "tracker" || step.app === "library") return { ...base, text: short(p.text) };
       if (step.app === "memory") {
         return { ...base, text: step.label.startsWith("Noted") ? `Noted: “${short(p.text)}”` : `Remembered: ${short(p.text)}` };
       }

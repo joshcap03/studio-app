@@ -10,6 +10,7 @@ import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
 import { seamBetween } from "./seam";
 import { buildVisual, withVisual } from "./visuals";
+import { describeLink } from "@/lib/library";
 import {
   ARTIFACT_KINDS,
   MAX_MEMORY_LENGTH,
@@ -176,6 +177,25 @@ const artifactSchema = z.object({
 export function sanitizeArtifact(value: unknown): Artifact | null {
   const parsed = artifactSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+const libraryItemSchema = z.object({
+  url: z.url({ protocol: /^https$/ }).max(4000),
+  title: z.string().trim().min(1).max(300),
+  kind: z.enum(ARTIFACT_KINDS).optional().catch(undefined),
+});
+
+/**
+ * A link the agent filed in the Library on the member's request (file_link), as an artifact to
+ * file: https only, with a title. Its kind, when the agent gave none, and its source come from
+ * the link's address, as for a link the member pastes.
+ */
+export function libraryItemArtifact(value: unknown): Artifact | null {
+  const parsed = libraryItemSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const { url, title, kind } = parsed.data;
+  const guess = describeLink(url);
+  return { id: url, kind: kind ?? guess.kind, title, url, source: guess.source.slice(0, 100) };
 }
 
 const MAX_PROPOSALS = 5;
@@ -551,6 +571,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                   );
                 }
               }
+              break;
+            }
+            case "library-item": {
+              // Filed only, not shown on the reply: its step says it was saved, and a link the
+              // agent was given isn't something this run's tools returned (see linksSeen).
+              const artifact = libraryItemArtifact(event.item);
+              if (!artifact || !deps.fileArtifact || filed >= MAX_FILED_PER_RUN) break;
+              filed += 1;
+              remembering.push(
+                deps.fileArtifact(artifact, { messageId: assistant.id }).then(noop, (e) => console.error("[turn] couldn't file a link", e)),
+              );
               break;
             }
             case "timeline": {

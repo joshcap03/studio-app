@@ -26,7 +26,7 @@ gitignored and stays out of the repo.
 - `npm run test:integration`: needs local Supabase; API tests also need `qa:serve`;
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
   with those, `job-search.eval.test.ts` evals the Job search template and `tidy.eval.test.ts`
-  the Brain's "Tidy up" on the real model.
+  the Brain's "Tidy up" on the real model, and `library.eval.test.ts` filing a link with `file_link`.
 - `npx trigger.dev dev`: runs the background worker locally (needs a Trigger.dev login and
   `TRIGGER_PROJECT_REF`); it deploys from GitHub Actions after each Vercel production deploy.
 
@@ -89,8 +89,9 @@ raw/technical text.
 - `src/lib/agent-files.ts`: a member's own files for one agent (a résumé), sent with every run of
   that agent ahead of project files (`runFiles` caps them). `claimAsAgentFile` moves an unsent upload there.
 - `src/lib/library.ts`: the member's Library for one agent (`agent_artifacts`): docs the agent made,
-  filed from its tools' own artifact results as each reply streams (one row per link), and links the
-  member pastes. Each run's context lists it so the agent reopens what it made. The page
+  filed from its tools' own artifact results as each reply streams (one row per link), links the agent
+  files when the member asks it to keep one (`file_link`), and links the member pastes. Each run's
+  context lists it so the agent reopens what it made. The page
   (`src/components/library/`) also shows every tracker collection and the member's agent files.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
@@ -137,7 +138,7 @@ raw/technical text.
 - The flow is shared by every tenant: nothing in it may hold one tenant's connections or
   memory (per-member values arrive through tweaks), and no tool may run code in the
   Langflow server process.
-- The agent may write the member's own Studio state (memory, a task's plan, tracker rows) without
+- The agent may write the member's own Studio state (memory, a task's plan, tracker rows, Library links) without
   approval, but only through gateway tools that return structured results the app validates
   and saves under the member's session; the member sees each write as a step and can edit or
   undo it. Anything touching their external accounts still needs approval.

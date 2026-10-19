@@ -72,6 +72,16 @@ class RecordArgs(BaseModel):
     fields: dict = Field(default_factory=dict, description="Any other details as short key-value pairs, e.g. {'score': 4, 'location': 'Remote'}.")
 
 
+LIBRARY_KINDS = ("document", "spreadsheet", "presentation", "pdf", "image", "data", "file", "link")
+
+
+class LibraryArgs(BaseModel):
+    url: str = Field(description="Its https link exactly as the owner gave it or a tool returned it.")
+    title: str = Field(description="What the owner sees in their Library, e.g. 'Q3 pricing plan'.")
+    kind: str = Field(default="", description=("Optional: document, spreadsheet, presentation, pdf, image, data, file, or "
+                                               "link. Left out, it's guessed from the link."))
+
+
 class RunReportArgs(BaseModel):
     outcome: str = Field(description=("nothing_new if this run found nothing worth the owner's attention, update if "
                                       "there's something for them to read, needs_you if they must decide or act."))
@@ -765,6 +775,25 @@ class ToolGatewayComponent(Component):
         async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
             return save_record(collection, key, title, status, url, fields)
 
+        def file_link(url: str, title: str, kind: str = "") -> str:
+            # The app files this in the owner's own Library (it knows whose; this flow doesn't).
+            # Nothing is stored here and no outside account changes, so it needs no approval.
+            url = str(url or "").strip()
+            if not url.lower().startswith("https://") or len(url) > 4000 or any(c.isspace() for c in url):
+                return "Not saved: give the item's https link exactly as the owner gave it or a tool returned it."
+            title = " ".join(str(title or "").split())[:300]
+            if not title:
+                return "Not saved: give it a title the owner will recognize."
+            item = {"url": url, "title": title}
+            kind = str(kind or "").strip().lower()
+            if kind in LIBRARY_KINDS:
+                item["kind"] = kind
+            return json.dumps({"library_item": item,
+                               "note": "Saved to the owner's Library. Say so in a few words; they can open it there."})
+
+        async def file_link_async(url: str, title: str, kind: str = "") -> str:
+            return file_link(url, title, kind)
+
         def report_run(outcome: str, summary: str = "") -> str:
             # The app reads this to decide whether to notify the owner; it changes nothing.
             outcome = outcome if outcome in ("nothing_new", "update", "needs_you") else "update"
@@ -974,7 +1003,7 @@ class ToolGatewayComponent(Component):
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1024,6 +1053,14 @@ class ToolGatewayComponent(Component):
                              "CONTEXT has a tracker section; otherwise nothing would be kept. Use it for "
                              "things the owner will want to follow over time, not one-off answers. Saved for the owner; "
                              "changes nothing in their accounts."),
+            ),
+            StructuredTool.from_function(
+                func=file_link, coroutine=file_link_async, name="file_link",
+                args_schema=LibraryArgs,
+                description=("Save a link to the owner's Library when they ask you to keep one there (e.g. 'save this "
+                             "doc to my library'), such as a doc they share or one you found. Only a link they gave you "
+                             "or a tool returned, never one you made up; docs your tools create are filed on their own. "
+                             "Saved for the owner; changes nothing in their accounts."),
             ),
             StructuredTool.from_function(
                 func=report_run, coroutine=report_run_async, name="report_run",

@@ -168,6 +168,8 @@ export type AgentEvent =
   | { type: "plan-update"; plan: unknown }
   /** A tracker row the agent added or updated (upserted by collection and key), unvalidated. */
   | { type: "record"; record: unknown }
+  /** A link the agent filed in the member's Library on their request (file_link), unvalidated. */
+  | { type: "library-item"; item: unknown }
   /** How a task's run went (nothing new, an update, or needs the member), unvalidated. */
   | { type: "run-report"; report: unknown };
 

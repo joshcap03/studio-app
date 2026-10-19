@@ -21,6 +21,8 @@ const TITLE_KEYS = ["title", "subject", "name", "summary"];
 const SEARCH_TOOLS = new Set(["search", "web_search", "exa_search", "search_web"]);
 const PAGE_TOOLS = new Set(["extract", "observe"]);
 const MAX_TEXT = 100_000;
+/** Tools whose result only echoes what the agent wrote (a link it filed), so it's no evidence of anything. */
+const ECHO_TOOLS = new Set(["file_link"]);
 const COMPOSIO_SLUG = /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/;
 
 export function evidenceFor(calls: ToolCall[]): Evidence[] {
@@ -39,6 +41,7 @@ export function evidenceFor(calls: ToolCall[]): Evidence[] {
 
   let page: string | undefined;
   for (const call of calls) {
+    if (ECHO_TOOLS.has(call.name)) continue;
     const input = isRecord(call.input) ? call.input : {};
     if (call.name === "navigate") {
       page = safeUrl(input.url) ?? page;

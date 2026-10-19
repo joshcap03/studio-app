@@ -83,6 +83,28 @@ describe("interpretCalls", () => {
     expect(record.preview).toEqual({ type: "text", text: "Tracked “Senior PM — Acme” (discovered)" });
   });
 
+  it("shows a link filed in the Library as a step, and a refused one as a failed step, never as evidence", () => {
+    const filed: ToolCall = {
+      name: "file_link",
+      input: { url: "https://docs.google.com/document/d/abc/edit", title: "Q3 pricing plan" },
+      output: JSON.stringify({ library_item: { url: "https://docs.google.com/document/d/abc/edit", title: "Q3 pricing plan" }, note: "Saved." }),
+      error: null,
+    };
+    const refusedCall: ToolCall = {
+      name: "file_link",
+      input: { url: "http://example.com/x", title: "Notes" },
+      output: "Not saved: give the item's https link exactly as the owner gave it or a tool returned it.",
+      error: null,
+    };
+    const [step, refused] = interpretCalls([filed, refusedCall]);
+    expect(step).toMatchObject({ label: "Saved “Q3 pricing plan” to your Library", app: "library", action: "write", status: "done" });
+    expect(step.preview).toEqual({ type: "text", text: "Saved “Q3 pricing plan” to your Library" });
+    expect(step.hidden).toBeFalsy();
+    expect(refused).toMatchObject({ label: "Couldn't save “Notes” to your Library", status: "failed", detail: "Only https links with a name can go in the Library." });
+    // The agent supplied the link; its own echo doesn't make the link citable.
+    expect(evidenceFor([filed])).toEqual([]);
+  });
+
   it("merges a gateway call with the tool it invoked into one step", () => {
     const steps = interpretCalls([
       gateway("search", { query: "fine jewelry trends" }, "Title: A\nURL: https://a.example/x"),
