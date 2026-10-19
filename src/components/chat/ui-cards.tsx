@@ -566,7 +566,7 @@ function VerdictField({
                       item.title
                     )}
                   </p>
-                  {item.body ? <p className="mt-0.5 text-[12.5px] leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">{item.body}</p> : null}
+                  {item.body ? <p className="mt-0.5 text-[12.5px] leading-[1.5] whitespace-pre-line text-fg-3 [overflow-wrap:anywhere]">{item.body}</p> : null}
                 </div>
                 <div className="flex shrink-0 gap-1" role="radiogroup" aria-label={`Keep or pass on ${item.title}`}>
                   <button
