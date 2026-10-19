@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createLangflowAdapter, type LangflowConfig } from "@/lib/agent/langflow";
 import type { AgentEvent, AgentTenantContext } from "@/lib/agent/types";
+import { buildUiBlock } from "@/lib/chat/ui";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { renderSkillMessage } from "@/lib/skills/render";
 import { templateById } from "@/lib/templates";
@@ -8,7 +9,8 @@ import { templateById } from "@/lib/templates";
 // Evals for the Job search template against a live flow with a real model and tools
 // (LANGFLOW_TEST_* env). Each run is sent the way a task run is: the template's
 // instructions, the task's brief with its skill, and the member's tracker in context. The
-// checks look only at structured events (records, approvals), never at the model's wording.
+// checks look at structured events (records, approvals, cards) and, for questions, only at
+// whether the reply ends on one, never at the model's wording.
 //
 // The flow must read the run's context through tweaks. LANGFLOW_TEST_TWEAKS (JSON, like
 // LANGFLOW_TWEAKS) sets them; by default the node ids langflow/install.py gives the
@@ -49,10 +51,10 @@ function tenant(tracker: Tracked[]): AgentTenantContext {
   };
 }
 
-async function run(config: LangflowConfig, t: AgentTenantContext, message: string): Promise<AgentEvent[]> {
+async function run(config: LangflowConfig, t: AgentTenantContext, message: string, conversationId = crypto.randomUUID()): Promise<AgentEvent[]> {
   const events: AgentEvent[] = [];
   for await (const e of createLangflowAdapter(config).run({
-    conversationId: crypto.randomUUID(),
+    conversationId,
     threadId: null,
     message,
     history: [],
@@ -70,6 +72,33 @@ function records(events: AgentEvent[], collection: string): RecordEvent[] {
     .filter((e): e is Extract<AgentEvent, { type: "record" }> => e.type === "record")
     .map((e) => e.record as RecordEvent)
     .filter((r) => r && typeof r === "object" && String(r.collection).toLowerCase() === collection);
+}
+
+/** The reply's text, as the member reads it. */
+function replyText(events: AgentEvent[]): string {
+  return events
+    .filter((e) => e.type === "message" || e.type === "text-delta")
+    .map((e) => (e as { text: string }).text)
+    .join("");
+}
+
+/** Results the reply put in a keep-or-pass card, validated the way the app shows them. */
+function verdictItems(events: AgentEvent[]): { title: string; link?: string }[] {
+  return events.flatMap((e) => {
+    const block = e.type === "ui" ? buildUiBlock(e.block) : null;
+    if (!block || !("fields" in block)) return [];
+    return block.fields.flatMap((f) => (f.kind === "verdict" ? f.items : []));
+  });
+}
+
+/**
+ * Whether the reply ends by asking the member something in text ("Want me to go ahead?",
+ * "Tell me if you'd like …") with no card to answer it: questions with choices belong in a card.
+ */
+function endsOnWrittenQuestion(events: AgentEvent[]): boolean {
+  if (events.some((e) => e.type === "questions" || e.type === "ui")) return false;
+  const last = replyText(events).trim().split(/\n+/).pop() ?? "";
+  return /\?\s*$/.test(last) || /^(tell me|let me know|want me|should i|shall i|do you want|would you like)\b/i.test(last.trim());
 }
 
 /** A posting link without tracking parameters, fragment, or trailing slash, for spotting the same role twice. */
@@ -91,12 +120,32 @@ describe.skipIf(!enabled)("Job search template against a live flow", () => {
   const tweaks = process.env.LANGFLOW_TEST_TWEAKS ? (JSON.parse(process.env.LANGFLOW_TEST_TWEAKS) as unknown) : DEFAULT_TWEAKS;
   const config: LangflowConfig = { baseUrl: baseUrl!, apiKey: apiKey!, flowId: flowId!, stream: true, tweaks };
   let found: RecordEvent[] = [];
+  let firstRun: AgentEvent[] = [];
 
   it("saves discovered roles to the applications tracker, keyed by their links", { timeout: 300_000 }, async () => {
-    const events = await run(config, tenant([]), findRolesMessage());
-    found = records(events, "applications");
+    firstRun = await run(config, tenant([]), findRolesMessage());
+    found = records(firstRun, "applications");
     expect(found.length, "no applications were saved").toBeGreaterThan(0);
     for (const r of found) expect(r.key, JSON.stringify(r)).toMatch(/^https?:\/\/\S+$/);
+  });
+
+  it("brings the roles it found for the member to keep or pass on", () => {
+    expect(found.length, "needs the first eval's roles").toBeGreaterThan(0);
+    expect(verdictItems(firstRun).length, `no keep-or-pass card after: ${replyText(firstRun).slice(-400)}`).toBeGreaterThan(0);
+  });
+
+  it("asks for a verdict on roles it finds in a chat, and asks what's next with a card", { timeout: 600_000 }, async () => {
+    // No task and no skill: the agent's own instructions decide how it brings results.
+    const t = { ...tenant([]), task: null };
+    const conversation = crypto.randomUUID();
+    const first = await run(config, t, "find me two or three roles that fit and track them", conversation);
+    expect(verdictItems(first).length, `no keep-or-pass card after: ${replyText(first).slice(-400)}`).toBeGreaterThan(0);
+    expect(endsOnWrittenQuestion(first), `ended on a question in text: ${replyText(first).slice(-300)}`).toBe(false);
+
+    // The member answers in their own words, not on the card, and asks what to do with them.
+    const tracked: Tracked[] = records(first, "applications").map((r) => ({ collection: "applications", key: r.key, title: r.title ?? "", status: r.status ?? "discovered" }));
+    const second = await run(config, { ...tenant(tracked), task: null }, "those were all on linkedin already btw. what am i supposed to do with these?", conversation);
+    expect(endsOnWrittenQuestion(second), `ended on a question in text: ${replyText(second).slice(-300)}`).toBe(false);
   });
 
   it("doesn't add a tracked role again on the next run", { timeout: 300_000 }, async () => {

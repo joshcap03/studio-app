@@ -459,6 +459,14 @@ describe("loose verdicts and notes", () => {
     });
   });
 
+  it("takes a result's reason as its line on why it fits", () => {
+    const form = buildUiBlock(
+      { form: { title: "Keep or pass", fields: [{ type: "verdict", label: "Roles", items: [{ title: "Senior PM, Acme", reason: "Remote US, $200k" }] }] } },
+      "t",
+    ) as UiForm;
+    expect(form.fields[0]).toMatchObject({ items: [{ title: "Senior PM, Acme", body: "Remote US, $200k" }] });
+  });
+
   it("doesn't turn a verdict prompt with no results into a result", () => {
     expect(buildUiBlock({ form: { title: "Trial run", fields: [{ type: "verdict", label: "Would you want these?" }] } }, "t")).toBeNull();
   });
