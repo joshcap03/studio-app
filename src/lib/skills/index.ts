@@ -52,13 +52,14 @@ export async function listSkills(tenant: Tenant): Promise<WorkspaceSkill[]> {
   return rows.map(toSkill);
 }
 
-export async function getSkill(tenant: Tenant, id: string): Promise<WorkspaceSkill | null> {
+/** One of the workspace's skills, by id; the setup skill as said on a call when `call`. */
+export async function getSkill(tenant: Tenant, id: string, { call = false }: { call?: boolean } = {}): Promise<WorkspaceSkill | null> {
   if (id === SETUP_SKILL_ID) {
     // Every agent has its setup interview, with steps from the template it started from.
     const row = check(
       await tenant.db.from("workspace_settings").select("template_id").eq("workspace_id", tenant.workspace.id).maybeSingle(),
     ) as { template_id: string | null } | null;
-    return setupSkill(row?.template_id);
+    return setupSkill(row?.template_id, { call });
   }
   if (id.startsWith("builtin:")) return builtinSkill(tenant, id);
   const row = check(

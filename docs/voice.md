@@ -89,10 +89,16 @@ Real calls are few, so `tests/integration/setup-call.eval.test.ts` scores the sa
 numbers without audio or voice minutes. Made-up callers (one rambles, one answers in a few words,
 one changes their mind) run a setup interview on a call against a live eval flow. Each turn is
 scored from what the voice would say (`relayReply`) and when it could start saying it. The
-scorecard also covers greetings, books kept before the reply, and replies too long to say whole.
-The test fails only on the call's plain rules: at most two questions at once, and every turn
-hands back the floor. Run it like the setup evals (`SETUP_EVAL_LOG` keeps the transcripts and
-each turn's scores), and compare prompt changes by the scorecard over several runs.
+scorecard also covers greetings, books kept before the reply, replies written again after the
+books, and replies too long to say whole. The test fails only on the call's plain rules: at most
+two questions at once, and every turn hands back the floor. Run it like the setup evals
+(`SETUP_EVAL_LOG` keeps the transcripts, each turn's scores, and the scorecard), and compare
+prompt changes by the scorecard over several runs.
+
+On a call the setup interview opens with just its first question: the voice has already greeted
+the member, so the setup skill is sent without its "Hey!" and its line on how setup goes
+(`setupSkill(…, { call: true })`). The voice says the question the reply's last paragraph ends
+on, with a short hint after it when there's room (`closingQuestion` in `relay.ts`).
 
 Sesame's TurnBench (end-of-turn and interruption detection) scores the provider's turn-taking.
 Its dataset is licensed for non-commercial use only, so running it for Studio needs Sesame's

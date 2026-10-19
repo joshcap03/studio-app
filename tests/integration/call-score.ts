@@ -3,7 +3,7 @@ import type { AgentEvent } from "@/lib/agent/types";
 import { buildQuestions } from "@/lib/chat/questions";
 import { buildUiBlock } from "@/lib/chat/ui";
 import type { ChatMessage, UiBlock } from "@/lib/types";
-import { plain, relayReply } from "@/lib/voice/relay";
+import { closingQuestion, plain, relayReply } from "@/lib/voice/relay";
 import type { Turn } from "./setup-harness";
 
 // How conversational a turn would be on a live call, scored from what the voice would actually
@@ -12,14 +12,14 @@ import type { Turn } from "./setup-harness";
 // call.tsx). Text only: no audio, no voice minutes. Pure.
 
 export interface CallTurnScore {
-  /** The reply opens with a greeting the voice already said. */
+  /** The reply greets them (anywhere: a reply written again can greet partway), which the voice already did. */
   greeted: boolean;
   /** What the voice would say for this turn. */
   spoken: string;
   spokenWords: number;
   /** Questions the reply itself asks (a card or quick pick aside). One at a time is a conversation. */
   questions: number;
-  /** The turn ends handing them the floor: a question said last, or a card or quick pick to answer. */
+  /** The turn ends handing them the floor: its closing question said last, or a card or quick pick to answer. */
   handsBack: boolean;
   /** The reply ran past what the voice says, and the rest was left on screen. */
   restOnScreen: boolean;
@@ -27,6 +27,8 @@ export interface CallTurnScore {
   answerS: number;
   /** The agent kept its books (plan, memory) before writing a word of its reply. */
   booksFirst: boolean;
+  /** The agent wrote more after keeping its books, having already written its reply (often the reply again). */
+  wroteAgain: boolean;
 }
 
 const SENTENCES = /[^.!?]+[.!?]+["”’)]*|[^.!?]+$/g;
@@ -57,6 +59,13 @@ export function scoreCallTurn(turn: Pick<Turn, "events" | "eventMs" | "reply" | 
   let text = "";
   let answerMs = turn.ms;
   let booksFirst = false;
+  let wroteAgain = false;
+  let booksAfter = false;
+  events.forEach((e, i) => {
+    const before = events.slice(0, i).some((x) => x.type === "text-delta" && x.text.trim());
+    if (before && bookkeeping(e)) booksAfter = true;
+    else if (booksAfter && e.type === "text-delta" && e.text.trim()) wroteAgain = true;
+  });
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     if (e.type === "text-delta") text += e.text;
@@ -69,14 +78,15 @@ export function scoreCallTurn(turn: Pick<Turn, "events" | "eventMs" | "reply" | 
 
   const prose = plain(turn.reply);
   return {
-    greeted: /^(hey|hi|hello)\b/i.test(turn.reply.trimStart()),
+    greeted: /(^|[.!?]\s*)(hey|hi|hello)\b/i.test(turn.reply.trim()),
     spoken,
     spokenWords: words(spoken),
     questions: (prose.match(SENTENCES) ?? []).filter((s) => /\?["”’)]*$/.test(s.trim())).length,
-    handsBack: Boolean(questions?.length || ui.length || /\?["”’)]*$/.test(spoken.trim())),
+    handsBack: Boolean(questions?.length || ui.length || closingQuestion(turn.reply)),
     restOnScreen: spoken.includes("The rest is on screen."),
     answerS: Math.round(answerMs / 100) / 10,
     booksFirst,
+    wroteAgain,
   };
 }
 
@@ -100,6 +110,7 @@ export function callSummary(scores: CallTurnScore[]): string {
     `rest on screen ${count((s) => s.restOnScreen)}`,
     `reply starts p50 ${pct(answers, 50)}s, p90 ${pct(answers, 90)}s`,
     `books before reply ${count((s) => s.booksFirst)}`,
+    `wrote again ${count((s) => s.wroteAgain)}`,
     `greeted ${count((s) => s.greeted)}`,
   ].join(" · ");
 }

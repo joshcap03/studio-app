@@ -178,7 +178,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
       conversationId && settings.setup?.conversationId === conversationId
         ? {
             plan: settings.setup.plan,
-            ...(settings.setup.status === "in_progress" ? { instructions: setupSkill(settings.templateId).instructions } : {}),
+            ...(settings.setup.status === "in_progress" ? { instructions: setupSkill(settings.templateId, { call: modality === "call" }).instructions } : {}),
           }
         : null,
     notes: await notesFor(tenant, settings.templateId),
