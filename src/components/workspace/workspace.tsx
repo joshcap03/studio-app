@@ -13,6 +13,7 @@ import { ProjectView } from "@/components/project/project-view";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { TasksView } from "@/components/tasks/tasks-view";
+import { CompanionContext } from "@/components/ui/companion";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
@@ -25,6 +26,7 @@ import type {
   AgentStatus,
   Attachment,
   ChatMessage,
+  Companion,
   ConversationSummary,
   MemoryProposal,
   MessageFeedback,
@@ -92,6 +94,8 @@ interface Props {
   member: string | null;
   /** The voice's name, when the member has calls ("it's Rowan"). */
   greeter: string | null;
+  /** Who each of the member's agents is to them, by agent id (a preview); null to show none. */
+  companions: Record<string, Companion> | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -127,9 +131,14 @@ function provisionalTitle(text: string): string {
  * lives here too (CardDrafts), shared by the thread and a call's stage.
  */
 export function Workspace(props: Props) {
+  // Who each agent is to the member, shared with the thread's marks through context.
+  const [companions, setCompanions] = useState(props.companions);
+  const updateCompanion = useCallback((next: Companion) => setCompanions((all) => (all ? { ...all, [next.workspaceId]: next } : all)), []);
   return (
     <CardDraftsProvider>
-      <WorkspaceShell {...props} />
+      <CompanionContext.Provider value={companions?.[props.workspace.id] ?? null}>
+        <WorkspaceShell {...props} companions={companions} onCompanion={updateCompanion} />
+      </CompanionContext.Provider>
     </CardDraftsProvider>
   );
 }
@@ -149,7 +158,9 @@ function WorkspaceShell({
   voice,
   member,
   greeter,
-}: Props) {
+  companions,
+  onCompanion,
+}: Props & { onCompanion: (companion: Companion) => void }) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
@@ -900,6 +911,20 @@ function WorkspaceShell({
     if (ended && setup?.status === "in_progress") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
   }, [running, setup?.status]);
 
+  // Who each agent is to the member. The one they're in moves along as they work together: the
+  // server updates it as a run ends, so look again a moment after.
+  const companion = companions?.[workspace.id] ?? null;
+  const wasRunningForCompanion = useRef<ReadonlySet<string>>(running);
+  useEffect(() => {
+    const ended = [...wasRunningForCompanion.current].some((id) => !running.has(id));
+    wasRunningForCompanion.current = running;
+    if (!ended || !companion || companion.stage === "arrived") return;
+    const timer = setTimeout(() => {
+      api.getCompanion().then(({ companion: next }) => next && onCompanion(next), () => undefined);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [running, companion, onCompanion]);
+
   // Arriving from onboarding (or "Run setup" on the agent's page) with ?setup=1 starts it once;
   // ?setup=talk opens it on a call (typed, for members without voice).
   const setupRequested = useRef(false);
@@ -1153,6 +1178,7 @@ function WorkspaceShell({
             agent={agent}
             workspace={workspace}
             workspaces={workspaces}
+            companions={companions}
             email={email}
             mod={mod}
             onSelect={(id) => navigate(`/c/${id}`)}

@@ -3,6 +3,8 @@ import { z } from "zod";
 import { Workspace, type InitialProject, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
 import { storeFor } from "@/lib/chat/store-for";
+import { getCompanions } from "@/lib/companion";
+import { previewEnabled } from "@/lib/flags";
 import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
@@ -41,6 +43,13 @@ export default async function WorkspacePage({
   }
 
   const store = storeFor(tenant);
+  // Who each agent is to this member (a preview); without it, everything looks as before.
+  const companions = previewEnabled(tenant, "companion")
+    ? getCompanions(tenant).catch((error) => {
+        console.error("[companion] unavailable", error);
+        return null;
+      })
+    : null;
   const [conversations, conversation, workspaceSkills, projects, project, settings] = await Promise.all([
     store.listConversations(),
     conversationId ? store.getConversation(conversationId) : null,
@@ -82,6 +91,7 @@ export default async function WorkspacePage({
       voice={voice}
       member={firstName(tenant.account.name)}
       greeter={voice ? personaFor(settings.templateId).name : null}
+      companions={await companions}
     />
   );
 }

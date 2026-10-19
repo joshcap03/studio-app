@@ -25,9 +25,17 @@ import {
 } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { BrandMark } from "@/components/ui/brand-mark";
+import { Companion, companionHint } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
 import { api } from "@/lib/client/api";
-import { MAX_PROJECT_NAME_LENGTH, type AgentStatus, type ConversationSummary, type ProjectSummary, type WorkspaceSummary } from "@/lib/types";
+import {
+  MAX_PROJECT_NAME_LENGTH,
+  type AgentStatus,
+  type Companion as CompanionInfo,
+  type ConversationSummary,
+  type ProjectSummary,
+  type WorkspaceSummary,
+} from "@/lib/types";
 
 interface Props {
   conversations: ConversationSummary[];
@@ -36,6 +44,8 @@ interface Props {
   agent: AgentStatus;
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
+  /** Who each agent is to the member, by agent id (a preview); null shows the Studio mark. */
+  companions: Record<string, CompanionInfo> | null;
   email: string | null;
   mod: string;
   onSelect: (id: string) => void;
@@ -64,6 +74,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
     agent,
     workspace,
     workspaces,
+    companions,
     email,
     mod,
     onSelect,
@@ -128,7 +139,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   return (
     <div className="flex h-full w-[264px] flex-col">
       <div className="flex h-14 shrink-0 items-center justify-between gap-1 pr-2 pl-2">
-        <AgentMenu workspace={workspace} workspaces={workspaces} email={email} />
+        <AgentMenu workspace={workspace} workspaces={workspaces} companions={companions} working={running.size > 0} email={email} />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
           <PanelLeftClose size={17} strokeWidth={1.75} />
         </IconButton>
@@ -691,8 +702,33 @@ const NESTED_CHATS = 5;
 const menuItem =
   "flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover";
 
+/** An agent's name: its own once it has arrived, with what it's for beside it. */
+function AgentLabel({ workspace, companion, bold }: { workspace: WorkspaceSummary; companion?: CompanionInfo; bold?: boolean }) {
+  if (!companion?.name) return <span className={`min-w-0 truncate ${bold ? "text-[14px] font-semibold tracking-[-0.01em]" : "flex-1"}`}>{workspace.name}</span>;
+  return (
+    <span className={`flex min-w-0 items-baseline gap-1.5 ${bold ? "" : "flex-1"}`}>
+      <span className={`shrink-0 truncate ${bold ? "text-[14px] font-semibold tracking-[-0.01em]" : ""}`}>{companion.name}</span>
+      <span className="min-w-0 truncate text-[12.5px] text-fg-3">{workspace.name}</span>
+    </span>
+  );
+}
+
 // One login, several agents. Each agent is stored as a workspace.
-function AgentMenu({ workspace, workspaces, email }: { workspace: WorkspaceSummary; workspaces: WorkspaceSummary[]; email: string | null }) {
+function AgentMenu({
+  workspace,
+  workspaces,
+  companions,
+  working,
+  email,
+}: {
+  workspace: WorkspaceSummary;
+  workspaces: WorkspaceSummary[];
+  companions: Record<string, CompanionInfo> | null;
+  /** The agent is running in one of its conversations. */
+  working: boolean;
+  email: string | null;
+}) {
+  const companion = companions?.[workspace.id];
   async function switchTo(id: string) {
     if (id === workspace.id) return;
     const res = await fetch("/api/workspaces/active", {
@@ -705,9 +741,16 @@ function AgentMenu({ workspace, workspaces, email }: { workspace: WorkspaceSumma
 
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg pr-2 pl-2 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover">
-        <BrandMark size={22} />
-        <span className="min-w-0 truncate text-[14px] font-semibold tracking-[-0.01em]">{workspace.name}</span>
+      <DropdownMenu.Trigger
+        title={companion ? companionHint(companion.stage, companion.name) : undefined}
+        className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg pr-2 pl-2 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover"
+      >
+        {companion ? (
+          <Companion stage={companion.stage} look={companion.look} mood={working ? "working" : "idle"} size={22} seenKey={workspace.id} />
+        ) : (
+          <BrandMark size={22} />
+        )}
+        <AgentLabel workspace={workspace} companion={companion} bold />
         <ChevronsUpDown size={13} className="shrink-0 text-fg-3" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -720,7 +763,8 @@ function AgentMenu({ workspace, workspaces, email }: { workspace: WorkspaceSumma
           <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Agents</DropdownMenu.Label>
           {workspaces.map((w) => (
             <DropdownMenu.Item key={w.id} onSelect={() => void switchTo(w.id)} className={menuItem}>
-              <span className="min-w-0 flex-1 truncate">{w.name}</span>
+              {companions?.[w.id] ? <Companion stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}
+              <AgentLabel workspace={w} companion={companions?.[w.id]} />
               {w.id === workspace.id ? <Check size={14} className="text-fg-2" /> : null}
             </DropdownMenu.Item>
           ))}
@@ -731,7 +775,7 @@ function AgentMenu({ workspace, workspaces, email }: { workspace: WorkspaceSumma
           <DropdownMenu.Separator className="my-1 h-px bg-line" />
           <DropdownMenu.Item onSelect={() => window.location.assign("/agent")} className={menuItem}>
             <SlidersHorizontal size={14} className="text-fg-3" />
-            <span className="min-w-0 truncate">Set up {workspace.name}</span>
+            <span className="min-w-0 truncate">Set up {companion?.name ?? workspace.name}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => window.location.assign("/settings")} className={menuItem}>
             <Settings size={14} className="text-fg-3" />

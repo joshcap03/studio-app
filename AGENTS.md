@@ -60,6 +60,11 @@ raw/technical text.
   own memory connection. `memory-merge.ts` tidies it: "Tidy up" on a Brain topic attaches that
   topic's tidy skill (`src/lib/skills/tidy.ts`, facts listed by id), the agent proposes merges with
   `merge_memories`, and the member merges what they pick (keeping pins and sources) or undoes it.
+- `src/lib/companion.ts`: who each agent is to one member (the "companion" preview). It starts as a
+  sketch of the Studio diamond (`src/components/ui/companion.tsx`), is drawn in with their chat runs,
+  is ready once it knows them (thresholds in `KNOWS_YOU`), and arrives with a name the member keeps.
+  Moved forward after each run, never back; it never gates what the agent can do. Members never read
+  the stage words: the change is shown, not announced.
 - `src/lib/account.ts`: the person's profile (Settings → You, onboarding's first step), sent to
   every agent as "You're assisting".
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the

@@ -250,6 +250,30 @@ export interface WorkspaceSummary {
   role: "owner" | "member";
 }
 
+/**
+ * Where an agent is in getting to know one member (src/lib/companion.ts): a sketch, drawn in
+ * with use, ready once it knows them, and arrived once they keep the name it suggests.
+ */
+export type CompanionStage = "sketch" | "drawn" | "ready" | "arrived";
+
+/** How one agent looks to one member, fixed from their ids so it never changes. */
+export interface CompanionLook {
+  shape: "classic" | "tall" | "wide" | "cushion";
+  tint: "chart-1" | "chart-2" | "chart-3" | "chart-4";
+  /** Spreads idle motion (blinks) across marks so they never move in step. */
+  seed: number;
+}
+
+export interface Companion {
+  workspaceId: string;
+  stage: CompanionStage;
+  /** Its own name, once it has arrived. */
+  name: string | null;
+  /** How it talks, in its own words, once it has arrived. */
+  manner: string | null;
+  look: CompanionLook;
+}
+
 export interface WorkspaceSettings {
   name: string;
   /** What this agent is for: who it works for and what they want from it. */

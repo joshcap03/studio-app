@@ -4,6 +4,7 @@ import { readAttachment } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
 import type { AgentAttachment } from "@/lib/agent/types";
 import { TurnError, type TurnDeps, type TurnRequest } from "@/lib/chat/turn";
+import { getCompanion, refreshCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
 import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
@@ -15,7 +16,7 @@ import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
 import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
-import { buildAgentContext, claimRun } from "@/lib/workspace";
+import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
 
 // Builds everything one turn needs for one member, from their tenant alone: the chat route
 // and a background worker run turns the same way. Nothing here touches the request, so it
@@ -97,10 +98,18 @@ export async function buildTurnDeps(
   const sent = new Set(files.map((f) => f.id));
   const named = (list: AgentAttachment[]) => list.filter((f) => sent.has(f.id)).map((f) => f.name);
 
-  // A member who wasn't watching when the run ended gets a notification.
+  // A member who wasn't watching when the run ended gets a notification, from the agent by
+  // name once it has one. Each chat run also moves its companion along (best-effort).
+  const companion = previewEnabled(tenant, "companion");
   const finished: NonNullable<TurnDeps["onFinished"]> = async (message, conversation, info) => {
     try {
-      const notification = info.watched || !pushEnabled() ? null : notificationFor(message, conversation, info.report);
+      const self = companion
+        ? await (asked.kind === "task" ? getCompanion(tenant) : getSettings(tenant).then((s) => refreshCompanion(tenant, s.setup))).catch((error) => {
+            console.error("[companion] refresh failed", error);
+            return null;
+          })
+        : null;
+      const notification = info.watched || !pushEnabled() ? null : notificationFor(message, conversation, info.report, self?.name);
       if (notification) await notify(tenant, notification);
     } finally {
       await onFinished?.(message, conversation, info);

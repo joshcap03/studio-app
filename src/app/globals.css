@@ -426,6 +426,131 @@ body {
   animation: wa-dot 1.2s ease-in-out infinite;
 }
 
+/* The companion (src/components/ui/companion.tsx): a pencil sketch that breathes faintly, a
+   pencil still drawing while it works, a brass trace the first time it's ready, then an inked
+   diamond that breathes, blinks, glances while it works and holds still while it waits. */
+.cm * {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.cm-fill {
+  fill: var(--cm-tint);
+}
+@keyframes cm-faint {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.cm-faint {
+  animation: cm-faint 4.8s ease-in-out infinite;
+}
+@keyframes cm-drawing {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.cm-drawing {
+  stroke-dasharray: 0.16 0.84;
+  animation: cm-drawing 1.8s linear infinite;
+}
+.cm-trace {
+  stroke-dasharray: 1;
+  animation: cm-drawing 600ms var(--ease-out-soft) both;
+}
+@keyframes cm-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+.cm-body {
+  animation: cm-breathe 4.2s ease-in-out infinite;
+}
+@keyframes cm-blink {
+  0%,
+  95%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.12);
+  }
+}
+.cm-eyes {
+  animation: cm-blink 6s ease-in-out infinite;
+  animation-delay: var(--cm-delay, 0s);
+}
+@keyframes cm-glance {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  30% {
+    transform: translateX(-0.9px);
+  }
+  70% {
+    transform: translateX(0.9px);
+  }
+}
+@keyframes cm-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-0.7px);
+  }
+}
+.cm-mood-working .cm-body {
+  animation: cm-bob 1.4s ease-in-out infinite;
+}
+.cm-mood-working .cm-look {
+  animation: cm-glance 3s ease-in-out infinite;
+}
+/* Waiting on the member: it looks up and holds still. */
+.cm-mood-needs_you .cm-body {
+  animation: none;
+}
+.cm-mood-needs_you .cm-look {
+  transform: translateY(-1.5px);
+}
+.cm-mood-stuck .cm-look {
+  transform: translateY(1.2px);
+}
+.cm-mood-stuck .cm-eyes {
+  animation: none;
+  transform: scaleY(0.55);
+}
+/* Arriving: the tint fills in from the brass edge, then the corners settle. */
+@keyframes cm-ink {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.cm-ink {
+  animation: cm-ink 260ms var(--ease-out-soft) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-drawing {
+    display: none;
+  }
+}
+
 /* ---------------------------------------------------------------------------------------- */
 /* Assistant prose                                                                           */
 

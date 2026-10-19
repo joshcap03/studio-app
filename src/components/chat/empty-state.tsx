@@ -2,6 +2,7 @@
 
 import { ArrowRight, AudioLines, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 import { forwardRef, useEffect } from "react";
+import { Companion, companionHint, useCompanion } from "@/components/ui/companion";
 import { JourneyBar } from "@/components/ui/journey";
 import { stepName } from "@/lib/setup-words";
 import type { SetupSummary, WorkspaceSkill } from "@/lib/types";
@@ -60,6 +61,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
+  const companion = useCompanion();
   // Until setup is done, the agent greets them and offers to guide them through it.
   const greeting = Boolean(setup && onSetup);
 
@@ -82,7 +84,12 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:justify-center md:px-8 md:pb-[12vh]">
-      <div className="flex flex-1 items-center justify-center md:flex-none">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 md:flex-none">
+        {companion ? (
+          <span title={companionHint(companion.stage, companion.name)} className="animate-fade-up">
+            <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} />
+          </span>
+        ) : null}
         <h1 className="animate-fade-up text-center font-display text-[30px] leading-tight tracking-[-0.015em] text-fg md:text-[36px]">
           {greeting ? `Hey${member ? ` ${member}` : ""}!` : "What should we work on?"}
         </h1>

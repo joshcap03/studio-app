@@ -2,6 +2,7 @@
 
 import { Check, ChevronRight, Minus, PanelRightOpen, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Companion, useCompanion } from "@/components/ui/companion";
 import { appName } from "@/lib/apps";
 import type { ActivityStep } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
@@ -162,8 +163,10 @@ function WorkingHeader({
   const seconds = since ? Math.max(0, Math.floor((now - since) / 1000)) : 0;
   const stepSeconds = stepSince ? Math.max(0, Math.floor((now - stepSince) / 1000)) : 0;
   const slow = stepSeconds >= SLOW_STEP_SECONDS;
+  const companion = useCompanion();
   return (
     <div className="flex h-6 items-center gap-2.5 text-[13.5px]">
+      {companion ? <Companion stage={companion.stage} look={companion.look} mood="working" size={18} /> : null}
       <WorkAnimation action={app ? action : undefined} app={app} />
       <span key={status} className="text-shimmer min-w-0 truncate font-medium animate-fade-in">
         {status}
