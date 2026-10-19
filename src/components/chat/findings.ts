@@ -1,5 +1,5 @@
 import { appName } from "@/lib/apps";
-import type { ActivityStep, Artifact } from "@/lib/types";
+import type { ActivityStep, Artifact, StepPreview } from "@/lib/types";
 
 // One-line summaries of what the agent found or produced, for the work panel. The chat
 // timeline says what the agent is *doing*; findings say what it *saw*. Built only from a
@@ -106,6 +106,88 @@ export function findingForArtifact(artifact: Artifact): Finding {
     tone: "normal",
     artifact,
     app: artifact.kind === "spreadsheet" ? "sheets" : artifact.kind === "document" ? "docs" : undefined,
+  };
+}
+
+/**
+ * One reply's findings arranged so the panel doesn't overwhelm: what the agent found or
+ * made comes first, in order, and the looking it did to get there (web reads, lookups with
+ * nothing specific to say) folds into one line per app below it. A lone lookup stays a
+ * plain line. Works on any tool: lookups are told apart by their receipt, not their name.
+ */
+export type Chunk = { kind: "finding"; finding: Finding } | ResearchChunk;
+
+export interface ResearchChunk {
+  kind: "research";
+  id: string;
+  app?: string;
+  text: string;
+  /** The sites read most, for a web bundle. */
+  detail?: string;
+  findings: Finding[];
+  /** Every source the bundle read, once each, for a web bundle. */
+  sources?: Extract<StepPreview, { type: "sources" }>;
+}
+
+export function chunkFindings(findings: Finding[]): Chunk[] {
+  const results: Chunk[] = [];
+  const lookups = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const key = lookupKey(f);
+    if (key === null) results.push({ kind: "finding", finding: f });
+    else lookups.set(key, [...(lookups.get(key) ?? []), f]);
+  }
+  const research = [...lookups.entries()].map(([key, group]): Chunk =>
+    group.length === 1 ? { kind: "finding", finding: group[0] } : key === SOURCES ? sourcesChunk(group) : lookupsChunk(group),
+  );
+  return [...results, ...research];
+}
+
+const SOURCES = "sources";
+
+/** Which bundle a finding folds into, or null when it's something found or made. */
+function lookupKey(f: Finding): string | null {
+  if (f.tone === "problem" || f.artifact || !f.step) return null;
+  if (f.step.preview?.type === "sources") return SOURCES;
+  return f.generic ? `app:${f.app ?? ""}` : null;
+}
+
+function sourcesChunk(group: Finding[]): ResearchChunk {
+  const seen = new Map<string, { title: string; url: string; domain: string }>();
+  const domains = new Map<string, number>();
+  let unlisted = 0;
+  for (const f of group) {
+    const p = f.step?.preview;
+    if (p?.type !== "sources") continue;
+    unlisted += Math.max(0, (p.total ?? p.items.length) - p.items.length);
+    for (const s of p.items) {
+      if (seen.has(s.url)) continue;
+      seen.set(s.url, s);
+      domains.set(s.domain, (domains.get(s.domain) ?? 0) + 1);
+    }
+  }
+  const n = seen.size + unlisted;
+  const top = [...domains.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => d);
+  const rest = top.length - 3;
+  return {
+    kind: "research",
+    id: `research:${group[0].id}`,
+    app: group[0].app,
+    text: `Read ${n} ${plural(n, "source")} across ${group.length} searches`,
+    detail: top.length ? `${top.slice(0, 3).join(", ")}${rest > 0 ? ` and ${rest} more ${plural(rest, "site")}` : ""}` : undefined,
+    findings: group,
+    sources: { type: "sources", items: [...seen.values()], total: n },
+  };
+}
+
+function lookupsChunk(group: Finding[]): ResearchChunk {
+  const app = group[0].app;
+  return {
+    kind: "research",
+    id: `research:${group[0].id}`,
+    app,
+    text: `Looked through ${appName(app)} ${group.length} times`,
+    findings: group,
   };
 }
 

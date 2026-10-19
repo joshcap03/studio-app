@@ -376,7 +376,24 @@ const SCENARIOS: Scenario[] = [
     // A task's run (or "track" in chat): plan the work, then add rows to the tracker.
     match: /\b(track|roles?)\b/i,
     steps: [
-      { kind: "activity", id: "search", running: "Searching job boards", done: "Searched job boards", ms: 700, app: "web", action: "search" },
+      ...[
+        ["search", "jobs.example", "boards.example"],
+        ["search-2", "jobs.example", "careers.example"],
+        ["search-3", "boards.example", "news.example"],
+      ].map(([id, ...domains]) => ({
+        kind: "activity" as const,
+        id,
+        running: "Searching job boards",
+        done: "Searched job boards",
+        ms: 500,
+        app: "web",
+        action: "search" as const,
+        preview: {
+          type: "sources" as const,
+          items: domains.map((domain, i) => ({ title: `Product roles (demo ${i + 1})`, url: `https://${domain}/${id}`, domain })),
+          total: 10,
+        },
+      })),
       {
         kind: "plan",
         plan: [
