@@ -154,7 +154,7 @@ describe.skipIf(!liveFlow)("Small business setup interview against a live flow",
 
 /** Recommending or deciding for them, which their guardrail rules out. */
 const DECIDES =
-  /\b(?:(?<!\bbefore )i(?:'d| would)? (?:recommend|suggest)|my (?:recommendation|pick|suggestion)|i'd (?:start|go|pick|focus)|you should (?:start|do|go|pick|focus|tackle)|your (?:call|decision)|up to you|the best (?:option|choice|place to start) is)\b/i;
+  /\b(?:(?<!\bbefore )i(?:'d| would)? (?:recommend|suggest)|my (?:recommendation|pick|suggestion)|i'd (?:start|go (?:with|for)|pick|focus)|you should (?:start|do|go|pick|focus|tackle)|your (?:call|decision)|up to you|the best (?:option|choice|place to start) is)\b/i;
 
 describe.skipIf(!liveFlow)("Small business setup under a guardrail against being told what to do", () => {
   const session = setupSession({
