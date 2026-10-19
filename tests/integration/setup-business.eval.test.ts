@@ -14,7 +14,7 @@ const INVOICES = "Corner Café, #1042, $840, due Sep 30\nBlue Door Coffee, #1047
 /** Where they keep them: a sheet they'd rather not connect yet, so they paste the rows instead. */
 const WHERE = `In a Google Sheet. I'd rather not connect it yet, so here are the unpaid ones:\n${INVOICES}`;
 const NO_LINK = "I'd rather not connect or share the sheet yet. Please use the rows I pasted.";
-const ASKS_WHERE = /\bwhere (?:do )?(?:you )?(?:keep|store|track)\b|\bwhere (?:do )?(?:your |the )?invoices live\b|\bwhich (?:app|one) (?:do you|is it)\b/i;
+const ASKS_WHERE = /\bwhere (?:do )?(?:you )?(?:keep|store|track)\b|\bwhere (?:do )?(?:your |the )?(?:\w+ )?invoices live\b|\bwhich (?:app|one) (?:do you|is it)\b/i;
 
 /** The turns so far, for the owner to tell the agent's plan from discovery's advice. */
 let seen: Turn[] = [];
