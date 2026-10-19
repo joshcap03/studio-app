@@ -1,4 +1,4 @@
-import { setupSteps, templateById } from "@/lib/templates";
+import { DISCOVERY_STEP, SUCCESS_STEP, templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, SetupSummary } from "@/lib/types";
 
@@ -34,12 +34,14 @@ export async function updateSetup(tenant: Tenant, patch: Partial<Omit<AgentSetup
 
 /**
  * What the owner sees of the setup: its checklist as the agent last reported it, or, before it
- * has, the steps of the agent's template, all still to do. Null for anyone but the owner.
+ * has, the two steps every setup opens with (what they're after, then their bar), all still to do.
+ * The agent adds the rest only once it knows their problem needs them, never the whole template.
+ * Null for anyone but the owner.
  */
 export function summarizeSetup(tenant: Tenant, setup: AgentSetup | null, templateId: string | null): SetupSummary | null {
   if (tenant.workspace.role !== "owner") return null;
-  const template = templateById(templateId);
-  const plan = setup?.plan.length ? setup.plan : template ? setupSteps(template).map((s) => ({ text: s.title, status: "todo" as const })) : [];
+  const opening = templateById(templateId) ? [DISCOVERY_STEP, SUCCESS_STEP].map((s) => ({ text: s.title, status: "todo" as const })) : [];
+  const plan = setup?.plan.length ? toTheBar(setup.plan) : opening;
   return {
     status: setup?.status ?? "not_started",
     conversationId: setup?.conversationId ?? null,
@@ -47,6 +49,21 @@ export function summarizeSetup(tenant: Tenant, setup: AgentSetup | null, templat
     total: plan.length,
     plan,
   };
+}
+
+/** The step that agrees their bar, and the steps a fair trial of it needs before then. */
+const BAR = /success|\bbar\b|judg/i;
+const ON_THE_WAY = /trial|résumé|resume/i;
+
+/**
+ * The checklist as far as the member's bar until they've confirmed it: steps after it that are
+ * still to do (anything but a trial or what one needs) stay off until then, even if the agent
+ * listed them, as a checklist from before setup grew step by step did. Finished steps always show.
+ */
+export function toTheBar(plan: AgentSetup["plan"]): AgentSetup["plan"] {
+  const bar = plan.findIndex((s) => BAR.test(s.text));
+  if (bar < 0 || plan[bar].status === "done") return plan;
+  return plan.filter((s, i) => i <= bar || s.status !== "todo" || ON_THE_WAY.test(s.text));
 }
 
 /** True when `conversationId` holds the agent's setup interview. */

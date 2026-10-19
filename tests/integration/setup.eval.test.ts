@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { buildUiBlock, scheduleFrom } from "@/lib/chat/ui";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { templateById } from "@/lib/templates";
-import { carriesRankedBar, describeTurn, liveFlow, records, setupSession, type ScriptedMember, type Turn } from "./setup-harness";
+import { carriesRankedBar, checklistGrowth, describeTurn, liveFlow, records, setupSession, type ScriptedMember, type Turn } from "./setup-harness";
 
 // Eval of the Job search setup interview against a live flow with a real model (LANGFLOW_TEST_*
 // env; see setup-harness.ts). A scripted job seeker answers whatever the agent shows. The checks
@@ -177,6 +177,13 @@ describe.skipIf(!liveFlow)("Job search setup interview against a live flow", () 
     expect(instructions, "the bar didn't learn from what they passed on in the trial run").toMatch(FROM_PASS);
     // Nothing is applied yet, so the agent mustn't say it is.
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
+  });
+
+  it("lists only what it knows: two steps to start, and nothing past the bar until it's confirmed", () => {
+    const growth = checklistGrowth(turns);
+    expect(growth.first, "no checklist on the first reply").not.toBeNull();
+    expect(growth.first!, "the first checklist laid out the whole setup").toBeLessThanOrEqual(2);
+    expect(growth.early, "the checklist listed later setup before the bar was confirmed").toEqual([]);
   });
 
   it("changes nothing outside the member's own notes before Apply", () => {
