@@ -1,4 +1,4 @@
-import type { Attachment, ChatMessage, Companion, ConversationSummary, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
+import type { Attachment, ChatMessage, Companion, ConversationSummary, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
 import type { AgentRecord, AgentTask, PlanStep, TaskRun } from "@/lib/tasks/types";
@@ -113,6 +113,12 @@ export const api = {
   updateRecord: (id: string, patch: { status?: string | null }) =>
     request<{ record: AgentRecord }>(`/api/records/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteRecord: (id: string) => request<void>(`/api/records/${id}`, { method: "DELETE" }),
+  listLibrary: (signal?: AbortSignal) => request<{ items: LibraryItem[] }>("/api/library", { signal }),
+  addLibraryLink: (link: { url: string; title?: string }) => request<{ item: LibraryItem }>("/api/library", { method: "POST", body: JSON.stringify(link) }),
+  updateLibraryItem: (id: string, patch: { title?: string; pinned?: boolean }) =>
+    request<{ item: LibraryItem }>(`/api/library/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteLibraryItem: (id: string) => request<void>(`/api/library/${id}`, { method: "DELETE" }),
+  listAgentFiles: (signal?: AbortSignal) => request<{ files: Attachment[] }>("/api/agent/files", { signal }),
   startVoice: () => request<{ grant: VoiceGrant }>("/api/voice/session", { method: "POST", body: "{}" }),
   endVoice: (sessionId: string) => request<{ seconds: number }>(`/api/voice/session/${sessionId}/end`, { method: "POST", body: "{}" }),
   /** Stops notifications on this device first, so the next person on it doesn't get them. */

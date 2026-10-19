@@ -11,6 +11,7 @@ import { Thread } from "@/components/chat/thread";
 import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { ProjectView } from "@/components/project/project-view";
 import { Sidebar } from "@/components/sidebar/sidebar";
+import { LibraryView } from "@/components/library/library-view";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { TasksView } from "@/components/tasks/tasks-view";
 import { CompanionContext } from "@/components/ui/companion";
@@ -120,6 +121,8 @@ function taskPathFrom(pathname: string): string | null {
   return match && UUID.test(match[1]) ? match[1] : null;
 }
 
+const isLibraryPath = (pathname: string) => /^\/library\/?$/.test(pathname);
+
 function provisionalTitle(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > 60 ? `${line.slice(0, 57).trimEnd()}…` : line;
@@ -170,6 +173,7 @@ function WorkspaceShell({
   const activeProjectId = activeId ? null : projectIdFrom(pathname);
   /** The Tasks page on screen: "list", or the id of the open task. */
   const activeTask = taskPathFrom(pathname);
+  const libraryActive = isLibraryPath(pathname);
   const [taskTitle, setTaskTitle] = useState<string | null>(null);
 
   useEffect(() => {
@@ -385,9 +389,9 @@ function WorkspaceShell({
   const activeProjectName = activeProject?.status === "ready" ? activeProject.project.name : undefined;
   const tasksTitle = activeTask === "list" ? "Tasks" : activeTask ? (taskTitle ?? undefined) : undefined;
   useEffect(() => {
-    const title = activeTitle ?? activeProjectName ?? tasksTitle;
+    const title = activeTitle ?? activeProjectName ?? tasksTitle ?? (libraryActive ? "Library" : undefined);
     document.title = title ? `${title} · Studio` : `${workspace.name} · Studio`;
-  }, [activeTitle, activeProjectName, tasksTitle, workspace.name]);
+  }, [activeTitle, activeProjectName, tasksTitle, libraryActive, workspace.name]);
 
   /**
    * Opens a task's conversation. A run may have just created it or added to it on the server,
@@ -1219,6 +1223,8 @@ function WorkspaceShell({
             onMove={moveConversation}
             tasksActive={activeTask !== null}
             onSelectTasks={() => navigate("/tasks")}
+            libraryActive={libraryActive}
+            onSelectLibrary={() => navigate("/library")}
           />
         </aside>
 
@@ -1308,7 +1314,9 @@ function WorkspaceShell({
             </IconButton>
           </header>
 
-          {activeTask === "list" ? (
+          {libraryActive ? (
+            <LibraryView onOpenConversation={(id) => navigate(`/c/${id}`)} />
+          ) : activeTask === "list" ? (
             <TasksView skills={skills} onOpen={(id) => navigate(`/tasks/${id}`)} />
           ) : activeTask ? (
             <TaskDetail

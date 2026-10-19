@@ -110,6 +110,11 @@ export interface TurnDeps {
   savePlan?: (plan: unknown) => Promise<boolean>;
   saveRecord?: (record: unknown, source: { messageId: string }) => Promise<boolean>;
   /**
+   * Files an artifact this reply produced (already sanitized, with a link) in the member's
+   * Library, under the caller's session. Without it, artifacts stay on the reply only.
+   */
+  fileArtifact?: (artifact: Artifact, source: { messageId: string }) => Promise<unknown>;
+  /**
    * Checks the agent's proposal to merge remembered facts against the member's memory (under
    * their session) and returns its card, or null when nothing in it holds up. Without it, such
    * proposals are dropped.
@@ -176,6 +181,8 @@ export function sanitizeArtifact(value: unknown): Artifact | null {
 const MAX_PROPOSALS = 5;
 /** Tracker rows one run may add or update; the rest are dropped. */
 const MAX_RECORDS_PER_RUN = 25;
+/** Artifacts one run may file in the Library; the rest stay on the reply only. */
+const MAX_FILED_PER_RUN = 10;
 const noop = () => undefined;
 
 /**
@@ -411,6 +418,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       const remembering: Promise<void>[] = [];
       let records = 0;
+      let filed = 0;
       let report: RunReport | null = null;
       let timeline: Timeline | null = assistant.timeline ?? null;
       // Kept from before a pause for approval; this run's citations are added to them.
@@ -536,6 +544,12 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               if (artifact && !artifacts.some((a) => a.id === artifact.id)) {
                 artifacts.push(artifact);
                 send({ type: "artifact", artifact });
+                if (deps.fileArtifact && artifact.url && filed < MAX_FILED_PER_RUN) {
+                  filed += 1;
+                  remembering.push(
+                    deps.fileArtifact(artifact, { messageId: assistant.id }).then(noop, (e) => console.error("[turn] couldn't file an artifact", e)),
+                  );
+                }
               }
               break;
             }

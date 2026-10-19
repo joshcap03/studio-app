@@ -159,6 +159,21 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, tracker: [] }).system_context).toContain("The member has a tracker, empty so far.");
   });
 
+  it("lists the member's Library so the agent reopens what it made, only when there's something in it", () => {
+    const system = templateValues({
+      ...tenantA,
+      library: [
+        { title: "Job search tracker", kind: "spreadsheet", url: "https://docs.google.com/spreadsheets/d/1", pinned: true },
+        { title: "Cover letter  draft", kind: "document", url: "https://docs.google.com/document/d/2", pinned: false },
+      ],
+    }).system_context;
+    expect(system).toContain("rather than making a new copy");
+    expect(system).toContain("- [pinned] Job search tracker | spreadsheet | https://docs.google.com/spreadsheets/d/1");
+    expect(system).toContain("- Cover letter draft | document | https://docs.google.com/document/d/2");
+    expect(templateValues({ ...tenantA, library: [] }).system_context).not.toContain("Library");
+    expect(templateValues(tenantA).system_context).not.toContain("Library");
+  });
+
   it("shows the agent how the member's bar is holding up, and what they passed on and why", () => {
     const system = templateValues({
       ...tenantA,

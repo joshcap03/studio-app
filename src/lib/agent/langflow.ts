@@ -111,6 +111,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.setup && setupContext(tenant.setup),
     tenant.tracker && trackerContext(tenant.tracker),
     tenant.notes?.length && notesContext(tenant.notes),
+    tenant.library?.length && libraryContext(tenant.library),
     tenant.bar && barContext(tenant.bar),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
     (tenant.profile.trim() || tenant.account?.about.trim() || memories) && BACKGROUND_ONLY,
@@ -228,6 +229,24 @@ function notesContext(notes: NonNullable<AgentTenantContext["notes"]>): string {
     used += line.length;
   }
   return `The member's saved reference notes (from their tracker; use them when they fit, e.g. stories in interview prep):\n${lines.join("\n")}`;
+}
+
+const LIBRARY_CHARS = 4000;
+
+/**
+ * The member's Library: docs and sheets this agent made for them and links they filed. Listed so
+ * the agent goes back to the one it already made (the job tracker sheet) instead of a new copy.
+ */
+export function libraryContext(items: NonNullable<AgentTenantContext["library"]>): string {
+  let budget = LIBRARY_CHARS;
+  const lines: string[] = [];
+  for (const item of items) {
+    const line = `- ${item.pinned ? "[pinned] " : ""}${item.title.replace(/\s+/g, " ").trim()} | ${item.kind} | ${item.url}`;
+    if (line.length > budget) break;
+    budget -= line.length + 1;
+    lines.push(line);
+  }
+  return `The member's Library (docs you made for them and links they filed; title | kind | link; pinned first, then most recent). When they ask for something one of these already covers, open and update that one rather than making a new copy, and give them its link:\n${lines.join("\n")}`;
 }
 
 /** The task this conversation works on: what it's for, and the plan so far. */

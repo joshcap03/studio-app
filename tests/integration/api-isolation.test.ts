@@ -292,6 +292,36 @@ describe("API tenant isolation", () => {
     expect((await alice.request(`/api/conversations/${inProject}`)).status).toBe(404);
   });
 
+  it("files what the agent made in the member's own Library, and keeps it there", async () => {
+    const made = crypto.randomUUID();
+    expect((await alice.send(made, "Make a spreadsheet of orders by month")).res.status).toBe(200);
+    type Items = { items: { id: string; title: string; url: string; conversationId: string | null; addedBy: string; pinned: boolean }[] };
+    const library = (await (await alice.request("/api/library")).json()) as Items;
+    const sheet = library.items.find((i) => i.url === "https://example.com/mock-artifact");
+    expect(sheet).toMatchObject({ title: "Orders by month — 2026", conversationId: made, addedBy: "agent" });
+
+    const pasted = await alice.json("/api/library", "POST", { url: "https://docs.google.com/document/d/alice-doc", title: "alice-library-secret" });
+    expect(pasted.status).toBe(201);
+    const doc = ((await pasted.json()) as { item: { id: string; kind: string } }).item;
+    expect(doc.kind).toBe("document");
+    expect((await alice.json("/api/library", "POST", { url: "https://docs.google.com/document/d/alice-doc" })).status).toBe(409);
+    expect((await alice.json("/api/library", "POST", { url: "http://example.com/plain" })).status).toBe(400);
+    expect((await alice.json("/api/library", "POST", { url: "https://example.com/x", workspaceId: bobWs })).status).toBe(400);
+
+    // Bob sees none of it and can't change or remove it.
+    const bobs = (await (await bob.request("/api/library")).json()) as Items;
+    expect(JSON.stringify(bobs)).not.toContain("alice-library-secret");
+    expect(bobs.items.some((i) => i.id === doc.id || i.id === sheet!.id)).toBe(false);
+    expect((await bob.json(`/api/library/${doc.id}`, "PATCH", { pinned: true })).status).toBe(404);
+    expect((await bob.json(`/api/library/${doc.id}`, "DELETE")).status).toBe(404);
+
+    expect((await alice.json(`/api/library/${doc.id}`, "PATCH", { pinned: true })).status).toBe(200);
+    expect((await alice.json(`/api/library/${doc.id}`, "PATCH", { url: "https://evil.example" })).status).toBe(400);
+    expect(((await (await alice.request("/api/library")).json()) as Items).items[0].id).toBe(doc.id);
+    expect((await alice.json(`/api/library/${doc.id}`, "DELETE")).status).toBe(204);
+    expect((await alice.json(`/api/library/not-an-id`, "DELETE")).status).toBe(404);
+  });
+
   it("clears only the caller's own chat history", async () => {
     // Clearing removes the caller's chats and no one else's.
     const carol = await signUp("carol");
