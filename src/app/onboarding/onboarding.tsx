@@ -62,7 +62,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
     if (pending) return;
     setPending(next);
     setError(null);
-    const agentName = name.trim() || namePlaceholder;
+    const agentName = name.trim() || template.namePlaceholder;
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -85,7 +85,6 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
 
   const current = steps.findIndex((s) => s.id === step);
   const template = templateById(templateId) ?? TEMPLATES[0];
-  const namePlaceholder = template.id === "job-search" ? "Job search" : template.id === "small-business" ? "My business" : "Personal";
   const suggested = created && step === "connect" ? template.apps : [];
 
   return (
@@ -199,7 +198,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
             maxLength={80}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={namePlaceholder}
+            placeholder={template.namePlaceholder}
             className="mt-1.5 h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-[15px] outline-none transition-[border-color,box-shadow] placeholder:text-fg-4 focus:border-line-strong focus:shadow-composer focus-visible:outline-none"
           />
 
