@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, replyStream, routeSpeech, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
+import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, quickRoute, replyStream, routeSpeech, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
 import { describeStage, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -249,5 +249,17 @@ describe("routeSpeech", () => {
     expect(routeSpeech("keep the first two", stage, [fill])).toEqual({ tools: [fill] });
     // The model can't stop or send on its own.
     expect(routeSpeech("that one looks good", stage, [{ name: "send_card", args: {} }])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+  });
+});
+
+describe("quickRoute", () => {
+  it("hands the member's words on without a model when no card is on screen", () => {
+    expect(quickRoute([mark({ stage: { working: false } }), user("Um, networking.")])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(quickRoute([user("...")])).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+    expect(quickRoute([user("stop")])).toEqual({ tools: [{ name: "stop_work", args: {} }] });
+  });
+  it("leaves card answers and tool results to the model", () => {
+    expect(quickRoute([mark({ stage }), user("keep the first two")])).toBeNull();
+    expect(quickRoute([user("x"), { role: "assistant", content: null, tool_calls: [{ id: "c", function: { name: "send_card", arguments: "{}" } }] }, { role: "tool", tool_call_id: "c", content: "Refused: wait" }])).toBeNull();
   });
 });

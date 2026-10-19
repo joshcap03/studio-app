@@ -62,6 +62,10 @@ interface Caption {
 
 const PROGRESS_GAP_MS = 6000;
 const AFTER_SPEECH_MS = 900;
+/** Studio's lines wait this long after the member last sounded like they were speaking. */
+const AFTER_MEMBER_MS = 900;
+/** Longest the first lines wait for the greeting to be said. */
+const GREETING_WAIT_MS = 6000;
 
 /** The open card on the latest reply: a form not yet sent, questions not yet answered. */
 function openAsk(messages: ChatMessage[], running: boolean) {
@@ -198,6 +202,10 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
   modeRef.current = mode;
   const relayState = useRef(initialRelay());
   const ended = useRef(false);
+  /** When the greeting was cued; Studio's lines wait until it's been said, so they don't cut it off. */
+  const greetingAt = useRef<number | null>(null);
+  const greeted = useRef(false);
+  const memberSoundAt = useRef(0);
   /** A redirect stopped the run before this one; its "Stopped" isn't news. */
   const steered = useRef(false);
 
@@ -398,6 +406,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       setStatus(next);
       if (next === "connected") {
         tone(true);
+        greetingAt.current = Date.now();
         link.current?.cue("hello", stageRef.current);
       } else if (next === "ended") {
         hangUp();
@@ -407,8 +416,14 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       }
     },
     onMode: (next) => {
+      // The first time the voice finishes speaking after the cue, the greeting has been said.
+      if (next === "listening" && modeRef.current === "speaking" && greetingAt.current !== null) greeted.current = true;
       setMode(next);
+      modeRef.current = next;
       lastSpeechAt.current = Date.now();
+    },
+    onVoiceActivity: (score) => {
+      if (score > 0.6) memberSoundAt.current = Date.now();
     },
     onMemberText: (text) => {
       spoken.current.push(text);
@@ -481,7 +496,9 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     const timer = setInterval(() => {
       if (status !== "connected" || ended.current || !link.current) return;
       const now = Date.now();
-      if (modeRef.current === "speaking" || now - lastSpeechAt.current < AFTER_SPEECH_MS) return;
+      // Never over the greeting, the voice itself, or the member mid-sentence.
+      if (!greeted.current && greetingAt.current !== null && now - greetingAt.current < GREETING_WAIT_MS) return;
+      if (modeRef.current === "speaking" || now - lastSpeechAt.current < AFTER_SPEECH_MS || now - memberSoundAt.current < AFTER_MEMBER_MS) return;
       const lines = pendingLines.current.splice(0);
       const progress = pendingProgress.current;
       if (progress && (lines.length || now - lastProgressAt.current >= PROGRESS_GAP_MS)) {
