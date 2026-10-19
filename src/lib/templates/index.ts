@@ -170,7 +170,7 @@ export const TEMPLATES: AgentTemplate[] = [
         instructions: `Find roles posted since the last run that fit my profile.
 - Save each role worth tracking with save_record: collection "applications", key = the posting's link (the company's own page when there is one), title "Company — Role", status "discovered", and fields for location, pay if listed, score (1–5) and why.
 - Skip any role whose link is already in the tracker, and anything that hits a deal-breaker.
-- Don't apply or contact anyone. Reply with the new roles, best first, or say there were none.`,
+- Don't apply or contact anyone. Show the new roles, best first, in a verdict card for me to keep or pass on, or say there were none.`,
       },
       {
         id: "check-replies",

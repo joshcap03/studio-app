@@ -32,7 +32,7 @@ If the agent's instructions have a plan for finding roles, follow it; otherwise:
 2. Skip roles already in the job tracker (same link) and any that hit a deal-breaker.
 3. Score each remaining role 1–5 against the profile, with one line on why.
 4. Track the roles scoring 3 or more. With a Studio tracker: save_record, collection "applications", key = the posting's link, title "Company — Role", status "discovered", fields for location, pay if listed, score, and why. Otherwise add them to the "Job search tracker" Google Sheet.
-5. Reply with the top 5, best first, each with its link. Do not apply to anything.`,
+5. Reply with a short summary of what you found and what it misses, then show the top 5, best first, in show_form with one verdict field for the user to keep or pass on: each with its link, its tracker row, and a line on why it fits, with reasons to pass drawn from the profile. Do not apply to anything.`,
   },
   {
     id: "research-company",

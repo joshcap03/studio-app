@@ -1000,9 +1000,10 @@ class ToolGatewayComponent(Component):
                 args_schema=AskArgs,
                 description=("Ask the owner a question with a few choices to click, when you need their decision or a "
                              "missing detail and can't sensibly pick a default yourself (which of several matching "
-                             "records, which way to go, a preference). Don't use it for yes/no on an action (take_action "
-                             "already asks), or for things you can look up. Call it as the last thing in your reply; "
-                             "their answer arrives as the next message."),
+                             "records, which way to go, whether to take a next step, a preference). Use it instead of "
+                             "ending your reply on such a question in text. Don't use it to confirm a change to their "
+                             "accounts (take_action already asks), or for things you can look up. Call it as the last "
+                             "thing in your reply; their answer arrives as the next message."),
             ),
             StructuredTool.from_function(
                 func=show_form, coroutine=show_form_async, name="show_form",
@@ -1010,8 +1011,9 @@ class ToolGatewayComponent(Component):
                 description=("Show the owner a short form when you need several details at once, an order of priorities "
                              "(rank), a point on a scale, their verdict on results you found (verdict), longer "
                              "answers, files (a resume, a price list), repeatable entries (stories, contacts), or "
-                             "apps to connect: for example while setting up this agent, or to have them judge a "
-                             "run's results. Draft answers they can react to and prefill what you already know, so "
+                             "apps to connect: for example while setting up this agent. Whenever you bring them "
+                             "results to act on (roles, leads, options you found), show those in one verdict field "
+                             "so they keep or pass each. Draft answers they can react to and prefill what you already know, so "
                              "they mostly pick, order, or fix rather than type. Use ask_user instead for one quick "
                              "choice. Call it as the last thing in your reply; their answers arrive as the next "
                              "message. Changes nothing."),
