@@ -319,6 +319,8 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
       return planUpdate(input);
     case "save_record":
       return recordSave(input);
+    case "file_link":
+      return linkFile(input, result);
     case "remember":
     case "propose_memory":
       // What was remembered is shown on its own line under the reply, with an Undo.
@@ -701,6 +703,21 @@ function recordSave(input: Record<string, unknown>): Interpretation {
     app: "tracker",
     action: "write",
     preview: title ? textPreview(`Tracked ${what}${status ? ` (${clip(status, 30)})` : ""}`) : undefined,
+  };
+}
+
+/** The agent filed a link in the member's Library, on their request (file_link). */
+function linkFile(input: Record<string, unknown>, result: unknown): Interpretation {
+  const title = firstString(input, ["title"]);
+  const what = title ? `“${clip(title, 60)}”` : "a link";
+  // The gateway files only https links with a title; anything else comes back as a plain refusal.
+  const refused = typeof result === "string" && /^Not saved\b/.test(result.trim());
+  return {
+    labels: { running: `Saving ${what} to your Library`, done: `Saved ${what} to your Library`, failed: `Couldn't save ${what} to your Library` },
+    app: "library",
+    action: "write",
+    preview: title && !refused ? textPreview(`Saved ${what} to your Library`) : undefined,
+    innerError: refused ? "Only https links with a name can go in the Library." : undefined,
   };
 }
 

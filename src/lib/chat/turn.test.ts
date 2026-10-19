@@ -3,7 +3,7 @@ import { createMockAdapter } from "@/lib/agent/mock";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "@/lib/agent/types";
 import { readNdjson } from "@/lib/client/api";
 import { createMemoryDb, createMemoryStore } from "@/test/memory-store";
-import type { StreamEvent } from "@/lib/types";
+import type { Artifact, StreamEvent } from "@/lib/types";
 import { sanitizeArtifact, startTurn, stopRun, titleFromMessage, TurnError } from "./turn";
 
 const scopeA = { workspaceId: "ws-a", userId: "user-a" };
@@ -764,6 +764,38 @@ describe("edits, files, and memory suggestions", () => {
     expect(filed).toHaveLength(10);
     expect(filed[0]).toEqual(["Cover letter", { messageId: reply.id }]);
     expect(filed.map(([title]) => title)).not.toContain("Notes");
+  });
+
+  it("files links the agent saved to the Library on request: https with a title only, kind guessed when missing, not shown on the reply", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const filed: [Artifact, { messageId: string }][] = [];
+    const adapter = scripted([
+      { type: "library-item", item: { url: "https://docs.google.com/spreadsheets/d/9/edit", title: "  Budget  " } },
+      { type: "library-item", item: { url: "https://example.com/brief.pdf", title: "Brief", kind: "document" } },
+      { type: "library-item", item: { url: "https://example.com/x", title: "Odd kind", kind: "hologram" } },
+      // Refused: not https, no title, not a link at all.
+      { type: "library-item", item: { url: "http://example.com/y", title: "Plain http" } },
+      { type: "library-item", item: { url: "javascript:alert(1)", title: "Script" } },
+      { type: "library-item", item: { url: "https://example.com/z", title: "   " } },
+      { type: "library-item", item: "https://example.com/w" },
+      { type: "message", text: "Saved." },
+    ]);
+    await collect(
+      startTurn(
+        { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, fileArtifact: async (a, source) => void filed.push([a, source]) },
+        { conversationId: id, kind: "send", text: "Save my budget sheet to my library" },
+      ),
+    );
+    const [, reply] = await store.listMessages(id);
+    expect(filed.map(([a]) => a)).toEqual([
+      { id: "https://docs.google.com/spreadsheets/d/9/edit", kind: "spreadsheet", title: "Budget", url: "https://docs.google.com/spreadsheets/d/9/edit", source: "Google Sheets" },
+      { id: "https://example.com/brief.pdf", kind: "document", title: "Brief", url: "https://example.com/brief.pdf", source: "example.com" },
+      { id: "https://example.com/x", kind: "link", title: "Odd kind", url: "https://example.com/x", source: "example.com" },
+    ]);
+    expect(filed[0][1]).toEqual({ messageId: reply.id });
+    expect(reply.artifacts).toEqual([]);
+    expect(reply.content).toBe("Saved.");
   });
 
   it("passes the agent's run report to onFinished, ignoring malformed ones", async () => {

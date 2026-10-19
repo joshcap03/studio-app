@@ -243,7 +243,7 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, notes: many }).system_context.length).toBeLessThan(templateValues(tenantA).system_context.length + 3300);
   });
 
-  it("reads plan updates and tracker rows only from tools that declare them", () => {
+  it("reads plan updates, tracker rows, and Library links only from tools that declare them", () => {
     const message = {
       content_blocks: [
         {
@@ -253,6 +253,9 @@ describe("Langflow request", () => {
             { type: "tool_use", name: "report_run", output: { run_report: { outcome: "nothing_new", summary: "" } } },
             { type: "tool_use", name: "web_search", output: { results: [] } },
             { type: "tool_use", name: "save_record", output: { record: { collection: "x", key: "y" } }, error: true },
+            { type: "tool_use", name: "file_link", output: JSON.stringify({ library_item: { url: "https://docs.google.com/document/d/1", title: "Plan" }, note: "Saved." }) },
+            { type: "tool_use", name: "file_link", output: "Not saved: give it a title the owner will recognize." },
+            { type: "tool_use", name: "file_link", output: { library_item: { url: "https://x.example", title: "X" } }, error: true },
           ],
         },
       ],
@@ -261,6 +264,7 @@ describe("Langflow request", () => {
       { type: "plan-update", plan: [{ text: "a", status: "todo" }] },
       { type: "record", record: { collection: "applications", key: "k" } },
       { type: "run-report", report: { outcome: "nothing_new", summary: "" } },
+      { type: "library-item", item: { url: "https://docs.google.com/document/d/1", title: "Plan" } },
     ]);
   });
 
