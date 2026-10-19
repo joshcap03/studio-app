@@ -114,6 +114,48 @@ describe.skipIf(!enabled)("Job search template against a live flow", () => {
     }
   });
 
+  describe("after the member passed on the last roles it brought", () => {
+    const items = [
+      { title: "Senior Product Designer · Coast", verdict: "pass" as const, reason: "Too early-stage" },
+      { title: "Product Designer · Fomo", verdict: "pass" as const, reason: "Consumer app" },
+      { title: "Staff Designer · Ledgerly", verdict: "pass" as const, reason: null },
+      { title: "Lead Product Designer · Northwind", verdict: "pass" as const, reason: null },
+    ];
+    const bar = (since: string[]) => ({
+      kept: 0,
+      judged: 4,
+      days: 7,
+      passes: items.map(({ title, reason }) => ({ title, reason })),
+      lastBatch: { judged: 4, kept: 0, items, since },
+    });
+    // What the member sent: the skill alone, in a new chat.
+    const message = renderSkillMessage(catalogEntry("find-roles")!, "");
+    const asked = (events: AgentEvent[]) => events.findIndex((e) => e.type === "questions" || e.type === "ui");
+    const searched = (events: AgentEvent[]) => events.findIndex((e) => e.type === "activity" && (e.action === "search" || e.action === "browse" || e.app === "web"));
+    const said = (events: AgentEvent[]) =>
+      events
+        .filter((e) => e.type === "message" || e.type === "text-delta")
+        .map((e) => (e as { text: string }).text)
+        .join("");
+
+    it("asks what to look for instead before looking again", { timeout: 300_000 }, async () => {
+      const events = await run(config, { ...tenant([]), task: null, bar: bar([]) }, message);
+      const ask = asked(events);
+      expect(ask, `no question in: ${said(events).slice(-400)}`).toBeGreaterThanOrEqual(0);
+      const search = searched(events);
+      expect(search === -1 || search > ask, "searched before asking").toBe(true);
+    });
+
+    it("goes ahead once they've said what to look for", { timeout: 300_000 }, async () => {
+      const since = ["Only senior roles at Series B or later B2B SaaS companies with a design team of 5 or more"];
+      const events = await run(config, { ...tenant([]), task: null, bar: bar(since) }, message);
+      const search = searched(events);
+      expect(search, `didn't search: ${said(events).slice(-400)}`).toBeGreaterThanOrEqual(0);
+      const ask = asked(events);
+      expect(ask === -1 || ask > search, "asked again before searching").toBe(true);
+    });
+  });
+
   it.each([
     [
       "sending outreach",

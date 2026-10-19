@@ -9,7 +9,7 @@ import { templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, Modality, UsageSummary, WorkspaceSettings } from "@/lib/types";
 import { setupSkill } from "@/lib/skills/setup";
-import { barScore, recentPasses } from "@/lib/verdicts";
+import { barScore, lastMissedBatch, recentPasses } from "@/lib/verdicts";
 
 // Workspace-level data: settings, usage, and the per-run agent context. All reads and writes
 // go through the tenant's RLS-bound client and are filtered by the tenant's workspace id.
@@ -160,7 +160,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
       console.error("[context] couldn't load the task and tracker", e);
       return {};
     }),
-    barFor(tenant),
+    barFor(tenant, conversationId),
   ]);
   return {
     workspaceId: tenant.workspace.id,
@@ -188,10 +188,10 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
 }
 
 /** The member's bar in practice (see src/lib/verdicts.ts); a run goes ahead without it on error. */
-async function barFor(tenant: Tenant): Promise<AgentTenantContext["bar"]> {
+async function barFor(tenant: Tenant, conversationId?: string): Promise<AgentTenantContext["bar"]> {
   try {
-    const [score, passes] = await Promise.all([barScore(tenant), recentPasses(tenant)]);
-    return score.judged ? { ...score, passes } : undefined;
+    const [score, passes, lastBatch] = await Promise.all([barScore(tenant), recentPasses(tenant), lastMissedBatch(tenant, conversationId)]);
+    return score.judged || lastBatch ? { ...score, passes, ...(lastBatch ? { lastBatch } : {}) } : undefined;
   } catch (e) {
     console.error("[context] couldn't load the member's verdicts", e);
     return undefined;

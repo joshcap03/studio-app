@@ -157,6 +157,39 @@ describe("Langflow request", () => {
     expect(system).toContain("- Designer II · Beta (Too junior)\n- Lead · Gamma");
     expect(system).toContain("- [done] Your bar (Bar set: 6 criteria)");
     expect(templateValues({ ...tenantA, bar: undefined }).system_context).not.toContain("member's bar");
+    expect(system).not.toContain("missed their bar");
+  });
+
+  it("has the agent ask what to look for instead after the member passed on most of the last results", () => {
+    const lastBatch = {
+      judged: 4,
+      kept: 0,
+      items: [
+        { title: "Senior PM · Coast", verdict: "pass" as const, reason: "Too early-stage" },
+        { title: "PM · Fomo", verdict: "pass" as const, reason: null },
+        { title: "Staff PM · Ramp", verdict: "pass" as const, reason: "Not NYC" },
+        { title: "PM · Brex", verdict: "pass" as const, reason: null },
+      ],
+      since: [],
+    };
+    const bar = { kept: 0, judged: 4, days: 7, passes: [{ title: "PM · Brex", reason: null }, { title: "Lead · Older", reason: "Agency" }], lastBatch };
+    const system = templateValues({ ...tenantA, bar }).system_context;
+    expect(system).toContain("missed their bar: they passed on all 4.\n- Passed: Senior PM · Coast (Too early-stage)\n- Passed: PM · Fomo\n");
+    expect(system).toContain("ask them what to look for instead: one ask_user");
+    expect(system).toContain("They haven't said anything in other chats since then.");
+    // The other passes still show; the batch's own aren't listed twice.
+    expect(system).toContain("- Lead · Older (Agency)");
+    expect(system.match(/PM · Brex/g)).toHaveLength(1);
+
+    const partly = { ...lastBatch, kept: 1, items: [{ ...lastBatch.items[0], verdict: "keep" as const, reason: null }, ...lastBatch.items.slice(1)] };
+    const later = templateValues({ ...tenantA, bar: { ...bar, kept: 1, lastBatch: { ...partly, since: ["Only Series B+ fintech in NYC"] } } }).system_context;
+    expect(later).toContain("they passed on 3 of the 4.\n- Kept: Senior PM · Coast\n");
+    expect(later).toContain(`What they've said in other chats since then:\n- "Only Series B+ fintech in NYC"`);
+
+    // A missed batch from before this week still asks, without a score of nothing.
+    const old = templateValues({ ...tenantA, bar: { kept: 0, judged: 0, days: 7, passes: [], lastBatch } }).system_context;
+    expect(old).toContain("missed their bar");
+    expect(old).not.toContain("they kept 0 of the 0");
   });
 
   it("keeps the setup instructions in view for the whole interview, not just its first message", () => {

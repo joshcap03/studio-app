@@ -48,9 +48,16 @@ export interface AgentTenantContext {
   agentFiles?: string[];
   /**
    * How the member's bar is holding up: what they kept of the results they judged lately, and
-   * what they passed on and why. Absent until they've judged something.
+   * what they passed on and why. `lastBatch` is the last card they judged, when they passed on
+   * most of it, with what they've said in other chats since. Absent until they've judged something.
    */
-  bar?: { kept: number; judged: number; days: number; passes: { title: string; reason: string | null }[] };
+  bar?: {
+    kept: number;
+    judged: number;
+    days: number;
+    passes: { title: string; reason: string | null }[];
+    lastBatch?: { judged: number; kept: number; items: { title: string; verdict: "keep" | "pass"; reason: string | null }[]; since: string[] };
+  };
   /** The member's project this conversation is in, if any. Its files arrive as attachments. */
   project?: { name: string; instructions: string; files: string[] } | null;
   /**
