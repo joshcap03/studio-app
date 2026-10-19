@@ -69,6 +69,8 @@ Do these in order (step 7, the background worker, can come later). `APP_URL` is 
   | `AGENT_LIVE_WORKSPACES` | `*` |
   | `LIMIT_RUNS_SERVICE_PER_DAY` | daily cap across all workspaces, e.g. `500` |
   | `LIMIT_RUNS_PER_MINUTE`, `LIMIT_RUNS_PER_WORKSPACE_PER_DAY`, `LIMIT_CONCURRENT_RUNS`, `LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY` | optional; defaults are in `.env.example` |
+  | `PREVIEW_FEATURE_EMAILS`, `PREVIEW_VOICE_EMAILS` | optional; sign-in emails that see preview features (Business Brain, `/why`, voice) |
+  | `VOICE_*`, `ELEVENLABS_*` | optional; voice calls, see docs/voice.md |
 
   Never add `SUPABASE_SECRET_KEY` here: only the background worker (step 7) has it, and
   `check:deploy-env` fails if the app does.
@@ -106,7 +108,8 @@ gitignored; still delete the pulled file when done.
 
 - [ ] Sign up account A. The confirmation email arrives from your SMTP sender, and the link
       lands on `APP_URL` (not localhost) and signs you in.
-- [ ] Create a workspace. No "Mock agent" label anywhere.
+- [ ] Create an agent from a template; its setup interview starts. No "Mock agent" label
+      anywhere.
 - [ ] Ask something simple; the reply streams and finishes.
 - [ ] In chat, ask the agent to use an app; connect it when prompted (Composio OAuth returns
       to the app). Ask for a change on that app: an approval card appears; approve it and
