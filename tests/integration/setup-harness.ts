@@ -110,7 +110,7 @@ export function carriesRankedBar(turns: Turn[], instructions: string): boolean {
 
 /**
  * The checklist sizes the agent reported, turn by turn, and the turn where the member confirmed
- * their bar (sent their ranking). A setup lists only what it knows: two steps to start, the rest
+ * their bar (sent their ranking). A setup lists only what it knows: three steps to start, the rest
  * once it understands their problem and bar.
  */
 export function checklistGrowth(turns: Turn[]): { first: number | null; early: string[]; barAt: number } {
@@ -126,15 +126,26 @@ export function checklistGrowth(turns: Turn[]): { first: number | null; early: s
   const barAt = [barDone, lastRanking, proposal].find((i) => i >= 0) ?? -1;
   const until = barAt === -1 ? plans.length : barAt;
   // Before the bar, only what getting to it needs: their problem, what a fair trial needs (e.g. a
-  // résumé), the trial, the bar itself, and the proposal it ends in. Anything else is later setup.
-  const known = /understand|after|problem|hard|résumé|resume|file|background|trial|success|bar\b|judg|propos/i;
+  // résumé), the trial, the bar itself, how to do it well, and the proposal it ends in. Anything else is later setup.
+  const known = /understand|after|problem|hard|résumé|resume|file|background|trial|success|bar\b|judg|how to do|do (?:it|this|the \w+) well|propos/i;
   const later = /\b(connect|apps?|tools?|stories|define the search|search settings|cadence|schedule|rhythm|when i work|chase day|your business)\b/i;
   const early = plans
     .slice(0, until)
     .flatMap((p) => p ?? [])
     .map((s) => s.text)
-    .filter((text, i, all) => (later.test(text) || !known.test(text)) && all.indexOf(text) === i);
+    // (Connecting an app for the trial run is part of getting to the bar.)
+    .filter((text, i, all) => ((later.test(text) && !/\btrial\b/i.test(text)) || !known.test(text)) && all.indexOf(text) === i);
   return { first: plans.find((p) => p !== null)?.length ?? null, early, barAt };
+}
+
+/** The member has sent their ranked bar, so what comes next is built on it. */
+export function barSent(turns: Turn[]): boolean {
+  return turns.some((t) => /most important first\)?:/i.test(t.message));
+}
+
+/** A plan written out in the agent's reply: three or more numbered steps. */
+export function writesPlan(reply: string): boolean {
+  return (reply.match(/^\s*(?:\*\*)?\d+[.)]\s+/gm) ?? []).length >= 3;
 }
 
 /** Median and 90th percentile of how long turns took, in seconds, for the eval log. */

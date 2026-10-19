@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DISCOVERY_STEP, SUCCESS_STEP, TEMPLATES, setupSteps } from "@/lib/templates";
+import { DISCOVERY_STEP, PLAN_STEP, SUCCESS_STEP, TEMPLATES, setupSteps } from "@/lib/templates";
 import { CATALOG } from "./catalog";
 import { SETUP_SKILL_ID, setupSkill } from "./setup";
 
@@ -26,7 +26,13 @@ describe("setupSkill", () => {
       expect(skill).toContain(`${(template.setup.before?.length ?? 0) + 2}. ${SUCCESS_STEP.title}: `);
       for (const s of template.setup.before ?? []) expect(s.goal).not.toMatch(/propose_agent|update_plan/);
       expect(skill).toContain(template.setup.successExample.crisp);
-      expect(skill).not.toMatch(/\{(vague|crisp|usual)\}/);
+      expect(skill).not.toMatch(/\{(vague|crisp|usual|craft)\}/);
+      // After the bar, it writes out its plan with what it knows of doing the job well, and asks
+      // for their advice before it proposes anything.
+      expect(skill.indexOf(`. ${PLAN_STEP.title}: `)).toBeGreaterThan(skill.indexOf(`. ${SUCCESS_STEP.title}: `));
+      expect(skill).toContain(template.setup.craft);
+      expect(skill).toContain(`a "How I'll do it" section`);
+      expect(skill).toMatch(/three steps:[^\n]*how to do it well/);
       // Nothing hands them a stock menu of jobs: the agent designs its forms from what it learns.
       expect(skill).toContain("No form in the first reply");
       // On a call the voice has greeted them already, so the first reply just asks.

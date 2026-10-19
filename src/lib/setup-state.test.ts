@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { DISCOVERY_STEP, SUCCESS_STEP, setupSteps, templateById } from "@/lib/templates";
+import { DISCOVERY_STEP, PLAN_STEP, SUCCESS_STEP, setupSteps, templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import { summarizeSetup, toTheBar } from "./setup-state";
 
 const tenant = (role: "owner" | "member") => ({ workspace: { id: "w", name: "Acme", role }, userId: "u" }) as unknown as Tenant;
 
 describe("summarizeSetup", () => {
-  it("shows only the two opening steps before the agent has written a checklist, never the whole template", () => {
+  it("shows only the three steps every setup is built on before the agent has written a checklist, never the whole template", () => {
     const summary = summarizeSetup(tenant("owner"), null, "job-search")!;
-    expect(summary).toMatchObject({ status: "not_started", conversationId: null, done: 0, total: 2 });
+    expect(summary).toMatchObject({ status: "not_started", conversationId: null, done: 0, total: 3 });
     expect(summary.plan).toEqual([
       { text: DISCOVERY_STEP.title, status: "todo" },
       { text: SUCCESS_STEP.title, status: "todo" },
+      { text: PLAN_STEP.title, status: "todo" },
     ]);
-    expect(setupSteps(templateById("job-search")!).length).toBeGreaterThan(2);
+    expect(setupSteps(templateById("job-search")!).length).toBeGreaterThan(3);
   });
 
   it("shows the checklist the agent reported, with what each finished step gave it", () => {
@@ -41,11 +42,13 @@ describe("summarizeSetup", () => {
     // Once the bar is confirmed, the rest of the checklist shows.
     const confirmed = legacy.map((s, i) => (i <= 2 ? { ...s, status: "done" as const } : s));
     expect(toTheBar(confirmed)).toEqual(confirmed);
-    // A trial still to come, or anything already under way, stays on.
-    expect(toTheBar([legacy[0], legacy[2], { text: "Trial run on your invoices", status: "todo" }, { text: "Your apps", status: "doing" }]).map((s) => s.text)).toEqual([
+    // A trial still to come, how to do it well, or anything already under way, stays on.
+    const plan = { text: PLAN_STEP.title, status: "todo" as const };
+    expect(toTheBar([legacy[0], legacy[2], { text: "Trial run on your invoices", status: "todo" }, plan, { text: "Your apps", status: "doing" }]).map((s) => s.text)).toEqual([
       legacy[0].text,
       legacy[2].text,
       "Trial run on your invoices",
+      PLAN_STEP.title,
       "Your apps",
     ]);
   });

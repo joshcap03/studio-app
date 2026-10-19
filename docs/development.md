@@ -94,7 +94,8 @@ ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/com
   overwriting anything, gives the member its tasks (paused), and suggests apps (never
   connected automatically). Every template has a setup interview that the built-in setup
   skill (`src/lib/skills/setup.ts`) runs: discovery, defining success, gathering context, a
-  trial run the member judges, and finally a `propose_agent` card the owner applies. Its
+  trial run the member judges, the agent's plan for the job run by the member for their advice,
+  and finally a `propose_agent` card the owner applies. Its
   progress is `workspace_settings.setup` (`src/lib/setup-state.ts`).
 - **Agent-rendered UI.** Cards are reusable gateway tools any skill can call, never UI for
   one flow: `ask_user` (choices, ranking, scale, keep/pass verdicts, "Something else"),

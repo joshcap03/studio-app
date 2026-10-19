@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { buildUiBlock, scheduleFrom } from "@/lib/chat/ui";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { templateById } from "@/lib/templates";
-import { carriesRankedBar, checklistGrowth, describeTurn, liveFlow, records, setupSession, type ScriptedMember, type Turn } from "./setup-harness";
+import { barSent, carriesRankedBar, checklistGrowth, describeTurn, liveFlow, records, setupSession, writesPlan, type ScriptedMember, type Turn } from "./setup-harness";
 
 // Eval of the Job search setup interview against a live flow with a real model (LANGFLOW_TEST_*
 // env; see setup-harness.ts). A scripted job seeker answers whatever the agent shows. The checks
@@ -33,6 +33,20 @@ const FROM_RESUME = /design|brightlane|quillfield|dashboard|analytics|saas/i;
 /** The agent giving its own read and recommendation, as discovery ends. */
 const ADVICE = /\b(recommend|suggest|i'd start|help (you )?most|where i (can|could) help|here's my read|i think i (can|could)|i'd leave)\b/i;
 
+/** The turns so far, for the seeker to tell a plan from discovery's advice. */
+let seen: Turn[] = [];
+/** The agent's plan for the search, written out once their bar is in. */
+const isPlan = (reply: string) => barSent(seen) && writesPlan(reply);
+/** Knowing where top roles surface, beyond the big job boards. */
+const CRAFT = /career pages?|greenhouse|lever|ashby|target (compan|list)|warm|referr|intro/i;
+
+/** What the seeker knows that the agent doesn't, given once when it runs its plan by them. */
+const PLAN_ADVICE = "Looks good. Add Figma, Linear, and Notion to the target list, and my best leads have always come through old Brightlane colleagues, so look for those first.";
+const FROM_PLAN_ADVICE = /figma|linear|notion|brightlane colleague|former colleague|old colleague/i;
+/** Who they'd ask for a warm intro, when the plan needs names. Made up. */
+const COLLEAGUES = "Priya Example at Figma and Tom Example at Linear, both from my Brightlane days.";
+let advised = false;
+
 const SEEKER: ScriptedMember = {
   templateId: "job-search",
   agentName: "Job search",
@@ -55,7 +69,9 @@ const SEEKER: ScriptedMember = {
   ],
   passReason: "Agency, not in-house",
   text: (label) =>
-    /\bpay\b|salary|compensation/i.test(label)
+    /colleague|contact|people you know/i.test(label)
+      ? COLLEAGUES
+      : /\bpay\b|salary|compensation/i.test(label)
       ? "$150k"
       : /location|where|\bcit(y|ies)\b/i.test(label)
         ? "Remote, US"
@@ -63,6 +79,8 @@ const SEEKER: ScriptedMember = {
           ? "Crypto, agencies"
           : undefined,
   file: { name: RESUME_NAME, mimeType: "text/plain", content: RESUME },
+  reply: (text) =>
+    !advised && isPlan(text) ? ((advised = true), PLAN_ADVICE) : advised && /colleagues?\b[^?]*\?/i.test(text) ? COLLEAGUES : undefined,
 };
 
 const FROM_PASS = /agenc/i;
@@ -73,6 +91,7 @@ describe.skipIf(!liveFlow)("Job search setup interview against a live flow", () 
   const session = setupSession(SEEKER);
   const { turns, answer } = session;
   const t = session.tenant;
+  seen = turns;
 
   afterAll(() => session.writeLog("job search setup"));
 
@@ -127,6 +146,17 @@ describe.skipIf(!liveFlow)("Job search setup interview against a live flow", () 
     expect(search === -1 || search > turns.indexOf(last), "asked for search details before the bar").toBe(true);
   });
 
+  it("writes out its plan for finding top roles and asks for the member's advice before proposing", { timeout: 900_000 }, async () => {
+    let last = turns[turns.length - 1];
+    for (let i = 0; i < 5 && !isPlan(last.reply) && !last.proposal; i++) last = await answer(last);
+    expect(isPlan(last.reply), describeTurn(last)).toBe(true);
+    // A plan in its own words, run by them as a question, not a form or a finished proposal.
+    expect(last.form, describeTurn(last)).toBeNull();
+    expect(last.proposal, describeTurn(last)).toBeNull();
+    expect(last.reply, describeTurn(last)).toContain("?");
+    expect(last.reply, "the plan doesn't show how top roles are found").toMatch(CRAFT);
+  });
+
   it("saves the stories the member sends to the stories tracker", { timeout: 900_000 }, async (ctx) => {
     let last = turns[turns.length - 1];
     let saved: Record<string, unknown>[] = [];
@@ -151,7 +181,7 @@ describe.skipIf(!liveFlow)("Job search setup interview against a live flow", () 
 
   it("ends with a proposal that switches on the template's tasks with valid schedules", { timeout: 900_000 }, async () => {
     let last = turns[turns.length - 1];
-    for (let i = 0; i < 6 && !last.proposal; i++) last = await answer(last);
+    for (let i = 0; i < 10 && !last.proposal; i++) last = await answer(last);
     expect(last.proposal, describeTurn(last)).not.toBeNull();
     // What the app reads from it (the validated card), and what the agent sent.
     const tasks = last.proposal!.tasks;
@@ -175,14 +205,17 @@ describe.skipIf(!liveFlow)("Job search setup interview against a live flow", () 
     expect(instructions, "the proposal doesn't say what success means").toMatch(/what success means/i);
     expect(FROM_BAR.test(instructions) || carriesRankedBar(turns, instructions), `the proposal dropped the member's bar: ${instructions.slice(0, 400)}`).toBe(true);
     expect(instructions, "the bar didn't learn from what they passed on in the trial run").toMatch(FROM_PASS);
+    // And on the plan they agreed, with their advice in it.
+    expect(instructions, "the proposal has no plan").toMatch(/how i'll do it/i);
+    expect(instructions, "the plan dropped the member's advice").toMatch(FROM_PLAN_ADVICE);
     // Nothing is applied yet, so the agent mustn't say it is.
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
   });
 
-  it("lists only what it knows: two steps to start, and nothing past the bar until it's confirmed", () => {
+  it("lists only what it knows: three steps to start, and nothing past the bar until it's confirmed", () => {
     const growth = checklistGrowth(turns);
     expect(growth.first, "no checklist on the first reply").not.toBeNull();
-    expect(growth.first!, "the first checklist laid out the whole setup").toBeLessThanOrEqual(2);
+    expect(growth.first!, "the first checklist laid out the whole setup").toBeLessThanOrEqual(3);
     expect(growth.early, "the checklist listed later setup before the bar was confirmed").toEqual([]);
   });
 

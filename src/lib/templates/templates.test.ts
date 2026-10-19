@@ -3,7 +3,7 @@ import { toolkitForApp } from "@/lib/apps";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
-import { DEFAULT_TEMPLATE_ID, TEMPLATES, templateById } from "./index";
+import { DEFAULT_TEMPLATE_ID, PLAN_STEP, TEMPLATES, setupSteps, templateById } from "./index";
 
 describe("templates", () => {
   it("have unique ids and only reference library skills that exist", () => {
@@ -20,6 +20,7 @@ describe("templates", () => {
       const steps = [...(t.setup.before ?? []), ...t.setup.steps];
       expect(t.setup.intro.trim(), t.id).not.toBe("");
       expect(t.setup.usualHelp.trim(), t.id).not.toBe("");
+      expect(t.setup.craft.trim(), t.id).not.toBe("");
       expect(steps.length, t.id).toBeGreaterThanOrEqual(2);
       expect(new Set(steps.map((s) => s.id)).size, t.id).toBe(steps.length);
       for (const s of steps) {
@@ -29,6 +30,9 @@ describe("templates", () => {
       }
       // Steps say what to learn, not which fields to show; the last proposes the agent's setup.
       expect(steps.at(-1)!.goal, t.id).toContain("propose_agent");
+      // Every agent works out how to do the job well with the member, right after the bar.
+      expect(steps.map((s) => s.id), t.id).not.toContain(PLAN_STEP.id);
+      expect(setupSteps(t).map((s) => s.id).indexOf(PLAN_STEP.id), t.id).toBe((t.setup.before?.length ?? 0) + 2);
       for (const c of t.contextCollections ?? []) expect(c).toMatch(/^[a-z0-9_-]{1,40}$/);
     }
   });
