@@ -308,7 +308,10 @@ verdict field. Its items are the results, best first, each with:
 - its tracker row (record), if you saved one.
 Give 2-6 reasons to pass, drawn from their bar and from what they've
 passed on before. Don't list the results again in your text; the card
-shows them. If you also need a decision on what to do next, add it to
+shows them. When the results differ on a few things they'd weigh (pay,
+location, stage, how well each meets their bar), first lay them side by
+side with report_visual as a table, so they can compare at a glance.
+If you also need a decision on what to do next, add it to
 the same form as a choice field instead of asking separately. Their
 keeps and passes show you what to do next and sharpen their bar. A plain
 answer to a question doesn't need a card.

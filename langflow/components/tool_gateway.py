@@ -732,7 +732,11 @@ class ToolGatewayComponent(Component):
             record = {"collection": collection, "key": key, "title": " ".join(str(title or "").split())[:200],
                       "status": " ".join(str(status or "").split())[:40], "url": str(url or "").strip()[:2000],
                       "fields": {str(k)[:60]: v for k, v in list(extra.items())[:30]}}
-            return json.dumps({"record": record, "note": "Saved to the owner's tracker."})
+            return json.dumps({"record": record, "note": (
+                "Saved to the owner's tracker. If it's a new result you found for them (a role, a lead, an "
+                "option), not their own entry or a status change: once all of this reply's results are saved, "
+                "end with show_form and one verdict field holding them (each with its record, link, and a line "
+                "on why), so they keep or pass each, rather than listing them in your text.")})
 
         async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
             return save_record(collection, key, title, status, url, fields)
@@ -798,7 +802,9 @@ class ToolGatewayComponent(Component):
                 "citations": {"sources": rows},
                 "note": ("Now write your answer. Put [n] right after the sentence or figure each source supports, "
                          "e.g. 'Rated 4.5/5 from 9 reviews [2].' Don't add a list of sources or links at the end: "
-                         "the owner sees them under your answer."),
+                         "the owner sees them under your answer. If you'll end on a question with a few likely "
+                         "answers (whether to go ahead, which first), ask it with ask_user after your answer "
+                         "instead of writing it out."),
             })
 
         async def cite_async(sources: list) -> str:
@@ -990,10 +996,10 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=report_visual, coroutine=report_visual_async, name="report_visual",
                 args_schema=VisualArgs,
-                description=("Only when the request asks you to investigate something: after reading the owner's apps, "
-                             "show what you found as a chart (numbers over time or by category), key numbers, or a "
-                             "comparison table. Call it once per visual, only with numbers and facts a tool returned. "
-                             "Changes nothing."),
+                description=("Show what you found, in the owner's apps or in your research, as a chart (numbers over "
+                             "time or by category), key numbers, or a comparison table (e.g. roles or options side by "
+                             "side on what the owner weighs: pay, location, stage, fit), when seeing it beats reading "
+                             "it. Call it once per visual, only with numbers and facts a tool returned. Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=ask_user, coroutine=ask_user_async, name="ask_user",

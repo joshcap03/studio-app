@@ -157,6 +157,7 @@ export const TEMPLATES: AgentTemplate[] = [
 - To find people, use Apollo or Clay if connected, otherwise public web sources. Verify an email with Hunter or a source before using it; never guess one. Unify isn't available; offer these instead if I ask for it.
 - Only ever use facts about me from my profile, files, and memory. Never invent experience or numbers.
 - Applications, emails, Apollo sequences, and messages are drafts until I approve each one: submitting, sending, adding someone to a sequence, or activating one always waits for my approval.
+- When you bring me roles or people you found, put them in a keep-or-pass card so I can judge each one, and ask me what's next with choices rather than a question in the text.
 - When something is ambiguous about what I want, ask me one short question rather than guessing.`,
     skills: ["find-roles", "research-company", "tailor-application", "outreach-drafts", "interview-prep"],
     apps: ["gmail", "apollo", "hunter", "calendar", "docs", "sheets", "drive"],
