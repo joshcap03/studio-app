@@ -7,6 +7,7 @@ import { TurnError, type TurnDeps, type TurnRequest } from "@/lib/chat/turn";
 import { getCompanion, refreshCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
+import { fileArtifact } from "@/lib/library";
 import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
 import { resolveMergeProposal } from "@/lib/memory-merge";
 import { projectForRun } from "@/lib/projects";
@@ -136,6 +137,7 @@ export async function buildTurnDeps(
     // Plans save only in a task's conversation or the agent's setup interview (for everyone).
     savePlan: (plan: unknown) => savePlanFromAgent(tenant, conversationId, plan),
     saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source),
+    fileArtifact: (artifact, source) => fileArtifact(tenant, artifact, { conversationId, messageId: source.messageId }),
     onFinished: finished,
     shouldStop,
   };

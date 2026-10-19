@@ -78,6 +78,25 @@ export interface Artifact {
   url?: string;
 }
 
+/** Items one member's Library holds per agent; the agent_artifacts migration checks it too. */
+export const MAX_LIBRARY_ITEMS = 500;
+
+/** Something filed in the member's Library: an artifact the agent made, or a link they added. */
+export interface LibraryItem {
+  id: string;
+  kind: ArtifactKind;
+  title: string;
+  url: string;
+  description: string | null;
+  source: string | null;
+  addedBy: "agent" | "member";
+  pinned: boolean;
+  /** The chat it last came from, if that chat still exists. */
+  conversationId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /**
  * An action the agent asked permission for, as reported by the agent backend. It runs only
  * if the member approves it.

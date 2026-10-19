@@ -3,6 +3,7 @@ import { getCompanion } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
+import { libraryContextFor } from "@/lib/library";
 import { recall } from "@/lib/memory";
 import { taskContextFor } from "@/lib/tasks/agent";
 import { listRecords } from "@/lib/tasks/records";
@@ -152,7 +153,7 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
  * being answered, left out of the recent chats a guardrail run sees.
  */
 export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string, modality?: Modality): Promise<AgentTenantContext> {
-  const [settings, memories, guardrail, tasks, bar, self] = await Promise.all([
+  const [settings, memories, guardrail, tasks, bar, self, library] = await Promise.all([
     getSettings(tenant),
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
     guardrailForRun(tenant, conversationId),
@@ -163,6 +164,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     }),
     barFor(tenant, conversationId),
     selfFor(tenant),
+    libraryContextFor(tenant),
   ]);
   return {
     workspaceId: tenant.workspace.id,
@@ -184,6 +186,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
           }
         : null,
     notes: await notesFor(tenant, settings.templateId),
+    ...(library?.length ? { library } : {}),
     bar,
     ...(modality && modality !== "text" ? { modality } : {}),
     ...(self ? { self } : {}),

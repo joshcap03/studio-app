@@ -14,7 +14,7 @@ import type { Artifact, ArtifactKind } from "@/lib/types";
 // Rendered only from structured artifact metadata sent by the backend. New kinds need one
 // entry here; unknown kinds fall back to a generic file.
 
-const KINDS: Record<ArtifactKind, { icon: LucideIcon; tint: string; label: string }> = {
+export const ARTIFACT_KIND_STYLE: Record<ArtifactKind, { icon: LucideIcon; tint: string; label: string }> = {
   spreadsheet: { icon: FileSpreadsheet, tint: "text-[#2f7a4c] bg-[#2f7a4c]/10", label: "Spreadsheet" },
   document: { icon: FileText, tint: "text-[#3a64a8] bg-[#3a64a8]/10", label: "Document" },
   presentation: { icon: Presentation, tint: "text-[#b0702a] bg-[#b0702a]/10", label: "Presentation" },
@@ -26,7 +26,7 @@ const KINDS: Record<ArtifactKind, { icon: LucideIcon; tint: string; label: strin
 };
 
 export function ArtifactCard({ artifact }: { artifact: Artifact }) {
-  const kind = KINDS[artifact.kind] ?? KINDS.file;
+  const kind = ARTIFACT_KIND_STYLE[artifact.kind] ?? ARTIFACT_KIND_STYLE.file;
   const Icon = kind.icon;
   const meta = [artifact.source ?? kind.label, artifact.description].filter(Boolean).join(" · ");
 

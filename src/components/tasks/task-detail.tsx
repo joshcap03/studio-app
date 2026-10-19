@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Check, ExternalLink, MessageSquare, Pause, Play, Plus, Trash2, Zap } from "lucide-react";
+import { ArrowLeft, Check, MessageSquare, Pause, Play, Plus, Trash2, Zap } from "lucide-react";
 import { AlertDialog, Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/client/api";
@@ -13,7 +13,6 @@ import {
   draftFrom,
   errorText,
   field,
-  formatDay,
   formatWhen,
   iconButton,
   label,
@@ -30,6 +29,7 @@ import {
   useNeedsYou,
 } from "./shared";
 import { TaskSheet } from "./tasks-view";
+import { Tracker } from "./tracker";
 
 // One task: its plan, settings, tracker, and runs, with controls to run, pause, or delete it.
 
@@ -257,7 +257,7 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
             </dl>
           </section>
 
-          <Tracker records={records} onChange={setRecords} onError={setNotice} />
+          <Tracker records={records} onChange={setRecords} onError={setNotice} empty="Nothing tracked yet. I'll add what I find here as I work." />
 
           <section className={card} aria-labelledby="task-runs">
             <h2 id="task-runs" className="text-[13.5px] font-medium text-fg">
@@ -514,136 +514,5 @@ function TaskEditor({ task, skills, onSave }: { task: AgentTask; skills: Workspa
         </div>
       </form>
     </TaskSheet>
-  );
-}
-
-function collectionName(collection: string): string {
-  const words = collection.replace(/[-_]+/g, " ").trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-function Tracker({
-  records,
-  onChange,
-  onError,
-}: {
-  records: AgentRecord[] | null;
-  onChange: (records: AgentRecord[]) => void;
-  onError: (message: string | null) => void;
-}) {
-  if (!records || records.length === 0) {
-    return (
-      <section className={card} aria-labelledby="task-tracker">
-        <h2 id="task-tracker" className="text-[13.5px] font-medium text-fg">
-          Tracker
-        </h2>
-        <p className="mt-2 text-[13px] text-fg-3">{records ? "Nothing tracked yet. I'll add what I find here as I work." : "Loading…"}</p>
-      </section>
-    );
-  }
-
-  const groups = new Map<string, AgentRecord[]>();
-  for (const r of records) groups.set(r.collection, [...(groups.get(r.collection) ?? []), r]);
-
-  async function setStatus(record: AgentRecord, status: string | null) {
-    onError(null);
-    try {
-      const { record: saved } = await api.updateRecord(record.id, { status });
-      onChange(records!.map((r) => (r.id === saved.id ? saved : r)));
-    } catch (error) {
-      onError(errorText(error));
-    }
-  }
-
-  async function remove(record: AgentRecord) {
-    if (!window.confirm(`Remove "${record.title || record.key}" from the tracker?`)) return;
-    onError(null);
-    try {
-      await api.deleteRecord(record.id);
-      onChange(records!.filter((r) => r.id !== record.id));
-    } catch (error) {
-      onError(errorText(error));
-    }
-  }
-
-  return (
-    <section className={card} aria-labelledby="task-tracker">
-      <h2 id="task-tracker" className="text-[13.5px] font-medium text-fg">
-        Tracker
-      </h2>
-      {[...groups].map(([collection, rows]) => (
-        <div key={collection} className="mt-3">
-          <h3 className="text-[12.5px] font-medium text-fg-3">
-            {collectionName(collection)} <span className="font-normal text-fg-4">· {rows.length}</span>
-          </h3>
-          <div className="-mx-1 mt-1">
-            <table className="w-full text-left text-[13px]">
-              <thead className="sr-only">
-                <tr>
-                  <th>Title</th>
-                  <th>Status</th>
-                  <th className="max-sm:hidden">Updated</th>
-                  <th>Remove</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td className="w-full max-w-0 px-1 py-1.5">
-                      {r.url ? (
-                        <a href={r.url} target="_blank" rel="noopener noreferrer" className="group/link inline-flex max-w-full items-center gap-1 text-fg hover:underline">
-                          <span className="truncate">{r.title || r.key}</span>
-                          <ExternalLink size={12} className="shrink-0 text-fg-4" aria-hidden="true" />
-                        </a>
-                      ) : (
-                        <span className="block truncate text-fg">{r.title || r.key}</span>
-                      )}
-                    </td>
-                    <td className="px-1 py-1.5">
-                      <RecordStatus record={r} onSave={(status) => setStatus(r, status)} />
-                    </td>
-                    <td className="px-1 py-1.5 text-right text-[12.5px] whitespace-nowrap text-fg-3 max-sm:hidden">{formatDay(r.updatedAt)}</td>
-                    <td className="px-0 py-1.5">
-                      <button type="button" aria-label={`Remove ${r.title || r.key}`} onClick={() => remove(r)} className={`${iconButton} hover:text-danger`}>
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function RecordStatus({ record, onSave }: { record: AgentRecord; onSave: (status: string | null) => void }) {
-  const [value, setValue] = useState(record.status ?? "");
-  useEffect(() => setValue(record.status ?? ""), [record.status]);
-
-  function commit() {
-    const next = value.trim() || null;
-    if (next !== record.status) onSave(next);
-  }
-
-  return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-        if (e.key === "Escape") {
-          setValue(record.status ?? "");
-          e.currentTarget.blur();
-        }
-      }}
-      maxLength={40}
-      placeholder="No status"
-      aria-label={`Status of ${record.title || record.key}`}
-      className="h-8 w-[6.5rem] rounded-lg border border-transparent bg-subtle px-2 text-[12.5px] sm:w-[9.5rem] text-fg-2 outline-none transition-colors placeholder:text-fg-4 hover:border-line focus:border-line-strong focus:bg-surface focus-visible:outline-none"
-    />
   );
 }

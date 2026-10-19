@@ -15,7 +15,7 @@ import { voiceStatus } from "@/lib/voice";
 import { personaFor } from "@/lib/voice/persona";
 import { getSettings } from "@/lib/workspace";
 
-// One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", and "/tasks[/<task id>]". After the first load the browser
+// One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", "/tasks[/<task id>]", and "/library". After the first load the browser
 // switches conversations in place, without a server round trip per navigation.
 
 export const dynamic = "force-dynamic";
@@ -32,7 +32,9 @@ export default async function WorkspacePage({
   const { slug = [] } = await params;
   let conversationId: string | null = null;
   let projectId: string | null = null;
-  if (slug[0] === "tasks") {
+  if (slug[0] === "library") {
+    if (slug.length > 1) notFound();
+  } else if (slug[0] === "tasks") {
     // The task itself loads in the browser, like a project opened from the sidebar.
     if (slug.length > 2 || (slug.length === 2 && !z.uuid().safeParse(slug[1]).success)) notFound();
   } else if (slug.length > 0) {

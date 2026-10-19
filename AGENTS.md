@@ -88,6 +88,10 @@ raw/technical text.
   (`accounts.composio_user_id`, one per person; `workspace_members.composio_user_id` is legacy).
 - `src/lib/agent-files.ts`: a member's own files for one agent (a résumé), sent with every run of
   that agent ahead of project files (`runFiles` caps them). `claimAsAgentFile` moves an unsent upload there.
+- `src/lib/library.ts`: the member's Library for one agent (`agent_artifacts`): docs the agent made,
+  filed from its tools' own artifact results as each reply streams (one row per link), and links the
+  member pastes. Each run's context lists it so the agent reopens what it made. The page
+  (`src/components/library/`) also shows every tracker collection and the member's agent files.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).

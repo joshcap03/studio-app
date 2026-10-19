@@ -738,6 +738,34 @@ describe("edits, files, and memory suggestions", () => {
     expect(asked.origin).toEqual({ kind: "task", taskId: "t1", title: "Job hunt", runId: null });
   });
 
+  it("files the reply's linked artifacts in the Library, once each and capped per run", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const filed: [string, { messageId: string }][] = [];
+    const adapter = scripted([
+      { type: "artifact", artifact: { id: "doc", kind: "document", title: "Cover letter", url: "https://docs.google.com/document/d/1" } },
+      { type: "artifact", artifact: { id: "doc", kind: "document", title: "Cover letter", url: "https://docs.google.com/document/d/1" } },
+      // No link: nothing to open later, so it stays on the reply only.
+      { type: "artifact", artifact: { id: "local", kind: "file", title: "Notes" } },
+      ...Array.from({ length: 12 }, (_, i) => ({
+        type: "artifact" as const,
+        artifact: { id: `s${i}`, kind: "spreadsheet" as const, title: `Sheet ${i}`, url: `https://docs.google.com/spreadsheets/d/${i}` },
+      })),
+      { type: "message", text: "Done." },
+    ]);
+    await collect(
+      startTurn(
+        { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, fileArtifact: async (a, source) => void filed.push([a.title, source]) },
+        { conversationId: id, kind: "send", text: "Write it" },
+      ),
+    );
+    const [, reply] = await store.listMessages(id);
+    expect(reply.artifacts).toHaveLength(14);
+    expect(filed).toHaveLength(10);
+    expect(filed[0]).toEqual(["Cover letter", { messageId: reply.id }]);
+    expect(filed.map(([title]) => title)).not.toContain("Notes");
+  });
+
   it("passes the agent's run report to onFinished, ignoring malformed ones", async () => {
     const reports: unknown[] = [];
     for (const report of [{ outcome: "nothing_new", summary: "  No   replies " }, { outcome: "bogus" }]) {

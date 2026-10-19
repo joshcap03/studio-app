@@ -47,6 +47,11 @@ export interface AgentTenantContext {
   /** Names of the member's files for this agent; they arrive as attachments on every run. */
   agentFiles?: string[];
   /**
+   * The member's Library: docs the agent made for them and links they filed (pinned first, then
+   * most recent), so it reopens and updates them instead of making new ones.
+   */
+  library?: { title: string; kind: string; url: string; pinned: boolean }[];
+  /**
    * How the member's bar is holding up: what they kept of the results they judged lately, and
    * what they passed on and why. `lastBatch` is the last card they judged, when they passed on
    * most of it, with what they've said in other chats since. Absent until they've judged something.
