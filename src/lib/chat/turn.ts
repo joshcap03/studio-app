@@ -114,7 +114,7 @@ export interface TurnDeps {
    * proposals are dropped.
    */
   resolveMerge?: (raw: unknown) => Promise<UiBlock | null>;
-  /** Whether this member gets investigation timelines and visuals; when false they're dropped. */
+  /** Whether this member gets investigation timelines; when false they're dropped (visuals are kept). */
   timelines?: boolean;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
@@ -544,7 +544,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               break;
             }
             case "visual": {
-              if (!deps.timelines) break;
+              // Unlike a why-timeline, a chart or table is for every member: replies show it inline.
               const built = buildVisual(event.visual);
               if (built) {
                 timeline = withVisual(timeline, built);
