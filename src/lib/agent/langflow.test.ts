@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, separateAroundTools, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -631,6 +631,46 @@ describe("Langflow streaming", () => {
       .map((e) => e.text)
       .join("");
     expect(text).toBe(answer);
+  });
+
+  it("separates the parts of a reply around a card in the recorded shape, and only where a call fell", () => {
+    const before = "I'll bring you a few options at a time and leave the choosing to you.";
+    const after = "You can keep the name Wren or pick your own.";
+    const propose = { type: "tool_use", name: "propose_agent", tool_input: { summary: "s", identity: { name: "Wren" } }, output: "{}", error: null };
+    // Langflow keeps each part, the call between them, and the whole text again at the end.
+    const message = bot(before + after, [{ type: "text", text: before }, propose, { type: "text", text: after }, { type: "text", text: before + after }]);
+    expect(separateAroundTools(before + after, message)).toBe(`${before}\n\n${after}`);
+    // No call between two parts: left as written.
+    expect(separateAroundTools("One.Two.", bot("One.Two.", [{ type: "text", text: "One." }, { type: "text", text: "Two." }]))).toBe("One.Two.");
+    // Parts that aren't in the text as joined (it was edited, or shaped otherwise): left alone.
+    expect(separateAroundTools("Something else.", message)).toBe("Something else.");
+  });
+
+  it("shows a reply and the line after its card apart, streamed or not, with opening lines still taken out", async () => {
+    const intro = "Let me look.";
+    const before = "Found two roles that fit.";
+    const after = "Keep the ones you like.";
+    const search = { type: "tool_use", name: "search", tool_input: {}, output: { results: [] }, error: null };
+    const form = { type: "tool_use", name: "show_form", tool_input: { title: "Roles", fields: [] }, output: "{}", error: null };
+    const parts = [{ type: "text", text: intro }, search, { type: "text", text: before }, form, { type: "text", text: after }];
+    const whole = { ...base, stream: false };
+    const { events } = await run(whole, streamResponse([frame("add_message", bot(intro + before + after, parts)), frame("end", { build_duration: 1 })]));
+    expect(events.filter((e) => e.type === "message").at(-1)).toEqual({ type: "message", text: `${before}\n\n${after}` });
+
+    const streamed = await run(
+      base,
+      streamResponse([
+        frame("token", { chunk: before }),
+        frame("add_message", bot(before, [{ type: "text", text: before }, form])),
+        frame("token", { chunk: after }),
+        frame("end", end(before + after)),
+      ]),
+    );
+    const text = streamed.events
+      .filter((e): e is Extract<AgentEvent, { type: "text-delta" }> => e.type === "text-delta")
+      .map((e) => e.text)
+      .join("");
+    expect(text).toBe(`${before}\n\n${after}`);
   });
 
   it("finds opening lines only before work, for every reporting tool and in any shape", () => {

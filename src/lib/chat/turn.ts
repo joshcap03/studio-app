@@ -8,6 +8,7 @@ import { buildQuestions } from "./questions";
 import { buildUiBlock, isMergeRequest } from "./ui";
 import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
+import { seamBetween } from "./seam";
 import { buildVisual, withVisual } from "./visuals";
 import {
   ARTIFACT_KINDS,
@@ -402,6 +403,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       };
 
       let content = assistant.content;
+      // A run resumed after an approval carries on the same reply: its first text is a new part.
+      let resumedSeam = Boolean(continued && content);
       const activity: ActivityStep[] = [...assistant.activity];
       const artifacts: Artifact[] = [...assistant.artifacts];
       const approvals: Approval[] = [...(assistant.approvals ?? [])];
@@ -468,10 +471,13 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               // Best effort: a reply without one just can't be linked to its trace.
               await store.setTrace(assistant.id, event.traceId.slice(0, 100)).catch((e) => console.error("[turn] couldn't save the trace id", e));
               break;
-            case "text-delta":
-              content += event.text;
-              send({ type: "text", delta: event.text });
+            case "text-delta": {
+              const seam = resumedSeam ? seamBetween(content, event.text) : "";
+              if (event.text) resumedSeam = false;
+              content += seam + event.text;
+              send({ type: "text", delta: seam + event.text });
               break;
+            }
             case "message":
               content = event.text;
               send({ type: "text-replace", text: event.text });
