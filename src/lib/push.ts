@@ -62,7 +62,8 @@ export function excerpt(markdown: string, max = EXCERPT): string {
 /**
  * What to tell the member about a run that ended while they weren't watching, or null when
  * there's nothing to say (they stopped it themselves). `from` is the agent's own name, once it
- * has one, so a member with several agents can tell which one it is.
+ * has one (with voice, the name its calls go by), so a member with several agents can tell
+ * which one it is.
  */
 export function notificationFor(
   message: ChatMessage,

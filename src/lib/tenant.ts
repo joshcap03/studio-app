@@ -1,10 +1,11 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
+import { isCrossSite, isSameOrigin } from "@/lib/same-origin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { resolveTenant, sessionFor, type Session, type Tenant } from "@/lib/tenant-core";
 
-export { resolveTenant, sessionFor, type Session, type Tenant };
+export { isSameOrigin, resolveTenant, sessionFor, type Session, type Tenant };
 
 // Identity and tenancy are derived only from the authenticated session. The active
 // workspace is a preference cookie, honored only if the user is actually a member of it
@@ -36,9 +37,16 @@ export function jsonError(status: number, message: string, code?: string): NextR
 
 type Authorized<T> = { ok: true; value: T } | { ok: false; response: NextResponse };
 
+/**
+ * `writes`: a GET that changes something anyway (it charges voice time, say). A session cookie
+ * rides along on another site's link or popup, so the browser's word on where it came from counts.
+ */
+type Options = { writes?: boolean };
+
 /** Authenticates an API request and rejects cross-origin writes. */
-export async function authorizeSession(request: NextRequest): Promise<Authorized<Session>> {
-  if (!isReadOnly(request) && !isSameOrigin(request)) {
+export async function authorizeSession(request: NextRequest, { writes = false }: Options = {}): Promise<Authorized<Session>> {
+  const refused = isReadOnly(request) ? writes && isCrossSite(request) : !isSameOrigin(request);
+  if (refused) {
     return { ok: false, response: jsonError(403, "Cross-origin request refused.") };
   }
   const session = await getSession();
@@ -47,8 +55,8 @@ export async function authorizeSession(request: NextRequest): Promise<Authorized
 }
 
 /** Authenticates an API request and resolves the caller's active workspace. */
-export async function authorizeTenant(request: NextRequest): Promise<Authorized<Tenant>> {
-  const auth = await authorizeSession(request);
+export async function authorizeTenant(request: NextRequest, options: Options = {}): Promise<Authorized<Tenant>> {
+  const auth = await authorizeSession(request, options);
   if (!auth.ok) return auth;
   const tenant = await resolveTenant(auth.value, request.cookies.get(ACTIVE_WORKSPACE_COOKIE)?.value);
   if (!tenant) return { ok: false, response: jsonError(409, "Create an agent first.", "no_workspace") };
@@ -57,17 +65,4 @@ export async function authorizeTenant(request: NextRequest): Promise<Authorized<
 
 function isReadOnly(request: NextRequest): boolean {
   return request.method === "GET" || request.method === "HEAD";
-}
-
-export function isSameOrigin(request: NextRequest): boolean {
-  const fetchSite = request.headers.get("sec-fetch-site");
-  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return false;
-  const origin = request.headers.get("origin");
-  if (!origin) return fetchSite === "same-origin";
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
 }

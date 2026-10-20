@@ -1,11 +1,13 @@
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, Companion, CompanionLook, CompanionStage } from "@/lib/types";
+import { isVoiceKey, type VoiceKey } from "@/lib/voice/voices";
 
 // Who an agent is to one member. It starts as a sketch of the Studio diamond, is drawn in as
 // they work together, and is ready to introduce itself once it knows them: real conversations,
 // on more than one day, with setup settled. It arrives when the member keeps the name it
 // suggests. The stage only shapes how the agent looks and talks; it never gates what it can
-// do. Members never read the stage names: the change is shown, not announced.
+// do. Members never read the stage names: the change is shown, not announced. How it sounds
+// (its voice and manner) is the member's to choose at any stage; only the name waits.
 
 export const COMPANION_STAGES = ["sketch", "drawn", "ready", "arrived"] as const satisfies readonly CompanionStage[];
 
@@ -88,14 +90,19 @@ interface CompanionRow {
   stage: CompanionStage;
   name: string | null;
   manner: string | null;
+  voice: string | null;
 }
+
+const COLUMNS = "workspace_id, stage, name, manner, voice";
 
 function toCompanion(workspaceId: string, userId: string, row: CompanionRow | undefined): Companion {
   return {
     workspaceId,
     stage: row?.stage ?? "sketch",
     name: row?.stage === "arrived" ? row.name : null,
-    manner: row?.stage === "arrived" ? row.manner : null,
+    manner: row?.manner ?? null,
+    // A voice since dropped from the catalog falls back to the template's.
+    voice: isVoiceKey(row?.voice) ? row.voice : null,
     look: companionLook(workspaceId, userId),
   };
 }
@@ -104,7 +111,7 @@ function toCompanion(workspaceId: string, userId: string, row: CompanionRow | un
 export async function getCompanions(tenant: Tenant): Promise<Record<string, Companion>> {
   const { data, error } = await tenant.db
     .from("agent_companions")
-    .select("workspace_id, stage, name, manner")
+    .select(COLUMNS)
     .eq("user_id", tenant.userId)
     .returns<CompanionRow[]>();
   if (error) throw error;
@@ -115,7 +122,7 @@ export async function getCompanions(tenant: Tenant): Promise<Record<string, Comp
 async function loadRow(tenant: Tenant): Promise<CompanionRow | undefined> {
   const { data, error } = await tenant.db
     .from("agent_companions")
-    .select("workspace_id, stage, name, manner")
+    .select(COLUMNS)
     .eq("workspace_id", tenant.workspace.id)
     .eq("user_id", tenant.userId)
     .maybeSingle<CompanionRow>();
@@ -195,8 +202,10 @@ export type NameResult = { ok: true; companion: Companion } | { ok: false; error
 
 /**
  * The member kept a name (the one the agent suggested, or their own pick): the agent arrives
- * with it and its manner. Also how a member renames it later. `suggested` is what the agent
- * offered, kept to see how often members keep it.
+ * with it. Also how a member renames it later. The manner they have always stays (they chose it,
+ * or kept it with an earlier introduction; they change it with setCompanionSound): a `manner`
+ * given with the name, in the agent's words, is taken only when there's none yet. `suggested`
+ * is what the agent offered, kept to see how often members keep it.
  */
 export async function nameCompanion(
   tenant: Tenant,
@@ -208,7 +217,7 @@ export async function nameCompanion(
   if (problem) return { ok: false, error: problem };
   const row = await loadRow(tenant);
   const arriving = row?.stage !== "arrived";
-  const kept = manner === undefined ? row?.manner ?? null : manner.trim().slice(0, MAX_MANNER) || null;
+  const kept = row?.manner ?? (manner?.trim().slice(0, MAX_MANNER) || null);
   await saveRow(tenant, Boolean(row), {
     stage: "arrived",
     name,
@@ -216,14 +225,21 @@ export async function nameCompanion(
     ...(suggested !== undefined ? { suggested_name: companionName(suggested) } : {}),
     ...(arriving ? { arrived_at: new Date().toISOString() } : {}),
   });
-  return { ok: true, companion: { ...toCompanion(tenant.workspace.id, tenant.userId, undefined), stage: "arrived", name, manner: kept } };
+  return { ok: true, companion: toCompanion(tenant.workspace.id, tenant.userId, { workspace_id: tenant.workspace.id, voice: row?.voice ?? null, stage: "arrived", name, manner: kept }) };
 }
 
-/** The member rewrote how it talks with them. Only once it has arrived. */
-export async function setCompanionManner(tenant: Tenant, manner: string): Promise<Companion | null> {
+/**
+ * The member chose how it sounds with them: its voice on calls (null goes back to its
+ * template's), and how it talks, in its words (an empty manner clears it). At any stage:
+ * choosing never makes it arrive.
+ */
+export async function setCompanionSound(tenant: Tenant, sound: { voice?: VoiceKey | null; manner?: string }): Promise<Companion> {
   const row = await loadRow(tenant);
-  if (row?.stage !== "arrived") return null;
-  const kept = manner.trim().slice(0, MAX_MANNER) || null;
-  await saveRow(tenant, true, { manner: kept });
-  return toCompanion(tenant.workspace.id, tenant.userId, { ...row, manner: kept });
+  const values = {
+    ...(sound.voice !== undefined ? { voice: sound.voice } : {}),
+    ...(sound.manner !== undefined ? { manner: sound.manner.trim().slice(0, MAX_MANNER) || null } : {}),
+  };
+  if (Object.keys(values).length) await saveRow(tenant, Boolean(row), values);
+  const before: CompanionRow = row ?? { workspace_id: tenant.workspace.id, stage: "sketch", name: null, manner: null, voice: null };
+  return toCompanion(tenant.workspace.id, tenant.userId, { ...before, ...values });
 }

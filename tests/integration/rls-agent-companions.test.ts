@@ -1,11 +1,13 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { refreshCompanion, getCompanion, getCompanions, KNOWS_YOU, nameCompanion, setCompanionManner } from "@/lib/companion";
+import { refreshCompanion, getCompanion, getCompanions, KNOWS_YOU, nameCompanion, setCompanionSound } from "@/lib/companion";
 import { resolveTenant, sessionFor, type Tenant } from "@/lib/tenant-core";
 import { addMember, createAccount, createWorkspace, type TestAccount } from "./helpers";
 
 // Who an agent is to one member is that member's alone: a teammate in the same agent has their
 // own, other tenants see nothing, and nobody deletes one or moves it to another agent. It moves
-// forward from the member's own runs, and deleting chats never moves it back.
+// forward from the member's own runs, and deleting chats never moves it back. How it sounds (its
+// voice and manner) is theirs to choose at any stage, choosing never makes it arrive, and the
+// agent's own words never replace a manner they have.
 
 let alice: TestAccount;
 let teammate: TestAccount;
@@ -42,7 +44,7 @@ beforeAll(async () => {
 describe("agent companions", () => {
   it("start as a sketch, with a look of their own", async () => {
     const companion = await getCompanion(tenant);
-    expect(companion).toMatchObject({ workspaceId: ws, stage: "sketch", name: null, manner: null });
+    expect(companion).toMatchObject({ workspaceId: ws, stage: "sketch", name: null, manner: null, voice: null });
     expect((await getCompanions(tenant))[ws].look).toEqual(companion.look);
   });
 
@@ -96,11 +98,41 @@ describe("agent companions", () => {
     const second = await createWorkspace(alice, "Second");
     expect(await nameCompanion(await tenantFor(alice, second), { name: "june", member: "Alice" })).toMatchObject({ ok: false });
 
-    expect(await setCompanionManner(tenant, "I lead with what I found.")).toMatchObject({ name: "June", manner: "I lead with what I found." });
-    // An agent that hasn't arrived has no manner to rewrite.
-    expect(await setCompanionManner(await tenantFor(alice, second), "x")).toBeNull();
+    expect(await setCompanionSound(tenant, { manner: "I lead with what I found." })).toMatchObject({ name: "June", manner: "I lead with what I found." });
+    // Renaming it keeps the manner they have, whatever manner comes with the name.
+    expect(await nameCompanion(tenant, { name: "Juno", member: "Alice" })).toMatchObject({ ok: true, companion: { name: "Juno", manner: "I lead with what I found." } });
+    expect(await nameCompanion(tenant, { name: "June", manner: " ", member: "Alice" })).toMatchObject({ ok: true, companion: { name: "June", manner: "I lead with what I found." } });
+    expect(await nameCompanion(tenant, { name: "June", manner: "I go on at length.", member: "Alice" })).toMatchObject({ ok: true, companion: { manner: "I lead with what I found." } });
+    expect((await getCompanion(tenant)).manner).toBe("I lead with what I found.");
     // Refreshing never moves it back.
     expect((await refreshCompanion(tenant, null)).stage).toBe("arrived");
+  });
+
+  it("take a voice and manner the member chose before it arrives, without arriving", async () => {
+    const third = await tenantFor(alice, await createWorkspace(alice, "Third"));
+    const chosen = await setCompanionSound(third, { voice: "warm", manner: "I take it slowly." });
+    expect(chosen).toMatchObject({ stage: "sketch", name: null, voice: "warm", manner: "I take it slowly." });
+    expect(await getCompanion(third)).toMatchObject({ stage: "sketch", name: null, voice: "warm", manner: "I take it slowly." });
+    expect(await setCompanionSound(third, { voice: "bright" })).toMatchObject({ voice: "bright", manner: "I take it slowly." });
+    // A name kept later (the agent introducing itself, in its own words) keeps the voice and the manner they chose.
+    expect(await nameCompanion(third, { name: "Wren", manner: "I'm brisk and to the point.", member: "Alice" })).toMatchObject({
+      ok: true,
+      companion: { name: "Wren", voice: "bright", manner: "I take it slowly." },
+    });
+    expect(await getCompanion(third)).toMatchObject({ stage: "arrived", manner: "I take it slowly." });
+    expect(await setCompanionSound(third, { manner: "" })).toMatchObject({ manner: null, voice: "bright" });
+
+    // Only Studio's key shape is stored, and only for themselves.
+    const odd = await alice.client.from("agent_companions").update({ voice: "Not a key!" }).eq("workspace_id", third.workspace.id);
+    expect(odd.error).not.toBeNull();
+    expect((await teammate.client.from("agent_companions").select("voice").eq("workspace_id", third.workspace.id)).data).toEqual([]);
+    const stolen = await bob.client.from("agent_companions").update({ voice: "steady" }).eq("workspace_id", third.workspace.id).select("voice");
+    expect(stolen.data ?? []).toEqual([]);
+    expect((await getCompanion(third)).voice).toBe("bright");
+    // A teammate's voice for the same agent is their own.
+    const mate = await tenantFor(teammate, ws);
+    expect(await setCompanionSound(mate, { voice: "grounded" })).toMatchObject({ voice: "grounded" });
+    expect((await getCompanion(tenant)).voice).toBeNull();
   });
 
   it("can't be deleted, moved, or arrive without a name", async () => {

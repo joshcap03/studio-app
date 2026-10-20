@@ -1,13 +1,15 @@
 "use client";
 
 import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, Combine, ExternalLink, FileUp, GripVertical, Paperclip, Pin, Plug, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Companion, useCompanion } from "@/components/ui/companion";
+import { PreviewNote, VoiceTile, useVoicePreview } from "@/components/voice/voice-preview";
 import { appName, toolkitForApp } from "@/lib/apps";
 import type { ConnectStatus, FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
+import { voiceByKey } from "@/lib/voice/voices";
 import type { AgentProposal, Attachment, ConnectionsState, MemoryMergeProposal, ProposalPicks, UiBlock, UiField, UiForm, UiResponse } from "@/lib/types";
 import { ATTACHMENT_TYPES, MEMORY_CATEGORY_LABELS } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
@@ -877,10 +879,20 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
 
   const toggle = (key: "skills" | "tasks" | "memories", i: number) =>
     setPicks((p) => ({ ...p, [key]: p[key].includes(i) ? p[key].filter((x) => x !== i) : [...p[key], i] }));
-  const nothing = !picks.profile && !picks.instructions && !picks.skills.length && !picks.tasks.length && !picks.memories.length && !picks.identity;
+  const nothing =
+    !picks.profile && !picks.instructions && !picks.skills.length && !picks.tasks.length && !picks.memories.length && !picks.identity && picks.sound === undefined;
   // Only a name: the agent introducing itself, which the member keeps rather than applies.
   const introduction =
-    proposal.identity !== undefined && proposal.profile === undefined && proposal.instructions === undefined && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length;
+    proposal.identity !== undefined &&
+    proposal.profile === undefined &&
+    proposal.instructions === undefined &&
+    !proposal.skills.length &&
+    !proposal.tasks.length &&
+    !proposal.memories.length &&
+    !proposal.sound?.length;
+  // Ways it could sound, offered only to a member with voice; none is picked until they pick one.
+  const preview = useVoicePreview();
+  const voices = useId();
 
   async function apply() {
     setBusy(true);
@@ -938,6 +950,15 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
     ) : null;
 
   const kept = applied?.applied.name;
+  // How it talks with them, shown once: with a picked sound option that has its own manner, on
+  // that option (it replaces any other); otherwise with the name. Once applied, the manner the
+  // server stored (cards applied before it was reported took the one offered with the name);
+  // until then, the one they have, which keeping a name never replaces, or else the one offered.
+  const nameManner = (() => {
+    if (shown.sound !== undefined && proposal.sound?.[shown.sound]?.manner) return null;
+    if (!applied) return companion?.manner || proposal.identity?.manner;
+    return applied.applied.manner === undefined ? proposal.identity?.manner : applied.applied.manner;
+  })();
   const identity =
     proposal.identity && chosen(Boolean(shown.identity)) ? (
       <div className={`flex items-center gap-3.5 ${introduction ? "" : "rounded-lg bg-subtle px-3 py-2.5"}`}>
@@ -959,8 +980,35 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
           ) : (
             <p className="font-display text-[24px] leading-tight tracking-[-0.01em] text-fg">{kept ?? proposal.identity.name}</p>
           )}
-          {proposal.identity.manner ? <p className="mt-1 text-[13px] leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">{proposal.identity.manner}</p> : null}
+          {nameManner ? <p className="mt-1 text-[13px] leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">{nameManner}</p> : null}
         </div>
+      </div>
+    ) : null;
+
+  // Its note shows wherever its ▶ does, applied or not: the mock's label, a pause on a call, a failure.
+  const soundPicked = shown.sound;
+  const sound =
+    proposal.sound?.length && (applied ? soundPicked !== undefined && proposal.sound[soundPicked] : preview) ? (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[13px] font-medium text-fg">How I&apos;ll sound</span>
+          {live ? <span className="text-[12px] text-fg-3">Pick one, or keep how I sound now.</span> : null}
+        </div>
+        <div role="radiogroup" aria-label="How I'll sound" className="grid gap-2 md:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
+          {proposal.sound.map((o, i) =>
+            chosen(soundPicked === i) ? (
+              <VoiceTile
+                key={`v${i}`}
+                voice={o.voice}
+                manner={o.manner}
+                chosen={soundPicked === i}
+                onChoose={live ? () => setPicks((p) => ({ ...p, sound: p.sound === i ? undefined : i })) : undefined}
+                group={voices}
+              />
+            ) : null,
+          )}
+        </div>
+        <PreviewNote group={voices} />
       </div>
     ) : null;
 
@@ -997,6 +1045,7 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
       </div>
       <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
         {identity}
+        {sound}
         {textItem("profile", "What this agent is for", profile, setProfile)}
         {textItem("instructions", "Standing instructions", instructions, setInstructions)}
         {proposal.tasks.map((t, i) =>
@@ -1087,6 +1136,7 @@ function FirstRun({ taskId, title, onRun }: { taskId: string; title?: string; on
 function appliedText(a: Extract<UiResponse, { status: "applied" }>["applied"]): string {
   const parts = [
     a.name ? `named ${a.name}` : "",
+    a.voice ? `sounds ${(voiceByKey(a.voice)?.label ?? a.voice).toLowerCase()}` : "",
     a.settings ? "updated what it's for and how it works" : "",
     a.tasks ? `${a.tasks} task${a.tasks === 1 ? "" : "s"} on` : "",
     a.skills ? `${a.skills} skill${a.skills === 1 ? "" : "s"} added` : "",

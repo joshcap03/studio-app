@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, separateAroundTools, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -142,6 +142,23 @@ describe("Langflow request", () => {
     const off = templateValues({ ...tenantA, self: null }).system_context;
     expect(off).not.toContain("go by");
     expect(off).not.toContain("name of your own");
+  });
+
+  it("says it's introduced on calls by its starting name, not one they chose, and keeps a chosen manner before a name", () => {
+    const calls = selfContext({ name: null, manner: "I keep it short.", callName: "Rowan" });
+    expect(calls).toContain("on calls you're introduced as Rowan, this agent's starting name, not one they chose for you.");
+    expect(calls).toContain("suggest it with propose_agent (identity)");
+    expect(calls).toContain("How you talk with them, in your own words: I keep it short.");
+    expect(calls).not.toContain("go by");
+    // Where it can't be given a name (voice without companions), it doesn't offer to take one.
+    const voiceOnly = selfContext({ name: null, manner: null, callName: "Rowan", naming: false });
+    expect(voiceOnly).toContain("introduced as Rowan");
+    expect(voiceOnly).not.toContain("propose_agent");
+    expect(voiceOnly).not.toContain("never in how much you say");
+    // A kept name is the name, on calls too.
+    expect(selfContext({ name: "Juniper", manner: null, callName: null })).toBe(
+      "Who you are to them: you go by Juniper. Let it show in how you say things, never in how much you say, and never make a show of it.",
+    );
   });
 
   it("tells the agent about its task and the member's tracker, only when there are some", () => {

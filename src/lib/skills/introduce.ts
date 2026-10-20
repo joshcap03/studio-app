@@ -11,12 +11,15 @@ export const INTRODUCE_SKILL_NAME = "Say hello";
 export function introduceSkill({
   member,
   voiceName,
+  manner,
   taken,
 }: {
   /** What the member goes by, if known. */
   member: string | null;
   /** The name they've heard on calls, if they've had any. */
   voiceName: string | null;
+  /** How it already talks with them, if they have one (chosen when it was set up, say); it stays. */
+  manner?: string | null;
   /** Names their other agents already go by. */
   taken: string[];
 }): WorkspaceSkill {
@@ -31,7 +34,7 @@ export function introduceSkill({
 - Don't read their instructions, preferences or rules back to them, don't say you've noticed things about them, and don't promise how you'll work or what you'll leave to them: they know what they told you, and a hello that recites it reads like a checklist. Keep to their work: leave health, relationships, money and anything else personal out.
 - Then call propose_agent with a one-sentence summary and only identity:
   - name: a short, warm, human first name that fits who you've been for them.${voiceName ? ` They've heard you as "${voiceName}" on calls, so keep "${voiceName}" unless another name clearly fits better.` : ""}${avoid.length ? ` Not ${avoid.join(", or ")}.` : ""}
-  - manner: two short first-person sentences on your tone with them (how brief you are, how you bring news), in different words from your hello. Tone only: nothing on what you will or won't do for them or what you leave to them, since their rules already say that.
+  - manner: ${manner ? `how you already talk with them, word for word: "${manner}" It's theirs and stays as it is, so don't reword it.` : "two short first-person sentences on your tone with them (how brief you are, how you bring news), in different words from your hello. Tone only: nothing on what you will or won't do for them or what you leave to them, since their rules already say that."}
 - The card shows under your message with the name and a button to keep it. After the call, end with one sentence offering the name in your own words, as a person would ("I'd like to go by …, if that suits you.")${voiceName ? `; if it's "${voiceName}", say they've heard you by it on calls` : ""}. Don't name yourself before the call or write anything else after it, don't call anything else, and don't mention tools, setup or anything behind the scenes.`;
   return { id: INTRODUCE_SKILL_ID, catalogId: null, name: INTRODUCE_SKILL_NAME, description: "The agent introduces itself and suggests a name.", instructions, createdAt: 0 };
 }

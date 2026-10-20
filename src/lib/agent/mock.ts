@@ -310,6 +310,27 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // A proposed setup with ways it could sound, side by side; the member picks one or none.
+    match: /\bhow (?:you'?ll|you would|you'd) sound\b/i,
+    steps: [
+      { kind: "text", text: "Here's how I'd work for you, and three ways I could sound on calls (mock)." },
+      {
+        kind: "ui",
+        block: {
+          proposal: {
+            summary: "I'll bring you a short list each morning and check in before anything goes out (mock).",
+            instructions: "Lead with the best two or three results. Ask before sending anything.",
+            sound: [
+              { voice: "steady", manner: "I keep it brief and even. I give you the result first, then the why (mock)." },
+              { voice: "warm", manner: "I take it slowly and check how it lands. I say plainly when something misses (mock)." },
+              { voice: "bright", manner: "I keep the pace up and get to the point. I flag what needs you right away (mock)." },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
     // A proposed setup; nothing changes until the member applies it.
     match: /\bpropose\b/i,
     steps: [

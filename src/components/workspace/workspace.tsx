@@ -21,6 +21,7 @@ import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { Call } from "@/components/voice/call";
+import { VoicePreviews } from "@/components/voice/voice-preview";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { registerServiceWorker } from "@/lib/client/push";
 import { INTRODUCE_SKILL_ID, INTRODUCE_SKILL_NAME } from "@/lib/skills/introduce";
@@ -145,10 +146,14 @@ export function Workspace(props: Props) {
   // Who each agent is to the member, shared with the thread's marks through context.
   const [companions, setCompanions] = useState(props.companions);
   const updateCompanion = useCallback((next: Companion) => setCompanions((all) => (all ? { ...all, [next.workspaceId]: next } : all)), []);
+  // Voices can be heard where they're offered (a proposed setup), but never over a call.
+  const [onCall, setOnCall] = useState(false);
   return (
     <CardDraftsProvider>
       <CompanionContext.Provider value={companions?.[props.workspace.id] ?? null}>
-        <WorkspaceShell {...props} companions={companions} onCompanion={updateCompanion} />
+        <VoicePreviews voice={props.voice} onCall={onCall}>
+          <WorkspaceShell {...props} companions={companions} onCompanion={updateCompanion} onCallChange={setOnCall} />
+        </VoicePreviews>
       </CompanionContext.Provider>
     </CardDraftsProvider>
   );
@@ -171,7 +176,8 @@ function WorkspaceShell({
   greeter,
   companions,
   onCompanion,
-}: Props & { onCompanion: (companion: Companion) => void }) {
+  onCallChange,
+}: Props & { onCompanion: (companion: Companion) => void; onCallChange: (live: boolean) => void }) {
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
@@ -225,6 +231,8 @@ function WorkspaceShell({
   }, []);
   /** A voice call in progress, and the conversation it's in. */
   const [call, setCall] = useState<{ grant: VoiceGrant; conversationId: string; waitForTap: boolean } | null>(null);
+  const callLive = Boolean(call);
+  useEffect(() => onCallChange(callLive), [callLive, onCallChange]);
   const [calling, setCalling] = useState(false);
   const [callNotice, setCallNotice] = useState<string | null>(null);
   // Streams this tab let go of while the run kept going on the server (the app was hidden).
@@ -733,10 +741,10 @@ function WorkspaceShell({
     (messageId: string, blockId: string, response: UiResponse) => {
       if (!activeId) return;
       patchMessage(activeId, messageId, (m) => ({ ...m, uiResponse: { ...(m.uiResponse ?? {}), [blockId]: response } }));
-      // Applying the proposed setup can finish the setup interview, and keeping a name is how
-      // the agent arrives.
+      // Applying the proposed setup can finish the setup interview, keeping a name is how the
+      // agent arrives, and a name or sound kept changes how it talks with them.
       if (response.status === "applied") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
-      if (response.status === "applied" && response.applied.name) {
+      if (response.status === "applied" && (response.applied.name || response.applied.manner !== undefined)) {
         api.getCompanion().then(({ companion: next }) => next && onCompanion(next), () => undefined);
       }
     },

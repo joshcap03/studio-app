@@ -6,9 +6,11 @@
 //   ELEVENLABS_API_KEY=…  VOICE_LLM_SECRET=…  APP_URL=https://<your app>  node scripts/voice-agent.mjs
 //
 // Set ELEVENLABS_AGENT_ID to update that agent instead of creating one. --dry-run prints what
-// would be sent (secrets left out) without calling ElevenLabs.
+// would be sent (secrets left out) without calling ElevenLabs. Afterwards it checks, read-only,
+// that each of Studio's voices exists on the account.
 
 const API = "https://api.elevenlabs.io/v1/convai";
+const VOICES_API = "https://api.elevenlabs.io/v1/voices";
 const dry = process.argv.includes("--dry-run");
 const key = process.env.ELEVENLABS_API_KEY?.trim();
 const llmSecret = process.env.VOICE_LLM_SECRET?.trim();
@@ -19,6 +21,23 @@ if (!dry && (!key || !llmSecret || !app)) fail("Set ELEVENLABS_API_KEY, VOICE_LL
 if (app && !/^https:\/\//.test(app)) fail("APP_URL must be the app's https address.");
 
 const SECRET_NAME = "studio_voice_llm_key";
+
+// The speech model, the same one Studio's voice previews use (ELEVENLABS_TTS_MODEL in
+// src/lib/voice/elevenlabs.ts), so a voice sounds the same everywhere. English only, like the agent.
+const TTS_MODEL = "eleven_flash_v2";
+
+// Studio's voices (ELEVENLABS_VOICES in src/lib/voice/elevenlabs.ts); each call picks one of
+// them through the voice override below.
+const VOICES = {
+  steady: "SAz9YHcvj6GT2YYXdXww",
+  clear: "Xb7hH8MSUJpSbSDYk0k2",
+  easygoing: "cjVigY5qzO86Huf0OWal",
+  warm: "XrExE9yKIg1WjnnlVkGX",
+  bright: "cgSgspJ2msm6clMCkdW9",
+  grounded: "JBFqnCBsd6RMkjVDRZzb",
+  casual: "iP95p4xoKVk53GoZ742B",
+  gentle: "EXAVITQu4vr4xnSDxMaL",
+};
 
 // Client tools: the browser runs each one and checks it against the member's own words. Studio's
 // voice front gives the model its own descriptions; these only let ElevenLabs deliver the calls.
@@ -92,6 +111,8 @@ function agentBody(secretId, toolIds) {
           },
         },
       },
+      // The voice itself is chosen per call (the override in platform_settings); the model is fixed.
+      tts: { model_id: TTS_MODEL },
       turn: {
         turn_model: "turn_v3",
         turn_eagerness: "patient",
@@ -168,4 +189,12 @@ console.log(`Custom LLM: ${llm.url ?? "(missing)"}`);
 console.log(`Request headers: ${JSON.stringify(llm.request_headers ?? {})}`);
 console.log(`Tools: ${(stored.conversation_config?.agent?.prompt?.tool_ids ?? []).length} client tools`);
 console.log(`Signed tokens required: ${stored.platform_settings?.auth?.enable_auth === true}`);
+console.log(`Speech model: ${stored.conversation_config?.tts?.model_id ?? "(missing)"}`);
+console.log(`Voice override allowed: ${stored.platform_settings?.overrides?.conversation_config_override?.tts?.voice_id === true}`);
+
+// Read-only: a voice missing from the account would fail on a call or a preview.
+for (const [voice, id] of Object.entries(VOICES)) {
+  const res = await fetch(`${VOICES_API}/${id}`, { headers: { "xi-api-key": key } });
+  console.log(`Voice ${voice}: ${res.ok ? "on the account" : `missing (${res.status}); add it under My Voices or pick another`}`);
+}
 console.log("Set ELEVENLABS_AGENT_ID to this id in Vercel (see docs/voice.md).");

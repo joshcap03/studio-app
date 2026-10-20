@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DISCOVERY_STEP, PLAN_STEP, SUCCESS_STEP, TEMPLATES, setupSteps } from "@/lib/templates";
+import { VOICES } from "@/lib/voice/voices";
 import { CATALOG } from "./catalog";
 import { SETUP_SKILL_ID, setupSkill } from "./setup";
 
@@ -56,5 +57,18 @@ describe("setupSkill", () => {
     expect(setupSkill(null).instructions).toBe(blank);
     expect(setupSkill("no-such-template").instructions).toBe(blank);
     expect(blank).not.toContain("Tasks this agent already has");
+  });
+
+  it("offers ways to sound side by side only to members with voice, with the voices it may use", () => {
+    const typed = setupSkill("job-search").instructions;
+    const voiced = setupSkill("job-search", { voice: true }).instructions;
+    expect(typed).not.toContain("How you'll sound");
+    expect(voiced.startsWith(typed)).toBe(true);
+    for (const v of VOICES) expect(voiced).toContain(`- ${v.key}: ${v.label}. ${v.description}`);
+    // Their choice, whatever their rules on advice: no pick marked, and the name isn't part of it.
+    expect(voiced).toContain("two or three ways you could sound as sound");
+    expect(voiced).toContain("don't mark one as yours or say which you'd pick");
+    expect(voiced).toContain("Your name isn't part of this.");
+    expect(setupSkill("job-search", { call: true, voice: true }).instructions).toContain("How you'll sound");
   });
 });

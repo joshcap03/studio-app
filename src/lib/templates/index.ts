@@ -1,5 +1,6 @@
 import type { AppId } from "@/lib/apps";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
+import type { VoiceKey } from "@/lib/voice/voices";
 
 // Built-in starting points for a workspace: what the agent is for, how it should work, and
 // which library skills and apps fit. Applying one copies these into the workspace (see
@@ -12,6 +13,12 @@ export interface AgentTemplate {
   description: string;
   /** Placeholder for the new agent's name, e.g. "My business". */
   namePlaceholder: string;
+  /**
+   * Who the agent is on calls until the member chooses: a first name (unique across templates)
+   * and a voice from Studio's catalog (src/lib/voice/voices.ts). The member can change the voice
+   * any time; the name changes once the agent introduces itself and they keep one.
+   */
+  persona: { name: string; voice: VoiceKey };
   /** Placeholder for the "What this agent is for" field: what to tell the agent. */
   profilePrompt: string;
   /** Starting instructions for the agent. Only filled in when the workspace has none. */
@@ -150,6 +157,7 @@ export const TEMPLATES: AgentTemplate[] = [
     id: "job-search",
     name: "Job search",
     namePlaceholder: "Job search",
+    persona: { name: "Rowan", voice: "steady" },
     description: "Finds roles that fit, tailors applications, drafts outreach, and preps you for interviews.",
     profilePrompt:
       "The roles you're after (titles, seniority), where (cities, remote), your pay floor, must-haves and deal-breakers, and a few lines on your background. Add your résumé to this agent's files (on its page) so it reads it in every chat.",
@@ -246,6 +254,7 @@ export const TEMPLATES: AgentTemplate[] = [
     id: "small-business",
     name: "Small business",
     namePlaceholder: "My business",
+    persona: { name: "June", voice: "clear" },
     description: "Helps run a shop or service business: customers, sales, stock, money, and marketing.",
     profilePrompt: "What you sell, who buys it, how you work, and the tools you run on (e.g. Shopify, QuickBooks, Gmail).",
     instructions: `You help me run my business day to day.
@@ -286,6 +295,7 @@ export const TEMPLATES: AgentTemplate[] = [
     id: "sales-pipeline",
     name: "Sales pipeline",
     namePlaceholder: "Sales",
+    persona: { name: "Miles", voice: "casual" },
     description: "Finds and researches leads, drafts outreach and follow-ups, and keeps your pipeline moving.",
     profilePrompt:
       "What you sell and what it costs, who buys it (industries, company sizes, roles), your best customers so far, and the tools you sell with (e.g. HubSpot, Apollo, Gmail).",
@@ -337,6 +347,7 @@ export const TEMPLATES: AgentTemplate[] = [
     id: "inbox-calendar",
     name: "Inbox & calendar",
     namePlaceholder: "Inbox",
+    persona: { name: "Ada", voice: "gentle" },
     description: "Triages your email, drafts replies, and preps you for meetings and their follow-ups.",
     profilePrompt:
       "Your role, the people and clients who matter most, what counts as urgent, the hours you keep, and which email and calendar you use.",
@@ -383,6 +394,7 @@ export const TEMPLATES: AgentTemplate[] = [
     id: "content-social",
     name: "Content & social",
     namePlaceholder: "Content",
+    persona: { name: "Iris", voice: "bright" },
     description: "Plans what to post, drafts posts and newsletters in your voice, and turns one piece into many.",
     profilePrompt:
       "What you make or sell, who you're talking to, the channels you post on and how often, the topics you want to be known for, and anything off limits.",
@@ -433,6 +445,7 @@ export const TEMPLATES: AgentTemplate[] = [
     id: "blank",
     name: "Start from scratch",
     namePlaceholder: "Personal",
+    persona: { name: "Sam", voice: "easygoing" },
     description: "A general agent. Tell it what it's for and shape it as you go.",
     profilePrompt: "Who you are, what you want this agent to help with, and anything it should always keep in mind.",
     instructions: "",

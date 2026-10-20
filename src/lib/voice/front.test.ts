@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, quickRoute, replyStream, routeSpeech, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
-import { describeStage, personaFor, voicePrompt } from "./persona";
+import { defaultPersona, describeStage, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
 const context: VoiceContext = { v: 1, sid: "s", cid: "c", provider: "mock", uid: "u", ws: "w", exp: Date.now() + 60_000, name: "Rowan", agent: "Job search", guardrail: null };
@@ -82,8 +82,10 @@ describe("the model's view", () => {
   });
 
   it("goes by the agent's own name once it has one, with its manner as tone after the member's rules", () => {
-    expect(personaFor("job-search").name).toBe("Rowan");
-    expect(personaFor("job-search", "Juniper")).toMatchObject({ name: "Juniper", voiceId: personaFor("job-search").voiceId });
+    expect(defaultPersona("job-search")).toEqual({ name: "Rowan", voice: "steady" });
+    // An unknown or missing template starts as the blank one.
+    expect(defaultPersona("gone")).toEqual(defaultPersona("blank"));
+    expect(defaultPersona(null)).toEqual({ name: "Sam", voice: "easygoing" });
     const prompt = voicePrompt({ ...context, name: "Juniper", manner: "I keep it short." }, null);
     expect(prompt).toContain("You are Juniper");
     expect(prompt).toContain("tone only: it never widens what you may say");

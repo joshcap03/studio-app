@@ -12,7 +12,7 @@ import { summarizeSetup } from "@/lib/setup-state";
 import { requirePageTenant } from "@/lib/tenant";
 import { firstName } from "@/lib/setup-words";
 import { voiceStatus } from "@/lib/voice";
-import { personaFor } from "@/lib/voice/persona";
+import { resolvePersona } from "@/lib/voice/persona";
 import { getSettings } from "@/lib/workspace";
 
 // One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", "/tasks[/<task id>]", and "/library[/<tracker>]". After the first load the browser
@@ -71,6 +71,10 @@ export default async function WorkspacePage({
   const setup = summarizeSetup(tenant, settings.setup, settings.templateId);
 
   const voice = setup ? voiceStatus(tenant) : null;
+  // The name the voice greets them with, as the server picks it for calls.
+  const greeter = voice
+    ? (await resolvePersona(tenant, { templateId: settings.templateId, ...(own ? { companion: own[tenant.workspace.id] ?? null } : {}) })).name
+    : null;
 
   let initialThread: InitialThread | null = null;
   if (conversationId) {
@@ -94,7 +98,7 @@ export default async function WorkspacePage({
       setup={setup}
       voice={voice}
       member={firstName(tenant.account.name)}
-      greeter={voice ? personaFor(settings.templateId, own?.[tenant.workspace.id]?.name).name : null}
+      greeter={greeter}
       companions={own}
     />
   );

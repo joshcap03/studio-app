@@ -63,6 +63,9 @@ export interface ScriptedMember {
   id?: string;
 }
 
+/** SETUP_EVAL_VOICE=1 runs setup as for a member with voice on: it also offers how it could sound. */
+const VOICE = process.env.SETUP_EVAL_VOICE === "1";
+
 export type Turn = {
   message: string;
   events: AgentEvent[];
@@ -255,13 +258,13 @@ export function setupSession(member: ScriptedMember) {
     turns.push(turn);
     // As the app does once setup is under way (src/lib/workspace.ts): the setup skill stays in
     // view on every later run in this conversation.
-    if (!tenant.setup?.instructions) tenant.setup = { plan: tenant.setup?.plan ?? [], instructions: setupSkill(member.templateId, { call: member.modality === "call" }).instructions };
+    if (!tenant.setup?.instructions) tenant.setup = { plan: tenant.setup?.plan ?? [], instructions: setupSkill(member.templateId, { call: member.modality === "call", voice: VOICE }).instructions };
     return turn;
   }
 
   /** The first turn: the setup skill, with no text of the member's own. */
   function start(): Promise<Turn> {
-    return send(renderSkillMessage(setupSkill(member.templateId, { call: member.modality === "call" }), ""));
+    return send(renderSkillMessage(setupSkill(member.templateId, { call: member.modality === "call", voice: VOICE }), ""));
   }
 
   /** The member's reply to a plain question: the next part of their story, or a yes to a playback. */

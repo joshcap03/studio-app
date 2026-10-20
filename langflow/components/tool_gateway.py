@@ -286,6 +286,13 @@ class ProposeArgs(BaseModel):
                                                              "they offer you a name. A short first name and, in two first-person "
                                                              "sentences, how you talk with them."),
                            json_schema_extra={"properties": {"name": {"type": "string"}, "manner": {"type": "string"}}})
+    sound: list[dict] = Field(default_factory=list, description=("Optional, when your context lists voices: two or three ways "
+                                                                "you could sound on calls, side by side, each a voice id from "
+                                                                "that list and, in two first-person sentences, how you'd talk "
+                                                                "with them. Don't mark one as yours: they choose one or none."),
+                              json_schema_extra={"items": {"type": "object", "properties": {"voice": {"type": "string"},
+                                                                                            "manner": {"type": "string"}},
+                                                           "required": ["voice"]}, "maxItems": 3})
 
 
 MERGE_SCHEMA = {
@@ -952,9 +959,11 @@ class ToolGatewayComponent(Component):
             return show_form(title, fields, intro, submit_label)
 
         def propose_agent(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
-                          tasks: list | None = None, memories: list | None = None, identity: dict | None = None) -> str:
+                          tasks: list | None = None, memories: list | None = None, identity: dict | None = None,
+                          sound: list | None = None) -> str:
             # Changes nothing: the app shows the proposal as a card, and only the owner's Apply
-            # changes this agent's setup (or, for a name, the member's Keep).
+            # changes this agent's setup (or, for a name or a voice, the member's own pick). The
+            # app checks each voice against Studio's catalog and drops the rest.
             def plain(v):
                 return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else v
             self_ = plain(identity) if identity else {}
@@ -964,11 +973,19 @@ class ToolGatewayComponent(Component):
                         "tasks": [plain(x) for x in (tasks or [])][:8], "memories": [str(m)[:500] for m in (memories or [])][:8]}
             if name:
                 proposal["identity"] = {"name": name, "manner": str(self_.get("manner") or "")[:600]}
-            if not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories", "identity")):
-                return "Not shown: propose at least one change (profile, instructions, skills, tasks, memories, or identity)."
+            options = []
+            for option in (plain(x) for x in (sound or [])):
+                voice = " ".join(str((option or {}).get("voice") or "").split()).lower()[:40] if isinstance(option, dict) else ""
+                if voice:
+                    options.append({"voice": voice, "manner": str(option.get("manner") or "")[:600]})
+            if options:
+                proposal["sound"] = options[:3]
+            if not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories", "identity", "sound")):
+                return ("Not shown: propose at least one change (profile, instructions, skills, tasks, memories, identity, "
+                        "or sound).")
             # A name alone is its own card, under the reply, with a Keep button: the sentence after
             # the call sits right above it, so it offers the name rather than saying how to keep it.
-            only_name = "identity" in proposal and not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories"))
+            only_name = "identity" in proposal and not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories", "sound"))
             return json.dumps({
                 "proposal": proposal,
                 "note": ("The member sees what you've written, with your name and manner on a card under it and a "
@@ -980,8 +997,9 @@ class ToolGatewayComponent(Component):
             })
 
         async def propose_agent_async(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
-                                      tasks: list | None = None, memories: list | None = None, identity: dict | None = None) -> str:
-            return propose_agent(summary, profile, instructions, skills, tasks, memories, identity)
+                                      tasks: list | None = None, memories: list | None = None, identity: dict | None = None,
+                                      sound: list | None = None) -> str:
+            return propose_agent(summary, profile, instructions, skills, tasks, memories, identity, sound)
 
         def merge_memories(merges: list, summary: str = "") -> str:
             # Changes nothing: the app checks each fact id against the owner's memory, shows the
@@ -1127,8 +1145,9 @@ class ToolGatewayComponent(Component):
                 func=propose_agent, coroutine=propose_agent_async, name="propose_agent",
                 args_schema=ProposeArgs,
                 description=("Propose how this agent should be set up for the owner: what it's for, its standing "
-                             "instructions, skills to add, tasks to switch on (with schedules), facts to remember, and "
-                             "(identity) a name and manner for yourself when you introduce yourself or they offer one. "
+                             "instructions, skills to add, tasks to switch on (with schedules), facts to remember, "
+                             "(identity) a name and manner for yourself when you introduce yourself or they offer one, "
+                             "and (sound) ways you could sound, when your context lists voices. "
                              "Use it once you've learned what they want, e.g. at the end of setup or when they ask "
                              "you to change how you work. The owner reviews it and applies what they want; nothing "
                              "changes until they do. Call it as the last thing in your reply."),

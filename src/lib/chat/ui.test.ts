@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UiForm } from "@/lib/types";
-import { buildUiBlock, scheduleFrom } from "./ui";
+import { buildUiBlock, proposalPicksSchema, scheduleFrom } from "./ui";
 import { formAnswerText, missingAnswer } from "./ui-answer";
 
 describe("buildUiBlock", () => {
@@ -114,6 +114,53 @@ describe("buildUiBlock", () => {
       instructions: "Be brief.",
       identity: { name: "Mae-Lin O'Hara", manner: "" },
     });
+  });
+
+  it("offers up to three ways to sound in Studio's own voices, dropping any it doesn't know", () => {
+    const block = buildUiBlock(
+      {
+        proposal: {
+          summary: "How I'll sound.",
+          sound: [
+            { voice: " Steady ", manner: "I keep it   brief." },
+            { voice: "SAz9YHcvj6GT2YYXdXww", manner: "A provider's id isn't a voice here." },
+            { voice: "steady", manner: "I keep it brief." },
+            { voice: "warm" },
+            "bright",
+            { voice: "bright", manner: "I keep the pace up." },
+            { voice: "gentle", manner: "One too many." },
+          ],
+        },
+      },
+      "p3",
+    );
+    expect(block).toEqual({
+      kind: "proposal",
+      id: "p3",
+      summary: "How I'll sound.",
+      skills: [],
+      tasks: [],
+      memories: [],
+      sound: [
+        { voice: "steady", manner: "I keep it brief." },
+        { voice: "warm", manner: "" },
+        { voice: "bright", manner: "I keep the pace up." },
+      ],
+    });
+    // One option alone, or under options, reads the same; none it knows means no card.
+    expect(buildUiBlock({ proposal: { summary: "s", sound: { voice: "warm", manner: "Slowly." } } })).toMatchObject({ sound: [{ voice: "warm", manner: "Slowly." }] });
+    expect(buildUiBlock({ proposal: { summary: "s", sound: { options: [{ voice: "clear" }] } } })).toMatchObject({ sound: [{ voice: "clear", manner: "" }] });
+    expect(buildUiBlock({ proposal: { summary: "s", sound: [{ voice: "robot" }] } })).toBeNull();
+  });
+});
+
+describe("proposal picks", () => {
+  it("take one sound option by its place, or none", () => {
+    const base = { profile: false, instructions: false, skills: [], tasks: [], memories: [] };
+    expect(proposalPicksSchema.parse({ ...base, sound: 2 })).toMatchObject({ sound: 2 });
+    expect(proposalPicksSchema.parse(base).sound).toBeUndefined();
+    expect(proposalPicksSchema.safeParse({ ...base, sound: 3 }).success).toBe(false);
+    expect(proposalPicksSchema.safeParse({ ...base, sound: "steady" }).success).toBe(false);
   });
 });
 
