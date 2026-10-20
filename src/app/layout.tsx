@@ -11,7 +11,8 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
   // Added to the home screen, Studio opens full screen like an app.
   appleWebApp: { capable: true, title: "Studio", statusBarStyle: "default" },
-  icons: { apple: "/apple-touch-icon.png" },
+  // Icons come from the files in app/ (favicon.ico, icon.svg, apple-icon.png). An `icons`
+  // entry here would replace them all, leaving Chrome tabs and bookmarks without one.
 };
 
 export const viewport: Viewport = {
