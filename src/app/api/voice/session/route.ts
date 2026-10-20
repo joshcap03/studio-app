@@ -3,7 +3,7 @@ import { errorResponse, noStore } from "@/lib/api";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { startVoiceCall, voiceStatus, VoiceUnavailable } from "@/lib/voice";
 
-// Starts a voice call (the Setup Call preview) for the signed-in member: claims a call against
+// Starts a voice call (a preview) for the signed-in member, from any conversation: claims a call against
 // their daily voice time, opens it with the provider, and seals the call's voice context (their
 // guardrail first, the agent's persona) for the voice front. The member and agent come from the
 // session; the body is ignored.

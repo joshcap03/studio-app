@@ -81,6 +81,11 @@ export interface AgentTenantContext {
   /** The member hears a task run's news as a voice note (src/lib/voice/notes.ts), so its report is written for the ear. */
   voiceNotes?: boolean;
   /**
+   * The member could talk this through with the agent on a call here, so it may offer one
+   * (offer_call): they have calls, aren't on one, and haven't said Not now to an offer here.
+   */
+  calls?: boolean;
+  /**
    * Who the agent is to this member (src/lib/companion.ts): the name they kept (else null) and
    * how it talks with them once one is chosen. `callName` is the starting name calls introduce
    * it by while it has none of its own (voice on); `naming: false` where it can't be given one

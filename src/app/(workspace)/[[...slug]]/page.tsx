@@ -15,6 +15,7 @@ import { summarizeSetup } from "@/lib/setup-state";
 import { requirePageTenant } from "@/lib/tenant";
 import { firstName } from "@/lib/setup-words";
 import { voiceStatus } from "@/lib/voice";
+import { callsOrNone } from "@/lib/voice/calls";
 import { resolvePersona } from "@/lib/voice/persona";
 import { getSettings } from "@/lib/workspace";
 
@@ -75,8 +76,8 @@ export default async function WorkspacePage({
 
   // Voice for every member with it (the mic, voice notes, calls); talking setup through stays the owner's.
   const voice = voiceStatus(tenant);
-  // The name the voice greets them with on the setup banner, as the server picks it for calls.
-  const greeter = voice && setup
+  // The name the voice goes by on calls, as the server picks it for them: on the call button and the setup banner.
+  const greeter = voice
     ? (await resolvePersona(tenant, { templateId: settings.templateId, ...(own ? { companion: own[tenant.workspace.id] ?? null } : {}) })).name
     : null;
 
@@ -94,9 +95,11 @@ export default async function WorkspacePage({
   ]);
   let initialThread: InitialThread | null = null;
   if (conversationId) {
+    // The calls its messages were said on, for their recaps.
+    const calls = thread ? await callsOrNone(tenant, thread[0]) : [];
     initialThread = thread
-      ? { id: conversationId, status: "ready", messages: thread[0], journey: thread[1] }
-      : { id: conversationId, status: "missing", messages: [], journey: null };
+      ? { id: conversationId, status: "ready", messages: thread[0], journey: thread[1], calls }
+      : { id: conversationId, status: "missing", messages: [], journey: null, calls: [] };
   }
 
   return (

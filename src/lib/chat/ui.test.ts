@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { UiForm } from "@/lib/types";
-import { buildUiBlock, proposalPicksSchema, scheduleFrom } from "./ui";
-import { formAnswerText, missingAnswer } from "./ui-answer";
+import type { UiBlock, UiForm } from "@/lib/types";
+import { buildUiBlock, capUi, proposalPicksSchema, scheduleFrom, withoutOffers } from "./ui";
+import { answerText, formAnswerText, isQuestionAnswer, missingAnswer } from "./ui-answer";
 
 describe("buildUiBlock", () => {
   it("keeps every field kind, with ids, caps, and the agent's drafts", () => {
@@ -151,6 +151,46 @@ describe("buildUiBlock", () => {
     expect(buildUiBlock({ proposal: { summary: "s", sound: { voice: "warm", manner: "Slowly." } } })).toMatchObject({ sound: [{ voice: "warm", manner: "Slowly." }] });
     expect(buildUiBlock({ proposal: { summary: "s", sound: { options: [{ voice: "clear" }] } } })).toMatchObject({ sound: [{ voice: "clear", manner: "" }] });
     expect(buildUiBlock({ proposal: { summary: "s", sound: [{ voice: "robot" }] } })).toBeNull();
+  });
+});
+
+describe("an offer to call", () => {
+  it("keeps why (required) and what about, in a line each", () => {
+    expect(buildUiBlock({ offer_call: { reason: "  This one's worth   five minutes. ", topic: "Which offer " } }, "o1")).toEqual({
+      kind: "offer",
+      id: "o1",
+      reason: "This one's worth five minutes.",
+      topic: "Which offer",
+    });
+    expect(buildUiBlock({ offer_call: { reason: "Quicker to talk.", topic: "" } }, "o2")).toEqual({ kind: "offer", id: "o2", reason: "Quicker to talk." });
+    expect(buildUiBlock({ offer_call: { reason: "x".repeat(500) } })).toMatchObject({ reason: "x".repeat(200) });
+    expect(buildUiBlock({ offer_call: { reason: "  ", topic: "Pay" } })).toBeNull();
+    expect(buildUiBlock({ offer_call: "call me" })).toBeNull();
+  });
+
+  it("never pushes out a card that asks something: two cards, then one offer, last", () => {
+    const form = (id: string): UiBlock => ({ kind: "form", id, title: id, fields: [], submitLabel: "Send" });
+    const offer = (id: string): UiBlock => ({ kind: "offer", id, reason: id });
+    expect(capUi([form("f1"), offer("o1"), form("f2")]).map((b) => b.id)).toEqual(["f1", "f2", "o1"]);
+    expect(capUi([form("f1"), form("f2"), form("f3"), offer("o1")]).map((b) => b.id)).toEqual(["f2", "f3", "o1"]);
+    // One offer is enough: the latest.
+    expect(capUi([offer("o1"), form("f1"), offer("o2")]).map((b) => b.id)).toEqual(["f1", "o2"]);
+    expect(capUi([form("f1"), form("f2"), form("f3")]).map((b) => b.id)).toEqual(["f2", "f3"]);
+  });
+});
+
+describe("pages that don't know offers", () => {
+  it("get the conversation without them, and without what was done with them", () => {
+    const form: UiBlock = { kind: "form", id: "f1", title: "Roles", fields: [], submitLabel: "Send" };
+    const offer: UiBlock = { kind: "offer", id: "o1", reason: "Quicker to talk." };
+    const base = { conversationId: "c1", role: "assistant" as const, content: "", status: "complete" as const, activity: [], artifacts: [], createdAt: 0 };
+    const plain = { ...base, id: "m0", content: "Hi." };
+    const offered = { ...base, id: "m1", ui: [form, offer], uiResponse: { f1: { status: "submitted" as const, at: 1 }, o1: { status: "declined" as const, at: 2 } } };
+    const [kept, stripped] = withoutOffers([plain, offered]);
+    expect(kept).toBe(plain);
+    expect(stripped.ui).toEqual([form]);
+    expect(stripped.uiResponse).toEqual({ f1: { status: "submitted", at: 1 } });
+    expect(withoutOffers([{ ...base, id: "m2", ui: [offer] }])[0]).toMatchObject({ ui: [] });
   });
 });
 
@@ -573,5 +613,23 @@ describe("loose verdicts and notes", () => {
         { id: "product_lead_beta_hybrid", title: "Product Lead · Beta, hybrid" },
       ],
     });
+  });
+});
+
+describe("question answers", () => {
+  const where = { question: "Where should I look?", header: "Where", options: [{ label: "Remote" }, { label: "Austin, TX" }, { label: "Hybrid" }], multiSelect: true };
+  const level = { question: "Which level?", options: [{ label: "Senior" }, { label: "Staff" }], multiSelect: false };
+
+  it("knows picks sent from the card from the member's own words", () => {
+    expect(isQuestionAnswer([where], answerText([where], [["Remote", "Austin, TX"]]))).toBe(true);
+    expect(isQuestionAnswer([where, level], answerText([where, level], [["Hybrid"], ["Staff"]]))).toBe(true);
+    // A question they skipped on the card still reads as its answers.
+    expect(isQuestionAnswer([where, level], answerText([where, level], [["Remote"], []]))).toBe(true);
+    // Their own words, said or typed in reply, aren't the card's.
+    expect(isQuestionAnswer([where], "Remote, and nothing in Austin")).toBe(false);
+    expect(isQuestionAnswer([where], "remote")).toBe(false);
+    expect(isQuestionAnswer([level], "Senior, Staff")).toBe(false);
+    expect(isQuestionAnswer([where, level], "Where: Remote")).toBe(false);
+    expect(isQuestionAnswer([], "Remote")).toBe(false);
   });
 });

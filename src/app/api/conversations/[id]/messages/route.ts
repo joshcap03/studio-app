@@ -23,6 +23,9 @@ export const maxDuration = 300;
 type Context = { params: Promise<{ id: string }> };
 
 const text = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
+// The page asking can show the agent's offer to call. One from before offers says nothing, and
+// gets none: it would break on the card.
+const offers = z.boolean().optional();
 const body = z.discriminatedUnion("kind", [
   z
     .object({
@@ -39,11 +42,15 @@ const body = z.discriminatedUnion("kind", [
       // How the member is talking: on a call or in a voice message their words were spoken, and the
       // agent writes for the ear. A retry, an edit, or a decision is said the way the latest message was.
       modality: z.enum(MODALITIES).optional(),
+      // The call these words were said on, for its recap. It counts only once it's checked to be
+      // the caller's own call in this agent (src/lib/chat/run.ts).
+      voiceSessionId: z.uuid().optional(),
+      offers,
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
-  z.object({ kind: z.literal("retry") }),
-  z.object({ kind: z.literal("edit"), messageId: z.uuid(), text }),
-  z.object({ kind: z.literal("decide"), approvalId: z.uuid(), decision: z.enum(["approve", "reject"]) }),
+  z.object({ kind: z.literal("retry"), offers }),
+  z.object({ kind: z.literal("edit"), messageId: z.uuid(), text, offers }),
+  z.object({ kind: z.literal("decide"), approvalId: z.uuid(), decision: z.enum(["approve", "reject"]), offers }),
 ]);
 
 export async function POST(request: NextRequest, { params }: Context) {

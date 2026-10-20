@@ -4,7 +4,8 @@ A call puts a fast voice in front of the agent. The voice (ElevenLabs Agents) li
 handles being talked over; the agent (the worker, Langflow) does all the thinking and work, as in
 the chat. The voice may only reflect the member's words back, say what the agent reported, ask
 them to clarify, and say a holding line. Everything else goes to the agent in the member's exact
-words. Phase 1 is the Setup Call: "Talk it through" beside "Start" on the setup banner.
+words. A call can start from any conversation or a new chat ("Call Rowan" beside the message box's
+mic), from the setup banner ("Talk it through"), or from the agent's own offer under a reply.
 
 ## How it fits together
 
@@ -29,7 +30,63 @@ words. Phase 1 is the Setup Call: "Talk it through" beside "Start" on the setup 
   the finished reply. The heads-up and time's-up cues each go once.
 - `POST /api/voice/session/<id>/end` records the call's length.
 
-Studio stores no audio. The member's words become their messages, labeled "On a call".
+Studio stores no audio. The member's words become their messages, labeled "On a call", each with
+the call's `voice_sessions` id in its origin once the server has checked the call is the member's
+own in this agent (`src/lib/voice/calls.ts`; the browser sends `voiceSessionId`, and someone
+else's call, or one ended more than two minutes before, leaves the words plain "voice").
+
+## Calls from any conversation
+
+- **Where it is.** The call is bound to a conversation in the browser only, and the binding moves:
+  "Do the first one now" on the stage runs the task and the call follows its run into the task's
+  conversation. Everything the stage does (sending, stopping, approving, applying, Retry) acts on
+  the call's conversation, not the one on screen. The stage carries `purpose` (setup, task, or
+  chat) for the voice's bearings, and the journey is the call's own conversation's (the setup's
+  only for the setup interview).
+- **Runs this tab didn't start.** A task's run, the worker's, or a stream let go of while the tab
+  was hidden is followed by loading the conversation every 1.5 seconds; what each load changed is
+  told to the call as the stream would have (`src/lib/chat/follow.ts`: start, steps, text, end), so
+  the narration, held words, and the reply's gist work the same. When the call follows a task's
+  run, the first load of its conversation tells the run from its start (`joinedEvents`), so one
+  that's already over (it failed at once, or reached an approval) is still read out.
+- **Joining.** A call reads the last reply out only when it waits on the member (a question, a
+  card, or an approval); an older answer isn't news.
+- **A long job.** After 45 seconds with nothing new, the call asks once, in fixed words (cue
+  `long_job`): "This takes a few minutes. Want to hang on, or should I send you a voice note when
+  it's done?" It asks only when the running reply really can come back as a note (`noteCanCome`
+  in `src/lib/voice/notes.ts`: it answers words said on this call, a voice message, or a task's
+  run), never for one started by typing. Their answer is read strictly from their own transcript:
+  `isVoiceNoteIntent` and `isHangOnIntent` take the answer and nothing more ("no, a voice note is
+  fine", "no voice note, I'll wait"), so a request said with it, or one that mentions a note
+  ("send a note to Sarah"), goes to the worker as usual. A voice note ends the call once the voice
+  has said so; hanging on carries on. A reply to words said on a call that finishes after the call
+  ended comes back as a voice note. If the job comes back before the call has hung up, or just as
+  they answer, the voice says "Actually, it just came back." and reads it instead (no note comes:
+  the call was still on). Hanging up while the job goes, the orb shows "Out on it" for a moment,
+  and the sidebar's mark keeps breathing by its name. Words still held for that job go into its
+  message box, never lost.
+- **Retry.** A failed or cut-off reply shows Retry on the stage, and a plain "try again"
+  (`isRetryIntent`) retries it rather than sending the words.
+- **The agent's offer.** `offer_call` (gateway) puts a "Hop on a call?" card under a reply: why,
+  with Not now and Call. It changes nothing and never rings anyone (no push). The app keeps it only
+  where the member could take a call (voice on, not on a call, no Not now to an offer in this
+  conversation; `TurnDeps.offerCalls`), and tells the agent so in its context (a plain fact that
+  names no tool, so a flow from before `offer_call` reads nothing it can't act on). Offers reach
+  only pages that know them: a turn's page says so (`offers: true`) and a load asks
+  (`?offers=1`), since a tab still on older code would break on the card. Call starts the
+  call first, then records the offer as taken with the call's id (checked to be the member's own
+  call, still going); Not now is stored, and no more offers come in that conversation. A reply
+  keeps two cards plus one offer, last.
+- **The recap.** After a call, a card under its last message says what the member asked (their
+  words only: a card's picks are decisions, and words held while it worked are quoted apart),
+  what got done (steps and files), what they decided (cards sent, questions answered, proposals
+  applied, approvals answered while it was on), and what's still out. It's built in the browser
+  from the records (`src/lib/voice/recap.ts`) and the calls the conversation's messages were said
+  on (`GET /api/conversations/<id>` returns them as `calls`), so it stays true as a job lands;
+  nothing is written to the reply. A call that followed a task's run has a recap in the run's
+  conversation too (from the run's start), and the one where it was says it started the run and,
+  by the run's sidebar mark, whether it's still out. Where a call went is known only to the tab
+  it was on, so those parts aren't there after a reload.
 
 ## Voices
 
@@ -158,7 +215,7 @@ orb takes working, your call, and stuck from it and keeps its own floor states (
 speaking, on it, connecting); the rail marks "Your call" or "Stuck", held still; the sidebar marks
 conversations working, waiting on the member, or stuck, and the agent's mark breathes while any run
 is going, including one out of view; and a push for a reply that ends on a card or question says
-"Needs you". An offer to talk (a later version's card) is never the member's call.
+"Needs you". An offer to call is never the member's call.
 
 ## Turning it on
 
@@ -240,10 +297,13 @@ can be used on our own recordings.
 
 ## Testing
 
-`npm run qa:serve` runs the mock voice: "Talk it through" opens the call with a labeled mock that
+`npm run qa:serve` runs the mock voice: "Talk it through", or the call button in any chat, opens the call with a labeled mock that
 takes typed speech and shows captions, and runs the real voice front with scripted replies (see
 `src/lib/voice/mock.ts` for what it understands). Previews on the agent page play the mock's
 tone; with the mock agent, "propose how you'll sound" shows a proposal with three ways to
-sound. `tests/integration/api-voice.test.ts` and `rls-voice.test.ts` cover isolation and the
-daily voice time (calls and clips); `npm run test:audit` checks the narration for every tool in
-the flow's history.
+sound; "hop on a call" shows an offer to call; "a very slow job" runs for over a minute with
+nothing new, so a call asks whether to hang on or leave a voice note. `tests/integration/api-voice.test.ts`
+and `rls-voice.test.ts` cover isolation and the daily voice time (calls and clips), and
+`api-calls.test.ts` the call a message was said on, a conversation's calls, the voice note after
+hanging up, and the offer; `npm run test:audit` checks the narration for every tool in the flow's
+history.

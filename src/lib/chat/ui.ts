@@ -16,6 +16,7 @@ import {
   MAX_VERDICT_ITEMS,
   MAX_VERDICT_REASONS,
   type AgentProposal,
+  type ChatMessage,
   type ProposedSkill,
   type ProposedSound,
   type ProposedTask,
@@ -23,14 +24,17 @@ import {
   type UiField,
   type UiForm,
   type UiListPart,
+  type UiOffer,
   type UiOption,
   type UiVerdictItem,
+  MAX_UI_BLOCKS,
 } from "@/lib/types";
 
-// Cards the agent asked to show through its show_form and propose_agent tools. Neither tool
-// changes anything: a form's answers go out as the member's next message, and a proposal is
-// applied only when the member clicks Apply (src/app/api/conversations/[id]/ui/[blockId]).
-// Agent output is loose, so anything unusable is dropped rather than failing the whole card.
+// Cards the agent asked to show through its show_form, propose_agent, and offer_call tools. None
+// changes anything: a form's answers go out as the member's next message, a proposal is applied
+// only when the member clicks Apply (src/app/api/conversations/[id]/ui/[blockId]), and an offer
+// to call starts one only when they tap Call. Agent output is loose, so anything unusable is
+// dropped rather than failing the whole card.
 
 const line = (s: unknown, max: number) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const para = (s: unknown, max: number) =>
@@ -505,12 +509,47 @@ export function isMergeRequest(raw: unknown): raw is { memory_merge: Record<stri
   return isRecord(raw) && isRecord(raw.memory_merge);
 }
 
-/** Validates one card the agent asked for (`{form}` or `{proposal}`). Null when nothing is usable. */
+/** The agent's offer to talk it through on a call: why, in one sentence (required), and what about. */
+export function buildOffer(raw: Record<string, unknown>, id: string = crypto.randomUUID()): UiOffer | null {
+  const reason = line(raw.reason, 200);
+  if (!reason) return null;
+  const topic = line(raw.topic, 80);
+  return { kind: "offer", id, reason, ...(topic ? { topic } : {}) };
+}
+
+/** Validates one card the agent asked for (`{form}`, `{proposal}`, or `{offer_call}`). Null when nothing is usable. */
 export function buildUiBlock(raw: unknown, id: string = crypto.randomUUID()): UiBlock | null {
   if (!isRecord(raw)) return null;
   if (isRecord(raw.form)) return buildForm(raw.form, id);
   if (isRecord(raw.proposal)) return buildProposal(raw.proposal, id);
+  if (isRecord(raw.offer_call)) return buildOffer(raw.offer_call, id);
   return null;
+}
+
+/**
+ * The cards a reply keeps: its latest MAX_UI_BLOCKS forms and proposals, then its latest offer
+ * to call, last. An offer never pushes out a card that asks something of the member (a form
+ * and an offer in one reply both stay), and one is enough.
+ */
+export function capUi(blocks: UiBlock[]): UiBlock[] {
+  const offer = blocks.findLast((b) => b.kind === "offer");
+  return [...blocks.filter((b) => b.kind !== "offer").slice(-MAX_UI_BLOCKS), ...(offer ? [offer] : [])];
+}
+
+/**
+ * Messages as a page from before offers to call reads them: without the offers, or what the
+ * member did with one. Such a page draws any card it doesn't know as a proposed setup and
+ * breaks on an offer, so only pages that say they know offers get them (an open tab keeps its
+ * old code across a deploy).
+ */
+export function withoutOffers(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => {
+    const offers = (m.ui ?? []).filter((b) => b.kind === "offer").map((b) => b.id);
+    if (!offers.length) return m;
+    const ui = m.ui!.filter((b) => b.kind !== "offer");
+    const uiResponse = m.uiResponse ? Object.fromEntries(Object.entries(m.uiResponse).filter(([id]) => !offers.includes(id))) : undefined;
+    return { ...m, ui, ...(uiResponse ? { uiResponse } : {}) };
+  });
 }
 
 export const proposalPicksSchema = z.strictObject({

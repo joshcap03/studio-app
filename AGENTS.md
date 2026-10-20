@@ -119,6 +119,8 @@ raw/technical text.
   with one member everywhere it speaks, `relay.ts` what it may say about a run, `intent.ts` what the
   member's own words ask for. The call screen is `src/components/voice/call.tsx`; card drafts it
   shares with the thread are `src/components/chat/card-drafts.tsx`, checked by `src/lib/chat/ui-fill.ts`.
+  A call can start in any conversation and follows a task's run there; `calls.ts` checks which call
+  a message was said on, and `recap.ts` builds the card after a call from the records (nothing stored).
   Outside calls: the message box's mic (`mic.ts`, `src/components/chat/mic.tsx`: hold to send a voice
   message, tap to dictate; `/api/voice/transcribe`), and voice notes (`notes.ts` picks which replies
   get one and its words, saved as `messages.voice_note`; `clips.ts` says one on play through
@@ -169,10 +171,11 @@ raw/technical text.
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
   the member's behalf. Provider resume state stays server-side.
 - Agent-rendered UI is built as reusable gateway tools any skill can call (`ask_user`,
-  `show_form`, `propose_agent`, `merge_memories`; cards in `src/components/chat/ui-cards.tsx` and
+  `show_form`, `propose_agent`, `merge_memories`, `offer_call`; cards in `src/components/chat/ui-cards.tsx` and
   `requests.tsx`), never as UI for one flow or template. They change nothing: a form's
-  answers go out as the member's next message, and a proposed setup applies only when the
-  member clicks Apply, and the card shows only what took effect.
+  answers go out as the member's next message, a proposed setup applies only when the
+  member clicks Apply, and the card shows only what took effect; an offer to call only
+  offers (never a push), and is kept only where the member could take one.
 - Render only what the backend reports: no invented activity, statuses, or artifacts, and no
   artifact parsing from free text. Mock output stays clearly labeled.
 - Secrets stay server-side in `src/lib/config.ts`; only `NEXT_PUBLIC_SUPABASE_*` reach the browser.

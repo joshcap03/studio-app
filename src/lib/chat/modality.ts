@@ -4,10 +4,13 @@ import type { MessageOrigin, Modality } from "@/lib/types";
 // again (a retry, an edit, a decision on an approval) is said: the same way. Pure, so the
 // browser labels its own copy of a message straight away the way the server will.
 
-/** The origin a sent message carries for how it was said: spoken on a call, or held as a voice message. */
-export function originFor(modality: Modality | undefined, text: string): MessageOrigin | undefined {
+/**
+ * The origin a sent message carries for how it was said: spoken on a call (with the call's id,
+ * once it's known to be the member's own), or held as a voice message.
+ */
+export function originFor(modality: Modality | undefined, text: string, callId?: string | null): MessageOrigin | undefined {
   if (!text.trim()) return undefined;
-  if (modality === "call") return { kind: "voice" };
+  if (modality === "call") return callId ? { kind: "voice", sessionId: callId } : { kind: "voice" };
   if (modality === "voice_note") return { kind: "voice", via: "note" };
   return undefined;
 }
@@ -16,4 +19,9 @@ export function originFor(modality: Modality | undefined, text: string): Message
 export function modalityOf(origin: MessageOrigin | null | undefined): Exclude<Modality, "text"> | undefined {
   if (origin?.kind !== "voice") return undefined;
   return origin.via === "note" ? "voice_note" : "call";
+}
+
+/** The call a message was said on, when it carries one. */
+export function callOf(origin: MessageOrigin | null | undefined): string | null {
+  return origin?.kind === "voice" && !origin.via && origin.sessionId ? origin.sessionId : null;
 }

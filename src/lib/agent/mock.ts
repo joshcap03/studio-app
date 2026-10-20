@@ -105,6 +105,25 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // A reply with an offer to talk it through on a call; the card shows only to members who
+    // could take one (the turn drops it otherwise).
+    match: /\b(hop on a call|offer (me )?a call)\b/i,
+    steps: [
+      { kind: "text", text: "There are a few trade-offs here: pay against growth, and remote against a team you'd see every day (mock)." },
+      { kind: "ui", block: { offer_call: { reason: "This one's worth five minutes: three trade-offs to weigh (mock).", topic: "Which offer to take (mock)" } } },
+    ],
+  },
+  {
+    // A job that runs for over a minute with nothing new after it starts, so a call following it
+    // asks whether to hang on or leave a voice note when it's done.
+    match: /\b(takes a few minutes|very slow job)\b/i,
+    steps: [
+      { kind: "note", text: "I'll go through the whole quarter, one vendor at a time (mock).", ms: 600 },
+      { kind: "activity", id: "slow", running: "Going through every vendor", done: "Went through 42 vendors", ms: 70_000, app: "code", action: "run" },
+      { kind: "text", text: "Done (mock). All 42 vendors are paid up except Casting Co, who's owed $1,240." },
+    ],
+  },
+  {
     // Numbered citations: two verified quotes, one link-only, and one link no tool returned.
     match: /\b(cite|citations|sources)\b/i,
     steps: [

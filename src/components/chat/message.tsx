@@ -146,6 +146,8 @@ interface AssistantProps {
   /** Records what the member did with one of the reply's cards (a form sent, a proposal applied). */
   onUiResponse?: (messageId: string, blockId: string, response: UiResponse) => void;
   onRunTask?: (taskId: string) => Promise<void>;
+  /** Present while an offer to call under this reply can be taken: starts the call, resolving with its id. */
+  onCall?: () => Promise<string>;
   /** Rates this reply (null clears the rating). */
   onFeedback?: (messageId: string, feedback: MessageFeedback | null) => void;
   /** A notification opened this reply's voice note: its play button is pointed out (it never plays on its own). */
@@ -162,6 +164,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   onAnswer,
   onUiResponse,
   onRunTask,
+  onCall,
   onFeedback,
   noteFocus,
 }: AssistantProps) {
@@ -257,6 +260,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           onAnswer={onAnswer && message.status === "complete" ? onAnswer : undefined}
           onResponse={onUiResponse}
           onRunTask={onRunTask}
+          onCall={onCall}
           settled={message.status === "complete"}
         />
       ) : null}
@@ -344,7 +348,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 });
 
-/** How the agent is, after a reply: waiting on the member, stuck, just done, or at rest (src/lib/chat/move.ts). */
+/**
+ * How the agent is, after a reply: waiting on the member, stuck, just done, or at rest
+ * (src/lib/chat/move.ts). An offer to call asks nothing of them, so it never reads as waiting.
+ */
 function replyMood(message: ChatMessage, justFinished: boolean): CompanionMood {
   const { move } = moveOf(message);
   if (move === "your_call") return "needs_you";

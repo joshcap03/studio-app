@@ -1,8 +1,10 @@
 "use client";
 
 import { ArrowDown } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, ChatMessage, MessageFeedback, UiResponse } from "@/lib/types";
+import { recapsByMessage, type RecapCall } from "@/lib/voice/recap";
+import { CallRecapCard } from "./call-recap";
 import { AssistantMessage, UserMessage } from "./message";
 import { pointOutNote } from "./voice-note";
 
@@ -28,6 +30,10 @@ interface Props {
   sendCount: number;
   /** A reply whose voice note a notification opened: brought into view, its play button pointed out. */
   noteFocus?: string | null;
+  /** Starts a call here, from the agent's offer under the latest reply (when the member has calls); resolves with its id. */
+  onCall?: () => Promise<string>;
+  /** The calls messages here were said on (or that followed a run here); each one that's over gets its recap after its last message. */
+  calls?: RecapCall[];
   footer: React.ReactNode;
 }
 
@@ -35,8 +41,9 @@ interface Props {
  * The scrolling message list. Follows new output while the reader is at the bottom, and
  * leaves the scroll position alone once they scroll up to read earlier messages.
  */
-export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onRunTask, onFeedback, onOpenPanel, sendCount, noteFocus, footer }: Props) {
+export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onRunTask, onFeedback, onOpenPanel, sendCount, noteFocus, onCall, calls, footer }: Props) {
   const lastUserId = messages.findLast((m) => m.role === "user")?.id;
+  const recaps = useMemo(() => recapsByMessage(messages, calls ?? []), [messages, calls]);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -109,10 +116,12 @@ export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposa
                     onAnswer={!running && index === messages.length - 1 ? onAnswer : undefined}
                     onUiResponse={onUiResponse}
                     onRunTask={onRunTask}
+                    onCall={!running && index === messages.length - 1 ? onCall : undefined}
                     onFeedback={message.id.startsWith("pending-") ? undefined : onFeedback}
                     noteFocus={message.id === noteFocus}
                   />
                 )}
+                {recaps.get(message.id)?.map((recap) => <CallRecapCard key={recap.callId} recap={recap} />)}
               </div>
             );
           })}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep, ChatMessage, StreamEvent } from "@/lib/types";
-import { cardLine, closingQuestion, initialRelay, plain, relayEvent, relayJourney, relayReply, speakableGist, type RelayState } from "./relay";
+import { cardLine, closingQuestion, initialRelay, plain, relayEvent, relayJourney, relayReply, speakableGist, waitsOnMember, type RelayState } from "./relay";
 
 const step = (patch: Partial<ActivityStep>): ActivityStep => ({ id: "s1", label: "Searching the web", status: "running", app: "web", startedAt: 0, ...patch });
 const activity = (s: ActivityStep): StreamEvent => ({ type: "activity", step: s });
@@ -171,6 +171,28 @@ describe("relayReply", () => {
     const block = { kind: "proposal" as const, id: "p", summary: "I'll look every weekday.", skills: [], tasks: [], memories: [] };
     expect(relayReply(reply({ ui: [block], uiResponse: { p: { status: "submitted", at: 0 } } }))).toEqual([]);
     expect(cardLine(block)).toBe("I'll look every weekday. It's on screen. Tap Apply when it looks right.");
+  });
+});
+
+describe("calls from anywhere", () => {
+  it("never says an offer to call on one", () => {
+    const offer = { kind: "offer" as const, id: "o", reason: "Quicker to talk it through." };
+    expect(relayReply(reply({ content: "Two ways to go.", ui: [offer] })).map((l) => l.text)).toEqual(["Two ways to go."]);
+    expect(cardLine(offer)).toBe("");
+  });
+
+  it("reads a reply a call joins only when it waits on the member", () => {
+    const pending = { id: "a", summary: "Send it", details: [] as [string, string][], status: "pending" as const, createdAt: 0 };
+    expect(waitsOnMember(reply({ content: "Found two roles. Which first, Acme or Globex?" }))).toBe(true);
+    expect(waitsOnMember(reply({ content: "Here.", ui: [{ kind: "form", id: "f", title: "Your search", fields: [], submitLabel: "Send" }] }))).toBe(true);
+    expect(waitsOnMember(reply({ status: "awaiting", content: "Here's the email.", approvals: [pending] }))).toBe(true);
+    expect(waitsOnMember(reply({ content: "Here.", questions: [{ question: "Remote?", options: [{ label: "Yes" }, { label: "No" }], multiSelect: false }] }))).toBe(true);
+    // An answer already given, an answered card, an offer, a failure, or the member's own message: not news.
+    expect(waitsOnMember(reply({ content: "Done. Both went out." }))).toBe(false);
+    expect(waitsOnMember(reply({ content: "Here.", ui: [{ kind: "offer", id: "o", reason: "Talk?" }] }))).toBe(false);
+    expect(waitsOnMember(reply({ content: "Here.", ui: [{ kind: "form", id: "f", title: "x", fields: [], submitLabel: "Send" }], uiResponse: { f: { status: "submitted", at: 1 } } }))).toBe(false);
+    expect(waitsOnMember(reply({ status: "error", content: "Want to retry?" }))).toBe(false);
+    expect(waitsOnMember(reply({ role: "user", content: "What now?" }))).toBe(false);
   });
 });
 

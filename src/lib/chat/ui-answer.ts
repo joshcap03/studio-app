@@ -1,7 +1,9 @@
 import { appName } from "@/lib/apps";
-import type { UiForm } from "@/lib/types";
+import type { Question, UiForm, UiResponse } from "@/lib/types";
+import { voiceByKey } from "@/lib/voice/voices";
 
-// Turning a filled-in form into the member's next message. Shared by the form card (browser)
+// Turning a filled-in form (or picks on the agent's questions) into the member's next message,
+// and an applied proposal into what took effect. Shared by the cards (browser), a call's recap,
 // and tests; kept apart from ui.ts so the browser doesn't load the skill library.
 
 /**
@@ -87,4 +89,53 @@ export function formAnswerText(form: UiForm, values: FormValues): string {
     }
   }
   return out.join("\n") || `${form.title}: nothing to add.`;
+}
+
+/** What applying a proposed setup did, in a line (the card's, and a call's recap). */
+export function appliedText(a: Extract<UiResponse, { status: "applied" }>["applied"]): string {
+  const parts = [
+    a.name ? `named ${a.name}` : "",
+    a.voice ? `sounds ${(voiceByKey(a.voice)?.label ?? a.voice).toLowerCase()}` : "",
+    a.settings ? "updated what it's for and how it works" : "",
+    a.tasks ? `${a.tasks} task${a.tasks === 1 ? "" : "s"} on` : "",
+    a.skills ? `${a.skills} skill${a.skills === 1 ? "" : "s"} added` : "",
+    a.memories ? `${a.memories} fact${a.memories === 1 ? "" : "s"} remembered` : "",
+  ].filter(Boolean);
+  const skipped = a.skipped ? ` ${a.skipped} item${a.skipped === 1 ? "" : "s"} couldn't be applied on your account.` : "";
+  return (parts.length ? `Applied: ${parts.join(", ")}.` : "Applied. Nothing needed changing.") + skipped;
+}
+
+/** The message that answers `questions` with the member's picks. */
+export function answerText(questions: Question[], picks: string[][]): string {
+  if (questions.length === 1) return picks[0].join(", ");
+  return questions.map((q, i) => `${q.header ? `${q.header}:` : q.question} ${picks[i].join(", ")}`).join("\n");
+}
+
+/**
+ * Whether `content` is picks on `questions` as the question card sends them (answerText), not
+ * words of the member's own: each line only the question's options. Labels may hold commas, so
+ * each line is matched label by label.
+ */
+export function isQuestionAnswer(questions: Question[], content: string): boolean {
+  if (!questions.length) return false;
+  const text = content.trim();
+  if (questions.length === 1) return picksOf(text, questions[0]);
+  const lines = text.split("\n");
+  return (
+    lines.length === questions.length &&
+    questions.every((q, i) => {
+      const lead = q.header ? `${q.header}:` : q.question;
+      const line = lines[i].trim();
+      return line === lead.trim() || (line.startsWith(`${lead} `) && picksOf(line.slice(lead.length + 1).trim(), q));
+    })
+  );
+}
+
+/** Whether `text` is one or more of the question's option labels, joined the way answerText joins them. */
+function picksOf(text: string, question: Question): boolean {
+  if (!text) return false;
+  const labels = question.options.map((o) => o.label).filter(Boolean);
+  const rest = (from: string, left: number): boolean =>
+    left > 0 && labels.some((label) => from === label || (from.startsWith(`${label}, `) && rest(from.slice(label.length + 2), left - 1)));
+  return rest(text, question.multiSelect ? labels.length : 1);
 }

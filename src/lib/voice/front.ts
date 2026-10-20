@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { isBackchannel, isRedirect, isSendIntent, isStopIntent } from "./intent";
+import { isBackchannel, isHangOnIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
 import { plain } from "./relay";
-import { cueLine, greeting, VOICE_TOOLS, voicePrompt } from "./persona";
-import { VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
+import { cueLine, greeting, JUST_BACK, VOICE_TOOLS, voiceNoteLine, voicePrompt } from "./persona";
+import { CALL_PURPOSES, VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
 // The voice front: an OpenAI-compatible chat-completions endpoint the voice provider calls for
 // every turn of a call (ElevenLabs' custom-LLM mode). It ignores the provider's own prompt and
@@ -51,6 +51,8 @@ const stageField = z
 const stage = z
   .object({
     working: z.boolean(),
+    // Absent from pages loaded before calls could be had anywhere.
+    purpose: z.enum(CALL_PURPOSES).optional(),
     journey: z
       .object({
         done: z.number(),
@@ -65,6 +67,7 @@ const stage = z
     questions: z.array(z.object({ question: z.string().max(500), options: z.array(z.string().max(200)).max(6), multi: z.boolean() })).max(4).optional(),
     proposal: z.string().max(600).optional(),
     approval: z.string().max(600).optional(),
+    longJob: z.boolean().optional(),
   })
   .strip();
 const marker = z.object({ say: z.array(z.string().max(600)).max(8).optional(), stage: stage.optional(), cue: z.enum(VOICE_CUES).optional() }).strip();
@@ -194,6 +197,8 @@ const HOLDING = {
   sent: ["Okay, that's sent.", "Sent."],
   stopped: ["Okay, I've stopped."],
   stopping: ["Okay, stopping."],
+  /** They'll hang on while a long job works. */
+  waiting: ["Sure, I'll keep going.", "Okay, still on it."],
 } as const;
 export type HoldingKind = keyof typeof HOLDING;
 
@@ -254,6 +259,17 @@ export function speechForResults(results: string[], messages: FrontMessage[] = [
       case "stopped":
         lines.push(holdingLine("stopped", messages));
         break;
+      case "waiting":
+        lines.push(holdingLine("waiting", messages));
+        break;
+      case "ending":
+        // They'd rather have a voice note than wait: the call ends once this is said.
+        lines.push(voiceNoteLine(latestStage(messages)));
+        break;
+      case "done":
+        // Their answer to "hang on, or a voice note?" came just as the job did: no note, the call reads it.
+        lines.push(JUST_BACK);
+        break;
       default:
         return null;
     }
@@ -290,7 +306,7 @@ export function planReply(context: VoiceContext, messages: FrontMessage[]): Fron
   if (last.role === "tool") {
     const results = trailingResults(messages);
     // The line already went out with the call (quickRoute), and the result is what it said.
-    if (alreadySaid(messages) && results.every((r) => /^\s*(handed off|held|stopped):/i.test(r))) return { kind: "skip" };
+    if (alreadySaid(messages) && results.every((r) => /^\s*(handed off|held|stopped|waiting|ending):/i.test(r))) return { kind: "skip" };
     const speech = speechForResults(results, messages);
     if (speech) return { kind: "say", text: speech };
   }
@@ -377,6 +393,8 @@ export function routeSpeech(said: string, stage: VoiceStage | null, tools: Brain
   const skip = { tools: [{ name: "skip_turn", args: {} }] };
   if (isBackchannel(said)) return skip;
   if (isStopIntent(said)) return { tools: [{ name: "stop_work", args: {} }] };
+  // Their answer to "hang on, or a voice note?" goes to the browser, which ends the call or carries on.
+  if (answerToLongJob(said, stage)) return { tools: [{ name: "send_message", args: {} }] };
   const fills = (tools ?? []).filter((t) => t.name === "fill_card" || t.name === "answer_question");
   // "Send" sends what's on screen; the browser says what's missing if it can't.
   if (isSendIntent(said) && (stage?.form || stage?.questions?.length)) return { tools: [...fills, { name: "send_card", args: {} }] };
@@ -399,12 +417,25 @@ export function quickRoute(messages: FrontMessage[]): BrainReply | null {
   const reply = routeSpeech(said, stage, []);
   // The holding line goes out with the hand-off, in one turn rather than two.
   const call = reply.tools?.[0]?.name;
+  const answer = answerToLongJob(said, stage);
+  if (answer) return { ...reply, text: answer === "note" ? voiceNoteLine(stage) : holdingLine("waiting", messages) };
   if (call === "send_message") {
     const kind: HoldingKind = stage?.approval ? "approval" : stage?.working && !isRedirect(said) ? "held" : answering(messages) ? "answer" : "request";
     return { ...reply, text: holdingLine(kind, messages) };
   }
   if (call === "stop_work") return stage?.working ? { ...reply, text: holdingLine("stopping", messages) } : { tools: [{ name: "skip_turn", args: {} }] };
   return reply;
+}
+
+/**
+ * Their answer, while a job is still going, to the call's "hang on, or a voice note?": the
+ * note (the call ends once that's said) or hanging on; null when it's anything else.
+ */
+function answerToLongJob(said: string, stage: VoiceStage | null): "note" | "wait" | null {
+  if (!stage?.longJob || !stage.working) return null;
+  // Each is that answer and nothing more, so "actually, just send me a voice note" isn't a change of course.
+  if (isVoiceNoteIntent(said)) return "note";
+  return isHangOnIntent(said) ? "wait" : null;
 }
 
 const TOOL_WORDS = /\b(skip[_ ]turn|end[_ ]call|send[_ ]message|fill[_ ]card|send[_ ]card|stop[_ ]work|answer[_ ]question|tools?|field id)\b/i;

@@ -312,6 +312,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "merge_memories":
       // The merges are shown under the reply; nothing changes until the member merges them.
       return { labels: { running: "Looking for facts that overlap", done: "Suggested facts to combine" }, app: "memory", action: "note", hidden: true };
+    case "offer_call":
+      // The offer is shown under the reply as a card; a call starts only if the member taps Call.
+      return { labels: { running: "Offering a call", done: "Offered a call", failed: "Couldn't offer a call" }, app: "agent", action: "note", hidden: true };
     case "report_run":
       // Decides whether the member is notified; the reply itself says how it went.
       return { labels: { running: "Wrapping up", done: "Wrapped up" }, app: "agent", action: "note", hidden: true };
@@ -678,6 +681,8 @@ function tablePreview(values: unknown[][], title?: string): StepPreview | undefi
 
 /** What the plan-update step says while it runs; bookkeeping a call doesn't narrate. */
 export const PLAN_STEP_LABEL = "Updating the plan";
+/** The same step, done. */
+export const PLAN_STEP_DONE_LABEL = "Updated the plan";
 
 /** The agent rewrote its task's plan: shown with how far along it is (the plan itself is on the task). */
 function planUpdate(input: Record<string, unknown>): Interpretation {
@@ -686,7 +691,7 @@ function planUpdate(input: Record<string, unknown>): Interpretation {
   const next = steps.find((s) => s.status === "doing" || s.status === "todo" || s.status === "needs_you");
   const nextText = next && typeof next.text === "string" ? `; next: ${clip(next.text, 80)}` : "";
   return {
-    labels: { running: PLAN_STEP_LABEL, done: "Updated the plan" },
+    labels: { running: PLAN_STEP_LABEL, done: PLAN_STEP_DONE_LABEL },
     app: "tracker",
     action: "write",
     preview: steps.length > 0 ? textPreview(`Plan: ${done} of ${steps.length} ${steps.length === 1 ? "step" : "steps"} done${nextText}`) : undefined,
@@ -871,7 +876,7 @@ export function talksMachinery(text: string): boolean {
 }
 
 /** Tools that report on the answer (its sources, charts, questions, what to remember) rather than do the work. */
-const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "remember", "propose_memory"]);
+const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "remember", "propose_memory"]);
 
 /**
  * Whether a call only reports on the answer. Text the agent writes before such a call is

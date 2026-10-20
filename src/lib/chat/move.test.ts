@@ -9,8 +9,8 @@ function reply(patch: Partial<ChatMessage> = {}): ChatMessage {
 const form = { kind: "form", id: "f", title: "A few things", fields: [], submitLabel: "Send" } as UiBlock;
 const proposal = { kind: "proposal", id: "p", summary: "How I'll work", skills: [], tasks: [], memories: [] } as UiBlock;
 const merge = { kind: "memory-merge", id: "g", summary: "Facts to combine", merges: [] } as UiBlock;
-// A card that asks nothing of them (an offer to talk, from a later version).
-const offer = { kind: "offer", id: "o" } as unknown as UiBlock;
+// A card that asks nothing of them: the agent's offer to talk it through on a call.
+const offer: UiBlock = { kind: "offer", id: "o", reason: "Quicker to talk it through." };
 const question = { question: "Remote?", options: [{ label: "Yes" }, { label: "No" }], multiSelect: false };
 const pending = { id: "a", summary: "Send it", details: [] as [string, string][], status: "pending" as const, createdAt: 0 };
 

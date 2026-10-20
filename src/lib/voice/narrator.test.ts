@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep, ChatMessage, StreamEvent } from "@/lib/types";
-import { CallNarrator } from "./narrator";
+import { CallNarrator, LONG_JOB_MS } from "./narrator";
 import { sentences } from "./relay";
 
 // Replays of what a call is sent during a run, the way the Langflow adapter and turn.ts send it,
@@ -192,5 +192,40 @@ describe("CallNarrator", () => {
     expect(cues).toEqual(["heads_up", "time_up"]);
     const short = new CallNarrator();
     expect(Array.from({ length: 100 }, (_, s) => short.clock(s, 90)).filter(Boolean)).toEqual(["time_up"]);
+  });
+});
+
+describe("a long job", () => {
+  it("is asked about once a turn, after a long stretch with nothing new", () => {
+    const narrator = new CallNarrator();
+    narrator.event(start, 0);
+    expect(narrator.longJob(LONG_JOB_MS - 1, true)).toBe(false);
+    // Something new puts it off.
+    narrator.event(activity({ id: "s2", label: "Reading the results" }), 30_000);
+    expect(narrator.longJob(LONG_JOB_MS + 1, true)).toBe(false);
+    expect(narrator.longJob(30_000 + LONG_JOB_MS, true)).toBe(true);
+    expect(narrator.longJob(30_000 + 3 * LONG_JOB_MS, true)).toBe(false);
+    // A hidden step isn't news; a new turn can be asked about again.
+    narrator.event(start, 200_000);
+    narrator.event(activity({ id: "h", label: "Looking up tools", hidden: true }), 230_000);
+    expect(narrator.longJob(200_000 + LONG_JOB_MS, true)).toBe(true);
+  });
+
+  it("counts a run already going when the call joined from when it was first seen, and not at all once it's done", () => {
+    const narrator = new CallNarrator();
+    expect(narrator.longJob(5_000, true)).toBe(false);
+    expect(narrator.longJob(5_000 + LONG_JOB_MS, true)).toBe(true);
+    const idle = new CallNarrator();
+    expect(idle.longJob(0, false)).toBe(false);
+    expect(idle.longJob(10 * LONG_JOB_MS, false)).toBe(false);
+  });
+
+  it("says that it came back ahead of the reply, when it did just as the call was hanging up for its note", () => {
+    const { narrator, spoken, feed, flush } = call();
+    feed([start]);
+    narrator.aside("Actually, it just came back.");
+    narrator.reply(message({ content: "Found three roles. The best is remote." }));
+    flush();
+    expect(spoken).toEqual(["Actually, it just came back.", "Found three roles. The best is remote."]);
   });
 });
