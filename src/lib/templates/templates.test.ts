@@ -5,7 +5,7 @@ import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
 import { companionName } from "@/lib/companion";
 import { isVoiceKey } from "@/lib/voice/voices";
-import { DEFAULT_TEMPLATE_ID, PLAN_STEP, TEMPLATES, setupSteps, templateById } from "./index";
+import { DEFAULT_TEMPLATE_ID, PLAN_STEP, TEMPLATES, setupSteps, templateById, templatesFor } from "./index";
 
 describe("templates", () => {
   it("have unique ids and only reference library skills that exist", () => {
@@ -92,6 +92,13 @@ describe("templates", () => {
       "small-business": { name: "June", voice: "clear" },
       blank: { name: "Sam", voice: "easygoing" },
     });
+  });
+
+  it("leave Job search out of a first agent's choices but offer it later", () => {
+    const first = templatesFor(true).map((t) => t.id);
+    expect(first).not.toContain("job-search");
+    expect(first).toContain(DEFAULT_TEMPLATE_ID);
+    expect(templatesFor(false).map((t) => t.id)).toContain("job-search");
   });
 
   it("include the default and look up by id", () => {
