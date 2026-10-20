@@ -12,7 +12,7 @@ type Step = "you" | "workspace" | "connect";
 
 const STEPS: { id: Step | "chat"; label: string }[] = [
   { id: "you", label: "You" },
-  { id: "workspace", label: "Your agent" },
+  { id: "workspace", label: "First agent" },
   { id: "connect", label: "Connect apps" },
   { id: "chat", label: "Set it up" },
 ];
@@ -29,7 +29,10 @@ interface Props {
 
 export function Onboarding({ initialStep, account, workspaceName, canCancel, canTalk }: Props) {
   const [step, setStep] = useState<Step>(initialStep);
-  const steps = account ? STEPS : STEPS.filter((s) => s.id !== "you");
+  // First-time setup makes the first of their agents; later visits add another.
+  const steps = (account ? STEPS : STEPS.filter((s) => s.id !== "you")).map((s) =>
+    s.id === "workspace" ? { ...s, label: canCancel ? "New agent" : "First agent" } : s,
+  );
   const [you, setYou] = useState<AccountProfile>(account ?? { name: "", about: "" });
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [name, setName] = useState("");
@@ -155,11 +158,12 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
         </form>
       ) : step === "workspace" ? (
         <form onSubmit={createWorkspace} className="mt-8 animate-fade-up" noValidate>
-          <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">{canCancel ? "New agent" : "Set up your agent"}</h1>
+          <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">{canCancel ? "New agent" : "Pick your first agent"}</h1>
           <p className="mt-1.5 text-[14px] text-fg-3">
+            {canCancel ? null : <>Studio is where you make your agents, as many as you need. </>}
             Each agent has its own focus, instructions, and chats: one for your business, one for a job search, one for the rest of your
-            life. They all know you, and share your connected apps and what they remember about you. Pick a starting point; you can
-            change everything later in agent setup.
+            life. They all know you, and share your connected apps and what they remember about you. Pick a starting point
+            {canCancel ? null : <> for this one</>}; you can change everything later in agent setup{canCancel ? null : <>, and add more agents anytime</>}.
           </p>
 
           <fieldset className="mt-7">
