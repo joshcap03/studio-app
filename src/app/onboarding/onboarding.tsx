@@ -40,6 +40,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
   const [created, setCreated] = useState(workspaceName);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<false | "continue" | "talk">(false);
+  const [connectedCount, setConnectedCount] = useState(0);
 
   async function saveYou(event: React.FormEvent) {
     event.preventDefault();
@@ -279,7 +280,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
             </p>
           ) : null}
           <div className="mt-6">
-            <ConnectionsList returnTo="/onboarding" />
+            <ConnectionsList returnTo="/onboarding" onConnectedCount={setConnectedCount} />
           </div>
           <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3">
             {/* The agent's setup interview opens next, typed or on a call; it asks for anything it still needs. */}
@@ -287,7 +288,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
               href="/?setup=1"
               className="flex h-10 items-center gap-2 rounded-xl bg-inverse px-4 text-[14px] font-medium text-on-inverse transition-opacity hover:opacity-90"
             >
-              Set up your agent
+              {connectedCount > 0 ? "Set up your agent" : "Skip"}
               <ArrowRight size={15} />
             </a>
             {canTalk ? (
@@ -299,7 +300,9 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
                 Talk it through
               </a>
             ) : null}
-            <span className="text-[12.5px] text-fg-3">You can skip this and connect apps anytime, or during setup.</span>
+            <span className="text-[12.5px] text-fg-3">
+              {connectedCount > 0 ? "You can connect more apps anytime, or during setup." : "You can connect apps anytime, or during setup."}
+            </span>
           </div>
         </div>
       )}
