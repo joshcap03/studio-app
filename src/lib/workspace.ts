@@ -10,6 +10,7 @@ import { listRecords } from "@/lib/tasks/records";
 import { templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, Modality, UsageSummary, WorkspaceSettings } from "@/lib/types";
+import { setupHolds } from "@/lib/setup-state";
 import { setupSkill } from "@/lib/skills/setup";
 import { barScore, lastMissedBatch, recentPasses } from "@/lib/verdicts";
 import { resolvePersona } from "@/lib/voice/persona";
@@ -152,9 +153,16 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
  * the caller's own session, so it can only ever contain this workspace's settings, this
  * workspace's shared memory, and this member's own profile, personal memory, and connection id. `query`
  * (the member's message) pulls in memories that match it. `conversationId` is the conversation
- * being answered, left out of the recent chats a guardrail run sees.
+ * being answered, left out of the recent chats a guardrail run sees. `setupRun`: the run was
+ * started with the setup skill, which picks the interview up again in its own conversation.
  */
-export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string, modality?: Modality): Promise<AgentTenantContext> {
+export async function buildAgentContext(
+  tenant: Tenant,
+  query?: string,
+  conversationId?: string,
+  modality?: Modality,
+  { setupRun = false }: { setupRun?: boolean } = {},
+): Promise<AgentTenantContext> {
   const loading = getSettings(tenant);
   const [settings, memories, guardrail, tasks, bar, self, library] = await Promise.all([
     loading,
@@ -169,6 +177,12 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     selfFor(tenant, loading),
     libraryContextFor(tenant),
   ]);
+  // The interview's checklist is the plan here only while it's under way here (or picked up again
+  // here); after it's applied or set aside, the agent keeps this conversation's own plan instead.
+  const setup =
+    setupHolds(settings.setup, conversationId) || (setupRun && Boolean(conversationId) && settings.setup?.conversationId === conversationId)
+      ? settings.setup
+      : null;
   return {
     workspaceId: tenant.workspace.id,
     workspaceName: settings.name,
@@ -181,15 +195,18 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     memories,
     guardrail,
     ...tasks,
-    setup:
-      conversationId && settings.setup?.conversationId === conversationId
-        ? {
-            plan: settings.setup.plan,
-            ...(settings.setup.status === "in_progress"
-              ? { instructions: setupSkill(settings.templateId, { call: modality === "call", voice: Boolean(voiceStatus(tenant)) }).instructions }
-              : {}),
-          }
-        : null,
+    ...(setup ? { plan: null } : {}),
+    setup: setup
+      ? {
+          plan: setup.plan,
+          ...(setup.goal ? { goal: setup.goal } : {}),
+          // Under way, its instructions ride along on every run here; a run that picks it up
+          // again has the skill attached.
+          ...(setup.status === "in_progress"
+            ? { instructions: setupSkill(settings.templateId, { call: modality === "call", voice: Boolean(voiceStatus(tenant)) }).instructions }
+            : {}),
+        }
+      : null,
     notes: await notesFor(tenant, settings.templateId),
     ...(library?.length ? { library } : {}),
     bar,

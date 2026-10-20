@@ -176,6 +176,39 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, tracker: [] }).system_context).toContain("The member has a tracker, empty so far.");
   });
 
+  it("puts what done looks like above the steps, for a task's plan, the setup's, and any other conversation's", () => {
+    const task = templateValues({
+      ...tenantA,
+      task: { title: "Job hunt", instructions: "", goal: "two roles worth applying to", plan: [{ text: "Find roles", status: "doing", note: null }] },
+    }).system_context;
+    expect(task).toContain("Plan so far:\nDone means: two roles worth applying to\n- [doing] Find roles");
+    const setup = templateValues({ ...tenantA, setup: { plan: [{ text: "Your bar", status: "doing" }], goal: "a setup you'd trust" } }).system_context;
+    expect(setup).toContain("Setup checklist so far:\nDone means: a setup you'd trust\n- [doing] Your bar");
+    const own = templateValues({
+      ...tenantA,
+      plan: { goal: "three caterers under $40 a head", steps: [{ text: "Search caterers", status: "done", note: "Found 9" }, { text: "Shortlist", status: "doing", note: null }] },
+    }).system_context;
+    expect(own).toContain("Your plan for the work in this conversation so far");
+    expect(own).toContain("Done means: three caterers under $40 a head\n- [done] Search caterers (Found 9)\n- [doing] Shortlist");
+    expect(own).toContain("Keep it current with update_plan");
+    // No goal said yet: just the steps.
+    expect(templateValues({ ...tenantA, plan: { goal: null, steps: [{ text: "Search", status: "todo", note: null }] } }).system_context).not.toContain("Done means");
+    expect(templateValues({ ...tenantA, plan: null }).system_context).not.toContain("Your plan for the work");
+  });
+
+  it("tells the agent what done means for a task (or the setup) before there's a plan, and to keep a task's goal", () => {
+    // The member said it on the task page before the first run.
+    const fresh = templateValues({ ...tenantA, task: { title: "Job hunt", instructions: "", goal: "two interviews booked", plan: [] } }).system_context;
+    expect(fresh).toContain("There's no plan yet.\nDone means: two interviews booked\nIf the task has several steps, write a plan toward that with update_plan.");
+    expect(fresh).toContain("The task's goal stays as it is when you leave update_plan's goal empty");
+    const none = templateValues({ ...tenantA, task: { title: "Job hunt", instructions: "", goal: null, plan: [] } }).system_context;
+    expect(none).toContain("with what done looks like as its goal");
+    expect(none).not.toContain("Done means");
+    expect(none).not.toContain("The task's goal stays");
+    const setup = templateValues({ ...tenantA, setup: { plan: [], goal: "a setup you'd trust" } }).system_context;
+    expect(setup).toContain("Done means: a setup you'd trust\nThere's no setup checklist yet");
+  });
+
   it("lists the member's Library so the agent reopens what it made, only when there's something in it", () => {
     const system = templateValues({
       ...tenantA,
@@ -266,6 +299,7 @@ describe("Langflow request", () => {
         {
           contents: [
             { type: "tool_use", name: "update_plan", output: JSON.stringify({ plan_update: { steps: [{ text: "a", status: "todo" }] } }) },
+            { type: "tool_use", name: "update_plan", output: JSON.stringify({ plan_update: { steps: [{ text: "b", status: "doing" }], goal: "a and b done" } }) },
             { type: "tool_use", name: "save_record", output: { record: { collection: "applications", key: "k" } } },
             { type: "tool_use", name: "report_run", output: { run_report: { outcome: "nothing_new", summary: "" } } },
             { type: "tool_use", name: "web_search", output: { results: [] } },
@@ -278,7 +312,9 @@ describe("Langflow request", () => {
       ],
     };
     expect(toolTaskUpdates(message as never)).toEqual([
-      { type: "plan-update", plan: [{ text: "a", status: "todo" }] },
+      // A flow from before goals sends none; the app keeps the current one.
+      { type: "plan-update", plan: [{ text: "a", status: "todo" }], goal: undefined },
+      { type: "plan-update", plan: [{ text: "b", status: "doing" }], goal: "a and b done" },
       { type: "record", record: { collection: "applications", key: "k" } },
       { type: "run-report", report: { outcome: "nothing_new", summary: "" } },
       { type: "library-item", item: { url: "https://docs.google.com/document/d/1", title: "Plan" } },

@@ -23,6 +23,7 @@ import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { Call } from "@/components/voice/call";
 import { VoicePlayer } from "@/components/voice/player";
 import { originFor } from "@/lib/chat/modality";
+import { markOf, moveOf, type MarkedMove, type WhoseMove } from "@/lib/chat/move";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { openRequest, reopening } from "@/lib/client/open";
 import { registerServiceWorker } from "@/lib/client/push";
@@ -35,6 +36,7 @@ import type {
   ChatMessage,
   Companion,
   ConversationSummary,
+  Journey as JourneyInfo,
   MemoryProposal,
   MessageFeedback,
   MessageSkill,
@@ -48,28 +50,60 @@ import type {
   WorkspaceSummary,
 } from "@/lib/types";
 import { MEMORY_CATEGORIES } from "@/lib/types";
-import type { VoiceGrant, VoiceStatus } from "@/lib/voice/types";
+import { SETUP_JOURNEY_TITLE, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
 
-/** Whether a finished reply still asks the member something: questions or an unsent form. */
-function hasOpenAsk(message: ChatMessage | undefined): boolean {
-  if (!message) return false;
-  return Boolean(message.questions?.length) || Boolean(message.ui?.some((b) => b.kind === "form" && !message.uiResponse?.[b.id]));
+/** What the composer says while the reply above waits on the member (src/lib/chat/move.ts). */
+function composerHint(move: WhoseMove | null): string | undefined {
+  if (move?.move !== "your_call") return undefined;
+  switch (move.reason) {
+    case "approval":
+      return "Approve or decline above, or reply to change course";
+    case "form":
+    case "question":
+      return "Answer above, or type your own";
+    case "proposal":
+      return "Apply what fits above, or reply to change it";
+    case "merge":
+      return "Merge what fits above, or reply";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The journey to show over a thread: the plan of the work in it, unless that's a conversation's
+ * own plan that finished before the member wrote again (they've moved on; a new plan shows
+ * again). The setup interview's is shown from the setup's own summary instead.
+ */
+function shownJourney(thread: ThreadState | undefined): JourneyInfo | null {
+  const journey = thread?.status === "ready" ? (thread.journey ?? null) : null;
+  if (!journey || journey.kind === "setup") return null;
+  const finished = journey.steps.every((s) => s.status === "done");
+  if (journey.kind === "conversation" && finished && thread!.messages.some((m) => m.role === "user" && m.createdAt > journey.updatedAt)) return null;
+  return journey;
+}
+
+/** The setup summary as a journey, for a call about it. */
+function setupAsJourney(setup: SetupSummary): JourneyInfo {
+  return { kind: "setup", goal: setup.goal, steps: setup.plan, updatedAt: 0 };
 }
 
 /** What a message is sent with besides its text, and how (on a call or held to the mic, the member spoke it). */
 type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality };
 const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
-type ThreadState =
-  | { status: "loading"; messages: ChatMessage[] }
-  | { status: "ready"; messages: ChatMessage[] }
-  | { status: "missing"; messages: ChatMessage[] }
-  | { status: "error"; messages: ChatMessage[] };
+interface ThreadState {
+  status: "loading" | "ready" | "missing" | "error";
+  messages: ChatMessage[];
+  /** The plan of the work here, as the server last reported it; null or absent when there's none. */
+  journey?: JourneyInfo | null;
+}
 
 export interface InitialThread {
   id: string;
   status: "ready" | "missing";
   messages: ChatMessage[];
+  journey: JourneyInfo | null;
 }
 
 type ProjectState = { status: "loading" } | { status: "ready"; project: Project } | { status: "missing" } | { status: "error" };
@@ -81,6 +115,8 @@ export interface InitialProject {
 
 interface Props {
   initialConversations: ConversationSummary[];
+  /** Whose move it is in the latest conversations, where it's worth a mark in the sidebar. */
+  initialMoves: Record<string, MarkedMove>;
   initialThread: InitialThread | null;
   initialProjects: ProjectSummary[];
   /** The project page being loaded, if any. */
@@ -106,6 +142,10 @@ interface Props {
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
+/** Conversations whose moves the sidebar asks about: the most recent ones (the server caps it too). */
+const MAX_MOVE_IDS = 100;
+/** How often to ask again while a run is going out of view. */
+const MOVES_POLL_MS = 20_000;
 const WORK_PANEL_KEY = "lj.work-panel";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -163,6 +203,7 @@ export function Workspace(props: Props) {
 
 function WorkspaceShell({
   initialConversations,
+  initialMoves,
   initialThread,
   initialProjects,
   initialProject,
@@ -201,7 +242,7 @@ function WorkspaceShell({
 
   const [conversations, setConversations] = useState(initialConversations);
   const [threads, setThreads] = useState<Record<string, ThreadState>>(() =>
-    initialThread ? { [initialThread.id]: { status: initialThread.status, messages: initialThread.messages } } : {},
+    initialThread ? { [initialThread.id]: { status: initialThread.status, messages: initialThread.messages, journey: initialThread.journey } } : {},
   );
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
@@ -212,6 +253,8 @@ function WorkspaceShell({
       : {},
   );
   const [running, setRunning] = useState<ReadonlySet<string>>(() => new Set());
+  /** Whose move it is in conversations this tab isn't running or showing, as the server last said. */
+  const [serverMoves, setServerMoves] = useState(initialMoves);
   // The owner's setup interview (null for other members); see "The agent's setup interview" below.
   const [setup, setSetup] = useState(initialSetup);
   const [sendCount, setSendCount] = useState(0);
@@ -356,7 +399,7 @@ function WorkspaceShell({
     setThreads((all) => ({ ...all, [activeId]: { status: "loading", messages: [] } }));
     api
       .getConversation(activeId, controller.signal)
-      .then(({ messages }) => setThreads((all) => ({ ...all, [activeId]: { status: "ready", messages } })))
+      .then(({ messages, journey }) => setThreads((all) => ({ ...all, [activeId]: { status: "ready", messages, journey } })))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         const status = error instanceof ApiError && error.status === 404 ? "missing" : "error";
@@ -431,8 +474,8 @@ function WorkspaceShell({
         // screen until the new copy is in.
         api
           .getConversation(conversationId)
-          .then(({ messages }) => {
-            if (!controllers.current.has(conversationId)) setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages } }));
+          .then(({ messages, journey }) => {
+            if (!controllers.current.has(conversationId)) setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages, journey } }));
           })
           .catch(() => undefined);
       }
@@ -538,6 +581,26 @@ function WorkspaceShell({
           case "ui":
             patchMessage(conversationId, assistantId, (m) => ({ ...m, ui: event.ui }));
             break;
+          case "journey": {
+            const { journey } = event;
+            setThreads((all) => (all[conversationId] ? { ...all, [conversationId]: { ...all[conversationId], journey } } : all));
+            // The setup's rail (the banner, the call) fills in as the agent goes too.
+            if (journey.kind === "setup") {
+              setSetup((current) =>
+                current
+                  ? {
+                      ...current,
+                      conversationId: current.conversationId ?? conversationId,
+                      plan: journey.steps,
+                      goal: journey.goal,
+                      done: journey.steps.filter((s) => s.status === "done").length,
+                      total: journey.steps.length,
+                    }
+                  : current,
+              );
+            }
+            break;
+          }
           case "end":
             cancelAnimationFrame(frame);
             buffered = "";
@@ -557,7 +620,7 @@ function WorkspaceShell({
         if (detached.current.has(controller) || (started && !controller.signal.aborted && !(error instanceof ApiError))) {
           const latest = await api.getConversation(conversationId).catch(() => null);
           if (latest) {
-            setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages: latest.messages } }));
+            setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages: latest.messages, journey: latest.journey } }));
             upsertConversation(latest.conversation);
             return;
           }
@@ -568,7 +631,7 @@ function WorkspaceShell({
           // The server refused (e.g. already answered elsewhere): show its state, not a guess.
           await api
             .getConversation(conversationId)
-            .then(({ messages }) => setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages } })))
+            .then(({ messages, journey }) => setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages, journey } })))
             .catch(() => undefined);
           setNotice(error.message);
           return;
@@ -627,7 +690,7 @@ function WorkspaceShell({
             { ...paused, status: "stopped", approvals: paused.approvals?.map((a) => (a.status === "pending" ? { ...a, status: "declined" } : a)) },
           ];
         }
-        return { ...all, [conversationId]: { status: "ready", messages: [...messages, user, assistant] } };
+        return { ...all, [conversationId]: { ...all[conversationId], status: "ready", messages: [...messages, user, assistant] } };
       });
       setConversations((list) => {
         const existing = list.find((c) => c.id === conversationId);
@@ -857,9 +920,9 @@ function WorkspaceShell({
         if (cancelled || controllers.current.has(id)) return;
         if (document.visibilityState === "hidden") continue;
         try {
-          const { messages, conversation } = await api.getConversation(id);
+          const { messages, conversation, journey } = await api.getConversation(id);
           if (cancelled || controllers.current.has(id)) return;
-          setThreads((all) => ({ ...all, [id]: { status: "ready", messages } }));
+          setThreads((all) => ({ ...all, [id]: { status: "ready", messages, journey } }));
           if (!messages.some((m) => m.status === "streaming")) {
             upsertConversation(conversation);
             return;
@@ -903,7 +966,7 @@ function WorkspaceShell({
       const conversationId = crypto.randomUUID();
       drafts.current.delete("new");
       sendTo(conversationId, "", true, { skill: { id: SETUP_SKILL_ID, name: SETUP_SKILL_NAME }, attachments: [], ...(modality ? { modality } : {}) });
-      setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0, plan: s.plan.map(({ text }) => ({ text, status: "todo" as const })) } : s));
+      setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0, goal: null, plan: s.plan.map(({ text }) => ({ text, status: "todo" as const })) } : s));
       return conversationId;
     },
     [activeId, navigate, sendTo, setup],
@@ -938,6 +1001,19 @@ function WorkspaceShell({
     },
     [call, calling, startSetup],
   );
+  // The member clears the plan the agent kept for the work in a conversation (its rail). If that
+  // fails, the plan comes back, unless a new one has come in meanwhile.
+  const clearPlan = useCallback((conversationId: string) => {
+    const before = threadsRef.current[conversationId]?.journey ?? null;
+    const setJourney = (journey: (current: JourneyInfo | null) => JourneyInfo | null) =>
+      setThreads((all) => (all[conversationId] ? { ...all, [conversationId]: { ...all[conversationId], journey: journey(all[conversationId].journey ?? null) } } : all));
+    setJourney(() => null);
+    api.clearPlan(conversationId).catch(() => {
+      setJourney((current) => current ?? before);
+      setNotice("Couldn't clear the plan. Try again.");
+    });
+  }, []);
+
   const skipSetup = useCallback(() => {
     setSetup((s) => (s ? { ...s, status: "skipped" } : s));
     api.skipSetup().catch(() => setSetup(initialSetup));
@@ -951,6 +1027,76 @@ function WorkspaceShell({
     wasRunning.current = running;
     if (ended && setup?.status === "in_progress") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
   }, [running, setup?.status]);
+
+  // ---------------------------------------------------------------------------------------
+  // Whose move it is in each conversation, for the sidebar's marks: a run this tab is streaming
+  // or following is working; the open conversation goes by what's on screen; the rest by what
+  // the server says, asked again on load, on coming back to the app, when a run ends, and every
+  // little while only while one is working out of view (a task's run in the background).
+
+  const refreshMoves = useCallback(() => {
+    const ids = conversationsRef.current.slice(0, MAX_MOVE_IDS).map((c) => c.id);
+    if (ids.length === 0) return;
+    api.conversationMoves(ids).then(({ moves }) => setServerMoves(moves), () => undefined);
+  }, []);
+
+  const wasRunningForMoves = useRef<ReadonlySet<string>>(running);
+  useEffect(() => {
+    const ended = [...wasRunningForMoves.current].filter((id) => !running.has(id));
+    wasRunningForMoves.current = running;
+    if (ended.length === 0) return;
+    // Its old mark would show until the server answers; what's on screen says more.
+    setServerMoves((all) => {
+      const next = { ...all };
+      for (const id of ended) delete next[id];
+      return next;
+    });
+    refreshMoves();
+  }, [running, refreshMoves]);
+
+  // Leaving a conversation, its mark is what it showed, until the server says otherwise.
+  const shownBefore = useRef(activeId);
+  useEffect(() => {
+    const left = shownBefore.current;
+    shownBefore.current = activeId;
+    if (!left || left === activeId) return;
+    const thread = threadsRef.current[left];
+    if (thread?.status !== "ready") return;
+    const mark = markOf(moveOf(thread.messages.at(-1)));
+    setServerMoves((all) => {
+      const { [left]: _, ...rest } = all;
+      return mark ? { ...rest, [left]: mark } : rest;
+    });
+  }, [activeId]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshMoves();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [refreshMoves]);
+
+  const workingElsewhere = Object.entries(serverMoves).some(([id, move]) => move === "working" && !running.has(id));
+  useEffect(() => {
+    if (!workingElsewhere) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") refreshMoves();
+    }, MOVES_POLL_MS);
+    return () => clearInterval(timer);
+  }, [workingElsewhere, refreshMoves]);
+
+  const moves = useMemo(() => {
+    const all: Record<string, MarkedMove> = { ...serverMoves };
+    const open = activeId ? threads[activeId] : undefined;
+    if (activeId && open?.status === "ready") {
+      const mark = markOf(moveOf(open.messages.at(-1)));
+      if (mark) all[activeId] = mark;
+      else delete all[activeId];
+    }
+    for (const id of running) all[id] = "working";
+    return all;
+  }, [serverMoves, activeId, threads, running]);
 
   // Who each agent is to the member. The one they're in moves along as they work together: the
   // server updates it as a run ends, so look again a moment after.
@@ -1233,9 +1379,19 @@ function WorkspaceShell({
   // ---------------------------------------------------------------------------------------
 
   const isRunning = activeId ? running.has(activeId) : false;
-  const awaiting = activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "awaiting";
-  const asking =
-    !isRunning && activeThread?.status === "ready" && activeThread.messages.at(-1)?.status === "complete" && hasOpenAsk(activeThread.messages.at(-1));
+  const lastMove = activeThread?.status === "ready" ? moveOf(activeThread.messages.at(-1), { running: isRunning }) : null;
+  const awaiting = lastMove?.reason === "approval";
+  // The setup's rail shows in its conversation while the interview is under way. Once it's
+  // applied, its finished checklist stays there until later work has a plan of its own; once
+  // it's set aside, that conversation is like any other.
+  const ownJourney = activeThread?.journey && activeThread.journey.kind !== "setup" ? activeThread.journey : null;
+  const setupHere = Boolean(
+    setup && activeId === setup.conversationId && (setup.status === "in_progress" || (setup.status === "done" && activeThread?.status === "ready" && !ownJourney)),
+  );
+  const journey = setupHere ? null : shownJourney(activeThread);
+  // A call about the setup follows the setup's rail, live; any other follows its conversation's.
+  const callThread = call ? threads[call.conversationId] : undefined;
+  const callJourney = useMemo(() => (!call ? null : setup ? setupAsJourney(setup) : shownJourney(callThread)), [call, setup, callThread]);
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
   const draftKey = activeId ?? "new";
   const projectDraftKey = `project:${activeProjectId}`;
@@ -1272,7 +1428,7 @@ function WorkspaceShell({
             ref={search}
             conversations={conversations}
             activeId={activeId}
-            running={running}
+            moves={moves}
             agent={agent}
             workspace={workspace}
             workspaces={workspaces}
@@ -1473,9 +1629,9 @@ function WorkspaceShell({
                       {notice}
                     </p>
                   ) : null}
-                  {setup && activeId === setup.conversationId && setup.status !== "skipped" ? (
+                  {setup && setupHere ? (
                     <div className="mb-2 flex items-stretch gap-2 animate-fade-up">
-                      <Journey steps={setup.plan} title="Setting up" growing className="min-w-0 flex-1" />
+                      <Journey steps={setup.plan} title={SETUP_JOURNEY_TITLE} goal={setup.goal} growing move={lastMove?.move} className="min-w-0 flex-1" />
                       {voice && setup.status === "in_progress" ? (
                         <button
                           type="button"
@@ -1489,6 +1645,15 @@ function WorkspaceShell({
                         </button>
                       ) : null}
                     </div>
+                  ) : journey ? (
+                    <Journey
+                      steps={journey.steps}
+                      goal={journey.goal}
+                      move={lastMove?.move}
+                      // A conversation's own plan is the member's to clear; a task's is edited on the task.
+                      onClear={journey.kind === "conversation" && activeId && !isRunning ? () => clearPlan(activeId) : undefined}
+                      className="mb-2 animate-fade-up"
+                    />
                   ) : null}
                   <Composer
                     key={draftKey}
@@ -1502,7 +1667,7 @@ function WorkspaceShell({
                     placeholder={isRunning ? "Redirect the agent…" : "Reply…"}
                     autoFocus={desktop}
                     allowFiles={agent.attachments}
-                    hint={awaiting ? "Approve or decline above, or reply to change course" : asking ? "Answer above, or type your own" : undefined}
+                    hint={composerHint(lastMove)}
                     voice={voice}
                     redirects={isRunning || awaiting}
                   />
@@ -1532,7 +1697,7 @@ function WorkspaceShell({
           conversationId={call.conversationId}
           messages={threads[call.conversationId]?.messages ?? []}
           running={running.has(call.conversationId)}
-          plan={setup ? setup.plan : null}
+          journey={callJourney}
           onSend={(text, { steer, attachments }) =>
             sendTo(call.conversationId, text, false, { skill: null, attachments: attachments ?? [], modality: "call" }, steer)
           }

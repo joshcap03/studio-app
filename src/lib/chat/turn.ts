@@ -20,6 +20,7 @@ import {
   type Artifact,
   type ChatMessage,
   type ConversationSummary,
+  type Journey,
   type MemoryCategory,
   type MemoryProposal,
   type MessageOrigin,
@@ -104,12 +105,13 @@ export interface TurnDeps {
    */
   claim?: (replyId: string) => Promise<string | null>;
   /**
-   * Saves what the agent reported about the conversation's task, under the caller's session:
-   * a rewritten plan, or a tracker row upserted by collection and key. Each validates its
-   * input and resolves false when it was refused or there's no task to save to. Without
-   * them, these reports are dropped.
+   * Saves what the agent reported about the work here, under the caller's session: a rewritten
+   * plan with what done looks like (on the conversation's task, the setup checklist, or the
+   * conversation itself), resolving to the journey as saved; or a tracker row upserted by
+   * collection and key. Each validates its input and resolves null or false when nothing was
+   * saved. Without them, these reports are dropped.
    */
-  savePlan?: (plan: unknown) => Promise<boolean>;
+  savePlan?: (plan: unknown, goal: unknown) => Promise<Journey | null>;
   saveRecord?: (record: unknown, source: { messageId: string }) => Promise<boolean>;
   /**
    * Files an artifact this reply produced (already sanitized, with a link) in the member's
@@ -447,6 +449,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const approvals: Approval[] = [...(assistant.approvals ?? [])];
       const proposals: MemoryProposal[] = [...(assistant.memoryProposals ?? [])];
       const remembering: Promise<void>[] = [];
+      // Plan saves read the current plan and write the new one, so they go one at a time, in the
+      // order the agent made them: an earlier plan can't land over a later one.
+      let planning: Promise<void> = Promise.resolve();
       let records = 0;
       let filed = 0;
       let report: RunReport | null = null;
@@ -660,7 +665,18 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
             }
             case "plan-update": {
               if (!deps.savePlan) break;
-              remembering.push(deps.savePlan(event.plan).then(noop, (e) => console.error("[turn] couldn't save the plan", e)));
+              const savePlan = deps.savePlan;
+              const { plan, goal } = event;
+              planning = planning
+                .then(() => savePlan(plan, goal))
+                .then(
+                  (journey) => {
+                    // The rail fills in as the agent goes, not only once the reply is done.
+                    if (journey) send({ type: "journey", journey });
+                  },
+                  (e) => console.error("[turn] couldn't save the plan", e),
+                );
+              remembering.push(planning);
               break;
             }
             case "record": {

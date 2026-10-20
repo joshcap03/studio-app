@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_GOAL_LENGTH } from "@/lib/types";
 import { taskScheduleSchema } from "./schedule";
 
 // Validation for tasks and records, used by the API routes and, later, the agent's tools.
@@ -45,6 +46,15 @@ export const planSchema = z
   .refine((steps) => new Set(steps.map((s) => s.id)).size === steps.length, "Each step needs its own id.")
   .refine((steps) => jsonSize(steps) <= MAX_PLAN_JSON, "That plan is too long.");
 
+/** What done looks like for a task, in one line ("Done means …"); empty clears it. */
+export const goalSchema = z
+  .string()
+  .max(MAX_GOAL_LENGTH * 4)
+  .transform((goal) => goal.replace(/\s+/g, " ").trim())
+  .pipe(z.string().max(MAX_GOAL_LENGTH, `Keep it to ${MAX_GOAL_LENGTH} characters.`))
+  .transform((goal) => goal || null)
+  .nullable();
+
 const taskFields = {
   title: z.string().trim().min(1, "Give it a title.").max(MAX_TASK_TITLE_LENGTH),
   instructions: z.string().trim().max(MAX_TASK_INSTRUCTIONS_LENGTH),
@@ -66,7 +76,7 @@ export const createTaskBody = z.strictObject({
 });
 
 export const patchTaskBody = z
-  .strictObject({ ...taskFields, status: z.enum(TASK_STATUSES) })
+  .strictObject({ ...taskFields, status: z.enum(TASK_STATUSES), goal: goalSchema })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "Nothing to change.");
 

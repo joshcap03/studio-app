@@ -109,6 +109,10 @@ ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/com
   They change nothing themselves: a form's answers go out as the member's next message, and
   a proposal applies only when the member clicks Apply. Keep/pass calls are saved as the
   member's verdicts (`src/lib/verdicts.ts`).
+- **Plans** (`src/lib/journey.ts`). Any work with several steps gets a plan the agent keeps with
+  `update_plan`, with what done looks like: on its task, in the setup checklist (while the
+  interview is under way in that conversation), or on the conversation (`conversations.plan`).
+  The member sees it as the rail above the chat, and can clear a conversation's own from there.
 - **Tasks** (`src/lib/tasks/`). A task has a goal, a plan the agent keeps with `update_plan`,
   a schedule (`schedule.ts`: daily, weekdays, weekly, or every N hours, in the member's time
   zone), a linked conversation, and runs. The agent keeps a tracker of records per collection

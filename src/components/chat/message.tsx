@@ -5,6 +5,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Companion, companionHint, useCompanion, type CompanionMood } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
 import { useCopy } from "@/components/ui/use-copy";
+import { moveOf } from "@/lib/chat/move";
 import { MAX_MESSAGE_LENGTH, type Attachment, type ChatMessage, type MessageFeedback, type UiResponse } from "@/lib/types";
 import { ActivityLog } from "./activity";
 import { ArtifactCard } from "./artifact-card";
@@ -343,12 +344,11 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 });
 
-/** How the agent is, after a reply: waiting on the member, stuck, just done, or at rest. */
+/** How the agent is, after a reply: waiting on the member, stuck, just done, or at rest (src/lib/chat/move.ts). */
 function replyMood(message: ChatMessage, justFinished: boolean): CompanionMood {
-  if (message.status === "awaiting") return "needs_you";
-  if (message.status === "error" || message.status === "interrupted") return "stuck";
-  const unanswered = (message.ui ?? []).some((block) => !message.uiResponse?.[block.id]) || (message.questions?.length ?? 0) > 0;
-  if (message.status === "complete" && unanswered) return "needs_you";
+  const { move } = moveOf(message);
+  if (move === "your_call") return "needs_you";
+  if (move === "stuck") return "stuck";
   return justFinished ? "done" : "idle";
 }
 

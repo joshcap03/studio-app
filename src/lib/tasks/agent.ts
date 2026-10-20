@@ -1,35 +1,76 @@
 import type { AgentTenantContext } from "@/lib/agent/types";
-import { isSetupConversation, updateSetup } from "@/lib/setup-state";
+import { storeFor } from "@/lib/chat/store-for";
+import { conversationJourney, setupJourney, taskJourney } from "@/lib/journey";
+import { getSetup, setupHolds, updateSetup } from "@/lib/setup-state";
 import type { Tenant } from "@/lib/tenant-core";
+import { MAX_GOAL_LENGTH, type Journey } from "@/lib/types";
 import { getTaskForConversation, updateTask } from "./index";
 import { listRecords, upsertRecord } from "./records";
 import { MAX_PLAN_STEPS, planSchema, STEP_STATUSES, upsertRecordInput } from "./schema";
 import type { PlanStep } from "./types";
 
-// The agent's side of tasks: what it's told about the conversation's task and the member's
-// tracker before a run, and checking what it reports back (update_plan, save_record) before
-// it's saved under the member's own session. Nothing the agent sends picks the task, the
-// member, or the workspace; those come from the session and the conversation.
+// The agent's side of tasks and plans: what it's told about the conversation's task (or its own
+// plan for the work here) and the member's tracker before a run, and checking what it reports
+// back (update_plan, save_record) before it's saved under the member's own session. Nothing the
+// agent sends picks the task, the member, or the workspace; those come from the session and the
+// conversation.
 
 /** How much of the tracker the agent sees: the most recently touched rows. */
 const TRACKER_ROWS = 150;
 
-/** The task this conversation belongs to and the member's tracker, for the agent's context. */
+const contextSteps = (plan: PlanStep[]) => plan.map(({ text, status, note }) => ({ text, status, note: note ?? null }));
+
+/**
+ * The task this conversation belongs to (or, in any other conversation, the plan the agent keeps
+ * for the work in it) and the member's tracker, for the agent's context.
+ */
 export async function taskContextFor(
   tenant: Tenant,
   conversationId: string | undefined,
-): Promise<Pick<AgentTenantContext, "task" | "tracker">> {
-  const [task, records] = await Promise.all([
+): Promise<Pick<AgentTenantContext, "task" | "plan" | "tracker">> {
+  const [task, records, own] = await Promise.all([
     conversationId ? getTaskForConversation(tenant, conversationId) : Promise.resolve(null),
     listRecords(tenant),
+    // Without its own plan the run still has its task and tracker.
+    conversationId
+      ? storeFor(tenant)
+          .getPlan(conversationId)
+          .catch((e) => {
+            console.error("[context] couldn't load the conversation's plan", e);
+            return null;
+          })
+      : Promise.resolve(null),
   ]);
   return {
-    task: task ? { title: task.title, instructions: task.instructions, plan: task.plan.map(({ text, status, note }) => ({ text, status, note: note ?? null })) } : null,
+    task: task ? { title: task.title, instructions: task.instructions, goal: task.goal, plan: contextSteps(task.plan) } : null,
+    plan: !task && own?.steps.length ? { goal: own.goal, steps: contextSteps(own.steps) } : null,
     tracker: records.slice(0, TRACKER_ROWS).map((r) => ({ collection: r.collection, key: r.key, title: r.title, status: r.status })),
   };
 }
 
 const str = (value: unknown, max: number) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "");
+
+/**
+ * What done looks like, as the agent gave it with its plan (update_plan's goal), or null when it
+ * gave none. Taken only from that argument, never from the reply's text.
+ */
+export function goalFromAgent(value: unknown): string | null {
+  // It's shown after "Done means", so a goal that says it again doesn't say it twice.
+  return str(typeof value === "string" ? value.replace(/^\s*done means\b[\s:,-]*/i, "") : value, MAX_GOAL_LENGTH) || null;
+}
+
+/**
+ * The goal to keep with the setup's or a conversation's rewritten plan: the one the agent gave,
+ * else the current one while the work carries on (some step is unchanged, or there were no steps
+ * to compare). A plan with nothing in common with the last is new work, so the old goal goes with
+ * the old plan rather than titling it. A task's goal is the task's, so it doesn't come here: it
+ * stays until the agent gives a new one or the member changes it.
+ */
+export function goalFor(given: string | null, steps: { text: string }[], previous: { text: string }[], current: string | null | undefined): string | null {
+  if (given) return given;
+  if (!previous.length) return current ?? null;
+  return steps.some((s) => previous.some((p) => p.text === s.text)) ? (current ?? null) : null;
+}
 
 /**
  * The agent's rewritten plan as stored steps, or null if it isn't one. Step ids are assigned
@@ -56,19 +97,52 @@ export function planFromAgent(value: unknown, previous: PlanStep[] = []): PlanSt
 }
 
 /**
- * Saves the agent's plan to the conversation's task, or to the setup checklist when this is
- * the agent's setup conversation. False when it's neither, or there's no plan.
+ * Saves the agent's plan, and what done looks like, where the work in this conversation keeps it
+ * (src/lib/journey.ts): on the conversation's task, in the owner's setup checklist while their
+ * setup interview is under way here, or else on the conversation itself (so work after setup is
+ * applied or set aside never writes over its checklist). `setup`: the run was started with the
+ * setup skill, so its plan is the setup's even before the conversation is recorded as the
+ * setup's. Returns the journey as saved, or null when nothing was (no plan in it, or no such
+ * conversation).
  */
-export async function savePlanFromAgent(tenant: Tenant, conversationId: string, value: unknown): Promise<boolean> {
-  const task = await getTaskForConversation(tenant, conversationId);
-  if (!task) {
-    if (!(await isSetupConversation(tenant, conversationId))) return false;
-    const plan = planFromAgent(value);
-    return plan ? updateSetup(tenant, { plan: plan.map(({ text, status, note }) => ({ text, status, ...(note ? { note } : {}) })) }) : false;
+export async function savePlanFromAgent(
+  tenant: Tenant,
+  conversationId: string,
+  value: unknown,
+  rawGoal?: unknown,
+  { setup: setupRun = false }: { setup?: boolean } = {},
+): Promise<Journey | null> {
+  const given = goalFromAgent(rawGoal);
+  const owner = tenant.workspace.role === "owner";
+  const [task, setup] = await Promise.all([
+    setupRun ? Promise.resolve(null) : getTaskForConversation(tenant, conversationId),
+    owner ? getSetup(tenant) : Promise.resolve(null),
+  ]);
+  if (task) {
+    const plan = planFromAgent(value, task.plan);
+    if (!plan) return null;
+    // The member may have said what done means on the task page, before any plan or since: a
+    // plan saved without a goal keeps it, however different its steps.
+    const saved = await updateTask(tenant, task.id, { plan, ...(given ? { goal: given } : {}) });
+    return saved ? taskJourney(saved) : null;
   }
-  const plan = planFromAgent(value, task.plan);
-  if (!plan) return false;
-  return (await updateTask(tenant, task.id, { plan })) !== null;
+  if (owner && (setupRun || setupHolds(setup, conversationId))) {
+    const plan = planFromAgent(value);
+    if (!plan) return null;
+    const steps = plan.map(({ text, status, note }) => ({ text, status, ...(note ? { note } : {}) }));
+    // A setup started over in a new conversation doesn't carry the old one's goal.
+    const before = setup?.conversationId === conversationId ? setup : null;
+    const goal = goalFor(given, steps, before?.plan ?? [], before?.goal);
+    if (!(await updateSetup(tenant, { plan: steps, goal, ...(setupRun ? { conversationId } : {}) }))) return null;
+    return setupJourney({ plan: steps, goal, updatedAt: Date.now() });
+  }
+  const store = storeFor(tenant);
+  const own = await store.getPlan(conversationId);
+  if (!own) return null;
+  const plan = planFromAgent(value, own.steps);
+  if (!plan) return null;
+  const saved = await store.savePlan(conversationId, { steps: plan, goal: goalFor(given, plan, own.steps, own.goal) });
+  return saved ? conversationJourney(saved) : null;
 }
 
 /**

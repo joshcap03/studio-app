@@ -1,4 +1,5 @@
-import type { Attachment, ChatMessage, Companion, ConversationSummary, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
+import type { MarkedMove } from "@/lib/chat/move";
+import type { Attachment, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
@@ -58,7 +59,10 @@ export const api = {
   listConversations: (query = "", signal?: AbortSignal) =>
     request<{ conversations: ConversationSummary[] }>(`/api/conversations?q=${encodeURIComponent(query)}`, { signal }),
   getConversation: (id: string, signal?: AbortSignal) =>
-    request<{ conversation: ConversationSummary; messages: ChatMessage[] }>(`/api/conversations/${id}`, { signal }),
+    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null }>(`/api/conversations/${id}`, { signal }),
+  /** Whose move it is in these conversations: only those working, waiting on the member, or stuck. */
+  conversationMoves: (ids: string[], signal?: AbortSignal) =>
+    request<{ moves: Record<string, MarkedMove> }>(`/api/conversations/moves?ids=${ids.map(encodeURIComponent).join(",")}`, { signal }),
   renameConversation: (id: string, title: string) =>
     request<{ conversation: ConversationSummary }>(`/api/conversations/${id}`, {
       method: "PATCH",
@@ -68,6 +72,12 @@ export const api = {
     request<{ conversation: ConversationSummary }>(`/api/conversations/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ projectId }),
+    }),
+  /** Clears the plan the agent keeps for the work in a conversation (the rail above the chat). */
+  clearPlan: (id: string) =>
+    request<{ conversation: ConversationSummary }>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ plan: null }),
     }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   clearConversations: () => request<{ deleted: number }>("/api/conversations", { method: "DELETE" }),
@@ -126,7 +136,7 @@ export const api = {
   listTasks: (signal?: AbortSignal) => request<{ tasks: AgentTask[] }>("/api/tasks", { signal }),
   getTask: (id: string, signal?: AbortSignal) => request<{ task: AgentTask; score?: string | null }>(`/api/tasks/${id}`, { signal }),
   createTask: (draft: TaskFields) => request<{ task: AgentTask }>("/api/tasks", { method: "POST", body: JSON.stringify(draft) }),
-  updateTask: (id: string, patch: Partial<TaskFields> & { status?: AgentTask["status"]; plan?: PlanStep[] }) =>
+  updateTask: (id: string, patch: Partial<TaskFields> & { status?: AgentTask["status"]; plan?: PlanStep[]; goal?: string | null }) =>
     request<{ task: AgentTask }>(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
   listTaskRuns: (id: string, signal?: AbortSignal) => request<{ runs: TaskRun[] }>(`/api/tasks/${id}/runs`, { signal }),

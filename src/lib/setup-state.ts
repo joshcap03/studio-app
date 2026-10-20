@@ -3,8 +3,8 @@ import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, SetupSummary } from "@/lib/types";
 
 // Where the owner is in the agent's setup interview (workspace_settings.setup): started, its
-// conversation, the checklist the agent keeps with update_plan, and done once they apply the
-// proposed setup. Only the owner's setup counts, and the database lets only owners write it.
+// conversation, the checklist (and what done looks like) the agent keeps with update_plan, and
+// done once they apply the proposed setup. Only the owner's setup counts, and the database lets only owners write it.
 
 function check<T>(result: { data: T; error: { message: string } | null }): T {
   if (result.error) throw new Error(result.error.message);
@@ -26,6 +26,7 @@ export async function updateSetup(tenant: Tenant, patch: Partial<Omit<AgentSetup
     status: patch.status ?? current?.status ?? "in_progress",
     conversationId: patch.conversationId !== undefined ? patch.conversationId : (current?.conversationId ?? null),
     plan: patch.plan ?? current?.plan ?? [],
+    goal: patch.goal !== undefined ? patch.goal : (current?.goal ?? null),
     updatedAt: Date.now(),
   };
   check(await tenant.db.from("workspace_settings").update({ setup, updated_at: new Date().toISOString() }).eq("workspace_id", tenant.workspace.id));
@@ -49,6 +50,7 @@ export function summarizeSetup(tenant: Tenant, setup: AgentSetup | null, templat
     done: plan.filter((s) => s.status === "done").length,
     total: plan.length,
     plan,
+    goal: setup?.goal ?? null,
   };
 }
 
@@ -68,6 +70,16 @@ export function toTheBar(plan: AgentSetup["plan"]): AgentSetup["plan"] {
   const bar = plan.findIndex((s) => BAR.test(s.text));
   if (bar < 0 || plan[bar].status === "done") return plan;
   return plan.filter((s, i) => i <= bar || s.status !== "todo" || ON_THE_WAY.test(s.text));
+}
+
+/**
+ * True while the setup interview is under way in `conversationId`, so the plan there is its
+ * checklist. Once the owner applies it or sets it aside, that conversation is an ordinary one
+ * again: later work in it keeps its own plan, and the checklist stays as the interview left it.
+ * (A run started with the setup skill picks it up again; its callers count that themselves.)
+ */
+export function setupHolds(setup: Pick<AgentSetup, "status" | "conversationId"> | null | undefined, conversationId: string | undefined): boolean {
+  return Boolean(conversationId) && setup?.status === "in_progress" && setup.conversationId === conversationId;
 }
 
 /** True when `conversationId` holds the agent's setup interview. */

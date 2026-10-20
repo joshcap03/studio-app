@@ -40,7 +40,7 @@ type Step =
   | { kind: "ui"; block: unknown }
   | { kind: "evidence"; items: Evidence[] }
   | { kind: "citations"; citations: unknown }
-  | { kind: "plan"; plan: unknown }
+  | { kind: "plan"; plan: unknown; goal?: string }
   | { kind: "record"; record: unknown }
   | { kind: "report"; report: unknown };
 
@@ -428,9 +428,20 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
-    // A task's run (or "track" in chat): plan the work, then add rows to the tracker.
+    // A task's run (or "track" in chat): say what done looks like and plan the work, search,
+    // update the plan, then add rows to the tracker.
     match: /\b(track|roles?)\b/i,
     steps: [
+      { kind: "note", text: "Done means two roles worth your time in your tracker, with outreach drafted (demo)." },
+      {
+        kind: "plan",
+        goal: "two roles worth your time in your tracker, with outreach drafted (demo)",
+        plan: [
+          { text: "Search for matching roles", status: "doing" },
+          { text: "Shortlist the best fits", status: "todo" },
+          { text: "Draft outreach for the top 2", status: "todo" },
+        ],
+      },
       ...[
         ["search", "jobs.example", "boards.example"],
         ["search-2", "jobs.example", "careers.example"],
@@ -867,7 +878,7 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
           await wait(400 * pace, signal);
           yield { type: "ui", block: step.block };
         } else if (step.kind === "plan") {
-          yield { type: "plan-update", plan: step.plan };
+          yield { type: "plan-update", plan: step.plan, ...(step.goal ? { goal: step.goal } : {}) };
         } else if (step.kind === "record") {
           yield { type: "record", record: step.record };
         } else if (step.kind === "report") {

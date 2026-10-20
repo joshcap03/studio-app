@@ -8,13 +8,14 @@ import { Markdown } from "@/components/chat/markdown";
 import { ApprovalCard, QuestionCard } from "@/components/chat/requests";
 import { UiCards } from "@/components/chat/ui-cards";
 import { Journey } from "@/components/ui/journey";
+import { moveOf } from "@/lib/chat/move";
 import type { FormValues } from "@/lib/chat/ui-answer";
 import { api } from "@/lib/client/api";
 import { isBackchannel, isRedirect, isSendIntent, isStopIntent } from "@/lib/voice/intent";
 import { clock, micProblem } from "@/lib/voice/mic";
 import { CallNarrator } from "@/lib/voice/narrator";
-import type { StageField, VoiceGrant, VoiceStage } from "@/lib/voice/types";
-import type { Attachment, ChatMessage, JourneyStep, StreamEvent, UiField, UiForm, UiResponse } from "@/lib/types";
+import { SETUP_JOURNEY_TITLE, type StageField, type VoiceGrant, type VoiceStage } from "@/lib/voice/types";
+import type { Attachment, ChatMessage, Journey as JourneyInfo, StreamEvent, UiField, UiForm, UiResponse } from "@/lib/types";
 import type { LinkStatus, VoiceLink, VoiceLinkEvents, VoiceTools } from "./link";
 import MockVoiceLink from "./mock-link";
 import { Orb, ORB_LABEL, type OrbState } from "./orb";
@@ -36,8 +37,8 @@ export interface CallProps {
   conversationId: string;
   messages: ChatMessage[];
   running: boolean;
-  /** The setup journey, when this call is the setup interview. */
-  plan: JourneyStep[] | null;
+  /** The plan of the work on the call: the setup's, when this call is the setup interview. */
+  journey: JourneyInfo | null;
   /** Sends the member's words (or a card's answer) as their next message, on the call. */
   onSend: (text: string, options: { steer: boolean; attachments?: Attachment[] }) => void;
   onStop: () => void;
@@ -158,7 +159,7 @@ export function callProblem(message: string | undefined): string {
   return micProblem(text, "start the call again") ?? (text ? `${text.replace(/[.!]?$/, ".")}` : "The call dropped.");
 }
 
-export function Call({ grant, agentName, conversationId, messages, running, plan, onSend, onStop, onDecide, onUiResponse, onRunTask, subscribe, onEnd, waitForTap = false }: CallProps) {
+export function Call({ grant, agentName, conversationId, messages, running, journey, onSend, onStop, onDecide, onUiResponse, onRunTask, subscribe, onEnd, waitForTap = false }: CallProps) {
   const drafts = useCardDrafts();
   const [joined, setJoined] = useState(!waitForTap);
   const link = useRef<VoiceLink | null>(null);
@@ -208,11 +209,23 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     const draft = ask.form ? drafts.form(ask.form) : null;
     const pendingApproval = latestReply?.status === "awaiting" ? latestReply.approvals?.find((a) => a.status === "pending") : undefined;
     const proposal = ask.reply?.ui?.find((b) => b.kind === "proposal" && !ask.reply!.uiResponse?.[b.id]);
-    const at = plan ? plan.findIndex((s) => s.status === "doing" || s.status === "needs_you") : -1;
-    const current = plan ? (plan[at >= 0 ? at : plan.findIndex((s) => s.status !== "done")]?.text ?? null) : null;
+    const steps = journey?.steps ?? [];
+    const at = steps.findIndex((s) => s.status === "doing" || s.status === "needs_you");
+    const current = steps[at >= 0 ? at : steps.findIndex((s) => s.status !== "done")]?.text ?? null;
     return {
       working: running,
-      ...(plan?.length ? { journey: { done: plan.filter((s) => s.status === "done").length, total: plan.length, current } } : {}),
+      ...(steps.length
+        ? {
+            journey: {
+              done: steps.filter((s) => s.status === "done").length,
+              total: steps.length,
+              current,
+              ...(journey?.goal ? { goal: journey.goal } : {}),
+              // Always said, so the voice can tell this from a page that predates kinds (the setup's).
+              ...(journey ? { kind: journey.kind } : {}),
+            },
+          }
+        : {}),
       ...(ask.form && draft && !draft.sent ? { form: { id: ask.form.id, title: ask.form.title, fields: ask.form.fields.map((f) => stageField(f, draft.values[f.id])) } } : {}),
       ...(ask.questions && !drafts.question(questionsKey, ask.questions).sent
         ? { questions: ask.questions.map((q) => ({ question: q.question, options: q.options.map((o) => o.label), multi: q.multiSelect })) }
@@ -220,7 +233,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
       ...(proposal && proposal.kind === "proposal" ? { proposal: proposal.summary } : {}),
       ...(pendingApproval ? { approval: pendingApproval.summary } : {}),
     };
-  }, [ask.form, ask.questions, ask.reply, drafts, latestReply, plan, questionsKey, running]);
+  }, [ask.form, ask.questions, ask.reply, drafts, journey, latestReply, questionsKey, running]);
   const stageRef = useRef(stage);
   stageRef.current = stage;
   /** The stage the voice last heard, with a line or as an update. */
@@ -450,6 +463,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
   }, [messages, narrator, running, status]);
 
   // What finishing each journey step gave the agent.
+  const plan = journey?.steps ?? null;
   const lastPlan = useRef(plan);
   useEffect(() => {
     if (plan && lastPlan.current) narrator.journey(lastPlan.current, plan);
@@ -529,7 +543,8 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
     link.current?.type(text);
   }
 
-  const lastAssistant = latestReply;
+  // Whose move it is, as everywhere else (src/lib/chat/move.ts); who has the floor is the call's own.
+  const move = moveOf(messages.at(-1), { running });
   const orb: OrbState = !joined
     ? "ready"
     : problem
@@ -540,13 +555,13 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
         ? "ended"
         : mode === "speaking" && speaker
           ? "speaking"
-          : lastAssistant && !running && (lastAssistant.status === "error" || lastAssistant.status === "interrupted")
+          : move.move === "stuck"
             ? "stuck"
-            : lastAssistant?.status === "awaiting" || stage.form || stage.questions || stage.proposal
+            : move.move === "your_call"
               ? "your_call"
-              : running && progressSeen
+              : move.move === "working" && progressSeen
                 ? "working"
-                : running || onIt
+                : move.move === "working" || onIt
                   ? "on_it"
                   : "listening";
 
@@ -568,7 +583,7 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14px] font-medium text-fg">{grant.persona.name}</p>
           <p className="truncate text-[12px] text-fg-3">
-            {plan ? `Setting up ${agentName}` : agentName}
+            {journey?.kind === "setup" ? `Setting up ${agentName}` : agentName}
             {status === "connected" ? ` · ${clock(elapsed)}${left <= 120 ? ` · ${clock(left)} left` : ""}` : ""}
           </p>
         </div>
@@ -710,7 +725,14 @@ export function Call({ grant, agentName, conversationId, messages, running, plan
         {/* The stage: only what the backend reported. */}
         <section aria-label="On screen" className="scroll-quiet min-h-0 overflow-y-auto border-t border-line px-4 pt-4 pb-10 md:border-t-0 md:px-8 md:pt-6">
           <div className="mx-auto flex w-full max-w-[40rem] flex-col">
-            {plan?.length ? <Journey steps={plan} title="Setting up" growing /> : null}
+            {journey ? (
+              <Journey
+                steps={journey.steps}
+                goal={journey.goal}
+                {...(journey.kind === "setup" ? { title: SETUP_JOURNEY_TITLE, growing: true } : {})}
+                move={move.move}
+              />
+            ) : null}
             {latestReply?.content.trim() ? (
               <div className="mt-4 text-[14.5px]">
                 <Markdown content={latestReply.content} citations={latestReply.citations} />

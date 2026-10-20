@@ -2,6 +2,7 @@
 // The voice front is the agent's mouth and ears on a call; the worker (src/lib/agent) does all
 // the thinking and work. Shared by the browser and the server, so no runtime imports here.
 
+import type { Journey } from "@/lib/types";
 import type { VoiceKey } from "./voices";
 
 export type VoiceProviderId = "mock" | "elevenlabs";
@@ -123,12 +124,20 @@ export interface StageField {
 export interface VoiceStage {
   /** The worker is running a turn right now. */
   working: boolean;
-  journey?: { done: number; total: number; current: string | null };
+  /**
+   * The plan of the work on screen: how far along, the step under way, what done looks like
+   * (`goal`, in the agent's words), and whose plan it is (`kind`). Pages loaded before plans had
+   * kinds send none, and only ever sent the setup interview's, so a journey without one is setup.
+   */
+  journey?: { done: number; total: number; current: string | null; goal?: string | null; kind?: Journey["kind"] };
   form?: { id: string; title: string; fields: StageField[] };
   questions?: { question: string; options: string[]; multi: boolean }[];
   proposal?: string;
   approval?: string;
 }
+
+/** The title the setup interview's journey carries on screen. */
+export const SETUP_JOURNEY_TITLE = "Setting up";
 
 /** Cues the browser sends the voice front; each makes it say one fixed, server-built line. */
 export const VOICE_CUES = ["hello", "heads_up", "time_up"] as const;

@@ -82,6 +82,17 @@ raw/technical text.
   their runs (`index.ts`), the agent's tracker of records per collection (`records.ts`), and
   request validation (`schema.ts`). Private to each member; the API is the "tasks" preview.
   `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike.
+- `src/lib/journey.ts`: where the plan for the work in a conversation lives and how the member sees it
+  (the rail above the chat, "Done means …"): the conversation's task's plan, else the owner's setup
+  checklist while the interview is under way there, else the conversation's own (`conversations.plan`/
+  `goal`), for any work with several steps. The agent keeps it with `update_plan` (`savePlanFromAgent`
+  in `tasks/agent.ts`); each save streams a `journey` event. The goal comes only from update_plan's
+  argument, never from the reply's text; a task's goal (which the member can set on the task) stays
+  until the agent gives a new one. The member edits a task's plan and goal on the task, and clears a
+  conversation's own from its rail (`PATCH /api/conversations/<id>` with `plan: null`).
+- `src/lib/chat/move.ts`: whose move it is in a conversation (working, the member's call, done, stuck,
+  idle), from real state only. The one signal for the reply's mark, the composer hint, the call's orb,
+  the rail, the sidebar's marks (`conversation_moves`, `GET /api/conversations/moves`), and push copy.
 - `src/lib/agent/`: provider-neutral interface (`types.ts`), `langflow.ts`, `mock.ts`, registry `index.ts`.
 - `src/lib/chat/turn.ts`: runs one turn (persist, stream, heartbeat, timeout, final state).
   `run.ts` builds its deps from a tenant (`buildTurnDeps`), free of Next.js so a worker can run turns;
@@ -149,10 +160,11 @@ raw/technical text.
 - The flow is shared by every tenant: nothing in it may hold one tenant's connections or
   memory (per-member values arrive through tweaks), and no tool may run code in the
   Langflow server process.
-- The agent may write the member's own Studio state (memory, a task's plan, tracker rows, Library links) without
-  approval, but only through gateway tools that return structured results the app validates
-  and saves under the member's session; the member sees each write as a step and can edit or
-  undo it. Anything touching their external accounts still needs approval.
+- The agent may write the member's own Studio state (memory, a task's or a conversation's plan,
+  tracker rows, Library links) without approval, but only through gateway tools that return
+  structured results the app validates and saves under the member's session; the member sees
+  each write as a step and can edit or undo it. Anything touching their external accounts
+  still needs approval.
 - Anything the agent does that changes a member's accounts must pause for their approval
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
   the member's behalf. Provider resume state stays server-side.

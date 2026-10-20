@@ -1,4 +1,5 @@
-import type { Conversation, MessagePatch, Scope, Store, StoredApproval, StoredAttachment } from "@/lib/db/store";
+import { lastMessageOf, type LastMessage } from "@/lib/chat/move";
+import type { Conversation, ConversationPlan, MessagePatch, Scope, Store, StoredApproval, StoredAttachment } from "@/lib/db/store";
 import type { ChatMessage } from "@/lib/types";
 
 /** In-memory Store for unit tests. Mirrors the Supabase store's per-tenant scoping. */
@@ -74,6 +75,26 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       const c = shared.conversations.get(id)!;
       c.updatedAt = Date.now();
       return summary(c);
+    },
+    async getPlan(id) {
+      const c = shared.conversations.get(id);
+      if (!c || !owns(c)) return null;
+      return shared.plans.get(id) ?? { steps: [], goal: null, updatedAt: null };
+    },
+    async savePlan(id, { steps, goal }) {
+      const c = shared.conversations.get(id);
+      if (!c || !owns(c)) return null;
+      const plan: ConversationPlan = { steps, goal, updatedAt: Date.now() };
+      shared.plans.set(id, plan);
+      return plan;
+    },
+    async lastMessages(ids) {
+      const found: Record<string, LastMessage> = {};
+      for (const id of ids) {
+        const last = (await store.listMessages(id)).at(-1);
+        if (last) found[id] = lastMessageOf(last)!;
+      }
+      return found;
     },
     async listMessages(conversationId) {
       const c = shared.conversations.get(conversationId);
@@ -199,8 +220,10 @@ export interface MemoryDb {
   attachments: MemoryAttachment[];
   /** Trace ids by reply id, kept apart like the server-only column. */
   traces: Map<string, string>;
+  /** Conversations' own plans, by conversation id, kept apart like the columns left out of summaries. */
+  plans: Map<string, ConversationPlan>;
 }
-export const createMemoryDb = (): MemoryDb => ({ conversations: new Map(), messages: [], approvals: [], attachments: [], traces: new Map() });
+export const createMemoryDb = (): MemoryDb => ({ conversations: new Map(), messages: [], approvals: [], attachments: [], traces: new Map(), plans: new Map() });
 const stripScope = ({ workspaceId: _w, userId: _u, ...a }: StoredApproval & Scope): StoredApproval => ({ ...a });
 const summary = ({ id, title, projectId, createdAt, updatedAt }: Row) => ({ id, title, projectId, createdAt, updatedAt });
 const strip = ({ workspaceId: _w, userId: _u, ...c }: Row): Conversation => ({ ...c });

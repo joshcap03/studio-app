@@ -23,6 +23,8 @@ export interface AgentTask {
   timezone: string;
   status: TaskStatus;
   plan: PlanStep[];
+  /** What done looks like, in one line ("Done means …"): the agent's words, or the member's edit. */
+  goal: string | null;
   conversationId: string | null;
   nextRunAt: number | null;
   lastRunAt: number | null;

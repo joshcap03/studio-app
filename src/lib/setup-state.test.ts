@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DISCOVERY_STEP, PLAN_STEP, SUCCESS_STEP, setupSteps, templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
-import { summarizeSetup, toTheBar } from "./setup-state";
+import { setupHolds, summarizeSetup, toTheBar } from "./setup-state";
 
 const tenant = (role: "owner" | "member") => ({ workspace: { id: "w", name: "Acme", role }, userId: "u" }) as unknown as Tenant;
 
@@ -23,7 +23,11 @@ describe("summarizeSetup", () => {
       { text: "Your résumé", status: "doing" as const },
     ];
     const summary = summarizeSetup(tenant("owner"), { status: "in_progress", conversationId: "c1", plan, updatedAt: 1 }, "job-search");
-    expect(summary).toEqual({ status: "in_progress", conversationId: "c1", done: 1, total: 2, plan });
+    expect(summary).toEqual({ status: "in_progress", conversationId: "c1", done: 1, total: 2, plan, goal: null });
+    // With what done looks like, once the agent has said.
+    expect(summarizeSetup(tenant("owner"), { status: "in_progress", conversationId: "c1", plan, goal: "a setup you'd trust", updatedAt: 1 }, "job-search")?.goal).toBe(
+      "a setup you'd trust",
+    );
   });
 
   it("shows a checklist saved in full only as far as the bar until the bar is confirmed", () => {
@@ -55,5 +59,17 @@ describe("summarizeSetup", () => {
 
   it("is only for the owner", () => {
     expect(summarizeSetup(tenant("member"), null, "job-search")).toBeNull();
+  });
+});
+
+describe("setupHolds", () => {
+  it("holds its conversation's plan only while the interview is under way there", () => {
+    expect(setupHolds({ status: "in_progress", conversationId: "c1" }, "c1")).toBe(true);
+    expect(setupHolds({ status: "in_progress", conversationId: "c1" }, "c2")).toBe(false);
+    // Applied or set aside, its conversation is an ordinary one again.
+    expect(setupHolds({ status: "done", conversationId: "c1" }, "c1")).toBe(false);
+    expect(setupHolds({ status: "skipped", conversationId: "c1" }, "c1")).toBe(false);
+    expect(setupHolds({ status: "in_progress", conversationId: null }, undefined)).toBe(false);
+    expect(setupHolds(null, "c1")).toBe(false);
   });
 });

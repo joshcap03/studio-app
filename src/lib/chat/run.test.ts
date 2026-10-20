@@ -92,4 +92,19 @@ describe("buildTurnDeps", () => {
     seen.voice = false;
     expect((await buildTurnDeps(tenant, { conversationId: id, input: { kind: "retry" } })).deps.voiceNotes).toBe(false);
   });
+
+  it("saves a plan where the work keeps it, with its goal; a run started with the setup skill is the setup's", async () => {
+    const { savePlanFromAgent } = await import("@/lib/tasks/agent");
+    const { buildAgentContext } = await import("@/lib/workspace");
+    const id = await conversationWith(null);
+    const setup = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "", skillId: "builtin:setup" } });
+    await setup.deps.savePlan?.([{ text: "x", status: "todo" }], "a setup you'd trust");
+    expect(savePlanFromAgent).toHaveBeenLastCalledWith(tenant, id, [{ text: "x", status: "todo" }], "a setup you'd trust", { setup: true });
+    // Its context is the setup's too, even before the setup is recorded as under way again.
+    expect(buildAgentContext).toHaveBeenLastCalledWith(tenant, "", id, undefined, { setupRun: true });
+    const plain = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Find caterers" } });
+    await plain.deps.savePlan?.([{ text: "y", status: "todo" }], undefined);
+    expect(savePlanFromAgent).toHaveBeenLastCalledWith(tenant, id, [{ text: "y", status: "todo" }], undefined, { setup: false });
+    expect(buildAgentContext).toHaveBeenLastCalledWith(tenant, "", id, undefined, { setupRun: false });
+  });
 });
