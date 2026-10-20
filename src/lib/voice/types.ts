@@ -116,6 +116,10 @@ export interface StageField {
   tapOnly?: boolean;
 }
 
+/** What a call is about: the setup interview, one of the member's tasks as it runs, or any other chat. */
+export const CALL_PURPOSES = ["setup", "task", "chat"] as const;
+export type CallPurpose = (typeof CALL_PURPOSES)[number];
+
 /**
  * What's on the call's stage, compactly, for the voice to answer against: the latest card the
  * worker reported and the journey. Built in the browser from what the backend reported; the
@@ -124,6 +128,8 @@ export interface StageField {
 export interface VoiceStage {
   /** The worker is running a turn right now. */
   working: boolean;
+  /** What the call is about; absent from pages loaded before calls could be had anywhere (those were setup calls). */
+  purpose?: CallPurpose;
   /**
    * The plan of the work on screen: how far along, the step under way, what done looks like
    * (`goal`, in the agent's words), and whose plan it is (`kind`). Pages loaded before plans had
@@ -134,13 +140,21 @@ export interface VoiceStage {
   questions?: { question: string; options: string[]; multi: boolean }[];
   proposal?: string;
   approval?: string;
+  /**
+   * The call asked whether they'd rather hang on or get a voice note when the job is done (the
+   * long_job cue), and they haven't said yet.
+   */
+  longJob?: boolean;
 }
 
 /** The title the setup interview's journey carries on screen. */
 export const SETUP_JOURNEY_TITLE = "Setting up";
 
-/** Cues the browser sends the voice front; each makes it say one fixed, server-built line. */
-export const VOICE_CUES = ["hello", "heads_up", "time_up"] as const;
+/**
+ * Cues the browser sends the voice front; each makes it say one fixed, server-built line.
+ * `long_job`: a job on the call has gone a while with nothing new.
+ */
+export const VOICE_CUES = ["hello", "heads_up", "time_up", "long_job"] as const;
 export type VoiceCue = (typeof VOICE_CUES)[number];
 
 /**

@@ -28,12 +28,20 @@ vi.mock("@/lib/skills", () => ({
 vi.mock("@/lib/tasks", () => ({ getTask: vi.fn() }));
 vi.mock("@/lib/tasks/agent", () => ({ savePlanFromAgent: vi.fn(), saveRecordFromAgent: vi.fn() }));
 vi.mock("@/lib/voice/persona", () => ({ resolvePersona: vi.fn() }));
+// Only "mine" is the member's own call in this agent, still going or just hung up on.
+vi.mock("@/lib/voice/calls", () => ({
+  callForWords: vi.fn(async (_t: unknown, id: string) => (id === MY_CALL ? { id, startedAt: 0, endedAt: null } : null)),
+  callEnded: vi.fn(async () => true),
+}));
 vi.mock("@/lib/voice/status", () => ({ voiceStatus: () => (seen.voice ? { provider: "mock", label: "Mock voice", live: false, speech: { tts: true, stt: true } } : null) }));
 vi.mock("@/lib/workspace", () => ({
   claimRun: vi.fn(),
   getSettings: vi.fn(),
   buildAgentContext: vi.fn(async (_t: unknown, _q: unknown, _c: unknown, modality: unknown) => (seen.modality.push(modality), {})),
 }));
+
+const MY_CALL = "11111111-1111-4111-8111-111111111111";
+const THEIR_CALL = "22222222-2222-4222-8222-222222222222";
 
 const { buildTurnDeps } = await import("./run");
 const tenant = { workspace: { id: scope.workspaceId }, userId: scope.userId } as Tenant;
@@ -65,6 +73,57 @@ describe("buildTurnDeps", () => {
     const typed = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only" } });
     expect((typed.request as { origin?: unknown }).origin).toBeUndefined();
     expect(seen.modality).toEqual(["voice_note", "call", undefined]);
+  });
+
+  it("ties words said on a call to the call only once it's the member's own", async () => {
+    const id = await conversationWith(null);
+    const mine = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only", modality: "call", voiceSessionId: MY_CALL } });
+    expect(mine.request).toMatchObject({ origin: { kind: "voice", sessionId: MY_CALL } });
+    // Someone else's call (or one long over) labels the words as spoken, and nothing more.
+    const theirs = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only", modality: "call", voiceSessionId: THEIR_CALL } });
+    expect((theirs.request as { origin?: unknown }).origin).toEqual({ kind: "voice" });
+    // A call id on a typed message or a voice message means nothing.
+    const typed = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only", voiceSessionId: MY_CALL } });
+    expect((typed.request as { origin?: unknown }).origin).toBeUndefined();
+    const held = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only", modality: "voice_note", voiceSessionId: MY_CALL } });
+    expect((held.request as { origin?: unknown }).origin).toEqual({ kind: "voice", via: "note" });
+    // Whether that call is over decides whether its reply comes back as a voice note.
+    expect(await mine.deps.callEnded?.(MY_CALL)).toBe(true);
+  });
+
+  it("lets the agent offer a call only where the member could take one, on a page that can show it", async () => {
+    const typed = await conversationWith(null);
+    const offered = await buildTurnDeps(tenant, { conversationId: typed, input: { kind: "send", text: "Which offer should I take?", offers: true } });
+    expect(offered.deps.offerCalls).toBe(true);
+    expect(offered.deps.context.calls).toBe(true);
+    expect(offered.request).not.toHaveProperty("offers");
+    expect((await buildTurnDeps(tenant, { conversationId: typed, input: { kind: "retry", offers: true } })).deps.offerCalls).toBe(true);
+    // A page from before offers (an open tab across a deploy) says nothing, and gets none: it would break on the card.
+    const older = await buildTurnDeps(tenant, { conversationId: typed, input: { kind: "send", text: "Which offer should I take?" } });
+    expect(older.deps.offerCalls).toBe(false);
+    expect(older.deps.offersShown).toBe(false);
+    expect(older.deps.context.calls).toBeUndefined();
+    expect(offered.deps.offersShown).toBe(true);
+    expect((await buildTurnDeps(tenant, { conversationId: typed, input: { kind: "retry" } })).deps.offerCalls).toBe(false);
+    // A task's run streams to no page (its conversation loads without offers on a page from before them).
+    const { getTask } = await import("@/lib/tasks");
+    vi.mocked(getTask).mockResolvedValueOnce({ id: "t1", title: "Weekly roles", instructions: "Check for new roles.", skillId: null } as never);
+    expect((await buildTurnDeps(tenant, { conversationId: typed, input: { kind: "task", taskId: "t1", runId: null } })).deps.offerCalls).toBe(true);
+    // On a call, it's already talking.
+    const onCall = await buildTurnDeps(tenant, { conversationId: typed, input: { kind: "send", text: "Which one?", modality: "call", offers: true } });
+    expect(onCall.deps.offerCalls).toBe(false);
+    expect(onCall.deps.context.calls).toBeUndefined();
+    // They said Not now to an offer here: no more offers in this conversation.
+    const store = db.current as ReturnType<typeof createMemoryStore>;
+    const [, reply] = await store.listMessages(typed);
+    await store.updateMessage(reply.id, { ui: [{ kind: "offer", id: "o1", reason: "Quicker to talk." }], uiResponse: { o1: { status: "declined", at: 1 } } });
+    expect((await buildTurnDeps(tenant, { conversationId: typed, input: { kind: "send", text: "And now?", offers: true } })).deps.offerCalls).toBe(false);
+    const decidedOnCall = await conversationWith({ kind: "voice" });
+    expect((await buildTurnDeps(tenant, { conversationId: decidedOnCall, input: { kind: "decide", approvalId: crypto.randomUUID(), decision: "approve", offers: true } })).deps.offerCalls).toBe(false);
+    // Without calls, never.
+    seen.voice = false;
+    const fresh = await conversationWith(null);
+    expect((await buildTurnDeps(tenant, { conversationId: fresh, input: { kind: "send", text: "Which offer?", offers: true } })).deps.offerCalls).toBe(false);
   });
 
   it("answers a retry, an edit, or a decision the way the member's latest message was said", async () => {

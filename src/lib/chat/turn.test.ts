@@ -460,6 +460,20 @@ describe("approvals", () => {
     expect(messages[1].activity.map((s) => s.label)).toEqual(["Found the thread"]);
   });
 
+  it("sends a page from before offers to call none of the offer already on a reply it continues, and keeps it saved", async () => {
+    const { id, deps, approval, store } = await pause();
+    const [, reply] = await store.listMessages(id);
+    const offer = { kind: "offer" as const, id: "o1", reason: "Quicker to talk." };
+    await store.updateMessage(reply.id, { ui: [offer] });
+    const events = await collect(startTurn({ ...deps, offersShown: false }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" }));
+    expect(JSON.stringify(events)).not.toContain('"offer"');
+    const start = events[0];
+    expect(start.type === "start" && start.assistantMessage.ui).toEqual([]);
+    const end = events.at(-1);
+    expect(end?.type === "end" && end.message.ui).toEqual([]);
+    expect((await store.listMessages(id))[1].ui).toEqual([offer]);
+  });
+
   it("keeps what the agent said before the pause apart from what it says once the member decides", async () => {
     const before: AgentEvent[] = [{ type: "text-delta", text: "Here's the reply to Jo. Okay to send?" }, ...paused];
     const seen: AgentRunInput[] = [];
@@ -972,6 +986,30 @@ describe("edits, files, and memory suggestions", () => {
     expect(events.filter((e) => e.type === "ui").at(-1)).toEqual({ type: "ui", ui: reply.ui });
   });
 
+  it("shows the agent's offer to call only where the member could take one, after the cards it keeps", async () => {
+    const offer = { offer_call: { reason: "Quicker to talk it through.", topic: "Which offer" } };
+    const form = (title: string) => ({ form: { title, fields: [{ kind: "text", label: "Roles" }] } });
+    const run = async (offerCalls: boolean | undefined) => {
+      const store = createMemoryStore(scopeA);
+      const id = crypto.randomUUID();
+      const adapter = scripted([
+        { type: "message", text: "Here are the trade-offs." },
+        { type: "ui", block: form("One") },
+        { type: "ui", block: offer },
+        { type: "ui", block: form("Two") },
+        { type: "ui", block: { proposal: { summary: "s", instructions: "Be brief." } } },
+      ]);
+      await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, offerCalls }, { conversationId: id, kind: "send", text: "x" }));
+      return (await store.listMessages(id))[1].ui ?? [];
+    };
+    // The offer doesn't take a card's place: the latest two cards, then the offer, last.
+    expect((await run(true)).map((b) => b.kind)).toEqual(["form", "proposal", "offer"]);
+    expect((await run(true)).at(-1)).toMatchObject({ kind: "offer", reason: "Quicker to talk it through.", topic: "Which offer" });
+    // No calls for this member, on a call, or after they said Not now here: no offer.
+    expect((await run(false)).map((b) => b.kind)).toEqual(["form", "proposal"]);
+    expect((await run(undefined)).map((b) => b.kind)).toEqual(["form", "proposal"]);
+  });
+
   it("shows a proposed merge of facts only as checked against the member's memory", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
@@ -1119,6 +1157,63 @@ describe("voice notes", () => {
       const note = script ? { script, source: "reply" } : null;
       expect(end.message.voiceNote ?? null).toEqual(note);
       expect((await store.listMessages(id))[1].voiceNote ?? null).toEqual(note);
+    }
+  });
+
+  it("come back on a reply to words said on a call, once the member has hung up on it", async () => {
+    const onCall = { kind: "voice", sessionId: "s1" } as const;
+    for (const [over, expected] of [
+      [true, { script: "Found three. The best is remote.", source: "reply" }],
+      [false, null],
+    ] as const) {
+      const store = createMemoryStore(scopeA);
+      const id = crypto.randomUUID();
+      const callEnded = vi.fn(async () => over);
+      const events = await collect(
+        startTurn(
+          { store, adapter: scripted([{ type: "message", text: "Found three. The best is remote." }]), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true, callEnded },
+          { conversationId: id, kind: "send", text: "Find me roles", origin: onCall },
+        ),
+      );
+      expect(callEnded).toHaveBeenCalledWith("s1");
+      const end = events.at(-1);
+      expect(end?.type === "end" && (end.message.voiceNote ?? null)).toEqual(expected);
+    }
+    // A member without voice notes gets none, and the call isn't even checked.
+    {
+      const store = createMemoryStore(scopeA);
+      const id = crypto.randomUUID();
+      const callEnded = vi.fn(async () => true);
+      await collect(
+        startTurn(
+          { store, adapter: scripted([{ type: "message", text: "Done." }]), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: false, callEnded },
+          { conversationId: id, kind: "send", text: "Find me roles", origin: onCall },
+        ),
+      );
+      expect(callEnded).not.toHaveBeenCalled();
+      expect((await store.listMessages(id))[1].voiceNote ?? null).toBeNull();
+    }
+    // A call it can't check isn't taken as over, and doesn't stop the reply being saved.
+    {
+      const store = createMemoryStore(scopeA);
+      const id = crypto.randomUUID();
+      const callEnded = vi.fn(async () => {
+        throw new Error("db");
+      });
+      const events = await collect(
+        startTurn(
+          { store, adapter: scripted([{ type: "message", text: "Found three. The best is remote." }]), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true, callEnded },
+          { conversationId: id, kind: "send", text: "Find me roles", origin: onCall },
+        ),
+      );
+      expect(callEnded).toHaveBeenCalledWith("s1");
+      const end = events.at(-1);
+      if (end?.type !== "end") throw new Error("no end event");
+      expect(end.message.status).toBe("complete");
+      expect(end.message.voiceNote ?? null).toBeNull();
+      const saved = (await store.listMessages(id))[1];
+      expect(saved).toMatchObject({ status: "complete", content: "Found three. The best is remote." });
+      expect(saved.voiceNote ?? null).toBeNull();
     }
   });
 

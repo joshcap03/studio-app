@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Paperclip, Sparkles, X } from "lucide-react";
+import { ArrowUp, AudioLines, Paperclip, Sparkles, X } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "radix-ui";
 import { TooltipContent } from "@/components/ui/icon-button";
@@ -61,6 +61,8 @@ interface Props {
    * message declines), so a held voice message goes into the draft instead. Defaults to `running`.
    */
   redirects?: boolean;
+  /** A call with the agent from here, beside the mic, when the member has calls ("Call Rowan"). */
+  call?: { label: string; onCall: () => void; busy?: boolean };
 }
 
 const MAX_HEIGHT = 240;
@@ -83,6 +85,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     hint,
     voice = null,
     redirects = running,
+    call,
   },
   ref,
 ) {
@@ -402,6 +405,22 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           hero ? "min-h-[56px] py-1.5 text-[16px]" : "min-h-8 py-1 text-[15px]"
         }`}
       />
+      {call ? (
+        <Tooltip.Root>
+          <Tooltip.Trigger asChild>
+            <button
+              type="button"
+              onClick={call.onCall}
+              disabled={call.busy}
+              aria-label={call.label}
+              className="flex size-8 shrink-0 items-center justify-center rounded-full text-fg-3 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-90 disabled:opacity-50"
+            >
+              {call.busy ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={17} strokeWidth={1.75} />}
+            </button>
+          </Tooltip.Trigger>
+          <TooltipContent label={call.label} side="top" />
+        </Tooltip.Root>
+      ) : null}
       {hasMic && mic ? <MicButton mic={mic} /> : null}
       {running && !hasDraft ? (
         <Tooltip.Root>

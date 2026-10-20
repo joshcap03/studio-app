@@ -5,21 +5,19 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Companion, useCompanion } from "@/components/ui/companion";
 import { PreviewNote, VoiceTile, useVoicePreview } from "@/components/voice/voice-preview";
 import { appName, toolkitForApp } from "@/lib/apps";
-import type { ConnectStatus, FormValues } from "@/lib/chat/ui-answer";
+import { appliedText, type ConnectStatus, type FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
-import { voiceByKey } from "@/lib/voice/voices";
-import type { AgentProposal, Attachment, ConnectionsState, MemoryMergeProposal, ProposalPicks, UiBlock, UiField, UiForm, UiResponse } from "@/lib/types";
+import type { AgentProposal, Attachment, ConnectionsState, MemoryMergeProposal, ProposalPicks, UiBlock, UiField, UiForm, UiOffer, UiResponse } from "@/lib/types";
 import { ATTACHMENT_TYPES, MEMORY_CATEGORY_LABELS } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
 import { useCardDrafts, type FormDraft } from "./card-drafts";
 
-// Reusable cards for what the agent asks through its show_form, propose_agent, and
-// merge_memories tools. They
-// know nothing about any one flow (setup, a template): every field kind and proposal item is
-// generic, and any skill can use them. Rendered only from what the backend reported; nothing
-// here acts until the member clicks.
+// Reusable cards for what the agent asks through its show_form, propose_agent, merge_memories,
+// and offer_call tools. They know nothing about any one flow (setup, a template): every field
+// kind and proposal item is generic, and any skill can use them. Rendered only from what the
+// backend reported; nothing here acts until the member clicks.
 
 export interface UiCardsProps {
   blocks: UiBlock[];
@@ -34,13 +32,29 @@ export interface UiCardsProps {
   settled: boolean;
   /** Runs a task now and opens its conversation; throws with a message the card can show. */
   onRunTask?: (taskId: string) => Promise<void>;
+  /**
+   * Present while an offer to call can be taken (the latest reply, agent idle, the member has
+   * calls): starts the call and resolves with its id, or throws with a message the card shows.
+   */
+  onCall?: () => Promise<string>;
 }
 
-export function UiCards({ blocks, responses, conversationId, messageId, onAnswer, onResponse, settled, onRunTask }: UiCardsProps) {
+export function UiCards({ blocks, responses, conversationId, messageId, onAnswer, onResponse, settled, onRunTask, onCall }: UiCardsProps) {
   return (
     <>
       {blocks.map((block) =>
-        block.kind === "form" ? (
+        block.kind === "offer" ? (
+          <OfferCard
+            key={block.id}
+            offer={block}
+            response={responses?.[block.id]}
+            onCall={onCall && settled && onResponse ? onCall : undefined}
+            onAnswer={async (body) => {
+              const { response } = await api.answerUi(conversationId, block.id, body);
+              onResponse?.(messageId, block.id, response);
+            }}
+          />
+        ) : block.kind === "form" ? (
           <FormCard
             key={block.id}
             form={block}
@@ -1105,6 +1119,87 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
   );
 }
 
+/**
+ * The agent's offer to talk it through on a call: why, and Not now or Call. It asks nothing of
+ * the member and never rings them; the call starts only on their tap, and the offer counts as
+ * taken only once the call has started. Where it can't be taken, it's a quiet line.
+ */
+export function OfferCard({
+  offer,
+  response,
+  onCall,
+  onAnswer,
+}: {
+  offer: UiOffer;
+  response?: UiResponse;
+  onCall?: () => Promise<string>;
+  onAnswer: (body: { action: "accept"; sessionId: string } | { action: "decline" }) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<"call" | "decline" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!onCall || response) {
+    const taken = response?.status === "accepted";
+    return (
+      <section aria-label="Offer to call" className="mt-3 flex items-start gap-2 text-[13px] leading-[1.5] text-fg-3 animate-fade-up">
+        {taken ? <Check size={14} className="settle-check mt-[3px] shrink-0 text-success" /> : <AudioLines size={14} className="mt-[3px] shrink-0 text-fg-4" />}
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          Offered a call
+          {taken ? <span className="text-fg-4"> · You took it</span> : response?.status === "declined" ? <span className="text-fg-4"> · Not now</span> : null}
+        </span>
+      </section>
+    );
+  }
+
+  async function call() {
+    setBusy("call");
+    setError(null);
+    try {
+      // The call starts first: one that's refused (today's voice time is used up) leaves the offer open.
+      const sessionId = await onCall!();
+      await onAnswer({ action: "accept", sessionId }).catch(() => undefined);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Voice is unavailable right now. Keep going here.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function decline() {
+    setBusy("decline");
+    setError(null);
+    try {
+      await onAnswer({ action: "decline" });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't do that. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section aria-label="Offer to call" className={card}>
+      <div className="flex items-start gap-3 px-4 pt-3.5 pb-3">
+        <AudioLines size={17} className="mt-0.5 shrink-0 text-accent" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[14.5px] font-medium leading-[1.45] text-fg">Hop on a call?</p>
+          <p className="mt-0.5 text-[13.5px] leading-[1.5] text-fg-2 [overflow-wrap:anywhere]">{offer.reason}</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
+        <span className={`mr-auto min-w-0 pl-1 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>{error ?? offer.topic ?? ""}</span>
+        <button type="button" onClick={() => void decline()} disabled={busy !== null} className="inline-flex h-8 items-center rounded-lg px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg disabled:opacity-60">
+          {busy === "decline" ? <span className="spinner size-3.5" aria-hidden="true" /> : "Not now"}
+        </button>
+        <button type="button" onClick={() => void call()} disabled={busy !== null} className={primary}>
+          {busy === "call" ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={14} />}
+          Call
+        </button>
+      </div>
+    </section>
+  );
+}
+
 /** The first win: the agent does its first task now, while the member is still here to see it. */
 function FirstRun({ taskId, title, onRun }: { taskId: string; title?: string; onRun: (taskId: string) => Promise<void> }) {
   const [state, setState] = useState<"idle" | "starting" | "started">("idle");
@@ -1131,19 +1226,6 @@ function FirstRun({ taskId, title, onRun }: { taskId: string; title?: string; on
       </button>
     </div>
   );
-}
-
-function appliedText(a: Extract<UiResponse, { status: "applied" }>["applied"]): string {
-  const parts = [
-    a.name ? `named ${a.name}` : "",
-    a.voice ? `sounds ${(voiceByKey(a.voice)?.label ?? a.voice).toLowerCase()}` : "",
-    a.settings ? "updated what it's for and how it works" : "",
-    a.tasks ? `${a.tasks} task${a.tasks === 1 ? "" : "s"} on` : "",
-    a.skills ? `${a.skills} skill${a.skills === 1 ? "" : "s"} added` : "",
-    a.memories ? `${a.memories} fact${a.memories === 1 ? "" : "s"} remembered` : "",
-  ].filter(Boolean);
-  const skipped = a.skipped ? ` ${a.skipped} item${a.skipped === 1 ? "" : "s"} couldn't be applied on your account.` : "";
-  return (parts.length ? `Applied: ${parts.join(", ")}.` : "Applied. Nothing needed changing.") + skipped;
 }
 
 interface MergeProps {

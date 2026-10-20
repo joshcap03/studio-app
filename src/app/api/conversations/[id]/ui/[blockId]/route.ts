@@ -16,6 +16,7 @@ import { authorizeTenant, jsonError, type Tenant } from "@/lib/tenant";
 import { MAX_CONTEXT_LENGTH, MAX_FORM_FIELDS, MAX_FORM_FILES, MAX_VERDICT_ITEMS, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
 import { firstName } from "@/lib/setup-words";
 import { saveVerdicts } from "@/lib/verdicts";
+import { openCall } from "@/lib/voice/calls";
 import { voiceStatus } from "@/lib/voice/status";
 import type { VoiceKey } from "@/lib/voice/voices";
 import { updateSettings } from "@/lib/workspace";
@@ -64,6 +65,11 @@ const body = z.discriminatedUnion("action", [
   }),
   // The member took back the merges they made from this card.
   z.strictObject({ action: z.literal("undo") }),
+  // The member took the agent's offer to talk on a call: the call they started from it, which
+  // must be their own and still going (it starts first, so a refused call leaves the offer open).
+  z.strictObject({ action: z.literal("accept"), sessionId: z.uuid() }),
+  // The member said Not now to the offer: the agent doesn't offer again in this conversation.
+  z.strictObject({ action: z.literal("decline") }),
 ]);
 
 /**
@@ -118,6 +124,16 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (block.kind !== "memory-merge" || previous?.status !== "merged") return jsonError(409, "There's nothing to undo here.");
       if (!memoryEnabled()) return jsonError(503, "Memory isn't set up for this app yet.");
       response = { status: "undone", at: Date.now(), ...(await undoMerges(auth.value, previous)) };
+    } else if (input.action === "accept" || input.action === "decline") {
+      if (block.kind !== "offer") return jsonError(400, "Only an offer to call can be taken.");
+      if (previous) return jsonError(409, "You already answered this.");
+      if (input.action === "accept") {
+        // Only a call that's really going, and the caller's own, counts as taking it.
+        if (!voiceStatus(auth.value) || !(await openCall(auth.value, input.sessionId))) return jsonError(404, "That call wasn't found.");
+        response = { status: "accepted", at: Date.now(), sessionId: input.sessionId };
+      } else {
+        response = { status: "declined", at: Date.now() };
+      }
     } else {
       if (block.kind !== "proposal") return jsonError(400, "Only a proposal can be applied.");
       if (previous) return jsonError(409, "This was already applied.");

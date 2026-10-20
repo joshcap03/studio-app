@@ -55,6 +55,8 @@ interface Props {
   onSayHello?: () => void;
   /** Voice for this member, for the message box's mic. */
   voice?: VoiceStatus | null;
+  /** A call with the agent from the message box, for a new chat ("Call Rowan"). */
+  call?: { label: string; onCall: () => void; busy?: boolean };
 }
 
 const chip =
@@ -68,7 +70,7 @@ export function chipSkills(skills: WorkspaceSkill[]): WorkspaceSkill[] {
 }
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, onSayHello, voice },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, onSayHello, voice, call },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
@@ -125,7 +127,14 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
             autoFocus
             allowFiles={allowFiles}
             voice={voice}
+            call={call}
           />
+          {/* Why a call from the message box couldn't start (the setup's own call says so above). */}
+          {talkNotice && !(setup && onSetup) ? (
+            <p role="status" className="mt-2 px-1 text-center text-[12.5px] text-danger">
+              {talkNotice}
+            </p>
+          ) : null}
         </div>
         <ul className="mt-4 flex flex-wrap justify-center gap-1.5 animate-fade-up [animation-delay:120ms]" aria-label="Suggestions">
           {skills.length > 0

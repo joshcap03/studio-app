@@ -15,6 +15,8 @@ const STILL_ON_IT_MS = 9000;
 const STILL_ON_IT = ["Still working on it.", "Bear with me, I'm still on it.", "Still going, one moment."];
 /** Seconds before the end of the call for the heads-up, on calls long enough to need one. */
 const HEADS_UP_S = 60;
+/** A job this long with nothing new gets asked about once: hang on, or a voice note when it's done? */
+export const LONG_JOB_MS = 45_000;
 
 /** A line's words compared loosely: case, punctuation, and markdown don't make a sentence new. */
 const sameWords = (sentence: string) => plain(sentence).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -41,15 +43,20 @@ export class CallNarrator {
   /** Sentences said, by turn: a turn's lines can still be waiting when the next one starts. */
   private said = new Map<number, Set<string>>();
   private cued = new Set<VoiceCue>();
+  /** When the run last brought something new (null until one's been seen going), and whether this turn asked about waiting. */
+  private newsAt: number | null = null;
+  private longAsked = false;
 
-  /** One streamed event of this conversation's run. The run's end is `reply`'s to read. */
-  event(event: StreamEvent): void {
+  /** One streamed event of this conversation's run, at `now`. The run's end is `reply`'s to read. */
+  event(event: StreamEvent, now = Date.now()): void {
+    if (event.type === "start" || event.type === "text" || event.type === "text-replace" || (event.type === "activity" && !event.step.hidden)) this.newsAt = now;
     if (event.type === "start") {
       this.turns += 1;
       for (const turn of this.said.keys()) if (turn < this.turns - 1) this.said.delete(turn);
       this.turnText = "";
       this.earlyGist = null;
       this.stillSaid = false;
+      this.longAsked = false;
     } else if (event.type === "text") {
       this.turnText += event.delta;
     } else if (event.type === "text-replace") {
@@ -96,6 +103,14 @@ export class CallNarrator {
     this.queue(lines);
   }
 
+  /**
+   * One of the call's own fixed lines, said ahead of what's queued after it: that the job came
+   * back just as the call was about to hang up for its voice note.
+   */
+  aside(text: string): void {
+    this.lines.push({ text, turn: this.turns });
+  }
+
   /** What finishing each journey step gave the agent. */
   journey(before: JourneyStep[], after: JourneyStep[]): void {
     this.queue(relayJourney(before, after));
@@ -120,6 +135,22 @@ export class CallNarrator {
       const fresh = this.unsaid(line.text, line.turn);
       return fresh ? [fresh] : [];
     });
+  }
+
+  /**
+   * Whether to ask now if they'd rather hang on or get a voice note: once a turn, when the run
+   * has gone LONG_JOB_MS with nothing new. `running`: whether the worker is on it.
+   */
+  longJob(now: number, running: boolean): boolean {
+    if (!running) {
+      this.newsAt = null;
+      return false;
+    }
+    // A run already going when the call joined counts from when it was first seen.
+    this.newsAt ??= now;
+    if (this.longAsked || now - this.newsAt < LONG_JOB_MS) return false;
+    this.longAsked = true;
+    return true;
   }
 
   /** The call's clock: the heads-up a minute before the end (on calls long enough), then time's up, each once. */

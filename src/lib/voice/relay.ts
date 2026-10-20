@@ -1,4 +1,5 @@
 import { PLAN_STEP_LABEL, talksMachinery } from "@/lib/agent/tools";
+import { moveOf } from "@/lib/chat/move";
 import type { ActivityStep, ChatMessage, JourneyStep, StreamEvent, UiBlock } from "@/lib/types";
 
 // What the voice may say about the worker's progress on a call, built only from what the
@@ -90,7 +91,8 @@ export function relayReply(message: ChatMessage): RelayLine[] {
   if (gist) lines.push({ kind: "reply", text: gist, droppable: false });
   for (const q of message.questions ?? []) lines.push({ kind: "card", text: questionLine(q.question, q.options.map((o) => o.label), q.multiSelect), droppable: false });
   for (const block of message.ui ?? []) {
-    if (message.uiResponse?.[block.id]) continue;
+    // An offer to call isn't said on one: they're on it.
+    if (message.uiResponse?.[block.id] || block.kind === "offer") continue;
     lines.push({ kind: "card", text: cardLine(block), droppable: false });
   }
   const pending = message.approvals?.find((a) => a.status === "pending");
@@ -105,8 +107,20 @@ function questionLine(question: string, options: string[], multi: boolean): stri
   return `${sentence(plain(question))}${list ? ` ${list}.` : ""}`;
 }
 
+/**
+ * Whether a reply the member left waits on them, so a call joining it reads it out: it asks
+ * something (an approval, a card, its questions) or ends on a question. An older reply that
+ * just answered isn't news on a new call.
+ */
+export function waitsOnMember(message: ChatMessage): boolean {
+  if (message.role !== "assistant" || (message.status !== "complete" && message.status !== "awaiting")) return false;
+  return moveOf(message).move === "your_call" || (message.status === "complete" && closingQuestion(message.content) !== null);
+}
+
 /** A card's title (and intro), with how to answer it by voice. Fixed words, the card's own content. */
 export function cardLine(block: UiBlock): string {
+  // Never said: an offer to call means nothing on one.
+  if (block.kind === "offer") return "";
   if (block.kind === "proposal") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Apply when it looks right.`;
   if (block.kind === "memory-merge") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Merge when it looks right.`;
   const intro = block.intro ? ` ${sentence(plain(block.intro))}` : "";

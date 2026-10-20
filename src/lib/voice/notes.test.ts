@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_VOICE_NOTE_CHARS, type ChatMessage, type MessageOrigin } from "@/lib/types";
-import { voiceNoteFor } from "./notes";
+import { noteCanCome, voiceNoteFor } from "./notes";
 
 const message = (patch: Partial<ChatMessage>): ChatMessage => ({
   id: "m1",
@@ -64,6 +64,18 @@ describe("voiceNoteFor", () => {
     expect(voiceNoteFor(message({ content: "```\ncode\n```" }), { answered: asked(VOICE_MESSAGE) })).toBeNull();
   });
 
+  it("says the gist of a reply to words said on a call when it finished after the call ended", () => {
+    const reply = message({ content: "Three roles cleared your bar. The best is remote at 195." });
+    const onCall = asked({ kind: "voice", sessionId: "s1" });
+    expect(voiceNoteFor(reply, { answered: onCall, callEnded: true })).toEqual({ script: "Three roles cleared your bar. The best is remote at 195.", source: "reply" });
+    // Still on the call: the call reads it out instead.
+    expect(voiceNoteFor(reply, { answered: onCall, callEnded: false })).toBeNull();
+    expect(voiceNoteFor(reply, { answered: onCall })).toBeNull();
+    // Only a finished reply, and only one that answers the member's own spoken words.
+    expect(voiceNoteFor(message({ content: "Three roles.", status: "error" }), { answered: onCall, callEnded: true })).toBeNull();
+    expect(voiceNoteFor(reply, { answered: asked(null), callEnded: true })).toBeNull();
+  });
+
   it("after an approval, says what the reply went on to say, not what the member read before deciding", () => {
     const earlier = "Here's the reminder I'll send Dana. It's waiting for your OK below.";
     const reply = message({ content: `${earlier}\n\nSent. Dana will get it in a minute.` });
@@ -84,5 +96,29 @@ describe("voiceNoteFor", () => {
     const note = voiceNoteFor(message({ content: "x" }), { answered: asked(TASK), report: { outcome: "update", summary } });
     expect([...note!.script].length).toBeLessThanOrEqual(MAX_VOICE_NOTE_CHARS);
     expect(note!.script.endsWith("word…")).toBe(true);
+  });
+});
+
+describe("noteCanCome", () => {
+  const CALL = "call-1";
+  const thread = (origin: MessageOrigin | null, more: ChatMessage[] = []) => [asked(origin), message({ id: "r1", status: "streaming" }), ...more];
+
+  it("is true only where the reply going now can come back as a note once the call hangs up", () => {
+    // Words said on this call, a voice message, a task's run (a note if it turns something up).
+    expect(noteCanCome(thread({ kind: "voice", sessionId: CALL }), CALL)).toBe(true);
+    expect(noteCanCome(thread(VOICE_MESSAGE), CALL)).toBe(true);
+    expect(noteCanCome(thread(TASK), CALL)).toBe(true);
+    // Typing (joined by a call while it ran), another call's words, or a call's words before calls had ids.
+    expect(noteCanCome(thread(null), CALL)).toBe(false);
+    expect(noteCanCome(thread({ kind: "voice", sessionId: "call-2" }), CALL)).toBe(false);
+    expect(noteCanCome(thread({ kind: "voice" }), CALL)).toBe(false);
+    // The setup's opening has no words, so no origin; and nothing at all asked.
+    expect(noteCanCome([message({ id: "u0", role: "user", content: "", skill: { id: "builtin:setup", name: "Setup" } }), message({ status: "streaming" })], CALL)).toBe(false);
+    expect(noteCanCome([], CALL)).toBe(false);
+  });
+
+  it("goes by the member's latest message, the one a retry or a decision answers again", () => {
+    const earlier = [asked({ kind: "voice", sessionId: CALL }), message({ id: "r0", content: "Found two." })];
+    expect(noteCanCome([...earlier, message({ id: "u2", role: "user", content: "Typed", origin: null }), message({ id: "r2", status: "streaming" })], CALL)).toBe(false);
   });
 });

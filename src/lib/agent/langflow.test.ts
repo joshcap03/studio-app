@@ -770,7 +770,7 @@ describe("Langflow streaming", () => {
     const intro = { type: "text", text: "Let me check." };
     const answer = { type: "text", text: "Here's what I found." };
     const work = { type: "tool_use", name: "search", tool_input: {} };
-    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "remember", "propose_memory"]) {
+    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "remember", "propose_memory"]) {
       const direct = { type: "tool_use", name, tool_input: {} };
       const viaGateway = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: name, arguments: {} } };
       expect(openingLineIndexes([intro, work, answer, direct])).toEqual([0]);
@@ -1136,6 +1136,33 @@ describe("Langflow approvals", () => {
     const { events } = await run(base, streamResponse([frame("add_message", bot("A few things.", [show, chatter])), frame("end", {})]));
     expect(events.filter((e) => e.type === "ui")).toHaveLength(1);
     expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ hidden: true });
+  });
+
+  it("passes on an offer to call from offer_call's structured output, keeps the reply before it, and hides the step", async () => {
+    const offer_call = { reason: "This one's worth five minutes.", topic: "Which offer" };
+    const offer = {
+      type: "tool_use",
+      name: "offer_call",
+      tool_input: { reason: offer_call.reason },
+      output: { type: "tool", tool_call_id: "c7", content: JSON.stringify({ offer_call, note: "x" }) },
+      error: null,
+    };
+    expect(toolUi(bot("", [offer]) as never)).toEqual([{ type: "ui", block: { offer_call } }]);
+    // "Not shown: …" is plain text, never a card.
+    expect(toolUi(bot("", [{ ...offer, output: { type: "tool", tool_call_id: "c7", content: "Not shown: an offer needs one sentence on why a call would help." } }]) as never)).toEqual([]);
+    const answer = "There are three trade-offs: pay, growth, and the commute.";
+    const { events } = await run(base, streamResponse([frame("add_message", bot(answer, [offer])), frame("end", {})]));
+    expect(events.filter((e) => e.type === "ui")).toEqual([{ type: "ui", block: { offer_call } }]);
+    expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ label: "Offered a call", hidden: true });
+    // The text before it is the reply, not an opening line.
+    expect(events.filter((e) => e.type === "note")).toEqual([]);
+  });
+
+  it("says calls are available only where the member could take one", () => {
+    // The fact alone, in the words the instructions key on; no tool named, for a flow from before offer_call.
+    expect(templateValues({ ...tenantA, calls: true }).system_context).toContain("can also talk this through with you on a call");
+    expect(templateValues({ ...tenantA, calls: true }).system_context).not.toContain("offer_call");
+    expect(templateValues(tenantA).system_context).not.toContain("talk this through");
   });
 
   it("passes on a memory suggestion that only arrives in the job's result message", async () => {

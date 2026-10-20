@@ -92,6 +92,13 @@ const BACKGROUND_ONLY =
 
 const TRACKER_CHARS = 5000;
 
+/**
+ * Said only where the member could take a call (the app drops offers everywhere else). It names
+ * no tool: a flow from before offer_call has none, and the instructions that come with the tool
+ * say when to use it.
+ */
+const CALLS_CONTEXT = "The member can also talk this through with you on a call; it's theirs to start.";
+
 export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPLATE_VARIABLES)[number], string> {
   const memories = tenant.memories.map((m) => `- ${m}`).join("\n");
   const project = tenant.project;
@@ -99,6 +106,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   const system = [
     guardrail,
     tenant.modality && modalityContext(tenant.modality),
+    tenant.calls && CALLS_CONTEXT,
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
     tenant.account?.name.trim() && `You're assisting: ${tenant.account.name.trim()}`,
     tenant.account?.about.trim() && `About them:\n${tenant.account.about.trim()}`,
@@ -599,8 +607,9 @@ export function toolEvidence(message: LangflowMessage): AgentEvent[] {
 }
 
 /**
- * Forms (show_form), proposed agent setups (propose_agent), and proposed merges of remembered
- * facts (merge_memories) for the member (validated by the turn).
+ * Forms (show_form), proposed agent setups (propose_agent), proposed merges of remembered facts
+ * (merge_memories), and offers to talk on a call (offer_call) for the member (validated, and
+ * offers kept only where the member could take one, by the turn).
  */
 export function toolUi(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -611,6 +620,7 @@ export function toolUi(message: LangflowMessage): AgentEvent[] {
     if (isRecord(result.form)) events.push({ type: "ui", block: { form: result.form } });
     else if (isRecord(result.proposal)) events.push({ type: "ui", block: { proposal: result.proposal } });
     else if (isRecord(result.memory_merge)) events.push({ type: "ui", block: { memory_merge: result.memory_merge } });
+    else if (isRecord(result.offer_call)) events.push({ type: "ui", block: { offer_call: result.offer_call } });
   }
   return events;
 }

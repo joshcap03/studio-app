@@ -22,7 +22,8 @@ import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { Call } from "@/components/voice/call";
 import { VoicePlayer } from "@/components/voice/player";
-import { originFor } from "@/lib/chat/modality";
+import { followEvents, joinedEvents } from "@/lib/chat/follow";
+import { callOf, originFor } from "@/lib/chat/modality";
 import { markOf, moveOf, type MarkedMove, type WhoseMove } from "@/lib/chat/move";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
 import { openRequest, reopening } from "@/lib/client/open";
@@ -33,6 +34,7 @@ import { TIDY_SKILL_NAME, tidyRequest, tidySkillId } from "@/lib/skills/tidy";
 import type {
   AgentStatus,
   Attachment,
+  CallSummary,
   ChatMessage,
   Companion,
   ConversationSummary,
@@ -50,7 +52,8 @@ import type {
   WorkspaceSummary,
 } from "@/lib/types";
 import { MEMORY_CATEGORIES } from "@/lib/types";
-import { SETUP_JOURNEY_TITLE, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
+import type { RecapCall } from "@/lib/voice/recap";
+import { SETUP_JOURNEY_TITLE, type CallPurpose, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
 
 /** What the composer says while the reply above waits on the member (src/lib/chat/move.ts). */
 function composerHint(move: WhoseMove | null): string | undefined {
@@ -88,8 +91,11 @@ function setupAsJourney(setup: SetupSummary): JourneyInfo {
   return { kind: "setup", goal: setup.goal, steps: setup.plan, updatedAt: 0 };
 }
 
-/** What a message is sent with besides its text, and how (on a call or held to the mic, the member spoke it). */
-type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality };
+/**
+ * What a message is sent with besides its text, and how (on a call or held to the mic, the member
+ * spoke it); on a call, which call (for its recap, once the server has checked it's theirs).
+ */
+type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality; voiceSessionId?: string };
 const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
 interface ThreadState {
@@ -97,6 +103,8 @@ interface ThreadState {
   messages: ChatMessage[];
   /** The plan of the work here, as the server last reported it; null or absent when there's none. */
   journey?: JourneyInfo | null;
+  /** The calls messages here were said on, as the server last reported them (for their recaps). */
+  calls?: CallSummary[];
 }
 
 export interface InitialThread {
@@ -104,6 +112,38 @@ export interface InitialThread {
   status: "ready" | "missing";
   messages: ChatMessage[];
   journey: JourneyInfo | null;
+  calls: CallSummary[];
+}
+
+/** A conversation as the server returned it, for the thread's state. */
+const loaded = ({ messages, journey, calls }: { messages: ChatMessage[]; journey: JourneyInfo | null; calls?: CallSummary[] }): ThreadState => ({
+  status: "ready",
+  messages,
+  journey,
+  calls: calls ?? [],
+});
+
+/**
+ * A voice call in progress: the conversation it's in now (it moves when it follows a task's run),
+ * when it started here, and whether it's the setup interview's.
+ */
+interface CallState {
+  grant: VoiceGrant;
+  conversationId: string;
+  waitForTap: boolean;
+  startedAt: number;
+  setup: boolean;
+}
+
+/**
+ * Where a call followed a task's run ("Do the first one now"): the run's conversation, the one
+ * it left, the run's first message there, and the task's title. Known only to this tab.
+ */
+interface CallFollow {
+  conversationId: string;
+  leftFrom: string;
+  firstMessage: string;
+  title: string;
 }
 
 type ProjectState = { status: "loading" } | { status: "ready"; project: Project } | { status: "missing" } | { status: "error" };
@@ -242,7 +282,7 @@ function WorkspaceShell({
 
   const [conversations, setConversations] = useState(initialConversations);
   const [threads, setThreads] = useState<Record<string, ThreadState>>(() =>
-    initialThread ? { [initialThread.id]: { status: initialThread.status, messages: initialThread.messages, journey: initialThread.journey } } : {},
+    initialThread ? { [initialThread.id]: { status: initialThread.status, messages: initialThread.messages, journey: initialThread.journey, calls: initialThread.calls } } : {},
   );
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
@@ -268,6 +308,25 @@ function WorkspaceShell({
   const controllers = useRef(new Map<string, AbortController>());
   /** Who's listening to runs' events as they stream (a call narrating progress). */
   const streamListeners = useRef(new Set<(conversationId: string, event: StreamEvent) => void>());
+  /** Replies whose start the listeners have heard, streamed here or followed from the server. */
+  const announced = useRef(new Set<string>());
+  /**
+   * For a run this tab isn't streaming: what changed between two loads of its conversation, told
+   * to the listeners as the stream would have (src/lib/chat/follow.ts), so a call narrating it
+   * hears its steps and its end.
+   */
+  const tell = useCallback((conversationId: string, events: StreamEvent[]) => {
+    for (const event of events) {
+      if (event.type === "start") announced.current.add(event.assistantMessage.id);
+      for (const listener of streamListeners.current) listener(conversationId, event);
+    }
+  }, []);
+  const tellFollowed = useCallback(
+    (conversationId: string, before: ChatMessage[], after: ChatMessage[], conversation: ConversationSummary) => {
+      if (streamListeners.current.size) tell(conversationId, followEvents(before, after, conversation, announced.current));
+    },
+    [tell],
+  );
   const subscribe = useCallback((listener: (conversationId: string, event: StreamEvent) => void) => {
     streamListeners.current.add(listener);
     return () => {
@@ -275,7 +334,36 @@ function WorkspaceShell({
     };
   }, []);
   /** A voice call in progress, and the conversation it's in. */
-  const [call, setCall] = useState<{ grant: VoiceGrant; conversationId: string; waitForTap: boolean } | null>(null);
+  const [call, setCall] = useState<CallState | null>(null);
+  const callRef = useRef(call);
+  callRef.current = call;
+  /** Calls on this page, as this tab knows them: when each started and (once hung up) ended, before the server says. */
+  const [localCalls, setLocalCalls] = useState<Record<string, CallSummary>>({});
+  /** Where each call on this page followed a task's run, by call, for their recaps. */
+  const [follows, setFollows] = useState<Record<string, CallFollow[]>>({});
+  /** A call that just followed a task's run into its conversation, until that conversation's first copy is in. */
+  const callMovedInto = useRef<{ conversationId: string; sessionId: string; from: string } | null>(null);
+  /**
+   * The first copy of a conversation a call just followed a task's run into: the call hears the
+   * run from its start (it may be over already: one that failed at once, or reached an approval
+   * first, which no follower would see go), and the recaps know where the call went. The run
+   * started before its conversation loaded, so it's the latest reply there.
+   */
+  const callArrived = useCallback(
+    (id: string, latest: { messages: ChatMessage[]; conversation: ConversationSummary }) => {
+      const moved = callMovedInto.current;
+      if (moved?.conversationId !== id) return;
+      callMovedInto.current = null;
+      const at = latest.messages.findLastIndex((m) => m.role === "assistant");
+      if (at < 0) return;
+      const brief = latest.messages[at - 1]?.role === "user" ? latest.messages[at - 1] : latest.messages[at];
+      const title = brief.origin?.kind === "task" ? brief.origin.title : latest.conversation.title;
+      const follow: CallFollow = { conversationId: id, leftFrom: moved.from, firstMessage: brief.id, title };
+      setFollows((all) => ({ ...all, [moved.sessionId]: [...(all[moved.sessionId] ?? []), follow] }));
+      if (callRef.current?.conversationId === id && !controllers.current.has(id)) tell(id, joinedEvents(latest.messages, latest.conversation, announced.current));
+    },
+    [tell],
+  );
   const callLive = Boolean(call);
   useEffect(() => onCallChange(callLive), [callLive, onCallChange]);
   const [calling, setCalling] = useState(false);
@@ -399,7 +487,10 @@ function WorkspaceShell({
     setThreads((all) => ({ ...all, [activeId]: { status: "loading", messages: [] } }));
     api
       .getConversation(activeId, controller.signal)
-      .then(({ messages, journey }) => setThreads((all) => ({ ...all, [activeId]: { status: "ready", messages, journey } })))
+      .then((latest) => {
+        setThreads((all) => ({ ...all, [activeId]: loaded(latest) }));
+        callArrived(activeId, latest);
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         const status = error instanceof ApiError && error.status === 404 ? "missing" : "error";
@@ -413,7 +504,7 @@ function WorkspaceShell({
         return rest;
       });
     };
-  }, [activeId]);
+  }, [activeId, callArrived]);
 
   const activeConversation = useMemo(() => (activeId ? conversations.find((c) => c.id === activeId) : undefined), [activeId, conversations]);
   const activeTitle = activeConversation?.title;
@@ -474,8 +565,10 @@ function WorkspaceShell({
         // screen until the new copy is in.
         api
           .getConversation(conversationId)
-          .then(({ messages, journey }) => {
-            if (!controllers.current.has(conversationId)) setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages, journey } }));
+          .then((latest) => {
+            if (controllers.current.has(conversationId)) return;
+            setThreads((all) => ({ ...all, [conversationId]: loaded(latest) }));
+            callArrived(conversationId, latest);
           })
           .catch(() => undefined);
       }
@@ -485,13 +578,21 @@ function WorkspaceShell({
         .then(({ conversations }) => setConversations(conversations))
         .catch(() => undefined);
     },
-    [navigate],
+    [callArrived, navigate],
   );
 
-  /** A task's run started from a card (the first win after setup): run it, then follow it there. */
+  /**
+   * A task's run started from a card in `from` (the first win after setup): run it, then follow it
+   * there. A call in `from` (the card is on its stage) follows it too, and narrates the run.
+   */
   const runTaskNow = useCallback(
-    async (taskId: string) => {
+    async (taskId: string, from: string | null) => {
       const { conversationId } = await api.runTask(taskId);
+      const following = callRef.current;
+      if (following && from && following.conversationId === from && conversationId !== from) {
+        callMovedInto.current = { conversationId, sessionId: following.grant.sessionId, from };
+      }
+      setCall((current) => (current && current.conversationId === from ? { ...current, conversationId, setup: false } : current));
       openTaskConversation(conversationId);
     },
     [openTaskConversation],
@@ -521,6 +622,7 @@ function WorkspaceShell({
       };
 
       const onEvent = (event: StreamEvent) => {
+        if (event.type === "start") announced.current.add(event.assistantMessage.id);
         for (const listener of streamListeners.current) listener(conversationId, event);
         switch (event.type) {
           case "start": {
@@ -620,8 +722,11 @@ function WorkspaceShell({
         if (detached.current.has(controller) || (started && !controller.signal.aborted && !(error instanceof ApiError))) {
           const latest = await api.getConversation(conversationId).catch(() => null);
           if (latest) {
-            setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages: latest.messages, journey: latest.journey } }));
+            const before = threadsRef.current[conversationId]?.messages ?? [];
+            setThreads((all) => ({ ...all, [conversationId]: loaded(latest) }));
             upsertConversation(latest.conversation);
+            // A call narrating it hears what happened meanwhile (and the end, if it's over).
+            tellFollowed(conversationId, before, latest.messages, latest.conversation);
             return;
           }
           if (started) return;
@@ -631,7 +736,7 @@ function WorkspaceShell({
           // The server refused (e.g. already answered elsewhere): show its state, not a guess.
           await api
             .getConversation(conversationId)
-            .then(({ messages, journey }) => setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages, journey } })))
+            .then((latest) => setThreads((all) => ({ ...all, [conversationId]: loaded(latest) })))
             .catch(() => undefined);
           setNotice(error.message);
           return;
@@ -661,7 +766,7 @@ function WorkspaceShell({
         }
       }
     },
-    [patchMessage, patchMessages, setRunState, skills, upsertConversation],
+    [patchMessage, patchMessages, setRunState, skills, tellFollowed, upsertConversation],
   );
 
   const sendTo = useCallback(
@@ -670,7 +775,7 @@ function WorkspaceShell({
       const now = Date.now();
       const base = { conversationId, activity: [], artifacts: [], createdAt: now };
       // Labeled at once the way the server will label it ("Voice message", "On a call").
-      const origin = originFor(extras.modality, text);
+      const origin = originFor(extras.modality, text, extras.voiceSessionId);
       const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete", skill, attachments, ...(origin ? { origin } : {}) };
       const assistant: ChatMessage = {
         ...base,
@@ -719,6 +824,7 @@ function WorkspaceShell({
           ...(attachmentIds.length ? { attachmentIds } : {}),
           ...(steer ? { steer } : {}),
           ...(extras.modality ? { modality: extras.modality } : {}),
+          ...(extras.voiceSessionId ? { voiceSessionId: extras.voiceSessionId } : {}),
           // Only creates it there; the server ignores it for a conversation that already exists.
           ...(projectId ? { projectId } : {}),
         },
@@ -744,11 +850,13 @@ function WorkspaceShell({
     [activeId, activeProjectId, running, sendTo],
   );
 
-  /** Answers the agent's pending request and continues the same reply. */
+  /**
+   * Answers the agent's pending request in `conversationId` (the open one, or a call's) and
+   * continues the same reply.
+   */
   const decide = useCallback(
-    (approvalId: string, decision: "approve" | "reject") => {
-      if (!activeId || running.has(activeId)) return;
-      const conversationId = activeId;
+    (conversationId: string, approvalId: string, decision: "approve" | "reject") => {
+      if (running.has(conversationId)) return;
       const reply = threadsRef.current[conversationId]?.messages.find((m) => m.approvals?.some((a) => a.id === approvalId));
       if (!reply) return;
       setNotice(null);
@@ -759,7 +867,7 @@ function WorkspaceShell({
       }));
       void runTurn(conversationId, { kind: "decide", approvalId, decision }, { assistant: reply.id });
     },
-    [activeId, patchMessage, runTurn, running],
+    [patchMessage, runTurn, running],
   );
 
   /** Replaces the latest message and answers it again. */
@@ -814,11 +922,10 @@ function WorkspaceShell({
     [activeId, patchMessage],
   );
 
-  /** Keeps a card answered or applied once the server has saved what the member did. */
+  /** Keeps a card in `conversationId` (the open one, or a call's) answered or applied once the server has saved what the member did. */
   const recordUiResponse = useCallback(
-    (messageId: string, blockId: string, response: UiResponse) => {
-      if (!activeId) return;
-      patchMessage(activeId, messageId, (m) => ({ ...m, uiResponse: { ...(m.uiResponse ?? {}), [blockId]: response } }));
+    (conversationId: string, messageId: string, blockId: string, response: UiResponse) => {
+      patchMessage(conversationId, messageId, (m) => ({ ...m, uiResponse: { ...(m.uiResponse ?? {}), [blockId]: response } }));
       // Applying the proposed setup can finish the setup interview, keeping a name is how the
       // agent arrives, and a name or sound kept changes how it talks with them.
       if (response.status === "applied") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
@@ -826,7 +933,7 @@ function WorkspaceShell({
         api.getCompanion().then(({ companion: next }) => next && onCompanion(next), () => undefined);
       }
     },
-    [activeId, patchMessage, onCompanion],
+    [patchMessage, onCompanion],
   );
 
   /** Rates a reply right away; puts the old rating back if saving fails. */
@@ -845,10 +952,10 @@ function WorkspaceShell({
     [activeId, patchMessage],
   );
 
+  /** Answers the latest message in `conversationId` (the open one, or a call's) again. */
   const retry = useCallback(
-    (messageId: string) => {
-      if (!activeId || running.has(activeId)) return;
-      const conversationId = activeId;
+    (conversationId: string, messageId: string) => {
+      if (running.has(conversationId)) return;
       const unsentSend = unsent.current.get(messageId);
       if (unsentSend !== undefined) {
         // The original send never reached the server: drop both placeholders and resend.
@@ -877,15 +984,23 @@ function WorkspaceShell({
       setSendCount((n) => n + 1);
       void runTurn(conversationId, { kind: "retry" }, { assistant: assistant.id });
     },
-    [activeId, patchMessages, runTurn, running, sendTo],
+    [patchMessages, runTurn, running, sendTo],
   );
 
   // Stopping is a request to the server: closing the tab doesn't stop the agent, Stop does.
-  const stop = useCallback(() => {
-    if (!activeId) return;
-    const id = activeId;
-    api.stopRun(id).catch(() => controllers.current.get(id)?.abort());
-  }, [activeId]);
+  const stop = useCallback((conversationId: string) => {
+    api.stopRun(conversationId).catch(() => controllers.current.get(conversationId)?.abort());
+  }, []);
+
+  // The open conversation's own handlers, for the thread and its message box.
+  const decideHere = useCallback((approvalId: string, decision: "approve" | "reject") => activeId && decide(activeId, approvalId, decision), [activeId, decide]);
+  const recordHere = useCallback(
+    (messageId: string, blockId: string, response: UiResponse) => activeId && recordUiResponse(activeId, messageId, blockId, response),
+    [activeId, recordUiResponse],
+  );
+  const retryHere = useCallback((messageId: string) => activeId && retry(activeId, messageId), [activeId, retry]);
+  const stopHere = useCallback(() => activeId && stop(activeId), [activeId, stop]);
+  const runTaskHere = useCallback((taskId: string) => runTaskNow(taskId, activeId), [activeId, runTaskNow]);
 
   // The service worker shows notifications on devices where the member turned them on.
   useEffect(() => {
@@ -907,40 +1022,57 @@ function WorkspaceShell({
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  // Follow a run this tab didn't start (e.g. after a reload) until it finishes.
-  const followingRemote = activeThread?.status === "ready" && activeThread.messages.some((m) => m.status === "streaming") && !controllers.current.has(activeId ?? "");
+  // Follow a run this tab didn't start (e.g. after a reload, or a task's run) until it finishes:
+  // in the open conversation, and in a call's when that's elsewhere. A call narrating it hears
+  // what each load changed, as if it streamed here, from the start of a reply no one announced.
+  const followRemote = useCallback(
+    (id: string) => {
+      let cancelled = false;
+      setRunState(id, true);
+      const tick = async () => {
+        while (!cancelled) {
+          await new Promise((r) => setTimeout(r, 1500));
+          if (cancelled || controllers.current.has(id)) return;
+          if (document.visibilityState === "hidden") continue;
+          try {
+            const latest = await api.getConversation(id);
+            if (cancelled || controllers.current.has(id)) return;
+            const before = threadsRef.current[id]?.messages ?? [];
+            setThreads((all) => ({ ...all, [id]: loaded(latest) }));
+            tellFollowed(id, before, latest.messages, latest.conversation);
+            if (!latest.messages.some((m) => m.status === "streaming")) {
+              upsertConversation(latest.conversation);
+              return;
+            }
+          } catch {
+            // keep trying while the conversation is open
+          }
+        }
+      };
+      void tick().finally(() => {
+        // A cancelled follower leaves the flag to whichever effect replaced it.
+        if (!cancelled && !controllers.current.has(id)) setRunState(id, false);
+      });
+      return () => {
+        cancelled = true;
+        if (!controllers.current.has(id)) setRunState(id, false);
+      };
+    },
+    [setRunState, tellFollowed, upsertConversation],
+  );
+  const remotelyRunning = (thread: ThreadState | undefined, id: string | null | undefined) =>
+    Boolean(id && thread?.status === "ready" && thread.messages.some((m) => m.status === "streaming") && !controllers.current.has(id));
+  const followingRemote = remotelyRunning(activeThread, activeId);
   useEffect(() => {
     if (!activeId || !followingRemote) return;
-    const id = activeId;
-    let cancelled = false;
-    setRunState(id, true);
-    const tick = async () => {
-      while (!cancelled) {
-        await new Promise((r) => setTimeout(r, 1500));
-        if (cancelled || controllers.current.has(id)) return;
-        if (document.visibilityState === "hidden") continue;
-        try {
-          const { messages, conversation, journey } = await api.getConversation(id);
-          if (cancelled || controllers.current.has(id)) return;
-          setThreads((all) => ({ ...all, [id]: { status: "ready", messages, journey } }));
-          if (!messages.some((m) => m.status === "streaming")) {
-            upsertConversation(conversation);
-            return;
-          }
-        } catch {
-          // keep trying while the conversation is open
-        }
-      }
-    };
-    void tick().finally(() => {
-      // A cancelled follower leaves the flag to whichever effect replaced it.
-      if (!cancelled && !controllers.current.has(id)) setRunState(id, false);
-    });
-    return () => {
-      cancelled = true;
-      if (!controllers.current.has(id)) setRunState(id, false);
-    };
-  }, [activeId, followingRemote, setRunState, upsertConversation]);
+    return followRemote(activeId);
+  }, [activeId, followingRemote, followRemote]);
+  const callElsewhere = call && call.conversationId !== activeId ? call.conversationId : null;
+  const followingCall = remotelyRunning(callElsewhere ? threads[callElsewhere] : undefined, callElsewhere);
+  useEffect(() => {
+    if (!callElsewhere || !followingCall) return;
+    return followRemote(callElsewhere);
+  }, [callElsewhere, followingCall, followRemote]);
 
   // ---------------------------------------------------------------------------------------
   // Conversation management
@@ -973,34 +1105,79 @@ function WorkspaceShell({
   );
 
   /**
-   * "Talk it through": the setup interview on a call, from where it is (the open setup
-   * conversation, the one under way, or a new one). `waitForTap` when no tap on this page
-   * started it (arriving from onboarding).
+   * Opens a call in `conversationId`, or in a new chat when there's none. With `setup`, it's the
+   * setup interview's ("Talk it through"): from where it is (the open setup conversation, the one
+   * under way, or a new one). `waitForTap` when no tap on this page started it (arriving from
+   * onboarding). Resolves with the call, or null when one is already starting; throws (an
+   * ApiError, with words for the member) when it can't start, e.g. today's voice time is used up.
    */
-  const talkItThrough = useCallback(
-    async ({ inConversation, waitForTap = false }: { inConversation?: string; waitForTap?: boolean } = {}) => {
-      if (calling || call) return;
+  const startingCall = useRef(false);
+  const openCall = useCallback(
+    async ({ conversationId, setup: forSetup = false, waitForTap = false }: { conversationId?: string | null; setup?: boolean; waitForTap?: boolean } = {}) => {
+      if (startingCall.current || callRef.current) return null;
+      startingCall.current = true;
       setCalling(true);
-      setCallNotice(null);
-      setNotice(null);
       try {
         const { grant } = await api.startVoice();
-        const conversationId = inConversation ?? startSetup(false, "call");
-        if (!conversationId) {
+        const id = conversationId ?? (forSetup ? startSetup(false, "call") : crypto.randomUUID());
+        if (!id) {
           await api.endVoice(grant.sessionId).catch(() => undefined);
-          return;
+          return null;
         }
-        setCall({ grant, conversationId, waitForTap });
-      } catch (error) {
-        const message = error instanceof ApiError ? error.message : "Voice is unavailable right now. Keep going here.";
-        if (inConversation) setNotice(message);
-        else setCallNotice(message);
+        const startedAt = Date.now();
+        setLocalCalls((all) => ({ ...all, [grant.sessionId]: { id: grant.sessionId, startedAt, endedAt: null } }));
+        setCall({ grant, conversationId: id, waitForTap, startedAt, setup: forSetup });
+        return grant;
       } finally {
+        startingCall.current = false;
         setCalling(false);
       }
     },
-    [call, calling, startSetup],
+    [startSetup],
   );
+
+  /** A call from a button ("Call Rowan", "Talk it through"), saying why if it can't start. */
+  const startCall = useCallback(
+    async (options: { conversationId?: string | null; setup?: boolean; waitForTap?: boolean } = {}) => {
+      setCallNotice(null);
+      setNotice(null);
+      try {
+        await openCall(options);
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : "Voice is unavailable right now. Keep going here.";
+        if (options.conversationId) setNotice(message);
+        else setCallNotice(message);
+      }
+    },
+    [openCall],
+  );
+
+  /** The agent's offer under a reply, taken: a call in this conversation. Its card says why if it can't start. */
+  const callFromOffer = useCallback(async () => {
+    if (!activeId) throw new ApiError(404, "Open the conversation first.");
+    const grant = await openCall({ conversationId: activeId });
+    if (!grant) throw new ApiError(409, "A call is already starting.");
+    return grant.sessionId;
+  }, [activeId, openCall]);
+
+  /**
+   * The call is over: it ends here at once (its recap shows before the server says so), and words
+   * still held for a job that hadn't landed go into that conversation's message box, ready to send.
+   */
+  const endCall = useCallback((held: string[]) => {
+    const ending = callRef.current;
+    if (!ending) return;
+    const id = ending.grant.sessionId;
+    setLocalCalls((all) => ({ ...all, [id]: { id, startedAt: all[id]?.startedAt ?? ending.startedAt, endedAt: Date.now() } }));
+    const words = held.join(" ").trim();
+    if (words) {
+      const key = ending.conversationId;
+      const draft = [drafts.current.get(key)?.trim(), words].filter(Boolean).join("\n\n");
+      drafts.current.set(key, draft);
+      if (conversationIdFrom(window.location.pathname) === key) requestAnimationFrame(() => composer.current?.setValue(draft));
+    }
+    setCall(null);
+  }, []);
   // The member clears the plan the agent kept for the work in a conversation (its rail). If that
   // fails, the plan comes back, unless a new one has come in meanwhile.
   const clearPlan = useCallback((conversationId: string) => {
@@ -1141,9 +1318,9 @@ function WorkspaceShell({
     if (!wanted) return;
     setupRequested.current = true;
     window.history.replaceState(null, "", window.location.pathname);
-    if (wanted === "talk" && voice) void talkItThrough({ waitForTap: true });
+    if (wanted === "talk" && voice) void startCall({ setup: true, waitForTap: true });
     else startSetup(wanted === "new");
-  }, [setup, startSetup, talkItThrough, voice]);
+  }, [setup, startSetup, startCall, voice]);
 
   // "Tidy up" on a Brain topic arrives as ?tidy=<topic>: a new chat with that topic's tidy
   // skill attached, where the agent suggests facts to combine.
@@ -1369,7 +1546,7 @@ function WorkspaceShell({
       } else if (key === "escape" && drawerOpen) {
         setDrawerOpen(false);
       } else if (key === "escape" && activeId && running.has(activeId) && document.activeElement === document.body) {
-        stop();
+        stop(activeId);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -1389,9 +1566,52 @@ function WorkspaceShell({
     setup && activeId === setup.conversationId && (setup.status === "in_progress" || (setup.status === "done" && activeThread?.status === "ready" && !ownJourney)),
   );
   const journey = setupHere ? null : shownJourney(activeThread);
-  // A call about the setup follows the setup's rail, live; any other follows its conversation's.
+  // A call about the setup (started as the interview's, or in its conversation while it holds
+  // there) follows the setup's rail, live; any other follows its own conversation's, and one
+  // that followed a task's run there, the task's.
   const callThread = call ? threads[call.conversationId] : undefined;
-  const callJourney = useMemo(() => (!call ? null : setup ? setupAsJourney(setup) : shownJourney(callThread)), [call, setup, callThread]);
+  const callOwnJourney = callThread?.journey && callThread.journey.kind !== "setup" ? callThread.journey : null;
+  const setupCall = Boolean(
+    call &&
+      setup &&
+      (call.setup ||
+        (call.conversationId === setup.conversationId && (setup.status === "in_progress" || (setup.status === "done" && callThread?.status === "ready" && !callOwnJourney)))),
+  );
+  const callJourney = useMemo(() => (!call ? null : setupCall && setup ? setupAsJourney(setup) : shownJourney(callThread)), [call, setup, setupCall, callThread]);
+  const callPurpose: CallPurpose = setupCall
+    ? "setup"
+    : callThread?.journey?.kind === "task" || callThread?.messages.some((m) => m.origin?.kind === "task")
+      ? "task"
+      : "chat";
+  // The calls a thread's messages were said on: as the server last said, with what this tab knows
+  // of its own (a call just hung up on is over here before the server's copy says so), and where
+  // its calls followed a task's run: into this conversation, or from it (and how that run stands).
+  const callsOf = useCallback(
+    (id: string | null, thread: ThreadState | undefined): RecapCall[] => {
+      if (!id || !thread) return [];
+      const said = new Set(thread.messages.flatMap((m) => callOf(m.origin) ?? []));
+      const all = new Map<string, RecapCall>((thread.calls ?? []).map((c) => [c.id, c]));
+      for (const mine of Object.values(localCalls)) {
+        const went = follows[mine.id] ?? [];
+        const into = went.find((f) => f.conversationId === id);
+        if (!said.has(mine.id) && !into) continue;
+        const known = all.get(mine.id);
+        const away = went.filter((f) => f.leftFrom === id).map((f) => ({ title: f.title, move: moves[f.conversationId] ?? null }));
+        all.set(mine.id, {
+          ...(known ? { ...known, endedAt: known.endedAt ?? mine.endedAt } : mine),
+          ...(into ? { followedFrom: into.firstMessage } : {}),
+          ...(away.length ? { away } : {}),
+        });
+      }
+      return [...all.values()];
+    },
+    [follows, localCalls, moves],
+  );
+  const activeCalls = useMemo(() => callsOf(activeId, activeThread), [activeId, activeThread, callsOf]);
+  // A call with the agent from the message box, where talking setup through isn't already offered.
+  const callName = (companion?.stage === "arrived" ? companion.name : null) ?? greeter;
+  const callButton = (where: string | null) =>
+    voice && !call ? { label: callName ? `Call ${callName}` : "Start a call", onCall: () => void startCall({ conversationId: where }), busy: calling } : undefined;
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
   const draftKey = activeId ?? "new";
   const projectDraftKey = `project:${activeProjectId}`;
@@ -1599,10 +1819,11 @@ function WorkspaceShell({
               greeter={greeter}
               onSetup={() => startSetup()}
               onSkipSetup={skipSetup}
-              onTalk={voice && setup ? () => void talkItThrough() : undefined}
+              onTalk={voice && setup ? () => void startCall({ setup: true }) : undefined}
               talking={calling}
               talkNotice={callNotice}
               voice={voice}
+              call={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? undefined : callButton(null)}
             />
           ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
             <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
@@ -1611,17 +1832,19 @@ function WorkspaceShell({
               key={activeId}
               messages={activeThread.messages}
               running={isRunning}
-              onRetry={retry}
+              onRetry={retryHere}
               onEdit={edit}
-              onDecide={decide}
+              onDecide={decideHere}
               onProposal={answerProposal}
               onAnswer={send}
-              onUiResponse={recordUiResponse}
-              onRunTask={runTaskNow}
+              onUiResponse={recordHere}
+              onRunTask={runTaskHere}
               onFeedback={rateMessage}
               onOpenPanel={openPanel}
               sendCount={sendCount}
               noteFocus={noteFocus?.conversationId === activeId ? noteFocus.messageId : null}
+              onCall={voice && !call ? callFromOffer : undefined}
+              calls={activeCalls}
               footer={
                 <div className="mx-auto w-full max-w-[46rem] px-3 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
                   {notice ? (
@@ -1635,7 +1858,7 @@ function WorkspaceShell({
                       {voice && setup.status === "in_progress" ? (
                         <button
                           type="button"
-                          onClick={() => void talkItThrough({ inConversation: setup.conversationId! })}
+                          onClick={() => void startCall({ conversationId: setup.conversationId, setup: true })}
                           disabled={calling}
                           aria-label="Talk it through on a call"
                           className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-[13px] font-medium text-fg-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.97] disabled:opacity-60"
@@ -1661,7 +1884,7 @@ function WorkspaceShell({
                     initialValue={drafts.current.get(draftKey) ?? ""}
                     onDraftChange={(v) => drafts.current.set(draftKey, v)}
                     onSubmit={send}
-                    onStop={stop}
+                    onStop={stopHere}
                     skills={skills}
                     running={isRunning}
                     placeholder={isRunning ? "Redirect the agent…" : "Reply…"}
@@ -1670,6 +1893,8 @@ function WorkspaceShell({
                     hint={composerHint(lastMove)}
                     voice={voice}
                     redirects={isRunning || awaiting}
+                    // In the setup conversation while it's under way, "Talk it through" is the call.
+                    call={setup && setupHere && setup.status === "in_progress" ? undefined : callButton(activeId)}
                   />
                   {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
                 </div>
@@ -1698,18 +1923,22 @@ function WorkspaceShell({
           messages={threads[call.conversationId]?.messages ?? []}
           running={running.has(call.conversationId)}
           journey={callJourney}
-          onSend={(text, { steer, attachments }) =>
-            sendTo(call.conversationId, text, false, { skill: null, attachments: attachments ?? [], modality: "call" }, steer)
-          }
-          onStop={() => {
+          purpose={callPurpose}
+          voiceNotes={Boolean(voice?.speech.tts)}
+          // Everything on the call acts on the call's own conversation, wherever the page is.
+          onSend={(text, { steer, attachments }) => {
             const id = call.conversationId;
-            api.stopRun(id).catch(() => controllers.current.get(id)?.abort());
+            // A call from the new-chat screen starts its conversation with the first words.
+            const isNew = !threadsRef.current[id];
+            sendTo(id, text, isNew, { skill: null, attachments: attachments ?? [], modality: "call", voiceSessionId: call.grant.sessionId }, steer);
           }}
-          onDecide={decide}
-          onUiResponse={recordUiResponse}
-          onRunTask={runTaskNow}
+          onStop={() => stop(call.conversationId)}
+          onRetry={(messageId) => retry(call.conversationId, messageId)}
+          onDecide={(approvalId, decision) => decide(call.conversationId, approvalId, decision)}
+          onUiResponse={(messageId, blockId, response) => recordUiResponse(call.conversationId, messageId, blockId, response)}
+          onRunTask={(taskId) => runTaskNow(taskId, call.conversationId)}
           subscribe={subscribe}
-          onEnd={() => setCall(null)}
+          onEnd={endCall}
           waitForTap={call.waitForTap}
         />
       ) : null}

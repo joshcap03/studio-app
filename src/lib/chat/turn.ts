@@ -5,7 +5,8 @@ import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
 import { buildQuestions } from "./questions";
-import { buildUiBlock, isMergeRequest } from "./ui";
+import { buildUiBlock, capUi, isMergeRequest, withoutOffers } from "./ui";
+import { callOf } from "./modality";
 import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
 import { seamBetween } from "./seam";
@@ -30,7 +31,6 @@ import {
   type StreamEvent,
   type Question,
   type UiBlock,
-  MAX_UI_BLOCKS,
   type Citation,
   type Timeline,
 } from "@/lib/types";
@@ -131,6 +131,22 @@ export interface TurnDeps {
    * their voice message, or a task run's news (src/lib/voice/notes.ts). Without it, none do.
    */
   voiceNotes?: boolean;
+  /**
+   * Whether the call the member's message was said on is over (under their session), so its reply
+   * comes back as a voice note: no call is left to read it out. Without it, none is.
+   */
+  callEnded?: (callId: string) => Promise<boolean>;
+  /**
+   * Whether the agent may offer the member a call here (its offer_call card): they have calls,
+   * this turn isn't on one, and they haven't said Not now to an offer in this conversation.
+   * Without it, offers are dropped.
+   */
+  offerCalls?: boolean;
+  /**
+   * False when the page this streams to predates offers to call: it breaks on the card, so the
+   * events it's sent leave out any offer already on the reply (one continued after an approval).
+   */
+  offersShown?: boolean;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -433,7 +449,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const send = (event: StreamEvent) => {
         if (!open) return;
         try {
-          stream.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          stream.enqueue(encoder.encode(`${JSON.stringify(deps.offersShown === false ? withoutOffersIn(event) : event)}\n`));
         } catch {
           open = false;
         }
@@ -641,8 +657,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               break;
             }
             case "ui": {
-              // A form, proposed setup, or proposed merge of facts; it changes nothing until the
-              // member answers or applies it.
+              // A form, proposed setup, proposed merge of facts, or offer to call; it changes
+              // nothing until the member answers, applies, or takes it.
               const built = !isMergeRequest(event.block)
                 ? buildUiBlock(event.block)
                 : deps.resolveMerge
@@ -651,8 +667,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                       return null;
                     })
                   : null;
-              if (built) {
-                ui = [...(ui ?? []), built].slice(-MAX_UI_BLOCKS);
+              // An offer to call shows only where the member could take it.
+              if (built && (built.kind !== "offer" || deps.offerCalls)) {
+                ui = capUi([...(ui ?? []), built]);
                 send({ type: "ui", ui });
               }
               break;
@@ -780,8 +797,11 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await Promise.all(remembering);
       await saving;
       // Saved with the final state, so the end event and the stored reply carry the same note. A
-      // reply that never had one doesn't write it.
-      const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier }) : null;
+      // reply that never had one doesn't write it. A reply to words said on a call is a note only
+      // when the call is over by now (the member hung up while it worked).
+      const callId = deps.voiceNotes && status === "complete" ? callOf(answered?.origin) : null;
+      const callEnded = callId && deps.callEnded ? await deps.callEnded(callId).catch(() => false) : false;
+      const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier, callEnded }) : null;
       const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
       let updated = summary;
       try {
@@ -840,6 +860,14 @@ export function renderSteerMessage(interrupted: ChatMessage, declined: string | 
   }
   lines.push("Use what's still relevant, and follow my new message:");
   return `${lines.join("\n")}\n\n${message}`;
+}
+
+/** An event as a page that predates offers to call is sent it: without them. */
+function withoutOffersIn(event: StreamEvent): StreamEvent {
+  if (event.type === "ui") return { ...event, ui: event.ui.filter((b) => b.kind !== "offer") };
+  if (event.type === "start") return { ...event, assistantMessage: withoutOffers([event.assistantMessage])[0] };
+  if (event.type === "end") return { ...event, message: withoutOffers([event.message])[0] };
+  return event;
 }
 
 /** Drops the latest exchange from the provider's own memory before it is answered again. */

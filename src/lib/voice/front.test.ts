@@ -368,3 +368,75 @@ describe("quickRoute", () => {
     expect(quickRoute([user("x"), { role: "assistant", content: null, tool_calls: [{ id: "c", function: { name: "send_card", arguments: "{}" } }] }, { role: "tool", tool_call_id: "c", content: "Refused: wait" }])).toBeNull();
   });
 });
+
+describe("calls from anywhere", () => {
+  it("knows what the call is about, from the stage", () => {
+    expect(describeStage({ working: false, purpose: "task" })).toContain("This call is following one of their tasks as it runs.");
+    expect(describeStage({ working: false, purpose: "setup" })).toContain("This call is the setup interview");
+    // An ordinary chat says nothing about itself.
+    expect(describeStage({ working: false, purpose: "chat" })).toBe("You're not working on anything right now.");
+    // A setup call whose checklist isn't written yet still says what it's for; any other just says hello.
+    expect(planReply(context, [mark({ cue: "hello", stage: { working: false, purpose: "setup" } })])).toEqual({
+      kind: "say",
+      text: "Hey, it's Rowan. I'll walk you through getting me set up, one step at a time.",
+    });
+    expect(planReply(context, [mark({ cue: "hello", stage: { working: false, purpose: "chat" } })])).toEqual({ kind: "say", text: "Hey, it's Rowan." });
+    expect(planReply(context, [mark({ cue: "hello", stage: { working: true, purpose: "task" } })])).toEqual({ kind: "say", text: "Hey, it's Rowan." });
+    // The new fields survive the stage's parsing; anything else is stripped.
+    expect(latestStage([mark({ stage: { working: true, purpose: "task", longJob: true } })])).toEqual({ working: true, purpose: "task", longJob: true });
+    expect(latestStage([mark({ stage: { working: true, purpose: "meeting" } } as never)])).toBeNull();
+  });
+});
+
+describe("a long job on a call", () => {
+  const handOff = { name: "send_message", args: {} };
+  const asked = (purpose: VoiceStage["purpose"] = "chat") => mark({ cue: "long_job", stage: { working: true, purpose, longJob: true } });
+
+  it("asks once, in fixed words, whether to hang on or leave a voice note", () => {
+    expect(planReply(context, [mark({ cue: "long_job", stage: { working: true, longJob: true } })])).toEqual({
+      kind: "say",
+      text: "This takes a few minutes. Want to hang on, or should I send you a voice note when it's done?",
+    });
+    expect(describeStage({ working: true, longJob: true })).toContain("hang on or get a voice note");
+  });
+
+  it("hands their answer to the browser, with the line that goes with it, never holding it for the job", () => {
+    expect(quickRoute([asked(), user("Just send me a voice note")])).toEqual({ text: "Okay. I'll leave you a voice note when it's done.", tools: [handOff] });
+    // A task's run is a note only if it finds something, so it doesn't promise one.
+    expect(quickRoute([asked("task"), user("Voice note please")])).toEqual({ text: "Okay. If it turns something up, I'll leave you a voice note.", tools: [handOff] });
+    expect(quickRoute([asked(), user("I'll hang on")])).toMatchObject({ tools: [handOff], text: expect.stringMatching(/keep going|still on it/) });
+    expect(routeSpeech("voice note", { working: true, longJob: true }, [])).toEqual({ tools: [handOff] });
+    // Anything else while it works is held as usual, and a change of course is still a redirect.
+    expect(quickRoute([asked(), user("Also, no agencies")])).toEqual({ text: "Got it. I'll bring that in once this is done.", tools: [handOff] });
+    expect(quickRoute([asked(), user("Actually, send me a voice note of the summary")])).toEqual({ text: "Sure, one moment.", tools: [handOff] });
+    // Not asked, or the job's done: a voice note is just words for the worker.
+    expect(quickRoute([mark({ stage: { working: true } }), user("Voice note please")])).toEqual({ text: "Got it. I'll bring that in once this is done.", tools: [handOff] });
+    expect(quickRoute([mark({ stage: { working: false, longJob: true } }), user("Voice note please")])).toEqual({ text: "Sure, one moment.", tools: [handOff] });
+  });
+
+  it("says the line once, whichever way it came", () => {
+    const call = { role: "assistant" as const, content: "Okay. I'll leave you a voice note when it's done.", tool_calls: [{ id: "c", function: { name: "send_message", arguments: "{}" } }] };
+    const ending = { role: "tool" as const, tool_call_id: "c", content: "Ending: they'd rather have a voice note when it's done; the call ends once that's said." };
+    expect(planReply(context, [asked(), user("voice note"), call, ending])).toEqual({ kind: "skip" });
+    // Through the model (no line said yet): the browser's result is worded the same way.
+    expect(speechForResults([ending.content], [asked("task")])).toBe("Okay. If it turns something up, I'll leave you a voice note.");
+    expect(speechForResults(["Waiting: they'll hang on while it works."])).toMatch(/keep going|still on it/);
+  });
+
+  it("takes only the answer itself: a request said with it, or one that mentions a note, is held for the job", () => {
+    const held = { text: "Got it. I'll bring that in once this is done.", tools: [handOff] };
+    for (const said of ["Send a note to Sarah that I'm running late", "Voice note is fine, and also add Acme to the tracker", "Also email Bob, and send me a voice note when it's done"]) {
+      expect(quickRoute([asked(), user(said)]), said).toEqual(held);
+    }
+    // Answers that start with "no" to "want to hang on?", or turn the note down, are still answers.
+    expect(quickRoute([asked(), user("No, a voice note is fine.")])).toEqual({ text: "Okay. I'll leave you a voice note when it's done.", tools: [handOff] });
+    expect(quickRoute([asked(), user("Actually, just send me a voice note")])).toEqual({ text: "Okay. I'll leave you a voice note when it's done.", tools: [handOff] });
+    expect(quickRoute([asked(), user("No voice note, I'll wait")])).toMatchObject({ tools: [handOff], text: expect.stringMatching(/keep going|still on it/) });
+  });
+
+  it("corrects itself when the job came back just as they answered", () => {
+    const call = { role: "assistant" as const, content: "Okay. I'll leave you a voice note when it's done.", tool_calls: [{ id: "c", function: { name: "send_message", arguments: "{}" } }] };
+    const done = { role: "tool" as const, tool_call_id: "c", content: "Done: it just came back, so there's nothing to wait for; what it came to comes next." };
+    expect(planReply(context, [asked(), user("voice note"), call, done])).toEqual({ kind: "say", text: "Actually, it just came back." });
+  });
+});

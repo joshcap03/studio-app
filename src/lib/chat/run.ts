@@ -19,6 +19,7 @@ import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
 import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
+import { callEnded, callForWords } from "@/lib/voice/calls";
 import { resolvePersona } from "@/lib/voice/persona";
 import { voiceStatus } from "@/lib/voice/status";
 import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
@@ -27,12 +28,18 @@ import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
 // and a background worker run turns the same way. Nothing here touches the request, so it
 // stays free of Next.js; keeping the process alive until the run settles is the caller's job.
 
-/** What the member asked for. Skills and projects are named by id and loaded from their workspace. */
-export type RunInput =
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality }
+/**
+ * What the member asked for. Skills and projects are named by id and loaded from their workspace.
+ * `voiceSessionId`: the call words said on a call were said on, which counts only once it's
+ * checked to be the member's own. `offers`: the page the reply streams to can show the agent's
+ * offer to call (one from before offers can't).
+ */
+export type RunInput = (
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject" }
+) & { offers?: boolean }
   /** Run one of the member's tasks: its brief (and skill) is sent as a message no one typed. */
   | { kind: "task"; taskId: string; runId: string | null };
 
@@ -63,8 +70,12 @@ export async function buildTurnDeps(
     input = { kind: "send", text: task.instructions.trim() || task.title, skillId: task.skillId ?? undefined };
   } else {
     input = asked;
-    // Words said on a call, or held as a voice message, are labeled as spoken.
-    if (asked.kind === "send") origin = originFor(asked.modality, asked.text);
+    // Words said on a call, or held as a voice message, are labeled as spoken; words said on a
+    // call carry the call, once it's known to be the member's own (for its recap).
+    if (asked.kind === "send") {
+      const call = asked.modality === "call" && asked.voiceSessionId && asked.text.trim() ? await callForWords(tenant, asked.voiceSessionId).catch(() => null) : null;
+      origin = originFor(asked.modality, asked.text, call?.id);
+    }
   }
   // A run started with the setup skill is the setup interview's, from its context to its first plan.
   const setupRun = input.kind === "send" && input.skillId === SETUP_SKILL_ID;
@@ -75,6 +86,11 @@ export async function buildTurnDeps(
   // message), whatever the browser sends.
   const modality: Modality | undefined =
     input.kind === "send" ? input.modality : modalityOf((await earlier)?.findLast((m) => m.role === "user")?.origin);
+  // The agent may offer a call where the member could take one: they have calls, they aren't on
+  // one, they haven't said Not now to an offer here, and the page the reply streams to can show
+  // the offer. A task's run streams to no page; a page that predates offers loads it without them.
+  const shown = asked.kind === "task" || asked.offers === true;
+  const offerCalls = shown && Boolean(voiceStatus(tenant)) && modality !== "call" && !(await earlier)?.some(declinedOffer);
   // Context (settings and memory recall) loads alongside the skill and project lookups rather
   // than after them; it only reads, so a refused run just discards it.
   // Memory is searched with the member's recent messages, not just this one, so a follow-up
@@ -143,6 +159,7 @@ export async function buildTurnDeps(
       ...(await context),
       agentFiles: named(agentFiles),
       project: project ? { ...project.context, files: named(project.files) } : null,
+      ...(offerCalls ? { calls: true } : {}),
     },
     projectFiles: files,
     remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
@@ -153,6 +170,10 @@ export async function buildTurnDeps(
     timelines: previewEnabled(tenant, "why"),
     // Replies to a voice message, and a task run's news, come back as voice notes for members with speech.
     voiceNotes: Boolean(voiceStatus(tenant)?.speech.tts),
+    // A reply to words said on a call the member has since hung up on comes back as a voice note.
+    callEnded: (callId) => callEnded(tenant, callId),
+    offerCalls,
+    offersShown: shown,
     loadAttachment: (attachment) => readAttachment(tenant, attachment),
     loadSkill,
     // A plan saves where the work here keeps it: the conversation's task, the owner's setup
@@ -179,4 +200,9 @@ export async function buildTurnDeps(
         }
       : { conversationId, ...input };
   return { deps, request };
+}
+
+/** Whether the member said Not now to an offer to call under this message. */
+function declinedOffer(message: ChatMessage): boolean {
+  return Object.values(message.uiResponse ?? {}).some((r) => r.status === "declined");
 }

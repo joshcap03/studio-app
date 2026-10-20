@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, AudioLines, Mic, MicOff, PhoneOff, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, AudioLines, Mic, MicOff, PhoneOff, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCardDrafts, type FillResult } from "@/components/chat/card-drafts";
@@ -11,22 +11,28 @@ import { Journey } from "@/components/ui/journey";
 import { moveOf } from "@/lib/chat/move";
 import type { FormValues } from "@/lib/chat/ui-answer";
 import { api } from "@/lib/client/api";
-import { isBackchannel, isRedirect, isSendIntent, isStopIntent } from "@/lib/voice/intent";
+import { isBackchannel, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
 import { clock, micProblem } from "@/lib/voice/mic";
 import { CallNarrator } from "@/lib/voice/narrator";
-import { SETUP_JOURNEY_TITLE, type StageField, type VoiceGrant, type VoiceStage } from "@/lib/voice/types";
+import { noteCanCome } from "@/lib/voice/notes";
+import { JUST_BACK } from "@/lib/voice/persona";
+import { withHeldWords } from "@/lib/voice/recap";
+import { waitsOnMember } from "@/lib/voice/relay";
+import { SETUP_JOURNEY_TITLE, type CallPurpose, type StageField, type VoiceGrant, type VoiceStage } from "@/lib/voice/types";
 import type { Attachment, ChatMessage, Journey as JourneyInfo, StreamEvent, UiField, UiForm, UiResponse } from "@/lib/types";
 import type { LinkStatus, VoiceLink, VoiceLinkEvents, VoiceTools } from "./link";
 import MockVoiceLink from "./mock-link";
 import { Orb, ORB_LABEL, type OrbState } from "./orb";
 
-// A call with the agent: the orb (who has the floor, and whose move it is) beside the stage,
-// which shows only what the backend reported: the journey rail, the latest reply, and the
-// agent's own cards, answerable by tap or by voice. The voice is the agent's mouth and ears;
-// the member's words go to the worker verbatim, its real progress is read out (relay.ts), and
-// nothing is sent until they say "send" or tap. Talking over a running job is held for when it
-// lands; only a clear "stop" or "actually…" redirects it, since that stops the work and declines
-// any request waiting on them.
+// A call with the agent, from any conversation: the orb (who has the floor, and whose move it is)
+// beside the stage, which shows only what the backend reported: the journey rail, the latest
+// reply, and the agent's own cards, answerable by tap or by voice. The voice is the agent's mouth
+// and ears; the member's words go to the worker verbatim, its real progress is read out
+// (relay.ts), and nothing is sent until they say "send" or tap. Talking over a running job is
+// held for when it lands; only a clear "stop" or "actually…" redirects it, since that stops the
+// work and declines any request waiting on them. The call can move to another conversation
+// ("Do the first one now" follows the task's run), and a long job can end it with a voice note
+// to come.
 
 const ElevenLabsLink = dynamic(() => import("./elevenlabs-link"), { ssr: false });
 
@@ -34,11 +40,18 @@ export interface CallProps {
   grant: VoiceGrant;
   /** The agent's name, for the header ("Setting up Job search"). */
   agentName: string;
+  /** The conversation the call is in now; it changes when the call follows a task's run. */
   conversationId: string;
   messages: ChatMessage[];
   running: boolean;
-  /** The plan of the work on the call: the setup's, when this call is the setup interview. */
+  /** The plan of the work on the call: the setup's when this call is the setup interview, else its conversation's. */
   journey: JourneyInfo | null;
+  /** What the call is about, for the voice's bearings. */
+  purpose: CallPurpose;
+  /** Whether a reply can come back as a voice note, so a long job can offer one. */
+  voiceNotes?: boolean;
+  /** Answers the latest message again after its reply failed (Retry, or "try again"). */
+  onRetry?: (messageId: string) => void;
   /** Sends the member's words (or a card's answer) as their next message, on the call. */
   onSend: (text: string, options: { steer: boolean; attachments?: Attachment[] }) => void;
   onStop: () => void;
@@ -47,8 +60,8 @@ export interface CallProps {
   onRunTask?: (taskId: string) => Promise<void>;
   /** Streamed events of runs in this workspace, for narrating real progress. */
   subscribe: (listener: (conversationId: string, event: StreamEvent) => void) => () => void;
-  /** The call is over; the chat takes it from here. */
-  onEnd: () => void;
+  /** The call is over; the chat takes it from here, with anything they said that was still held. */
+  onEnd: (held: string[]) => void;
   /**
    * Opened without a tap on this page (arriving from onboarding): browsers may block a call's
    * sound until the member taps, so it waits for "Start call".
@@ -153,13 +166,36 @@ function fillReply(result: FillResult): string {
   return result.status === "filled" ? `Filled: ${result.said}. Not sent yet.` : `Heard: ${result.said}? It's on screen for them to confirm with a tap.`;
 }
 
+/** How long the call screen stays up after hanging up while the job is still out, to say so. */
+const OUT_ON_IT_MS = 1400;
+/** The longest the call waits for its voice-note line to be said before it hangs up anyway. */
+const NOTE_LINE_WAIT_MS = 6000;
+
 /** A call failure in plain words; the browser's own wording for a refused mic is just "Permission denied". */
 export function callProblem(message: string | undefined): string {
   const text = (message ?? "").trim();
   return micProblem(text, "start the call again") ?? (text ? `${text.replace(/[.!]?$/, ".")}` : "The call dropped.");
 }
 
-export function Call({ grant, agentName, conversationId, messages, running, journey, onSend, onStop, onDecide, onUiResponse, onRunTask, subscribe, onEnd, waitForTap = false }: CallProps) {
+export function Call({
+  grant,
+  agentName,
+  conversationId,
+  messages,
+  running,
+  journey,
+  purpose,
+  voiceNotes = false,
+  onRetry,
+  onSend,
+  onStop,
+  onDecide,
+  onUiResponse,
+  onRunTask,
+  subscribe,
+  onEnd,
+  waitForTap = false,
+}: CallProps) {
   const drafts = useCardDrafts();
   const [joined, setJoined] = useState(!waitForTap);
   const link = useRef<VoiceLink | null>(null);
@@ -175,6 +211,22 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
   const [progressSeen, setProgressSeen] = useState(false);
   const [typed, setTyped] = useState("");
   const [elapsed, setElapsed] = useState(0);
+  /** The call asked "hang on, or a voice note?" about the job going now, and they haven't said. */
+  const [longJob, setLongJob] = useState(false);
+  const longJobRef = useRef(false);
+  longJobRef.current = longJob;
+  /** When the job came back while that question was open: an answer arriving just after isn't for the worker. */
+  const longJobClosedAt = useRef<number | null>(null);
+  /** The question about waiting is over: answered, or the job came back (`closed`). */
+  const closeLongJob = useCallback((closed = false) => {
+    if (closed && longJobRef.current) longJobClosedAt.current = Date.now();
+    longJobRef.current = false;
+    setLongJob(false);
+  }, []);
+  /** Hung up while the job is still going: the orb says it's out on it, then the chat takes over. */
+  const [closing, setClosing] = useState(false);
+  /** They chose a voice note: the call hangs up once the voice has said so. */
+  const noteExit = useRef<{ at: number; heard: boolean } | null>(null);
   const captionId = useRef(0);
 
   // What the member said on this call, verbatim, and how much of it has been acted on.
@@ -214,6 +266,7 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
     const current = steps[at >= 0 ? at : steps.findIndex((s) => s.status !== "done")]?.text ?? null;
     return {
       working: running,
+      purpose,
       ...(steps.length
         ? {
             journey: {
@@ -232,8 +285,9 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
         : {}),
       ...(proposal && proposal.kind === "proposal" ? { proposal: proposal.summary } : {}),
       ...(pendingApproval ? { approval: pendingApproval.summary } : {}),
+      ...(longJob && running ? { longJob: true } : {}),
     };
-  }, [ask.form, ask.questions, ask.reply, drafts, journey, latestReply, questionsKey, running]);
+  }, [ask.form, ask.questions, ask.reply, drafts, journey, latestReply, longJob, purpose, questionsKey, running]);
   const stageRef = useRef(stage);
   stageRef.current = stage;
   /** The stage the voice last heard, with a line or as an update. */
@@ -248,16 +302,31 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
   // ---------------------------------------------------------------------------------------
   // Ending
 
+  // Words still held for a job that hasn't landed go back to the chat with it (into its message
+  // box), never lost. A job still going when they hang up is out on it: the screen says so for a
+  // moment, and the sidebar keeps breathing by its name.
+  const finished = useRef(false);
+  const finish = useCallback(() => {
+    if (finished.current) return;
+    finished.current = true;
+    onEnd(heldRef.current);
+  }, [onEnd]);
   const hangUp = useCallback(
     (sound = true) => {
       if (ended.current) return;
       ended.current = true;
+      noteExit.current = null;
       link.current?.end();
       if (sound) tone(false);
       api.endVoice(grant.sessionId).catch(() => undefined);
-      onEnd();
+      if (live.current.running) {
+        setClosing(true);
+        setTimeout(finish, OUT_ON_IT_MS);
+      } else {
+        finish();
+      }
     },
-    [grant.sessionId, onEnd],
+    [finish, grant.sessionId],
   );
 
   // Leaving the page (or this screen going away) ends the call, so its time stops counting.
@@ -297,7 +366,12 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
     if (!earlier) return text;
     setHeld([]);
     heldRef.current = [];
-    return `${text}\n\nAlso, while you were working: ${earlier}`;
+    return withHeldWords(text, earlier);
+  }, []);
+  /** Words for when the current work lands; kept in step at once, since a hang-up can come before the next render. */
+  const hold = useCallback((words: string) => {
+    heldRef.current = [...heldRef.current, words];
+    setHeld(heldRef.current);
   }, []);
 
   const send = useCallback(
@@ -311,11 +385,36 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
   );
 
   const handOff = useCallback((): string => {
-    const words = pending().join(" ").trim();
+    const said = pending();
+    const words = said.join(" ").trim();
     if (!words) return "Refused: they haven't said anything new to pass on.";
     consume();
     const { running: busy, messages: now } = live.current;
-    const awaiting = now.at(-1)?.status === "awaiting";
+    const last = now.at(-1);
+    const awaiting = last?.status === "awaiting";
+    // "Try again" after a reply failed tries it again, rather than sending the words.
+    if (!busy && onRetry && last?.role === "assistant" && (last.status === "error" || last.status === "interrupted") && isRetryIntent(words)) {
+      setOnIt(true);
+      setProgressSeen(false);
+      onRetry(last.id);
+      return "Handed off: trying it again.";
+    }
+    // Their answer to "hang on, or a voice note?": the call ends once that's said, or carries
+    // on. Anything said before it is talk-over like any other. An answer that comes just as the
+    // job did has nothing to wait for and no note coming (the call is still on, and reads it).
+    const long = longJobAnswer(said, { open: longJobRef.current, running: busy, closedAt: longJobClosedAt.current, now: Date.now() });
+    if (long) {
+      longJobClosedAt.current = null;
+      closeLongJob();
+      if (long.earlier) {
+        if (busy || awaiting) hold(long.earlier);
+        else send(withHeld(long.earlier), { steer: false });
+      }
+      if (long.late) return "Done: it just came back, so there's nothing to wait for; what it came to comes next.";
+      if (long.answer === "wait") return "Waiting: they'll hang on while it works.";
+      noteExit.current = { at: Date.now(), heard: modeRef.current === "speaking" };
+      return "Ending: they'd rather have a voice note when it's done; the call ends once that's said.";
+    }
     if (busy || awaiting) {
       if (isRedirect(words)) {
         send(words, { steer: true });
@@ -323,12 +422,12 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
           ? "Handed off: their change of course. The request that was waiting on their OK was declined."
           : "Handed off: their change of course. The earlier work stopped.";
       }
-      setHeld((list) => [...list, words]);
+      hold(words);
       return awaiting ? "Held: it's waiting on their OK on screen; their words go along after." : "Held: until the current work lands.";
     }
     send(withHeld(words), { steer: false });
     return "Handed off: sent to the worker.";
-  }, [send, withHeld]);
+  }, [closeLongJob, hold, onRetry, send, withHeld]);
 
   const tools: VoiceTools = {
     send_message: () => handOff(),
@@ -404,6 +503,7 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
     onMode: (next) => {
       // The first time the voice finishes speaking after the cue, the greeting has been said.
       if (next === "listening" && modeRef.current === "speaking" && greetingAt.current !== null) greeted.current = true;
+      if (next === "speaking" && noteExit.current) noteExit.current.heard = true;
       setMode(next);
       modeRef.current = next;
       lastSpeechAt.current = Date.now();
@@ -426,9 +526,18 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
     () =>
       subscribe((id, event) => {
         if (id !== live.current.conversationId || ended.current) return;
-        narrator.event(event);
+        narrator.event(event, Date.now());
         if (event.type === "activity" && !event.step.hidden) setProgressSeen(true);
+        // A new job is going: an answer to the question about the last one is talk-over now.
+        if (event.type === "start") longJobClosedAt.current = null;
         if (event.type === "end") {
+          closeLongJob(true);
+          // It came back before the call hung up for its voice note: the call is still on, so no
+          // note will come (src/lib/voice/notes.ts). It stays on and reads it instead.
+          if (noteExit.current) {
+            noteExit.current = null;
+            narrator.aside(JUST_BACK);
+          }
           if (steered.current && event.message.status === "stopped") {
             steered.current = false;
             return;
@@ -449,26 +558,45 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
           }
         }
       }),
-    [narrator, send, subscribe],
+    [closeLongJob, narrator, send, subscribe],
   );
 
   // Picking up where it left off: once connected and the conversation is loaded, what's waiting
-  // on them now. A call that starts a new turn hears about it as the turn goes.
+  // on them now (a reply that asks something or ends on a question; an older answer isn't news).
+  // A call that starts a new turn hears about it as the turn goes.
   const caughtUp = useRef(false);
   useEffect(() => {
     if (caughtUp.current || status !== "connected" || (!messages.length && !running)) return;
     caughtUp.current = true;
-    const { reply } = openAsk(messages, running);
-    if (reply) narrator.reply(reply);
+    const last = messages.at(-1);
+    if (last && !running && waitsOnMember(last)) narrator.reply(last);
   }, [messages, narrator, running, status]);
 
-  // What finishing each journey step gave the agent.
+  // What finishing each journey step gave the agent. When the call moves to another conversation,
+  // its plan is that conversation's own, not a change to the one before.
   const plan = journey?.steps ?? null;
   const lastPlan = useRef(plan);
+  const planOf = useRef(conversationId);
   useEffect(() => {
-    if (plan && lastPlan.current) narrator.journey(lastPlan.current, plan);
+    if (plan && lastPlan.current && planOf.current === conversationId) narrator.journey(lastPlan.current, plan);
     lastPlan.current = plan;
-  }, [narrator, plan]);
+    planOf.current = conversationId;
+  }, [conversationId, narrator, plan]);
+
+  // Following into another conversation: what's said from here is about the card there.
+  const boundTo = useRef(conversationId);
+  useEffect(() => {
+    if (boundTo.current === conversationId) return;
+    boundTo.current = conversationId;
+    cardSince.current = spoken.current.length;
+    longJobClosedAt.current = null;
+    closeLongJob();
+  }, [closeLongJob, conversationId]);
+
+  // A job that ended (or a question left unanswered when it did) closes the question about waiting.
+  useEffect(() => {
+    if (!running) closeLongJob(true);
+  }, [closeLongJob, running]);
 
   // The voice's view of the stage, kept current. Not again when a line just carried it: an update
   // arriving while the voice words a line makes the provider drop that line.
@@ -484,9 +612,28 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
     const timer = setInterval(() => {
       if (status !== "connected" || ended.current || !link.current) return;
       const now = Date.now();
+      // They chose a voice note: hang up once the voice has said it would leave one.
+      const going = noteExit.current;
+      if (going) {
+        if (modeRef.current === "speaking") going.heard = true;
+        else if (going.heard ? now - lastSpeechAt.current > AFTER_SPEECH_MS : now - going.at > NOTE_LINE_WAIT_MS) hangUp();
+        return;
+      }
       // Never over the greeting, the voice itself, or the member mid-sentence.
       if (!greeted.current && greetingAt.current !== null && now - greetingAt.current < GREETING_WAIT_MS) return;
       if (modeRef.current === "speaking" || now - lastSpeechAt.current < AFTER_SPEECH_MS || now - memberSoundAt.current < AFTER_MEMBER_MS) return;
+      // A job that's gone a while with nothing new: ask once whether to hang on or leave a voice
+      // note, only when its reply really can come back as one (never for a run started by typing).
+      const noteable = voiceNotes && noteCanCome(live.current.messages, grant.sessionId);
+      if (narrator.longJob(now, live.current.running && noteable)) {
+        const next: VoiceStage = { ...stageRef.current, longJob: true };
+        longJobRef.current = true;
+        setLongJob(true);
+        lastSpeechAt.current = now;
+        sentStage.current = JSON.stringify(next);
+        link.current.cue("long_job", next);
+        return;
+      }
       const lines = narrator.take(now, { running: live.current.running, quietMs: now - lastSpeechAt.current });
       if (!lines.length) return;
       lastSpeechAt.current = now;
@@ -494,7 +641,7 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
       link.current.say(lines, stageRef.current);
     }, 400);
     return () => clearInterval(timer);
-  }, [narrator, status]);
+  }, [grant.sessionId, hangUp, narrator, status, voiceNotes]);
 
   // The call's time: a heads-up a minute before the end, then it wraps up.
   useEffect(() => {
@@ -545,25 +692,27 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
 
   // Whose move it is, as everywhere else (src/lib/chat/move.ts); who has the floor is the call's own.
   const move = moveOf(messages.at(-1), { running });
-  const orb: OrbState = !joined
-    ? "ready"
-    : problem
-    ? "stuck"
-    : status === "connecting"
-      ? "connecting"
-      : status === "ended"
-        ? "ended"
-        : mode === "speaking" && speaker
-          ? "speaking"
-          : move.move === "stuck"
-            ? "stuck"
-            : move.move === "your_call"
-              ? "your_call"
-              : move.move === "working" && progressSeen
-                ? "working"
-                : move.move === "working" || onIt
-                  ? "on_it"
-                  : "listening";
+  const orb: OrbState = closing
+    ? "out_on_it"
+    : !joined
+      ? "ready"
+      : problem
+        ? "stuck"
+        : status === "connecting"
+          ? "connecting"
+          : status === "ended"
+            ? "ended"
+            : mode === "speaking" && speaker
+              ? "speaking"
+              : move.move === "stuck"
+                ? "stuck"
+                : move.move === "your_call"
+                  ? "your_call"
+                  : move.move === "working" && progressSeen
+                    ? "working"
+                    : move.move === "working" || onIt
+                      ? "on_it"
+                      : "listening";
 
   const voiceLine = captions.findLast((c) => c.who === "voice");
   const memberLine = captions.findLast((c) => c.who === "you");
@@ -625,7 +774,14 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
             ) : null}
           </div>
 
-          {problem ? (
+          {closing ? (
+            <div className="flex flex-col items-center gap-3 animate-fade-in">
+              <p className="max-w-sm text-center text-[13.5px] text-fg-2">It&apos;s still working. You&apos;ll find it in the chat.</p>
+              <button type="button" onClick={finish} className="inline-flex h-9 items-center rounded-full px-4 text-[13.5px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg">
+                Back to the chat
+              </button>
+            </div>
+          ) : problem ? (
             <div role="alert" className="w-full max-w-sm rounded-xl bg-danger-soft px-3.5 py-2.5 text-center text-[13.5px] text-fg">
               {problem} Everything&apos;s in the chat.
             </div>
@@ -636,7 +792,7 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
             </button>
           ) : null}
 
-          {!joined ? (
+          {closing ? null : !joined ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -748,9 +904,30 @@ export function Call({ grant, agentName, conversationId, messages, running, jour
             {ask.reply && ask.questions ? (
               <QuestionCard questions={ask.questions} draftKey={questionsKey} onAnswer={(text) => send(withHeld(text), { steer: false })} />
             ) : null}
-            {latestReply?.ui?.length ? (
+            {/* A failed reply is tried again with a tap here, or by saying "try again". */}
+            {onRetry && !running && (latestReply?.status === "error" || latestReply?.status === "interrupted") && latestReply === messages.at(-1) ? (
+              <div className="mt-4 flex items-center gap-2 rounded-xl bg-danger-soft py-2 pr-2 pl-3.5 animate-fade-up">
+                <p className="min-w-0 flex-1 text-[13.5px] text-fg">
+                  {latestReply.status === "error" ? (latestReply.error ?? "Something went wrong.") : "That got cut off before it finished."}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnIt(true);
+                    setProgressSeen(false);
+                    onRetry(latestReply.id);
+                  }}
+                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg"
+                >
+                  <RotateCcw size={13} />
+                  Retry
+                </button>
+              </div>
+            ) : null}
+            {/* An offer to call means nothing on one. */}
+            {latestReply?.ui?.some((b) => b.kind !== "offer") ? (
               <UiCards
-                blocks={latestReply.ui}
+                blocks={latestReply.ui.filter((b) => b.kind !== "offer")}
                 responses={latestReply.uiResponse}
                 conversationId={conversationId}
                 messageId={latestReply.id}

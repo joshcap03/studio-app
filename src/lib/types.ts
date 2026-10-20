@@ -178,7 +178,8 @@ export interface RunReport {
 /**
  * Where a message came from when the member didn't type it: a task's run, or their spoken words,
  * on a call (plain "voice", as rows from before voice messages say) or held as a voice message
- * (`via: "note"`).
+ * (`via: "note"`). Words said on a call carry the call's voice_sessions id once the server has
+ * checked it's the member's own (`sessionId`; rows from before calls had recaps carry none).
  */
 export type MessageOrigin =
   | {
@@ -188,7 +189,17 @@ export type MessageOrigin =
       title: string;
       runId: string | null;
     }
-  | { kind: "voice"; via?: "note" };
+  | { kind: "voice"; via?: "note"; sessionId?: string };
+
+/**
+ * A call some of a conversation's messages were said on, from the member's own voice_sessions
+ * row: when it started and when it ended (null while it's still going).
+ */
+export interface CallSummary {
+  id: string;
+  startedAt: number;
+  endedAt: number | null;
+}
 
 /** The most a voice note says: about forty seconds. */
 export const MAX_VOICE_NOTE_CHARS = 600;
@@ -569,10 +580,21 @@ export interface Question {
 
 /**
  * Cards the agent puts under a reply for the member to act on (see src/lib/chat/ui.ts): a form
- * to fill in, whose answers go out as the member's next message, or a proposed setup for the
- * agent, which changes nothing until the member applies it.
+ * to fill in, whose answers go out as the member's next message, a proposed setup for the
+ * agent, which changes nothing until the member applies it, or an offer to talk it through on a
+ * call, which asks nothing of them (the call starts only if they tap Call).
  */
-export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal;
+export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer;
+
+/** The agent's offer to talk something through on a call (its offer_call tool). It never rings anyone. */
+export interface UiOffer {
+  kind: "offer";
+  id: string;
+  /** Why it would help, in one sentence, as the agent would say it. */
+  reason: string;
+  /** What the call would be about, in a few words. */
+  topic?: string;
+}
 
 export interface UiOption {
   label: string;
@@ -764,8 +786,13 @@ export type UiResponse =
    * `skipped`: merges left as they are because the merged fact was edited or removed since;
    * `merges`: the ones that had been made, as the card showed them.
    */
-  | { status: "undone"; at: number; restored: number; skipped: number; merges: Pick<AppliedMerge, "index" | "text">[] };
+  | { status: "undone"; at: number; restored: number; skipped: number; merges: Pick<AppliedMerge, "index" | "text">[] }
+  /** An offer to call, taken: the call that started from it (the member's own voice_sessions row). */
+  | { status: "accepted"; at: number; sessionId: string }
+  /** An offer to call, turned down ("Not now"): no more offers in that conversation. */
+  | { status: "declined"; at: number };
 
+/** Cards one reply keeps (the latest ones); an offer to call is kept besides them (src/lib/chat/ui.ts capUi). */
 export const MAX_UI_BLOCKS = 2;
 export const MAX_FORM_FIELDS = 8;
 export const MAX_LIST_ITEMS = 8;

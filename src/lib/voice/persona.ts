@@ -5,7 +5,7 @@ import { DEFAULT_TEMPLATE_ID, templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import type { Companion } from "@/lib/types";
 import { voiceStatus } from "./status";
-import type { StageField, VoiceContext, VoiceCue, VoiceStage, VoiceToolName } from "./types";
+import type { CallPurpose, StageField, VoiceContext, VoiceCue, VoiceStage, VoiceToolName } from "./types";
 import type { VoiceKey } from "./voices";
 
 // Who the voice is on a call and what it may say, built per call from the member's session.
@@ -82,7 +82,7 @@ const HOW_TO_ACT = `How to act:
 - Only when they clearly say to send it ("send", "send it"), call send_card. Never send on your own or on "yes" alone.
 - Only when they clearly ask to stop, call stop_work.
 - Files, connecting apps, Apply, and approvals are taps: say it's on screen.
-- If they talk while you're working, still call send_message: Studio holds their words until the work lands, unless they're changing course.
+- If they talk while you're working, still call send_message: Studio holds their words until the work lands, unless they're changing course. That includes their answer when Studio has asked whether they'd rather hang on or get a voice note, and "try again" after something failed.
 - One or two short sentences in plain words: no lists, markdown, or links, and no praise or filler ("great question"). Say "we" for the shared goal, "I" for your own work and misses, "you" for their decisions. If asked, say you're an AI.
 - If there's nothing new to say, call skip_turn.`;
 
@@ -110,13 +110,23 @@ function isSetupJourney(journey: NonNullable<VoiceStage["journey"]>): boolean {
   return (journey.kind ?? "setup") === "setup";
 }
 
+/** What the call is about, in a line for the voice; nothing for an ordinary chat (or a page that predates purposes). */
+const PURPOSE_LINE: Record<CallPurpose, string | null> = {
+  setup: "This call is the setup interview: getting you set up for them.",
+  task: "This call is following one of their tasks as it runs.",
+  chat: null,
+};
+
 /**
- * The stage in a few lines for the voice: the journey (the setup's, or what done means for the
- * work on screen), then the card and how to address it.
+ * The stage in a few lines for the voice: what the call is about, the journey (the setup's, or
+ * what done means for the work on screen), then the card and how to address it.
  */
 export function describeStage(stage: VoiceStage | null): string {
   if (!stage) return "Nothing yet.";
   const lines: string[] = [stage.working ? "You're working on something now." : "You're not working on anything right now."];
+  const about = stage.purpose ? PURPOSE_LINE[stage.purpose] : null;
+  if (about) lines.unshift(about);
+  if (stage.longJob) lines.push("Studio asked whether they'd rather hang on or get a voice note when it's done; their answer goes to send_message.");
   const journey = stage.journey;
   if (journey) {
     const progress = `${journey.done} ${journey.done === 1 ? "step" : "steps"} done so far${journey.current ? `; now: ${journey.current}` : ""}.`;
@@ -155,7 +165,8 @@ function fieldLine(f: StageField): string {
 export function greeting(context: VoiceContext, stage: VoiceStage | null): string {
   const hello = `Hey${context.member ? ` ${context.member}` : ""}, it's ${context.name}.`;
   const journey = stage?.journey;
-  if (!journey) return hello;
+  // A setup call whose checklist isn't written yet still says what it's for.
+  if (!journey) return stage?.purpose === "setup" ? `${hello} I'll walk you through getting me set up, one step at a time.` : hello;
   const step = journey.current ? stepName(journey.current) : "";
   if (!isSetupJourney(journey)) {
     const goal = journey.goal ? ` Done means ${journey.goal.replace(/[.!?]+$/, "")}.` : "";
@@ -174,8 +185,25 @@ export function cueLine(cue: VoiceCue, context: VoiceContext, stage: VoiceStage 
       return "Just so you know, we've got about a minute left on this call. We can carry on in the chat after.";
     case "time_up":
       return "That's our time for this call. It's all in the chat, so we can pick it up there whenever you like.";
+    case "long_job":
+      return "This takes a few minutes. Want to hang on, or should I send you a voice note when it's done?";
   }
 }
+
+/**
+ * What the voice says when the member would rather have a voice note than wait, just before the
+ * call ends. A task's run is a note only if it turns something up (src/lib/voice/notes.ts), so
+ * it doesn't promise one; a reply to what they said always is.
+ */
+export function voiceNoteLine(stage: VoiceStage | null): string {
+  return stage?.purpose === "task" ? "Okay. If it turns something up, I'll leave you a voice note." : "Okay. I'll leave you a voice note when it's done.";
+}
+
+/**
+ * Said when the job came back (done, stuck, or waiting on their OK) just as they chose to hang on
+ * or have a voice note: there's nothing to wait for, and no note coming, since the call reads it.
+ */
+export const JUST_BACK = "Actually, it just came back.";
 
 /**
  * The client tools, as the voice front offers them to its model. Fixed here, so a provider's own

@@ -3,11 +3,11 @@
 import { Companion, useCompanion, type CompanionMood } from "@/components/ui/companion";
 
 // The call's orb. Each state means something real: who has the floor, whether the member's words
-// reached the worker, whether real progress is coming in, and whether it's waiting on them (it
-// holds still). No sounds. Once the agent has a name with the member, its face is the orb's core,
+// reached the worker, whether real progress is coming in, whether it's waiting on them (it
+// holds still), and, as the call closes, whether the job is still out (it breathes). No sounds. Once the agent has a name with the member, its face is the orb's core,
 // and its mood follows the same states; until then the core stays plain.
 
-export type OrbState = "ready" | "connecting" | "listening" | "on_it" | "working" | "speaking" | "your_call" | "stuck" | "ended";
+export type OrbState = "ready" | "connecting" | "listening" | "on_it" | "working" | "speaking" | "your_call" | "stuck" | "ended" | "out_on_it";
 
 export const ORB_LABEL: Record<OrbState, string> = {
   ready: "Ready when you are",
@@ -19,6 +19,7 @@ export const ORB_LABEL: Record<OrbState, string> = {
   your_call: "Your call",
   stuck: "Stuck",
   ended: "Call ended",
+  out_on_it: "Out on it",
 };
 
 const MOOD: Record<OrbState, CompanionMood> = {
@@ -31,6 +32,7 @@ const MOOD: Record<OrbState, CompanionMood> = {
   your_call: "needs_you",
   stuck: "stuck",
   ended: "idle",
+  out_on_it: "working",
 };
 
 export function Orb({ state, size = 148 }: { state: OrbState; size?: number }) {
@@ -41,7 +43,7 @@ export function Orb({ state, size = 148 }: { state: OrbState; size?: number }) {
       ? "bg-danger/55"
       : state === "ready" || state === "connecting" || state === "ended"
         ? "bg-accent/25"
-        : state === "listening"
+        : state === "listening" || state === "out_on_it"
           ? "bg-accent/60 breathe-soft"
           : state === "speaking"
             ? "bg-accent orb-speak"

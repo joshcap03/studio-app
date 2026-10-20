@@ -1,5 +1,5 @@
 import type { MarkedMove } from "@/lib/chat/move";
-import type { Attachment, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
+import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
@@ -58,8 +58,9 @@ export const api = {
     request<{ account: { name: string; about: string } }>("/api/account", { method: "PATCH", body: JSON.stringify(patch) }),
   listConversations: (query = "", signal?: AbortSignal) =>
     request<{ conversations: ConversationSummary[] }>(`/api/conversations?q=${encodeURIComponent(query)}`, { signal }),
+  // This page knows the agent's offers to call, so it asks for them (pages from before them don't get any).
   getConversation: (id: string, signal?: AbortSignal) =>
-    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null }>(`/api/conversations/${id}`, { signal }),
+    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null; calls: CallSummary[] }>(`/api/conversations/${id}?offers=1`, { signal }),
   /** Whose move it is in these conversations: only those working, waiting on the member, or stuck. */
   conversationMoves: (ids: string[], signal?: AbortSignal) =>
     request<{ moves: Record<string, MarkedMove> }>(`/api/conversations/moves?ids=${ids.map(encodeURIComponent).join(",")}`, { signal }),
@@ -113,7 +114,9 @@ export const api = {
       | { action: "submit"; keepFiles?: string[]; verdicts?: VerdictCall[] }
       | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string }
       | { action: "merge"; picks: number[]; edits?: Record<string, string> }
-      | { action: "undo" },
+      | { action: "undo" }
+      | { action: "accept"; sessionId: string }
+      | { action: "decline" },
   ) =>
     request<{ response: UiResponse }>(`/api/conversations/${conversationId}/ui/${blockId}`, {
       method: "POST",
@@ -189,7 +192,7 @@ export async function uploadAgentFile(file: File): Promise<Attachment> {
 }
 
 export type TurnBody =
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject" };
@@ -207,7 +210,8 @@ export async function streamTurn(
   const res = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    // This page can show the agent's offer to call; the server makes none for a page that can't.
+    body: JSON.stringify({ ...body, offers: true }),
     signal,
   });
   if (res.status === 401) {

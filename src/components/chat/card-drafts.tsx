@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { fillField, fillQuestions, type VoiceFill } from "@/lib/chat/ui-fill";
-import { formAnswerText, missingAnswer, type FormValues } from "@/lib/chat/ui-answer";
+import { answerText, formAnswerText, missingAnswer, type FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError } from "@/lib/client/api";
 import type { Attachment, Question, UiForm, UiResponse, Verdict } from "@/lib/types";
 
@@ -71,11 +71,7 @@ export function initialFormValues(form: UiForm): FormValues {
 const freshForm = (form: UiForm): FormDraft => ({ values: initialFormValues(form), files: {}, heard: {}, uploading: 0, error: null, busy: false, sent: false });
 const freshQuestion = (questions: Question[]): QuestionDraft => ({ picks: questions.map(() => []), heard: null, sent: false });
 
-/** The message that answers `questions` with the member's picks. */
-export function answerText(questions: Question[], picks: string[][]): string {
-  if (questions.length === 1) return picks[0].join(", ");
-  return questions.map((q, i) => `${q.header ? `${q.header}:` : q.question} ${picks[i].join(", ")}`).join("\n");
-}
+export { answerText };
 
 export function CardDraftsProvider({ children }: { children: React.ReactNode }) {
   // Read and written synchronously (a voice fill and its "send" can come back to back), and

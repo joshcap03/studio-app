@@ -4,11 +4,13 @@ import { getAgentAdapter } from "@/lib/agent";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { removeAttachmentFiles } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
+import { withoutOffers } from "@/lib/chat/ui";
 import type { Conversation } from "@/lib/db/store";
 import { journeyOrNone } from "@/lib/journey";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { getProject } from "@/lib/projects";
 import { MAX_TITLE_LENGTH, type ConversationSummary } from "@/lib/types";
+import { callsOrNone } from "@/lib/voice/calls";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -41,9 +43,13 @@ export async function GET(request: NextRequest, { params }: Context) {
     const store = storeFor(auth.value);
     const conversation = await store.getConversation(parsed.data);
     if (!conversation) return jsonError(404, "Conversation not found.");
-    // The plan of the work here comes with it, so a run followed from elsewhere fills in the rail too.
+    // The plan of the work here comes with it, so a run followed from elsewhere fills in the rail
+    // too, and so do the calls its messages were said on (for their recaps).
     const [messages, journey] = await Promise.all([store.listMessages(conversation.id), journeyOrNone(auth.value, conversation.id)]);
-    return NextResponse.json({ conversation: summaryOf(conversation), messages, journey }, noStore);
+    const calls = await callsOrNone(auth.value, messages);
+    // Offers to call only go to pages that know them (?offers=1): a tab still on older code breaks on one.
+    const shown = request.nextUrl.searchParams.get("offers") === "1" ? messages : withoutOffers(messages);
+    return NextResponse.json({ conversation: summaryOf(conversation), messages: shown, journey, calls }, noStore);
   } catch (error) {
     return errorResponse(error);
   }

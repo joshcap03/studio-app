@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -319,6 +319,12 @@ class MergeArgs(BaseModel):
                                json_schema_extra={"items": MERGE_SCHEMA, "minItems": 1, "maxItems": 8})
 
 
+class OfferCallArgs(BaseModel):
+    reason: str = Field(description=("Why a call would help, in one sentence as you'd say it, e.g. 'This one's worth five "
+                                     "minutes: there are three trade-offs to weigh.'"))
+    topic: str = Field(default="", description="Optional: what the call would be about, 2-6 words, e.g. 'Which offer to take'.")
+
+
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
 DiscoverArgs.model_rebuild()
 ExecuteArgs.model_rebuild()
@@ -331,6 +337,7 @@ AskArgs.model_rebuild()
 FormArgs.model_rebuild()
 ProposeArgs.model_rebuild()
 MergeArgs.model_rebuild()
+OfferCallArgs.model_rebuild()
 
 
 def words(s):
@@ -1036,9 +1043,25 @@ class ToolGatewayComponent(Component):
         async def merge_memories_async(merges: list, summary: str = "") -> str:
             return merge_memories(merges, summary)
 
+        def offer_call(reason: str, topic: str = "") -> str:
+            # Changes nothing and rings no one: the app shows a "Hop on a call?" card under the
+            # reply (only to members who can take one), and a call starts only if they tap Call.
+            reason = " ".join(str(reason or "").split())[:200]
+            if not reason:
+                return "Not shown: an offer needs one sentence on why a call would help."
+            return json.dumps({
+                "offer_call": {"reason": reason, "topic": " ".join(str(topic or "").split())[:80]},
+                "note": ("The owner now sees a 'Hop on a call?' card with Call and Not now under your reply. Don't "
+                         "repeat the offer in your text; if they don't take it, carry on in text. Don't offer again "
+                         "in this conversation once they've said Not now."),
+            })
+
+        async def offer_call_async(reason: str, topic: str = "") -> str:
+            return offer_call(reason, topic)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1172,5 +1195,15 @@ class ToolGatewayComponent(Component):
                              "keeps every detail of the ones it replaces. The owner reviews the merges and makes the "
                              "ones they want, and can undo them; nothing changes until they do. Call it once, as the "
                              "last thing in your reply."),
+            ),
+            StructuredTool.from_function(
+                func=offer_call, coroutine=offer_call_async, name="offer_call",
+                args_schema=OfferCallArgs,
+                description=("Offer to talk something through with the owner on a live call, only when CONTEXT says "
+                             "they can talk with you on a call. Your judgment: when a decision trades off several "
+                             "things, or typing has gone back and forth a few times without settling. It only "
+                             "offers; it never starts a call, and they may say Not now. Never on a call, and not "
+                             "again in a conversation where they said Not now. Call it after your reply (and after "
+                             "show_form or ask_user, if any). Changes nothing."),
             ),
         ]
