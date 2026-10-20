@@ -3,7 +3,7 @@ import { seamBetween } from "@/lib/chat/seam";
 import { toMemoryCategory } from "@/lib/types";
 import { evidenceFor, interpretCalls, keepsBooks, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
-import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
+import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
 
 // Langflow adapter. Everything Langflow-specific lives in this file.
 //
@@ -716,7 +716,7 @@ const APPROVAL_FIELD_MAX = 6;
  * The approval card for a paused tool call: the agent's own summary, the app it acts in, and
  * a few readable arguments. Built from the take_action call the run paused on.
  */
-export function approvalFor(data: unknown): { summary: string; app?: string; details: [string, string][] } {
+export function approvalFor(data: unknown): { summary: string; app?: string; details: [string, string][]; actions: ApprovalAction[] } {
   const request = isRecord(data) && Array.isArray(data.action_requests) && isRecord(data.action_requests[0]) ? data.action_requests[0] : {};
   const args = isRecord(request.args) ? request.args : {};
   let tool = typeof args.tool_name === "string" ? args.tool_name : typeof request.name === "string" ? request.name : "";
@@ -740,7 +740,62 @@ export function approvalFor(data: unknown): { summary: string; app?: string; det
   }
   const fallback = typeof data === "object" && isRecord(data) && typeof data.prompt === "string" ? data.prompt.split("\n")[0] : "";
   const summary = clip(typeof args.summary === "string" && args.summary.trim() ? args.summary : fallback || "The agent wants to make a change", 500);
-  return { summary, app, details };
+  return { summary, app, details, actions: approvalActions(data) };
+}
+
+/** The gateway's take_action: an action that changes something, paused until the member approves. */
+const TAKE_ACTION = "take_action";
+const COMPOSIO_SLUG = /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/;
+
+/**
+ * Everything approving this pause would run, across all its action requests, the way the gateway
+ * will run it once approved (tool_gateway.py `route()`): nested execute_tool calls unwrapped
+ * (three deep), a bare Composio slug sent as one action, and every tool of a multi-execute. An
+ * action the gateway couldn't run as written (arguments that aren't JSON, a request to some other
+ * tool) comes back under a name no rule allows, so it stays a tap.
+ */
+export function approvalActions(data: unknown): ApprovalAction[] {
+  const requests = isRecord(data) && Array.isArray(data.action_requests) ? data.action_requests : [];
+  return requests.flatMap((request): ApprovalAction[] => {
+    if (!isRecord(request) || request.name !== TAKE_ACTION || !isRecord(request.args)) {
+      return [{ tool: isRecord(request) && typeof request.name === "string" ? request.name : "", arguments: isRecord(request) ? request.args : null }];
+    }
+    return routedActions(request.args.tool_name, request.args.arguments);
+  });
+}
+
+/** JSON text as the gateway reads it (an empty string is no arguments); undefined when it isn't JSON. */
+function gatewayJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (!value.trim()) return {};
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function routedActions(toolName: unknown, raw: unknown): ApprovalAction[] {
+  let name = typeof toolName === "string" ? toolName : "";
+  let args = raw;
+  for (let i = 0; i < 3 && name === "execute_tool"; i++) {
+    const inner = gatewayJson(args);
+    if (!isRecord(inner) || typeof inner.tool_name !== "string") break;
+    name = inner.tool_name;
+    args = inner.arguments || {};
+  }
+  const parsed = gatewayJson(args);
+  if (COMPOSIO_SLUG.test(name)) return [{ tool: parsed === undefined ? "" : name, arguments: parsed ?? null }];
+  if (name === "composio_multi_execute_tool") {
+    const tools = isRecord(parsed) ? parsed.tools : undefined;
+    if (!Array.isArray(tools) || tools.length === 0) return [{ tool: "", arguments: null }];
+    return tools.map((t) => {
+      const slug = isRecord(t) && typeof t.tool_slug === "string" ? t.tool_slug.toUpperCase() : "";
+      const inner = isRecord(t) ? gatewayJson(t.arguments ?? {}) : undefined;
+      return { tool: inner === undefined ? "" : slug, arguments: inner ?? null };
+    });
+  }
+  return [{ tool: name, arguments: parsed ?? null }];
 }
 
 function humanizeKey(key: string): string {

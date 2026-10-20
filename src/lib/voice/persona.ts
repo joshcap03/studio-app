@@ -81,7 +81,8 @@ const HOW_TO_ACT = `How to act:
 - When they answer the card on screen, call fill_card once for each field they answered, using the field's id (the word in quotes after "field"), or answer_question for questions. Set sure to false when you're guessing what they meant. Then say nothing more than their answer back in a few words. If a fill is refused, say why in a few words.
 - Only when they clearly say to send it ("send", "send it"), call send_card. Never send on your own or on "yes" alone.
 - Only when they clearly ask to stop, call stop_work.
-- Files, connecting apps, Apply, and approvals are taps: say it's on screen.
+- Files, connecting apps, and Apply are taps: say it's on screen.
+- A request waiting on their OK is answered by Studio's own rules, never by you: Studio reads it back, and only their clear "send it" after that counts, which Studio checks before a visible countdown; anything else they say about it goes to send_message. Never say it's approved, sent, or done until Studio says so.
 - If they talk while you're working, still call send_message: Studio holds their words until the work lands, unless they're changing course. That includes their answer when Studio has asked whether they'd rather hang on or get a voice note, and "try again" after something failed.
 - One or two short sentences in plain words: no lists, markdown, or links, and no praise or filler ("great question"). Say "we" for the shared goal, "I" for your own work and misses, "you" for their decisions. If asked, say you're an AI.
 - If there's nothing new to say, call skip_turn.`;
@@ -141,7 +142,14 @@ export function describeStage(stage: VoiceStage | null): string {
     lines.push(`Question ${i + 1}${q.multi ? " (pick any)" : ""}: ${q.question} Options: ${q.options.join(" | ")}`);
   }
   if (stage.proposal) lines.push(`Proposed setup (a tap to apply): ${stage.proposal}`);
-  if (stage.approval) lines.push(`Waiting on the member's OK (a tap): ${stage.approval}`);
+  if (stage.approval) {
+    if (stage.approving) lines.push(`Studio is counting down before it goes ahead with the request below, on their "send it"; anything they say stops it.`);
+    lines.push(
+      stage.approvalVoice
+        ? `Waiting on the member's OK (Studio reads it back; their own "send it", or a tap): ${stage.approval}`
+        : `Waiting on the member's OK (a tap): ${stage.approval}`,
+    );
+  }
   return lines.join("\n");
 }
 

@@ -7,7 +7,7 @@ import type { ActivityStep, Artifact, CallSummary, ChatMessage } from "@/lib/typ
 // What a call came to, for the card after it in the chat: what the member asked (their own
 // words, as the speech-to-text heard them), what the agent did (the steps and files its replies
 // reported), what they decided (cards sent, questions answered, proposals applied, approvals
-// answered while it was on), and what's still out. Built from the records alone, never from a
+// answered while it was on, with their words when they said it), and what's still out. Built from the records alone, never from a
 // model's account of the call, and read again as things change, so "still out" stays true once
 // a job lands. A call that followed a task's run ("Do the first one now") has a recap where it
 // went too, and the one where it was says the run is still out. Pure.
@@ -101,8 +101,10 @@ export function callRecap(messages: ChatMessage[], call: RecapCall): CallRecap |
     }
     for (const a of m.approvals ?? []) {
       if (!during(a.decidedAt)) continue;
-      if (a.status === "approved") decided.push(`Approved: ${a.summary}`);
-      else if (a.status === "declined") decided.push(`Declined: ${a.summary}`);
+      // Decided by voice, with the member's words as they were heard.
+      const said = a.decidedVia === "voice" && a.decidedWords ? ` by voice (“${a.decidedWords}”)` : "";
+      if (a.status === "approved") decided.push(`Approved${said}: ${a.summary}`);
+      else if (a.status === "declined") decided.push(`Declined${said}: ${a.summary}`);
     }
   }
 

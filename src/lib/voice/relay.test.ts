@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep, ChatMessage, StreamEvent } from "@/lib/types";
-import { cardLine, closingQuestion, initialRelay, plain, relayEvent, relayJourney, relayReply, speakableGist, waitsOnMember, type RelayState } from "./relay";
+import { approvalLine, cardLine, closingQuestion, initialRelay, plain, relayEvent, relayJourney, relayReply, speakableGist, tapReason, waitsOnMember, type RelayState } from "./relay";
 
 const step = (patch: Partial<ActivityStep>): ActivityStep => ({ id: "s1", label: "Searching the web", status: "running", app: "web", startedAt: 0, ...patch });
 const activity = (s: ActivityStep): StreamEvent => ({ type: "activity", step: s });
@@ -205,5 +205,46 @@ describe("plain", () => {
   it("keeps a short reply whole", () => {
     expect(speakableGist("Got it.")).toBe("Got it.");
     expect(speakableGist("")).toBe("");
+  });
+});
+
+describe("a request waiting on the member's OK, on a call", () => {
+  const readBack = "I'll reply in the thread to billing@casting.example, saying “Hi, it looks like invoice 4471 was paid twice”.";
+  const voiceOk = { id: "a", summary: "Send a reply to Casting Co", details: [], status: "pending" as const, createdAt: 0, spoken: { ok: true as const, readBack } };
+  const money = { ...voiceOk, summary: "Pay Casting Co", spoken: { ok: false as const, reason: "money" as const } };
+
+  it("reads a voice-ok one back word for word, then how to answer, where spoken approvals are on", () => {
+    const awaiting = reply({ status: "awaiting", approvals: [voiceOk] });
+    expect(relayReply(awaiting, { spokenApprovals: true }).at(-1)).toEqual({ kind: "approval", text: `${readBack} Say “send it” to go ahead, or tap.`, droppable: false });
+    expect(approvalLine(voiceOk, true)).toBe(`${readBack} Say “send it” to go ahead, or tap.`);
+  });
+
+  it("says a tap is a tap, and why", () => {
+    expect(approvalLine(money, true)).toBe("It needs your OK on screen: Pay Casting Co. Payments are a tap.");
+    expect(approvalLine({ ...money, spoken: { ok: false, reason: "deletion" } }, true)).toContain("Deleting things is a tap.");
+    expect(approvalLine({ ...money, spoken: { ok: false, reason: "bulk_send" } }, true)).toContain("Sending to that many people is a tap.");
+    expect(approvalLine({ ...money, spoken: { ok: false, reason: "unsupported" } }, true)).toContain("That one's a tap.");
+    // Spoken approvals off: even a voice-ok one.
+    expect(approvalLine(voiceOk, false)).toBe("It needs your OK on screen: Send a reply to Casting Co. Approvals are taps for now.");
+    expect(relayReply(reply({ status: "awaiting", approvals: [voiceOk] })).at(-1)?.text).toContain("Approvals are taps for now.");
+  });
+
+  it("knows why a request is a tap on this call", () => {
+    expect(tapReason(voiceOk, true)).toBeNull();
+    expect(tapReason(voiceOk, false)).toBe("off");
+    expect(tapReason(money, true)).toBe("money");
+    expect(tapReason(money, false)).toBe("money");
+    expect(tapReason({ ...voiceOk, spoken: undefined }, true)).toBe("unsupported");
+    // Its spoken approval came back undecided on this call: a tap from then on, others untouched.
+    expect(tapReason(voiceOk, true, ["a"])).toBe("spent");
+    expect(tapReason(voiceOk, true, ["other"])).toBeNull();
+    expect(tapReason(money, true, ["a"])).toBe("money");
+  });
+
+  it("says a returned one is a tap now, never to say “send it”", () => {
+    const awaiting = reply({ status: "awaiting", approvals: [voiceOk] });
+    const line = relayReply(awaiting, { spokenApprovals: true, spent: ["a"] }).at(-1)!.text;
+    expect(line).toBe("It needs your OK on screen: Send a reply to Casting Co. That one's a tap now.");
+    expect(line).not.toContain("send it");
   });
 });

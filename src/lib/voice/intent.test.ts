@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { isBackchannel, isHangOnIntent, isRedirect, isRetryIntent, isSendIntent, isStopIntent, isVoiceNoteIntent, LATE_ANSWER_MS, longJobAnswer, spokenWords } from "./intent";
+import {
+  isAffirmation,
+  isApproveIntent,
+  isBackchannel,
+  isDeclineIntent,
+  isHangOnIntent,
+  isHoldOn,
+  isRedirect,
+  isRetryIntent,
+  isSendIntent,
+  isStopIntent,
+  isVoiceNoteIntent,
+  LATE_ANSWER_MS,
+  longJobAnswer,
+  spokenWords,
+} from "./intent";
 
 describe("isSendIntent", () => {
   it("takes a clear send, alone or ending what they said", () => {
@@ -168,5 +183,87 @@ describe("longJobAnswer", () => {
     expect(longJobAnswer(["I'll wait"], closed)).toEqual({ answer: "wait", late: true, earlier: "" });
     expect(longJobAnswer(["voice note"], { ...closed, now: 10_000 + LATE_ANSWER_MS })).toBeNull();
     expect(longJobAnswer(["Find more roles"], closed)).toBeNull();
+  });
+});
+
+describe("approving a request by voice", () => {
+  it("takes a clear action phrase, with plain agreement around it", () => {
+    for (const said of [
+      "Send it",
+      "send it.",
+      "Send.",
+      "Yes, send it",
+      "Yes. Send it.",
+      "Yeah, send it please",
+      "Okay, go ahead",
+      "Go ahead and send it",
+      "Go for it",
+      "Approve it",
+      "I approve",
+      "Yes, do it",
+      "Do it.",
+      "Uh, yeah, send it",
+      "That's right, send it now",
+      "Just send it",
+      "Confirm",
+    ]) {
+      expect(isApproveIntent(said), said).toBe(true);
+    }
+  });
+
+  it("never takes agreement alone, a question, a negation, a hedge, or anything more", () => {
+    for (const said of [
+      "Yes",
+      "yeah",
+      "okay",
+      "sure",
+      "Sounds good",
+      "That's right",
+      "Send it?",
+      "Should I send it",
+      "Don't send it",
+      "No, send it",
+      "No",
+      "Not yet",
+      "Send it later",
+      "Send it, but to Sam",
+      "Send it to Sam instead",
+      "Send it and cc Sam",
+      "Send it. Actually, wait.",
+      "Yes, but change the subject",
+      "Wait",
+      "Maybe send it",
+      "I guess send it",
+      "Send me a summary",
+      "Approved?",
+      "Go ahead and change it",
+      "",
+    ]) {
+      expect(isApproveIntent(said), said).toBe(false);
+    }
+  });
+});
+
+describe("declining a request by voice", () => {
+  it("takes a clear no to it", () => {
+    for (const said of ["Don't send it", "No, don't send it.", "Decline", "decline it", "No, cancel that", "Cancel it", "Reject it", "Never mind", "No thanks", "Actually, don't", "Forget it", "Scratch that"]) {
+      expect(isDeclineIntent(said), said).toBe(true);
+    }
+  });
+  it("leaves a bare no, stop, or cancel, and anything more, alone", () => {
+    for (const said of ["No", "Stop", "Cancel", "Wait", "Don't send it yet", "Don't send it to Sam", "No, send it to Sam", "Decline? Why?", "Send it", "Don't worry about it, I'll do it", ""]) {
+      expect(isDeclineIntent(said), said).toBe(false);
+    }
+  });
+});
+
+describe("agreeing, and holding off", () => {
+  it("knows agreement that asks for nothing", () => {
+    for (const said of ["Yes", "Yeah, that's right", "Correct.", "Sounds good", "Yes please", "Okay okay"]) expect(isAffirmation(said), said).toBe(true);
+    for (const said of ["Yes, send it", "Yes, but", "No", "That's wrong", "Right, and add Sam", ""]) expect(isAffirmation(said), said).toBe(false);
+  });
+  it("knows holding off that asks for nothing", () => {
+    for (const said of ["Wait", "Hold on a sec", "No, wait", "Not yet", "Stop", "Cancel", "One second", "Let me think"]) expect(isHoldOn(said), said).toBe(true);
+    for (const said of ["Wait, change the subject", "Stop sending emails", "Hold the Tuesday slot", "No", "Send it", ""]) expect(isHoldOn(said), said).toBe(false);
   });
 });

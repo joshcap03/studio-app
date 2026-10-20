@@ -21,6 +21,7 @@ import type { Tenant } from "@/lib/tenant-core";
 import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
 import { callEnded, callForWords } from "@/lib/voice/calls";
 import { resolvePersona } from "@/lib/voice/persona";
+import { checkSpokenDecision } from "@/lib/voice/approvals";
 import { voiceStatus } from "@/lib/voice/status";
 import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
 
@@ -32,13 +33,14 @@ import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
  * What the member asked for. Skills and projects are named by id and loaded from their workspace.
  * `voiceSessionId`: the call words said on a call were said on, which counts only once it's
  * checked to be the member's own. `offers`: the page the reply streams to can show the agent's
- * offer to call (one from before offers can't).
+ * offer to call (one from before offers can't). A decision `via` voice carries what the member was
+ * heard to say and their call, and stands only once checked (src/lib/voice/approvals.ts).
  */
 export type RunInput = (
   | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
-  | { kind: "decide"; approvalId: string; decision: "approve" | "reject" }
+  | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; via?: "tap" | "voice"; heard?: string; voiceSessionId?: string }
 ) & { offers?: boolean }
   /** Run one of the member's tasks: its brief (and skill) is sent as a message no one typed. */
   | { kind: "task"; taskId: string; runId: string | null };
@@ -167,6 +169,7 @@ export async function buildTurnDeps(
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
     claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
+    allowSpokenDecision: (approval, decision, spoken) => checkSpokenDecision(tenant, approval, decision, spoken),
     timelines: previewEnabled(tenant, "why"),
     // Replies to a voice message, and a task run's news, come back as voice notes for members with speech.
     voiceNotes: Boolean(voiceStatus(tenant)?.speech.tts),
@@ -198,7 +201,16 @@ export async function buildTurnDeps(
           projectId: input.projectId,
           origin,
         }
-      : { conversationId, ...input };
+      : input.kind === "decide"
+        ? {
+            conversationId,
+            kind: "decide",
+            approvalId: input.approvalId,
+            decision: input.decision,
+            // Said, not tapped: checked as said even with words or a call missing (and refused then).
+            ...(input.via === "voice" ? { spoken: { heard: input.heard ?? "", voiceSessionId: input.voiceSessionId ?? "" } } : {}),
+          }
+        : { conversationId, ...input };
   return { deps, request };
 }
 

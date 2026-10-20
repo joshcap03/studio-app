@@ -3,7 +3,9 @@
 import { ArrowUp, Ban, BookmarkCheck, BookmarkPlus, Check, Clock, MessageCircleQuestion, X } from "lucide-react";
 import { useState } from "react";
 import { appName } from "@/lib/apps";
+import { api } from "@/lib/client/api";
 import type { Approval, MemoryProposal, Question } from "@/lib/types";
+import { TAP_REASON_LINE, tapReason } from "@/lib/voice/relay";
 import { AppGlyph } from "./app-glyph";
 import { useCardDrafts } from "./card-drafts";
 import { Heard } from "./ui-cards";
@@ -18,17 +20,31 @@ interface ApprovalProps {
   approval: Approval;
   /** Present only while this request can still be answered. */
   onDecide?: (decision: "approve" | "reject") => void;
+  /** The conversation it's in, so an approval made by voice can be reported as not what they said. */
+  conversationId?: string;
+  /**
+   * On a call: `spoken` when spoken approvals are on for it (a voice-ok request is read back,
+   * then their "send it" counts), `spent` when its spoken approval on this call came back
+   * undecided (a tap from then on), and the visible hold once their "send it" is in, which Cancel
+   * stops (`waiting` once it has run out and is waiting for them to go quiet).
+   */
+  call?: { spoken: boolean; spent?: boolean; hold: { left: number; waiting?: boolean; onCancel: () => void } | null };
 }
 
-export function ApprovalCard({ approval, onDecide }: ApprovalProps) {
+export function ApprovalCard({ approval, onDecide, conversationId, call }: ApprovalProps) {
   const pending = approval.status === "pending";
   const [choice, setChoice] = useState<"approve" | "reject" | null>(null);
+  const spent = call?.spent ? [approval.id] : [];
+  const readBack = call && !tapReason(approval, call.spoken, spent) && approval.spoken?.ok ? approval.spoken.readBack : null;
 
   function decide(decision: "approve" | "reject") {
     if (!onDecide || choice) return;
     setChoice(decision);
     onDecide(decision);
   }
+
+  // On a call, how it can be answered there: by voice after its read-back, or why it's a tap.
+  const hint = !call ? "Nothing happens until you choose." : readBack ? "Say “send it”, or tap." : TAP_REASON_LINE[tapReason(approval, call.spoken, spent) ?? "unsupported"];
 
   return (
     <section
@@ -43,6 +59,7 @@ export function ApprovalCard({ approval, onDecide }: ApprovalProps) {
             {approval.app ? ` · ${appName(approval.app)}` : ""}
           </p>
           <p className="mt-0.5 text-[15px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{approval.summary}</p>
+          {pending && readBack ? <p className="mt-1.5 text-[13px] leading-[1.5] text-fg-2 [overflow-wrap:anywhere]">Read back: {readBack}</p> : null}
         </div>
       </div>
 
@@ -57,9 +74,25 @@ export function ApprovalCard({ approval, onDecide }: ApprovalProps) {
         </dl>
       ) : null}
 
-      {pending && onDecide ? (
+      {pending && onDecide && call?.hold ? (
+        // Their "send it" is in: a visible hold before it goes, which Cancel (or anything they say) stops.
+        <div role="status" aria-live="assertive" className="flex items-center gap-3 border-t border-line px-3 py-2.5">
+          <span className="pl-1 text-[13px] font-medium text-fg">{call.hold.waiting ? "Waiting for quiet" : "Approving"}</span>
+          <div aria-hidden="true" className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-subtle">
+            <div className="h-full rounded-full bg-accent transition-[width] duration-100 ease-linear" style={{ width: `${Math.round(call.hold.left * 100)}%` }} />
+          </div>
+          <button
+            type="button"
+            onClick={call.hold.onCancel}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover"
+          >
+            <X size={14} />
+            Cancel
+          </button>
+        </div>
+      ) : pending && onDecide ? (
         <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
-          <span className="mr-auto pl-1 text-[12px] text-fg-3">Nothing happens until you choose.</span>
+          <span className="mr-auto pl-1 text-[12px] text-fg-3">{hint}</span>
           <button
             type="button"
             onClick={() => decide("reject")}
@@ -80,27 +113,60 @@ export function ApprovalCard({ approval, onDecide }: ApprovalProps) {
           </button>
         </div>
       ) : (
-        <ApprovalOutcome status={approval.status} />
+        <ApprovalOutcome approval={approval} conversationId={conversationId} />
       )}
     </section>
   );
 }
 
-function ApprovalOutcome({ status }: { status: Approval["status"] }) {
+/**
+ * How it was answered. One approved by voice quotes the member's words, as they were heard, with
+ * a way to say that's not what they said (which turns spoken approvals off for everyone).
+ */
+function ApprovalOutcome({ approval, conversationId }: { approval: Approval; conversationId?: string }) {
+  const { status } = approval;
+  const [report, setReport] = useState<"idle" | "sending" | "sent" | "failed">(approval.reported ? "sent" : "idle");
+  const byVoice = status === "approved" && approval.decidedVia === "voice" && approval.decidedWords;
   const outcome =
     status === "approved"
-      ? { icon: Check, text: "You approved this", tone: "text-success" }
+      ? { icon: Check, text: byVoice ? `You approved this by voice: “${approval.decidedWords}”` : "You approved this", tone: "text-success" }
       : status === "declined"
         ? { icon: Ban, text: "You declined this, so it didn't happen", tone: "text-fg-3" }
         : status === "expired"
           ? { icon: Clock, text: "Expired before it was answered, so nothing was done", tone: "text-fg-3" }
           : { icon: Clock, text: "Waiting for your answer", tone: "text-fg-3" };
   const Icon = outcome.icon;
+
+  async function sendReport() {
+    if (!conversationId || report === "sending" || report === "sent") return;
+    setReport("sending");
+    try {
+      await api.reportSpokenApproval(conversationId, approval.id);
+      setReport("sent");
+    } catch {
+      setReport("failed");
+    }
+  }
+
   return (
-    <p className={`flex items-center gap-1.5 border-t border-line px-4 py-2 text-[12.5px] ${outcome.tone}`}>
-      <Icon size={13} />
-      {outcome.text}
-    </p>
+    <div className="border-t border-line px-4 py-2">
+      <p className={`flex items-center gap-1.5 text-[12.5px] [overflow-wrap:anywhere] ${outcome.tone}`}>
+        <Icon size={13} className="shrink-0" />
+        {outcome.text}
+      </p>
+      {byVoice && conversationId ? (
+        report === "sent" ? (
+          <p className="mt-1 text-[12.5px] text-fg-3">Thanks for telling me. Spoken approvals are off now, so approvals are taps.</p>
+        ) : (
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[12.5px] text-fg-3">
+            <button type="button" onClick={() => void sendReport()} disabled={report === "sending"} className={`${quiet} -ml-1.5 disabled:opacity-50`}>
+              That&apos;s not what I said
+            </button>
+            {report === "failed" ? <span role="alert">Couldn&apos;t send that. Try again.</span> : null}
+          </p>
+        )
+      ) : null}
+    </div>
   );
 }
 

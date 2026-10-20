@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, quickRoute, replyStream, routeSpeech, sayable, speechForResults, spokenText, type FrontMessage } from "./front";
+import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, quickRoute, replyStream, routeSpeech, sayable, speechForResults, spokenText, tapLine, type FrontMessage } from "./front";
 import { defaultPersona, describeStage, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -438,5 +438,129 @@ describe("a long job on a call", () => {
     const call = { role: "assistant" as const, content: "Okay. I'll leave you a voice note when it's done.", tool_calls: [{ id: "c", function: { name: "send_message", arguments: "{}" } }] };
     const done = { role: "tool" as const, tool_call_id: "c", content: "Done: it just came back, so there's nothing to wait for; what it came to comes next." };
     expect(planReply(context, [asked(), user("voice note"), call, done])).toEqual({ kind: "say", text: "Actually, it just came back." });
+  });
+});
+
+describe("a request waiting on the member's OK", () => {
+  const voiceOk: VoiceStage = { working: false, approval: "Send the reply to Casting Co", approvalVoice: true };
+  const money: VoiceStage = { working: false, approval: "Pay Casting Co", approvalTap: "money" };
+  const approveTool = { tools: [{ name: "send_card", args: {} }] };
+  const declineTool = { tools: [{ name: "stop_work", args: {} }] };
+  const on = { approvals: true };
+
+  it("approves only on a clear yes, by rule, where the call may and the request can be", () => {
+    expect(routeSpeech("Send it", voiceOk, [], on)).toEqual(approveTool);
+    expect(routeSpeech("Yes, go ahead", voiceOk, [], on)).toEqual(approveTool);
+    expect(quickRoute([mark({ stage: voiceOk }), user("Send it")], on)).toEqual(approveTool);
+    // Never on agreement alone, or anything more.
+    expect(routeSpeech("yes", voiceOk, [], on)).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(routeSpeech("send it to Sam instead", voiceOk, [], on)).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    // The model's own send_card or stop_work never counts.
+    expect(routeSpeech("that looks good", voiceOk, [{ name: "send_card", args: {} }], on)).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(routeSpeech("that looks good", voiceOk, [{ name: "stop_work", args: {} }], on)).toEqual({ tools: [{ name: "send_message", args: {} }] });
+  });
+
+  it("says it's a tap, and why, where the call can't approve it by voice", () => {
+    expect(routeSpeech("Send it", money, [], on)).toEqual({ text: "Payments are a tap. It's on screen." });
+    expect(routeSpeech("Send it", { ...voiceOk, approvalVoice: undefined, approvalTap: "bulk_send" }, [], on)).toEqual({ text: "Sending to that many people is a tap. It's on screen." });
+    // Spoken approvals off for this call (sealed when it started), whatever the stage says.
+    expect(routeSpeech("Send it", voiceOk, [])).toEqual({ text: "Approvals are taps for now. It's on screen." });
+    expect(quickRoute([mark({ stage: voiceOk }), user("Send it")])).toEqual({ text: "Approvals are taps for now. It's on screen." });
+    // A page from before spoken approvals says nothing of it: a tap.
+    expect(routeSpeech("Send it", { working: false, approval: "Send it" }, [], on)).toEqual({ text: "That one's a tap. It's on screen." });
+  });
+
+  it("declines any request on a clear no", () => {
+    expect(routeSpeech("Don't send it", voiceOk, [], on)).toEqual(declineTool);
+    expect(routeSpeech("No, cancel that", money, [], on)).toEqual(declineTool);
+    expect(quickRoute([mark({ stage: money }), user("never mind")])).toEqual(declineTool);
+    // A bare stop with nothing running stays quiet, as before.
+    expect(quickRoute([mark({ stage: money }), user("stop")])).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+  });
+
+  it("answers agreement with how to approve, and holds talk about it until it's answered", () => {
+    expect(quickRoute([mark({ stage: voiceOk }), user("Yes")], on)).toEqual({ text: "Say “send it” to go ahead, or tap." });
+    expect(quickRoute([mark({ stage: voiceOk }), user("and cc Sam")], on)).toEqual({ text: "Got it. That goes along once the request on screen is answered.", tools: [{ name: "send_message", args: {} }] });
+    expect(quickRoute([mark({ stage: money }), user("and cc Sam")], on)).toEqual({ text: "Got it. That goes along once you've OK'd the request on screen.", tools: [{ name: "send_message", args: {} }] });
+    expect(quickRoute([mark({ stage: voiceOk }), user("wait")], on)).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+    // A change of course declines it (the browser steers): no word of it waiting.
+    expect(quickRoute([mark({ stage: voiceOk }), user("Actually, send it to Sam")], on)).toEqual({ text: "Sure, one moment.", tools: [{ name: "send_message", args: {} }] });
+  });
+
+  it("says the hold stopped when they speak during it", () => {
+    const approving = { ...voiceOk, approving: true };
+    expect(quickRoute([mark({ stage: approving }), user("wait")], on)).toEqual({ text: "Okay, I've held off. It's still waiting on you." });
+    expect(quickRoute([mark({ stage: approving }), user("change the subject")], on)).toEqual({
+      text: "Okay, I've held off. It's still waiting on you.",
+      tools: [{ name: "send_message", args: {} }],
+    });
+    expect(quickRoute([mark({ stage: approving }), user("send it")], on)).toEqual(approveTool);
+    expect(quickRoute([mark({ stage: approving }), user("mm-hm")], on)).toEqual({ tools: [{ name: "skip_turn", args: {} }] });
+  });
+
+  it("holds off, never declines, on the hold's own words during it", () => {
+    const approving = { ...voiceOk, approving: true };
+    const heldOff = { text: "Okay, I've held off. It's still waiting on you." };
+    for (const words of ["cancel that", "cancel it", "Cancel", "no, cancel that", "hold on", "stop"]) {
+      expect(quickRoute([mark({ stage: approving }), user(words)], on), words).toEqual(heldOff);
+      expect(routeSpeech(words, approving, [], on), words).toEqual(heldOff);
+    }
+    // A decline the hold's words don't cover still declines.
+    expect(quickRoute([mark({ stage: approving }), user("don't send it")], on)).toEqual(declineTool);
+    expect(quickRoute([mark({ stage: approving }), user("never mind")], on)).toEqual(declineTool);
+    // With no hold running, "cancel that" is a no.
+    expect(quickRoute([mark({ stage: voiceOk }), user("cancel that")], on)).toEqual(declineTool);
+  });
+
+  it("says fixed words for what the browser did with it", () => {
+    expect(speechForResults(["Approving: in three seconds, unless they say wait or tap Cancel."])).toBe("Okay, going ahead in three seconds. Say “wait”, or tap Cancel.");
+    expect(speechForResults(["Declined: the request that was waiting on their OK."])).toBe("Okay, declined.");
+    expect(speechForResults(["Held off: the hold stopped; the request is still waiting on them."])).toBe("Okay, I've held off. It's still waiting on you.");
+    expect(speechForResults(["Tap: spent"])).toBe("That one's a tap now. It's on screen.");
+    expect(speechForResults(["Tap: typed"])).toBe("Typed words don't approve it. Say “send it”, or tap Approve.");
+    expect(speechForResults(["Tap: money"])).toBe("Payments are a tap. It's on screen.");
+    expect(speechForResults(["Tap: spent"])).toBe("That one's a tap now. It's on screen.");
+    expect(tapLine("whatever")).toBe("That one's a tap. It's on screen.");
+    // The read-back is said again as a Studio line: the voice itself stays quiet.
+    const turns: FrontMessage[] = [
+      mark({ stage: voiceOk }),
+      user("send it"),
+      { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "send_card", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "c1", content: "Reading: it's read back first; then their own spoken “send it” counts." },
+    ];
+    expect(planReply(context, turns)).toEqual({ kind: "skip" });
+    expect(planReply(context, [...turns.slice(0, 3), { role: "tool", tool_call_id: "c1", content: "Approving: in three seconds." }])).toEqual({
+      kind: "say",
+      text: "Okay, going ahead in three seconds. Say “wait”, or tap Cancel.",
+    });
+  });
+
+  it("keeps the stage's word on it, and drops anything else", () => {
+    const parsed = latestStage([mark({ stage: { ...voiceOk, approving: true, approvalTap: "money", extra: "x" } as VoiceStage })]);
+    expect(parsed).toMatchObject({ approval: "Send the reply to Casting Co", approvalVoice: true, approving: true, approvalTap: "money" });
+    expect(parsed).not.toHaveProperty("extra");
+  });
+
+  it("never lets the model answer it, even after a tool result", async () => {
+    const reply = { choices: [{ message: { content: "", tool_calls: [{ function: { name: "send_card", arguments: "{}" } }, { function: { name: "stop_work", arguments: "{}" } }] } }] };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(reply), { status: 200 }));
+    const request = {
+      messages: [
+        mark({ stage: voiceOk }),
+        user("hmm"),
+        { role: "assistant" as const, content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "send_message", arguments: "{}" } }] },
+        { role: "tool" as const, tool_call_id: "c1", content: "Refused: they haven't said anything new to pass on." },
+      ],
+    };
+    const out = await modelReply({ baseUrl: "https://llm.example", apiKey: "k", model: "m" }, { ...context, approvals: true }, request, new AbortController().signal);
+    expect(out.tools?.some((t) => t.name === "send_card" || t.name === "stop_work")).toBeFalsy();
+    fetchMock.mockRestore();
+  });
+
+  it("describes it to the voice as Studio's to answer", () => {
+    expect(describeStage(voiceOk)).toContain(`Waiting on the member's OK (Studio reads it back; their own "send it", or a tap): Send the reply to Casting Co`);
+    expect(describeStage(money)).toContain("Waiting on the member's OK (a tap): Pay Casting Co");
+    expect(describeStage({ ...voiceOk, approving: true })).toContain("anything they say stops it");
+    expect(voicePrompt(context, voiceOk)).toContain("never by you");
   });
 });

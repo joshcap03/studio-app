@@ -10,16 +10,17 @@ import { UiCards } from "@/components/chat/ui-cards";
 import { Journey } from "@/components/ui/journey";
 import { moveOf } from "@/lib/chat/move";
 import type { FormValues } from "@/lib/chat/ui-answer";
-import { api } from "@/lib/client/api";
-import { isBackchannel, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
+import { api, type SpokenDecision } from "@/lib/client/api";
+import { guardStep, HOLD_MS, initialGuard, type GuardEffect, type GuardEvent, type GuardRequest } from "@/lib/voice/approval-guard";
+import { isBackchannel, isDeclineIntent, isHoldOn, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
 import { clock, micProblem } from "@/lib/voice/mic";
 import { CallNarrator } from "@/lib/voice/narrator";
 import { noteCanCome } from "@/lib/voice/notes";
 import { JUST_BACK } from "@/lib/voice/persona";
 import { withHeldWords } from "@/lib/voice/recap";
-import { waitsOnMember } from "@/lib/voice/relay";
+import { approvalLine, tapReason, waitsOnMember } from "@/lib/voice/relay";
 import { SETUP_JOURNEY_TITLE, type CallPurpose, type StageField, type VoiceGrant, type VoiceStage } from "@/lib/voice/types";
-import type { Attachment, ChatMessage, Journey as JourneyInfo, StreamEvent, UiField, UiForm, UiResponse } from "@/lib/types";
+import type { Approval, Attachment, ChatMessage, Journey as JourneyInfo, StreamEvent, UiField, UiForm, UiResponse } from "@/lib/types";
 import type { LinkStatus, VoiceLink, VoiceLinkEvents, VoiceTools } from "./link";
 import MockVoiceLink from "./mock-link";
 import { Orb, ORB_LABEL, type OrbState } from "./orb";
@@ -30,9 +31,11 @@ import { Orb, ORB_LABEL, type OrbState } from "./orb";
 // and ears; the member's words go to the worker verbatim, its real progress is read out
 // (relay.ts), and nothing is sent until they say "send" or tap. Talking over a running job is
 // held for when it lands; only a clear "stop" or "actually…" redirects it, since that stops the
-// work and declines any request waiting on them. The call can move to another conversation
-// ("Do the first one now" follows the task's run), and a long job can end it with a voice note
-// to come.
+// work and declines any request waiting on them. A request waiting on their OK can be approved
+// by voice where it's voice-ok: it's read back, their own spoken "send it" (never typed) starts
+// a visible hold, and only then does it go (approval-guard.ts); a clear "don't send it" declines
+// any request. The call can move to another conversation ("Do the first one now" follows the
+// task's run), and a long job can end it with a voice note to come.
 
 const ElevenLabsLink = dynamic(() => import("./elevenlabs-link"), { ssr: false });
 
@@ -55,7 +58,8 @@ export interface CallProps {
   /** Sends the member's words (or a card's answer) as their next message, on the call. */
   onSend: (text: string, options: { steer: boolean; attachments?: Attachment[] }) => void;
   onStop: () => void;
-  onDecide: (approvalId: string, decision: "approve" | "reject") => void;
+  /** Answers the request waiting on them: by a tap, or `spoken` on this call (the server checks it again). */
+  onDecide: (approvalId: string, decision: "approve" | "reject", spoken?: SpokenDecision) => void;
   onUiResponse: (messageId: string, blockId: string, response: UiResponse) => void;
   onRunTask?: (taskId: string) => Promise<void>;
   /** Streamed events of runs in this workspace, for narrating real progress. */
@@ -80,6 +84,17 @@ const AFTER_SPEECH_MS = 900;
 const AFTER_MEMBER_MS = 900;
 /** Longest the first lines wait for the greeting to be said. */
 const GREETING_WAIT_MS = 6000;
+
+/** The request waiting on the member's OK: on the latest reply, paused for it. */
+function waitingApproval(messages: ChatMessage[], running: boolean): Approval | undefined {
+  const reply = messages.findLast((m) => m.role === "assistant");
+  return !running && reply?.status === "awaiting" ? reply.approvals?.find((a) => a.status === "pending") : undefined;
+}
+
+/** Said when a request approved by voice is waiting on them again: the server didn't take it. */
+const NOT_THROUGH = "That didn't go through, so it's still waiting on you. It's a tap now.";
+/** The hold gave up waiting for a pause: nothing was sent. */
+const NO_PAUSE = "I couldn't hear a clear pause, so I haven't sent it. Say “send it” again, or tap Approve.";
 
 /** The open card on the latest reply: a form not yet sent, questions not yet answered. */
 function openAsk(messages: ChatMessage[], running: boolean) {
@@ -231,6 +246,8 @@ export function Call({
 
   // What the member said on this call, verbatim, and how much of it has been acted on.
   const spoken = useRef<string[]>([]);
+  /** Which of those they typed rather than said: typed words never approve a request. */
+  const typedAt = useRef(new Set<number>());
   const consumed = useRef(0);
   /** Where the words about the card now on screen begin. */
   const cardSince = useRef(0);
@@ -253,13 +270,74 @@ export function Call({
   const live = useRef({ messages, running, conversationId });
   live.current = { messages, running, conversationId };
 
+  // ---------------------------------------------------------------------------------------
+  // Spoken approvals: the guard (approval-guard.ts) hears what happens on the call and says when
+  // a request may go, after its read-back, the member's spoken "send it", and the hold.
+
+  /** Whether this call may approve a voice-ok request by voice, as the server said when it started. */
+  const spokenOn = grant.spokenApprovals === true;
+  const guard = useRef(initialGuard());
+  /** The hold running before a spoken approval goes, and the clock it's drawn by. */
+  const [approving, setApproving] = useState<{ id: string; until: number } | null>(null);
+  const [holdNow, setHoldNow] = useState(0);
+  /** Requests whose spoken approval on this call came back undecided: taps from then on, on screen and aloud. */
+  const [spent, setSpent] = useState<readonly string[]>([]);
+  const decideRef = useRef(onDecide);
+  decideRef.current = onDecide;
+  const step = useCallback(
+    (event: GuardEvent): GuardEffect | undefined => {
+      const out = guardStep(guard.current, event);
+      if (out.state.spent !== guard.current.spent) setSpent(out.state.spent);
+      guard.current = out.state;
+      const effect = out.effect;
+      if (effect?.kind === "hold") {
+        setApproving({ id: effect.requestId, until: effect.until });
+        setHoldNow(Date.now());
+      } else if (effect?.kind === "cancelled") {
+        setApproving(null);
+        if (effect.reason === "noisy") narrator.aside(NO_PAUSE);
+      } else if (effect?.kind === "decide") {
+        setApproving(null);
+        setOnIt(true);
+        setProgressSeen(false);
+        decideRef.current(effect.requestId, "approve", { via: "voice", heard: effect.heard, voiceSessionId: grant.sessionId });
+      } else if (effect?.kind === "returned") {
+        narrator.aside(NOT_THROUGH);
+      }
+      return effect;
+    },
+    [grant.sessionId, narrator],
+  );
+
+  const pendingApproval = waitingApproval(messages, running);
+  const request: GuardRequest | null = pendingApproval
+    ? { id: pendingApproval.id, readBack: spokenOn && pendingApproval.spoken?.ok ? pendingApproval.spoken.readBack : null }
+    : null;
+  const requestRef = useRef(request);
+  requestRef.current = request;
+  const requestKey = request ? `${request.id}:${request.readBack ?? ""}` : "";
+  // The request leaving pending (answered, expired, declined by a change of course) stops a hold.
+  useEffect(() => {
+    step({ type: "request", request: requestRef.current, at: Date.now() });
+  }, [requestKey, step]);
+
+  // The hold's clock: drawn as it runs, and done once it's run out and they've gone quiet.
+  useEffect(() => {
+    if (!approving) return;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setHoldNow(now);
+      step({ type: "tick", at: now });
+    }, 100);
+    return () => clearInterval(timer);
+  }, [approving, step]);
+
   const ask = openAsk(messages, running);
   const questionsKey = ask.reply ? `${ask.reply.id}:questions` : "";
   const latestReply = messages.findLast((m) => m.role === "assistant");
 
   const stage = useMemo<VoiceStage>(() => {
     const draft = ask.form ? drafts.form(ask.form) : null;
-    const pendingApproval = latestReply?.status === "awaiting" ? latestReply.approvals?.find((a) => a.status === "pending") : undefined;
     const proposal = ask.reply?.ui?.find((b) => b.kind === "proposal" && !ask.reply!.uiResponse?.[b.id]);
     const steps = journey?.steps ?? [];
     const at = steps.findIndex((s) => s.status === "doing" || s.status === "needs_you");
@@ -284,10 +362,16 @@ export function Call({
         ? { questions: ask.questions.map((q) => ({ question: q.question, options: q.options.map((o) => o.label), multi: q.multiSelect })) }
         : {}),
       ...(proposal && proposal.kind === "proposal" ? { proposal: proposal.summary } : {}),
-      ...(pendingApproval ? { approval: pendingApproval.summary } : {}),
+      ...(pendingApproval
+        ? {
+            approval: pendingApproval.summary,
+            ...(tapReason(pendingApproval, spokenOn, spent) ? { approvalTap: tapReason(pendingApproval, spokenOn, spent)! } : { approvalVoice: true }),
+            ...(approving?.id === pendingApproval.id ? { approving: true } : {}),
+          }
+        : {}),
       ...(longJob && running ? { longJob: true } : {}),
     };
-  }, [ask.form, ask.questions, ask.reply, drafts, journey, latestReply, longJob, purpose, questionsKey, running]);
+  }, [approving, ask.form, ask.questions, ask.reply, drafts, journey, longJob, pendingApproval, purpose, questionsKey, running, spent, spokenOn]);
   const stageRef = useRef(stage);
   stageRef.current = stage;
   /** The stage the voice last heard, with a line or as an update. */
@@ -314,6 +398,7 @@ export function Call({
   const hangUp = useCallback(
     (sound = true) => {
       if (ended.current) return;
+      step({ type: "cancel", reason: "hang_up", at: Date.now() });
       ended.current = true;
       noteExit.current = null;
       link.current?.end();
@@ -326,7 +411,7 @@ export function Call({
         finish();
       }
     },
-    [finish, grant.sessionId],
+    [finish, grant.sessionId, step],
   );
 
   // Leaving the page (or this screen going away) ends the call, so its time stops counting.
@@ -358,6 +443,33 @@ export function Call({
     consumed.current = spoken.current.length;
   };
   const lastWords = () => spoken.current.at(-1) ?? "";
+  /** Whether their last words were typed, not said. */
+  const lastTyped = () => typedAt.current.has(spoken.current.length - 1);
+
+  /**
+   * Their "send it" to the request waiting on them, routed here by the voice front's fixed rule:
+   * the hold starts only if the guard says everything before it held; otherwise the reason, in a
+   * word the voice front turns into fixed words (and the read-back is said again when it must be).
+   */
+  const approveByVoice = (approval: Approval): string => {
+    consume();
+    const effect = step({ type: "approve", at: Date.now() });
+    if (effect?.kind === "hold") return "Approving: in three seconds, unless they say wait or tap Cancel.";
+    switch (effect?.kind === "refused" ? effect.reason : "none") {
+      case "unread":
+      case "not_yes":
+        narrator.again(approvalLine(approval, true));
+        return "Reading: it's read back first; then their own spoken “send it” counts.";
+      case "typed":
+        return "Tap: typed";
+      case "spent":
+        return "Tap: spent";
+      case "tap":
+        return `Tap: ${tapReason(approval, spokenOn, guard.current.spent) ?? "unsupported"}`;
+      default:
+        return "Refused: there's no request waiting on them.";
+    }
+  };
   const cardWords = () => spoken.current.slice(cardSince.current).join(" ");
 
   /** The member's next message, with anything they said while the agent was busy. */
@@ -433,6 +545,20 @@ export function Call({
     send_message: () => handOff(),
     stop_work: () => {
       const said = lastWords();
+      // A clear no to the request waiting on them declines it (which changes nothing outside),
+      // said or typed; only said words are kept as theirs.
+      const approval = waitingApproval(live.current.messages, live.current.running);
+      // "Cancel that" during the hold stopped the hold (the guard saw to that), not the request.
+      if (approval && guard.current.heldOffBy === said && isHoldOn(said)) {
+        consume();
+        return "Held off: the hold stopped; the request is still waiting on them.";
+      }
+      if (approval && isDeclineIntent(said)) {
+        consume();
+        step({ type: "cancel", reason: "tap", at: Date.now() });
+        onDecide(approval.id, "reject", lastTyped() ? undefined : { via: "voice", heard: said, voiceSessionId: grant.sessionId });
+        return "Declined: the request that was waiting on their OK.";
+      }
       if (isRedirect(said)) return handOff();
       if (!isStopIntent(said)) return "Refused: they didn't ask to stop.";
       consume();
@@ -455,6 +581,9 @@ export function Call({
       return fillReply(result);
     },
     send_card: async () => {
+      // The voice front sends their "send it" to a request waiting on them here, by rule.
+      const approval = waitingApproval(live.current.messages, live.current.running);
+      if (approval) return approveByVoice(approval);
       if (!isSendIntent(lastWords())) return "Refused: wait until they say send.";
       const { reply, form, questions } = openAsk(live.current.messages, live.current.running);
       if (!reply) return "Refused: there's no card open on screen.";
@@ -501,6 +630,7 @@ export function Call({
       }
     },
     onMode: (next) => {
+      step({ type: "mode", mode: next, at: Date.now() });
       // The first time the voice finishes speaking after the cue, the greeting has been said.
       if (next === "listening" && modeRef.current === "speaking" && greetingAt.current !== null) greeted.current = true;
       if (next === "speaking" && noteExit.current) noteExit.current.heard = true;
@@ -509,15 +639,23 @@ export function Call({
       lastSpeechAt.current = Date.now();
     },
     onVoiceActivity: (score) => {
-      if (score > 0.6) memberSoundAt.current = Date.now();
+      if (score <= 0.6) return;
+      memberSoundAt.current = Date.now();
+      step({ type: "sound", at: memberSoundAt.current });
     },
-    onMemberText: (text) => {
+    onMemberText: (text, { typed }) => {
+      if (typed) typedAt.current.add(spoken.current.length);
       spoken.current.push(text);
       caption("you", text);
+      step({ type: "member", text, typed, at: Date.now() });
     },
-    onVoiceText: (text) => caption("voice", text),
+    onVoiceText: (text) => {
+      caption("voice", text);
+      step({ type: "voice_text", text, at: Date.now() });
+    },
     onInterrupted: () => {
       lastSpeechAt.current = Date.now();
+      step({ type: "cut_off", at: lastSpeechAt.current });
     },
   };
 
@@ -547,7 +685,7 @@ export function Call({
           // them, and the next reply asks what's next.
           const asksNow = Boolean(event.message.questions?.length || event.message.ui?.some((b) => b.kind === "form"));
           const passOn = heldRef.current.length > 0 && !asksNow && event.message.status !== "awaiting";
-          narrator.reply(event.message, { superseded: passOn });
+          narrator.reply(event.message, { superseded: passOn, spokenApprovals: spokenOn, spent: guard.current.spent });
           setOnIt(false);
           cardSince.current = spoken.current.length;
           if (passOn) {
@@ -558,7 +696,7 @@ export function Call({
           }
         }
       }),
-    [closeLongJob, narrator, send, subscribe],
+    [closeLongJob, narrator, send, spokenOn, subscribe],
   );
 
   // Picking up where it left off: once connected and the conversation is loaded, what's waiting
@@ -569,8 +707,8 @@ export function Call({
     if (caughtUp.current || status !== "connected" || (!messages.length && !running)) return;
     caughtUp.current = true;
     const last = messages.at(-1);
-    if (last && !running && waitsOnMember(last)) narrator.reply(last);
-  }, [messages, narrator, running, status]);
+    if (last && !running && waitsOnMember(last)) narrator.reply(last, { spokenApprovals: spokenOn, spent: guard.current.spent });
+  }, [messages, narrator, running, spokenOn, status]);
 
   // What finishing each journey step gave the agent. When the call moves to another conversation,
   // its plan is that conversation's own, not a change to the one before.
@@ -667,6 +805,9 @@ export function Call({
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== "hidden") return;
+      // They may not have heard what was said while away: a hold stops, and a read-back is said again.
+      step({ type: "cancel", reason: "hidden", at: Date.now() });
+      step({ type: "speaker", on: false, at: Date.now() });
       link.current?.setMuted({ mic: true, speaker: true });
       setMic(false);
       setSpeaker(false);
@@ -674,9 +815,10 @@ export function Call({
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
+  }, [step]);
 
   const unmute = () => {
+    step({ type: "speaker", on: true, at: Date.now() });
     link.current?.setMuted({ mic: false, speaker: false });
     setMic(true);
     setSpeaker(true);
@@ -688,6 +830,14 @@ export function Call({
     if (!text) return;
     setTyped("");
     link.current?.type(text);
+  }
+
+  /** MOCK VOICE: what's in the box, said rather than typed, as the speech-to-text would hear it. */
+  function submitSpoken() {
+    const text = typed.trim();
+    if (!text || !link.current?.mockSpeech) return;
+    setTyped("");
+    link.current.mockSpeech(text);
   }
 
   // Whose move it is, as everywhere else (src/lib/chat/move.ts); who has the floor is the call's own.
@@ -823,8 +973,11 @@ export function Call({
                   value={typed}
                   disabled={status !== "connected"}
                   onChange={(e) => {
+                    // Typing stops a hold before a spoken approval goes.
+                    step({ type: "cancel", reason: "typing", at: Date.now() });
                     // Typing on a real call stops the voice talking right away; the captions carry on.
                     if (grant.capabilities.audio && speaker && !typed) {
+                      step({ type: "speaker", on: false, at: Date.now() });
                       link.current?.setMuted({ speaker: true });
                       setSpeaker(false);
                     }
@@ -833,6 +986,18 @@ export function Call({
                   placeholder={grant.capabilities.audio ? "Type instead…" : "Type what you'd say…"}
                   className="min-w-0 flex-1 bg-transparent text-[14px] text-fg placeholder:text-fg-4 focus:outline-none"
                 />
+                {grant.join.kind === "mock" ? (
+                  // MOCK VOICE: stands in for saying it, so QA can approve a request by voice. Send types it.
+                  <button
+                    type="button"
+                    onClick={submitSpoken}
+                    disabled={!typed.trim() || status !== "connected"}
+                    title="Mock voice: take these words as spoken, the way the speech-to-text would hear them."
+                    className="inline-flex h-8 shrink-0 items-center rounded-lg border border-line px-2.5 text-[12.5px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg disabled:text-fg-4"
+                  >
+                    Say it (mock)
+                  </button>
+                ) : null}
                 <button type="submit" aria-label="Send" disabled={!typed.trim()} className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-inverse text-on-inverse transition-opacity hover:opacity-90 disabled:bg-press disabled:text-fg-4">
                   <ArrowUp size={15} />
                 </button>
@@ -857,6 +1022,7 @@ export function Call({
                   aria-label={speaker ? "Mute the voice" : "Unmute the voice"}
                   aria-pressed={!speaker}
                   onClick={() => {
+                    step({ type: "speaker", on: !speaker, at: Date.now() });
                     link.current?.setMuted({ speaker: speaker });
                     setSpeaker(!speaker);
                     setAway(false);
@@ -899,7 +1065,31 @@ export function Call({
             {latestReply?.status === "awaiting"
               ? (latestReply.approvals ?? [])
                   .filter((a) => a.status === "pending")
-                  .map((approval) => <ApprovalCard key={approval.id} approval={approval} onDecide={(decision) => onDecide(approval.id, decision)} />)
+                  .map((approval) => (
+                    <ApprovalCard
+                      key={approval.id}
+                      approval={approval}
+                      conversationId={conversationId}
+                      onDecide={(decision) => {
+                        // A tap answers it outright, and stops any hold on it.
+                        step({ type: "cancel", reason: "tap", at: Date.now() });
+                        onDecide(approval.id, decision);
+                      }}
+                      call={{
+                        spoken: spokenOn,
+                        spent: spent.includes(approval.id),
+                        hold:
+                          approving?.id === approval.id
+                            ? {
+                                left: Math.max(0, Math.min(1, (approving.until - holdNow) / HOLD_MS)),
+                                // Run out, and waiting for them to go quiet before it goes.
+                                waiting: holdNow >= approving.until,
+                                onCancel: () => step({ type: "cancel", reason: "tap", at: Date.now() }),
+                              }
+                            : null,
+                      }}
+                    />
+                  ))
               : null}
             {ask.reply && ask.questions ? (
               <QuestionCard questions={ask.questions} draftKey={questionsKey} onAnswer={(text) => send(withHeld(text), { steer: false })} />

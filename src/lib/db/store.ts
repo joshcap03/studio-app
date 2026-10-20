@@ -1,4 +1,5 @@
 import type { Ask, LastMessage } from "@/lib/chat/move";
+import { fitTools } from "@/lib/approvals/spoken";
 import type { Db } from "@/lib/supabase/db";
 import type { PlanStep } from "@/lib/tasks/types";
 import type {
@@ -14,6 +15,7 @@ import type {
   MessageSkill,
   MessageStatus,
   Question,
+  TapOnlyReason,
   UiBlock,
   UiResponse,
   Citation,
@@ -56,9 +58,18 @@ export interface StoredApproval extends Approval {
   messageId: string;
   provider: string;
   providerState: unknown;
+  /** What approving it runs, by the provider's names for the tools (for looking into a report). */
+  tools?: string[];
 }
 
-export type NewApproval = Omit<StoredApproval, "id" | "status" | "createdAt" | "decidedAt">;
+export type NewApproval = Omit<StoredApproval, "id" | "status" | "createdAt" | "decidedAt" | "decidedVia" | "decidedWords" | "reported">;
+
+/** How a decision was made: by hand (`tap`), or by the member's spoken `words`. */
+/**
+ * How a decision was made: a tap (or typed words), or said on a call, with the member's words
+ * and the call they were said on (the database checks it's their own open call).
+ */
+export type ApprovalDecision = { via: "tap" } | { via: "voice"; words: string; call: string };
 
 /** An attachment with where its bytes live. Server-side only. */
 export interface StoredAttachment extends Attachment {
@@ -124,8 +135,12 @@ export interface Store {
   pendingApproval(conversationId: string): Promise<StoredApproval | null>;
   /** Every undecided approval across the caller's conversations. */
   pendingApprovals(): Promise<StoredApproval[]>;
-  /** Moves an approval from one status to another; false if it wasn't in `from` (e.g. decided elsewhere). */
-  settleApproval(id: string, from: Approval["status"], to: Approval["status"]): Promise<boolean>;
+  /**
+   * Moves an approval from one status to another; false if it wasn't in `from` (e.g. decided
+   * elsewhere). `how`: the member's decision, and how they made it (absent when no one decided:
+   * it expired, or writing instead declined it).
+   */
+  settleApproval(id: string, from: Approval["status"], to: Approval["status"], how?: ApprovalDecision): Promise<boolean>;
 
   /** Attaches uploaded, not-yet-sent files to a message. False unless every id was claimable. */
   claimAttachments(ids: string[], messageId: string): Promise<boolean>;
@@ -184,6 +199,13 @@ interface ApprovalRow {
   provider_state: unknown;
   created_at: string;
   decided_at: string | null;
+  tools?: string[] | null;
+  voice_ok?: boolean | null;
+  tap_only?: TapOnlyReason | null;
+  read_back?: string | null;
+  decided_via?: "tap" | "voice" | null;
+  decided_words?: string | null;
+  reported_at?: string | null;
 }
 
 interface AttachmentRow {
@@ -222,9 +244,10 @@ const PLAN_COLUMNS = "plan, goal, plan_updated_at";
 // go to the browser.
 const MESSAGE_COLUMNS =
   "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, error, skill, origin, created_at, updated_at, " +
-  "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at), " +
+  "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at), " +
   "attachments(id, name, mime_type, size)";
-const APPROVAL_COLUMNS = "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at";
+const APPROVAL_COLUMNS =
+  "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at, tools, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at";
 const ATTACHMENT_COLUMNS = "id, name, mime_type, size, storage_path";
 
 const toApproval = (r: Omit<ApprovalRow, "provider" | "provider_state">): Approval => ({
@@ -235,6 +258,11 @@ const toApproval = (r: Omit<ApprovalRow, "provider" | "provider_state">): Approv
   status: r.status,
   createdAt: Date.parse(r.created_at),
   decidedAt: r.decided_at ? Date.parse(r.decided_at) : undefined,
+  // Voice-ok only with its read-back; anything else, including requests from before, is a tap.
+  spoken: r.voice_ok === true && r.read_back ? { ok: true, readBack: r.read_back } : { ok: false, reason: r.tap_only ?? "unsupported" },
+  ...(r.decided_via ? { decidedVia: r.decided_via } : {}),
+  ...(r.decided_via === "voice" && r.decided_words ? { decidedWords: r.decided_words } : {}),
+  ...(r.reported_at ? { reported: true } : {}),
 });
 
 const toStoredApproval = (r: ApprovalRow): StoredApproval => ({
@@ -243,6 +271,7 @@ const toStoredApproval = (r: ApprovalRow): StoredApproval => ({
   messageId: r.message_id,
   provider: r.provider,
   providerState: r.provider_state,
+  tools: r.tools ?? [],
 });
 
 const toAttachment = (r: Omit<AttachmentRow, "storage_path">): Attachment => ({ id: r.id, name: r.name, mimeType: r.mime_type, size: r.size });
@@ -653,6 +682,10 @@ export function createStore(db: Db, scope: Scope): Store {
             details: a.details,
             provider: a.provider,
             provider_state: a.providerState ?? {},
+            tools: fitTools(a.tools ?? []),
+            voice_ok: a.spoken?.ok === true,
+            tap_only: a.spoken && !a.spoken.ok ? a.spoken.reason : null,
+            read_back: a.spoken?.ok ? a.spoken.readBack : null,
           })
           .select(APPROVAL_COLUMNS)
           .single(),
@@ -687,10 +720,20 @@ export function createStore(db: Db, scope: Scope): Store {
       return rows.map(toStoredApproval);
     },
 
-    async settleApproval(id, from, to) {
+    async settleApproval(id, from, to, how) {
+      if (how?.via === "voice") {
+        // Only the database records a spoken decision: on the member's own call in this agent,
+        // still open, and (approving) a request classified voice-ok when it was asked.
+        if (from !== "pending" || (to !== "approved" && to !== "declined")) throw new Error("A spoken decision answers a pending request.");
+        return check(await db.rpc("settle_spoken_approval", { p_approval: id, p_decision: to, p_call: how.call, p_words: how.words })) === true;
+      }
       const rows = check(
         await approvals()
-          .update({ status: to, decided_at: new Date().toISOString() })
+          .update({
+            status: to,
+            decided_at: new Date().toISOString(),
+            ...(how ? { decided_via: how.via } : {}),
+          })
           .eq("id", id)
           .eq("workspace_id", workspaceId)
           .eq("user_id", userId)

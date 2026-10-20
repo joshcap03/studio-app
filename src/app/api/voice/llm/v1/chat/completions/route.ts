@@ -49,7 +49,8 @@ export async function POST(request: NextRequest) {
   const plan = planReply(context, parsed.data.messages);
   if (plan.kind === "say") return deliver({ text: plan.text });
   if (plan.kind === "skip") return deliver({ tools: [{ name: "skip_turn", args: { reason: "Nothing new to say" } }] });
-  const quick = quickRoute(parsed.data.messages);
+  // Whether this call may approve by voice was sealed when it started.
+  const quick = quickRoute(parsed.data.messages, { approvals: context.approvals === true });
   if (quick) return deliver(quick);
   return deliver(voice.llm ? await modelReply(voice.llm, context, parsed.data, request.signal) : mockReply(parsed.data.messages));
 }

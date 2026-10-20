@@ -102,6 +102,9 @@ export const api = {
     return (await res.json()) as { text: string; mock?: true };
   },
   skipSetup: () => request<{ ok: true }>("/api/agent/setup", { method: "POST", body: JSON.stringify({ status: "skipped" }) }),
+  /** "That's not what I said" about a request approved by voice: spoken approval goes off for everyone. */
+  reportSpokenApproval: (conversationId: string, approvalId: string) =>
+    request<{ ok: true }>(`/api/conversations/${conversationId}/approvals/${approvalId}/report`, { method: "POST", body: "{}" }),
   decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss" | "undo") =>
     request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {
       method: "POST",
@@ -195,7 +198,14 @@ export type TurnBody =
   | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
-  | { kind: "decide"; approvalId: string; decision: "approve" | "reject" };
+  | ({ kind: "decide"; approvalId: string; decision: "approve" | "reject" } & ({ via?: "tap" } | SpokenDecision));
+
+/** A decision said on a call: what the member was heard to say, and the call. The server checks both. */
+export interface SpokenDecision {
+  via: "voice";
+  heard: string;
+  voiceSessionId: string;
+}
 
 /**
  * Starts a turn and calls `onEvent` for each streamed event. Resolves when the stream ends.

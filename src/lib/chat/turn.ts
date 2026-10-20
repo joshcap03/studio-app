@@ -13,6 +13,7 @@ import { seamBetween } from "./seam";
 import { buildVisual, withVisual } from "./visuals";
 import { describeLink } from "@/lib/library";
 import { voiceNoteFor } from "@/lib/voice/notes";
+import { spokenApprovalFor } from "@/lib/approvals/spoken";
 import {
   ARTIFACT_KINDS,
   MAX_MEMORY_LENGTH,
@@ -75,9 +76,19 @@ export type TurnRequest = { conversationId: string } & (
   | { kind: "retry" }
   /** Replace the latest member message and answer it again (keeping its skill and files). */
   | { kind: "edit"; messageId: string; text: string }
-  /** Answer the conversation's pending approval and let the agent continue. */
-  | { kind: "decide"; approvalId: string; decision: "approve" | "reject" }
+  /**
+   * Answer the conversation's pending approval and let the agent continue. `spoken`: the member
+   * said it on a call (their words as the speech-to-text heard them, and the call), which counts
+   * only once allowSpokenDecision says so; otherwise it's a tap.
+   */
+  | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; spoken?: SpokenDecision }
 );
+
+/** A decision the member said on a call. */
+export interface SpokenDecision {
+  heard: string;
+  voiceSessionId: string;
+}
 
 export interface TurnDeps {
   store: Store;
@@ -104,6 +115,12 @@ export interface TurnDeps {
    * reply it will write. Returns why it was refused, or null to go ahead.
    */
   claim?: (replyId: string) => Promise<string | null>;
+  /**
+   * Whether a decision the member said on a call stands (src/lib/voice/approvals.ts): spoken
+   * approvals on, the request voice-ok, their words a clear yes (or no), their own call open.
+   * Returns why not, or null to go ahead. Without it, no spoken decision is taken.
+   */
+  allowSpokenDecision?: (approval: StoredApproval, decision: "approve" | "reject", spoken: SpokenDecision) => Promise<string | null>;
   /**
    * Saves what the agent reported about the work here, under the caller's session: a rewritten
    * plan with what done looks like (on the conversation's task, the setup checklist, or the
@@ -299,6 +316,13 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await store.settleApproval(pending.id, "pending", "expired");
       throw new TurnError(409, "This request can't be answered anymore. Ask the agent again.");
     }
+    // A decision said on a call stands only when every check does; the request stays waiting otherwise.
+    if (request.spoken) {
+      const refusal = deps.allowSpokenDecision
+        ? await deps.allowSpokenDecision(pending, request.decision, request.spoken)
+        : "Spoken decisions aren't available here. Tap instead.";
+      if (refusal) throw new TurnError(403, refusal);
+    }
   } else if (pending && request.kind === "send") {
     // A new message waits for the pending decision.
     throw new TurnError(409, "Approve or decline the agent's request first.");
@@ -312,8 +336,13 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   if (request.kind === "decide") {
     const approval = pending!;
     const to = request.decision === "approve" ? "approved" : "declined";
-    if (!(await store.settleApproval(approval.id, "pending", to))) throw new TurnError(409, "This request was already answered.");
-    decided = { ...approval, status: to, decidedAt: Date.now() };
+    const how = request.spoken
+      ? ({ via: "voice", words: request.spoken.heard, call: request.spoken.voiceSessionId } as const)
+      : ({ via: "tap" } as const);
+    if (!(await store.settleApproval(approval.id, "pending", to, how))) {
+      throw new TurnError(409, request.spoken ? "That couldn't be answered by voice: it was already answered, or the call has ended. It's on screen." : "This request was already answered.");
+    }
+    decided = { ...approval, status: to, decidedAt: Date.now(), decidedVia: how.via, ...(how.via === "voice" ? { decidedWords: how.words } : {}) };
     resume = { decision: request.decision, state: approval.providerState };
   }
 
@@ -737,14 +766,20 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               break;
             }
             case "approval": {
+              const summary = event.summary.slice(0, 500) || "The agent wants to make a change";
+              // Whether a call may approve it by voice, decided now from what it would run; the
+              // raw arguments aren't kept.
+              const spoken = spokenApprovalFor({ actions: event.actions, summary });
               const stored = await store.createApproval({
                 conversationId,
                 messageId: assistant.id,
-                summary: event.summary.slice(0, 500) || "The agent wants to make a change",
+                summary,
                 app: event.app?.slice(0, 40),
                 details: event.details.slice(0, 8).map(([k, v]) => [k.slice(0, 40), v.slice(0, 300)]),
                 provider: adapter.id,
                 providerState: event.state,
+                spoken: spoken.voiceOk ? { ok: true, readBack: spoken.readBack } : { ok: false, reason: spoken.tapOnly },
+                tools: spoken.tools,
               });
               const approval = publicApproval(stored);
               approvals.push(approval);
@@ -882,7 +917,19 @@ async function rewind(deps: TurnDeps, threadId: string | null, conversationId: s
 }
 
 function publicApproval(a: StoredApproval | Approval): Approval {
-  return { id: a.id, summary: a.summary, app: a.app, details: a.details, status: a.status, createdAt: a.createdAt, decidedAt: a.decidedAt };
+  return {
+    id: a.id,
+    summary: a.summary,
+    app: a.app,
+    details: a.details,
+    status: a.status,
+    createdAt: a.createdAt,
+    decidedAt: a.decidedAt,
+    ...(a.spoken ? { spoken: a.spoken } : {}),
+    ...(a.decidedVia ? { decidedVia: a.decidedVia } : {}),
+    ...(a.decidedWords ? { decidedWords: a.decidedWords } : {}),
+    ...(a.reported ? { reported: true } : {}),
+  };
 }
 
 function publicAttachment(a: StoredAttachment) {

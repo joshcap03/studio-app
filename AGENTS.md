@@ -189,9 +189,14 @@ raw/technical text.
 - A card is sent by voice only on the member's clear "send" in their own transcript, and a
   running job is redirected only on a clear "stop" or "actually…" (redirecting stops it and
   declines a pending approval); other talk-over is held until it lands. Files, connecting apps,
-  Apply, "Do the first one now", and approvals stay taps. A spoken approval (Phase 3) needs a
-  read-back, the member's yes from speech-to-text, and a visible cancel hold, is stored with
-  their words, and never covers money, deletions, or bulk sends.
+  Apply, and "Do the first one now" stay taps. A spoken approval needs a read-back said in full,
+  the member's own "send it" from speech-to-text (never typed), and a visible cancel hold
+  (`src/lib/voice/approval-guard.ts`), is routed by fixed rules (never the voice model), checked
+  again on the server (`src/lib/voice/approvals.ts`), recorded only by the database's
+  `settle_spoken_approval` on the member's own open call, stored with their words, and never covers
+  money, deletions, bulk sends, or anything it can't read back (`src/lib/approvals/spoken.ts`,
+  decided when the agent asks). One "That's not what I said" turns it off for everyone until
+  cleared with SQL (docs/voice.md).
 - Studio never stores audio. Dictation and voice messages send a recording once to be turned
   into words and keep only the words; a voice note keeps only its words and is spoken each time
   it's played. Screen or camera frames are taken only when the member asks.

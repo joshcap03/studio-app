@@ -2,8 +2,9 @@
 // from the voice front's paraphrase). Deliberately strict: a card is sent only on a clear
 // "send", the work stops only on a clear "stop", only a clear "stop" or "actually…" redirects
 // a running job (redirecting aborts it and declines any pending approval), a failed reply is
-// tried again only on a clear "try again", and a call ends for a voice note only when they ask
-// for one. Pure.
+// tried again only on a clear "try again", a call ends for a voice note only when they ask
+// for one, and a request waiting on their OK is approved only on a clear "send it" (and
+// declined on a clear "don't send it"). Pure.
 
 /** Lowercase words only: punctuation becomes spaces, apostrophes vanish ("that's" → "thats"). */
 export function normalizeSpeech(text: string): string {
@@ -71,6 +72,69 @@ const RETRY = /^(?:(?:ok|okay|yes|yeah|please|can you|could you|lets|just|um|uh)
 export function isRetryIntent(text: string): boolean {
   const all = clauses(text);
   return all.length > 0 && all.every((c) => RETRY.test(c));
+}
+
+// ------------------------------------------------------------------------------------------
+// A request waiting on their OK. Approving by voice takes an action phrase, never a bare "yes" or
+// "okay" (those agree with what was said, they don't say to do it), and every part of what they
+// said has to be that or plain agreement: "yes. send it" approves, "send it, but to Sam" doesn't.
+
+/** Clauses in speaking order without spoken fillers ("um, send it" is "send it"). */
+function spokenClauses(text: string): string[] {
+  return clauses(text)
+    .map((c) => c.replace(FILLERS, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+/** Plain agreement: "yes", "that's right", "sounds good". Says nothing new, and asks for nothing. */
+const AGREE =
+  "(?:yes|yeah|yep|yup|yes please|correct|thats correct|thats right|right|exactly|ok|okay|alright|all right|sure|fine|good|great|perfect|cool|sounds good|looks good|thats good|thats fine|all good|uh huh|mm hm|mhm)";
+const AFFIRMATION = new RegExp(`^${AGREE}(?:\\s+${AGREE})*$`);
+
+/** The whole of what they said is agreement and nothing more: "yes", "yeah, that's right". */
+export function isAffirmation(text: string): boolean {
+  const all = spokenClauses(text);
+  return all.length > 0 && all.every((c) => AFFIRMATION.test(c));
+}
+
+const APPROVE = new RegExp(
+  `^(?:${AGREE}\\s+|please\\s+|lets\\s+|just\\s+)*` +
+    "(?:(?:go ahead and |please )?(?:send it|send that|send this|send|send it off)|go ahead|go for it|do it|(?:i )?approve(?: it| that| this)?|confirm(?: it| that)?)" +
+    "(?:\\s+(?:please|now|then|thanks|thank you))*$",
+);
+
+/**
+ * The member said to go ahead with the request on screen, and nothing else: "send it", "yes,
+ * send it", "okay, go ahead", "approve it", "yes, do it". Never on a bare "yes" or "okay", a
+ * question, or anything with more in it ("send it to Sam instead", "send it, wait").
+ */
+export function isApproveIntent(text: string): boolean {
+  if (/\?/.test(text)) return false;
+  const all = spokenClauses(text);
+  return all.some((c) => APPROVE.test(c)) && all.every((c) => APPROVE.test(c) || AFFIRMATION.test(c));
+}
+
+const DECLINE =
+  /^(?:(?:no|nope|nah|okay|ok|actually|please|oh)\s+)*(?:(?:(?:please )?(?:dont|do not)(?: (?:send|do|approve|book|add|post|forward|reply)(?: (?:it|that|this|them|anything))?)?)|decline(?: it| that| this)?|reject(?: it| that| this)?|cancel (?:it|that|this)|scrap (?:it|that)|scratch that|forget (?:it|that)|never mind|nevermind|no thanks|no thank you)(?:\s+(?:please|thanks|thank you|now|for now|then))*$/;
+
+/**
+ * The member turned the request on screen down, and said nothing more: "don't send it", "no,
+ * cancel that", "decline", "never mind". A bare "no", "stop" or "cancel" isn't one (it may be
+ * about something else); declining changes nothing outside Studio either way.
+ */
+export function isDeclineIntent(text: string): boolean {
+  if (/\?/.test(text)) return false;
+  const all = spokenClauses(text);
+  return all.length > 0 && all.every((c) => DECLINE.test(c));
+}
+
+const HOLD_ON =
+  /^(?:(?:no|oh|okay|ok|hey)\s+)*(?:wait|hold on|hang on|hold it|hold up|one sec(?:ond)?|just a sec(?:ond)?|a sec(?:ond)?|not yet|stop|cancel|pause|let me (?:think|see|check))(?:\s+(?:a sec(?:ond)?|a moment|a minute|please|now|there|that|it|for now))*$/;
+
+/** Holding off and nothing more: "wait", "hold on a sec", "not yet", "stop". */
+export function isHoldOn(text: string): boolean {
+  const all = spokenClauses(text);
+  return all.length > 0 && all.every((c) => HOLD_ON.test(c));
 }
 
 /**

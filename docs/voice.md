@@ -217,6 +217,70 @@ conversations working, waiting on the member, or stuck, and the agent's mark bre
 is going, including one out of view; and a push for a reply that ends on a card or question says
 "Needs you". An offer to call is never the member's call.
 
+## Spoken approvals
+
+A request the agent pauses on (`take_action`) can be approved by voice on a call, where it's safe
+to. Each layer checks on its own, and anything out of order fails closed (the request just waits
+for a tap):
+
+- **When the agent asks.** `src/lib/approvals/spoken.ts` classifies the request from what
+  approving it would run (the adapter's `actions`, the gateway's own routing of the call), never
+  from the agent's summary. Voice-ok: one email, reply or forward to at most five people (Gmail,
+  Outlook), a draft, or a new calendar event, each with a read-back built from its arguments
+  ("I'll email jo@acme.example, subject “March invoice”, saying “…”"). Who it reaches counts
+  every address in the arguments: under any recipient or invitee key (`attendees_info`,
+  `attendee_emails`…), and an address anywhere else but the sender's fields and the quoted text
+  makes it a tap. An event is said whole or not at all: its start, its zone ("New York time"),
+  and its end or length; a repeat, a start with a Z or an offset, two zones, another calendar, or
+  any argument Studio wouldn't say (a meeting room, visibility) makes it a tap. Everything else is a tap,
+  with its reason: `money` (payment apps, or pay/refund/invoice/order… in the action), `deletion`,
+  `bulk_send` (more than five people, campaigns, posts, channel messages), or `unsupported`
+  (the browser, code, connecting apps, several actions at once, a reply with nobody named, a
+  name with no address, anything Studio can't read back plainly). Stored on the request:
+  `approvals.voice_ok`, `tap_only`, `read_back`, `tools`; the raw arguments aren't kept.
+- **On the call** (`src/components/voice/call.tsx`, guarded by `src/lib/voice/approval-guard.ts`).
+  A voice-ok request is read back word for word, then "Say “send it” to go ahead, or tap." A yes
+  counts only if the read-back was said in full (its words reached the voice, it spoke, and
+  stopped, with nothing talking over it, the voice not muted, the tab not hidden), it's the
+  member's first words after it (agreement aside), it came from the speech-to-text (typed words,
+  and the provider's echo of them, never count), and it's a clear action phrase (`isApproveIntent`:
+  "send it", "go ahead", "yes, do it"; never a bare "yes"). Then a visible 3-second "Approving ·
+  Cancel" hold runs on the card; anything said or typed, a tap, the tab hiding, hanging up, muting
+  the voice, or the request leaving pending stops it ("wait", "cancel that": the request keeps
+  waiting), and it doesn't finish while they may still be talking. If it hears no pause within 5
+  seconds of running out, it stops and says so: nothing is sent, and it takes a new "send it".
+  Only then is it sent, once; one the server refuses is a tap from then on, on the card and
+  aloud. A clear no ("don't send it", `isDeclineIntent`) declines any request.
+- **The voice front** routes a yes to the existing `send_card` client tool and a no to `stop_work`
+  by fixed rules on the member's own words (`routeSpeech`/`quickRoute`), never the model's call;
+  the model's own `send_card`/`stop_work` are dropped while a request waits. Whether the call may
+  approve by voice at all is sealed into the call's context when it starts. No new ElevenLabs
+  client tools: `scripts/voice-agent.mjs` needn't be run again.
+- **The server** (`src/lib/voice/approvals.ts`) checks the decision again: `VOICE_SPOKEN_APPROVALS`
+  not "off", the member's voice preview, the trip wire not tripped, the request voice-ok, the
+  words a clear yes (or no), and the member's own call in this agent still open. The mock voice's
+  "speech" is typed, so under it spoken approvals are on only in front of the mock agent, and
+  never approve another provider's request. Only the database records a spoken decision
+  (`settle_spoken_approval`: the member's own pending request, their own open call in that agent,
+  voice-ok to approve); members can't write `decided_words` or `decided_call` themselves. It
+  stores how it was decided (`decided_via` `tap` or `voice`), the words (`decided_words`), and the
+  call (`decided_call`); the card says
+  "You approved this by voice: “send it”", and the call's recap quotes them.
+
+**The kill switch.** "That's not what I said" under a spoken approval reports it
+(`POST /api/conversations/<id>/approvals/<approvalId>/report`, `report_spoken_approval`), which
+turns spoken approval off for everyone: every call after says approvals are taps. Only a spoken
+approval the database recorded on one of the reporter's own calls can be reported, so a row
+written by hand can't trip it. Only SQL turns
+it back on, after looking into the report (the request keeps its words, read-back and tools):
+
+```sql
+select * from public.spoken_approval_reports;          -- what was reported, and when
+delete from public.spoken_approval_reports;            -- spoken approvals back on
+```
+
+`VOICE_SPOKEN_APPROVALS=off` turns them off without a report.
+
 ## Turning it on
 
 1. **ElevenLabs:** an account on a paid plan (calls are billed per minute) and an API key
@@ -305,5 +369,11 @@ sound; "hop on a call" shows an offer to call; "a very slow job" runs for over a
 nothing new, so a call asks whether to hang on or leave a voice note. `tests/integration/api-voice.test.ts`
 and `rls-voice.test.ts` cover isolation and the daily voice time (calls and clips), and
 `api-calls.test.ts` the call a message was said on, a conversation's calls, the voice note after
-hanging up, and the offer; `npm run test:audit` checks the narration for every tool in the flow's
-history.
+hanging up, and the offer; `api-spoken-approvals.test.ts` and `rls-approvals-attachments.test.ts`
+spoken approvals and the kill switch; `npm run test:audit` checks the narration, and the spoken
+approval class of every `take_action`, across the flow's history.
+
+Spoken approvals on the mock: "email Casting Co about the duplicate payment" asks for a reply to
+one person (voice-ok), "pay the Casting Co invoice" for a payment (a tap). On the call, Send types
+the words (so "send it" sent that way is refused, as typed); **Say it (mock)** takes them as
+spoken, standing in for the speech-to-text, so "send it" said after the read-back starts the hold.

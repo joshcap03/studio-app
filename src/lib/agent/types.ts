@@ -162,9 +162,13 @@ export type AgentEvent =
   | { type: "artifact"; artifact: Artifact }
   /**
    * The run paused before an action that needs the member's approval. The adapter ends the
-   * run after this event; the app stores `state` and passes it back in `resume`.
+   * run after this event; the app stores `state` and passes it back in `resume`. `actions`:
+   * what approving it would run, each with its raw arguments, as the provider will run them
+   * (several when one approval covers more than one), for deciding whether it may be approved by
+   * voice. Server-side only: never sent or stored. Absent when the adapter can't tell, which
+   * keeps it a tap.
    */
-  | { type: "approval"; summary: string; app?: string; details: [string, string][]; state: unknown }
+  | { type: "approval"; summary: string; app?: string; details: [string, string][]; actions?: ApprovalAction[]; state: unknown }
   /** The agent suggested a fact to remember. Nothing is saved unless the member confirms. */
   | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory }
   /** An investigation's timeline, unvalidated; the turn checks it against this run's results. */
@@ -191,6 +195,15 @@ export type AgentEvent =
   | { type: "library-item"; item: unknown }
   /** How a task's run went (nothing new, an update, or needs the member), unvalidated. */
   | { type: "run-report"; report: unknown };
+
+/**
+ * One thing approving a request would run: the tool as the provider names it (a Composio slug
+ * like GMAIL_SEND_EMAIL, or anything else) and its arguments, unvalidated.
+ */
+export interface ApprovalAction {
+  tool: string;
+  arguments: unknown;
+}
 
 /** What a provider has been verified to support. The app adapts its behavior to these. */
 export interface AgentCapabilities {

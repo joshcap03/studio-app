@@ -7,7 +7,9 @@ import type { VoiceCue, VoiceGrant, VoiceStage } from "@/lib/voice/types";
 // MOCK VOICE: the call's link for QA, labeled "Mock voice" on screen. It plays the provider's
 // part: what the member types is taken as their speech, each turn goes to Studio's real voice
 // front (sealed context and all), the voice's words show as captions with a speaking time
-// instead of audio, and its tool calls run in the browser like the real provider's do.
+// instead of audio, and its tool calls run in the browser like the real provider's do. Typed
+// words count as typed, as on a real call, so they never approve a request; the call's labeled
+// "Say it (mock)" stands in for speaking them (`mockSpeech`), as the speech-to-text would hear them.
 
 type Message = { role: "system" | "user" | "assistant" | "tool"; content: string | null; tool_calls?: unknown[]; tool_call_id?: string };
 type Call = { id: string; name: string; args: string };
@@ -135,11 +137,23 @@ class MockLink implements VoiceLink {
   }
 
   type(text: string) {
+    this.member(text, true);
+  }
+
+  mockSpeech(text: string) {
+    this.member(text, false);
+  }
+
+  private member(text: string, typed: boolean) {
     const said = text.trim();
     if (!said || this.ended) return;
-    // Talking over the voice cuts it off; the words still count.
-    if (this.stopSpeaking()) this.events().onInterrupted();
-    this.events().onMemberText(said);
+    // Talking over the voice cuts it off, as the provider reports it: first the talk-over, then
+    // the voice stopping. The words still count.
+    if (this.speaking) {
+      this.events().onInterrupted();
+      this.stopSpeaking();
+    }
+    this.events().onMemberText(said, { typed });
     this.turn({ role: "user", content: said });
   }
 
