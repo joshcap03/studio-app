@@ -251,7 +251,7 @@ const SCENARIOS: Scenario[] = [
     steps: [
       {
         kind: "text",
-        text: "Hi Sam (mock). You like a short list first and the reasoning after, and you'd rather pass on a role than stretch your bar. I'll keep bringing you fewer, better options.",
+        text: "Hi Sam (mock). We've been working through your search together, a short list at a time. I'd like to go by Juniper, if that suits you.",
       },
       {
         kind: "ui",

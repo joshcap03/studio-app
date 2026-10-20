@@ -983,9 +983,16 @@ class ToolGatewayComponent(Component):
             if not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories", "identity", "sound")):
                 return ("Not shown: propose at least one change (profile, instructions, skills, tasks, memories, identity, "
                         "or sound).")
+            # A name alone is its own card, under the reply, with a Keep button: the sentence after
+            # the call sits right above it, so it offers the name rather than saying how to keep it.
+            only_name = "identity" in proposal and not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories", "sound"))
             return json.dumps({
                 "proposal": proposal,
-                "note": ("The owner now sees your proposal and can apply all or part of it; nothing changes until "
+                "note": ("The member sees what you've written, with your name and manner on a card under it and a "
+                         "button to keep it; nothing changes until they do. End your reply here with one short "
+                         "sentence offering the name in your own words, without repeating what you've written."
+                         if only_name else
+                         "The owner now sees your proposal and can apply all or part of it; nothing changes until "
                          "they do. End your reply here with one short sentence."),
             })
 

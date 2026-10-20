@@ -41,7 +41,8 @@ const isPlan = (reply: string) => barSent(seen) && writesPlan(reply);
 const CRAFT = /career pages?|greenhouse|lever|ashby|target (compan|list)|warm|referr|intro/i;
 
 /** What the seeker knows that the agent doesn't, given once when it runs its plan by them. */
-const PLAN_ADVICE = "Looks good. Add Figma, Linear, and Notion to the target list, and my best leads have always come through old Brightlane colleagues, so look for those first.";
+const PLAN_ADVICE =
+  "Looks good. Add Figma, Linear, and Notion to the target list, and my best leads have always come through old Brightlane colleagues, so look for those first. For the best ones, find the hiring manager too.";
 const FROM_PLAN_ADVICE = /figma|linear|notion|brightlane colleague|former colleague|old colleague/i;
 /** Who they'd ask for a warm intro, when the plan needs names. Made up. */
 const COLLEAGUES = "Priya Example at Figma and Tom Example at Linear, both from my Brightlane days.";
@@ -55,7 +56,8 @@ const SEEKER: ScriptedMember = {
     "I'm a senior product designer and I want to move to a new role this year.",
     "Honestly I waste hours on postings that turn out to be junior, agency, or on-site. I only want to spend time on roles that genuinely fit.",
     "LinkedIn alerts. They're noisy and I stopped reading them.",
-    "I'd apply to a few great roles a week instead of skimming hundreds, and be sharp when interviews come.",
+    // Outreach is part of the help they want, which tempts a bar that judges roles by their contacts.
+    "I'd apply to a few great roles a week instead of skimming hundreds, reach someone on the team for the best ones, and be sharp when interviews come.",
     "Don't apply or email anyone without me.",
   ],
   advice: ADVICE,
@@ -84,6 +86,9 @@ const SEEKER: ScriptedMember = {
 };
 
 const FROM_PASS = /agenc/i;
+/** How the agent gets a result (who it finds or contacts, which app), which belongs in the plan, not the bar. */
+// (Not "recruiter": "posted by the company, not a recruiter" is about the result.)
+const METHOD = /hiring manager|verified (e-?mail|contact)|e-?mail (address|verified)|warm (intro|path|way)|referr|colleague|apollo|hunter|\bclay\b/i;
 // The agent designs the success form itself, so the bar may come from any of their answers.
 const FROM_BAR = /180|150|2[-–]3|9 ?am|3 (of|out of) (every )?5|3 days/i;
 
@@ -210,6 +215,21 @@ describe.skipIf(!liveFlow)("Job search setup interview against a live flow", () 
     expect(instructions, "the plan dropped the member's advice").toMatch(FROM_PLAN_ADVICE);
     // Nothing is applied yet, so the agent mustn't say it is.
     expect(last.reply).not.toMatch(/\b(you're|you are|you're all|we're|i'm|i am) (all )?set up\b/i);
+  });
+
+  it("keeps the bar to results the member judges, with methods like finding a hiring manager in the plan", () => {
+    // The criteria on the last "Your bar" card, and the proposal's "What success means" section.
+    const card = [...turns].reverse().find((x) => x.form?.fields.some((f) => f.kind === "rank"));
+    const criteria = card ? card.form!.fields.flatMap((f) => (f.kind === "rank" ? f.options.map((o) => o.label) : [])) : [];
+    expect(criteria.filter((c) => METHOD.test(c)), "the bar card asks for a method, not a result").toEqual([]);
+    const instructions = turns.find((x) => x.proposal)?.proposal?.instructions ?? "";
+    const success = instructions.match(/what success means([\s\S]*?)(?=how i'll do it|$)/i)?.[1] ?? "";
+    expect(success, "the proposal has no success section").not.toBe("");
+    const method = success.match(METHOD)?.[0] ?? null;
+    expect(method, `the success section holds a method ("${method}"): ${success.slice(0, 600)}`).toBeNull();
+    // The member's advice on how to do it still lands in the plan.
+    const plan = instructions.slice(instructions.search(/how i'll do it/i));
+    expect(plan, "the member's hiring-manager advice didn't reach the plan").toMatch(/hiring manager/i);
   });
 
   it("lists only what it knows: three steps to start, and nothing past the bar until it's confirmed", () => {

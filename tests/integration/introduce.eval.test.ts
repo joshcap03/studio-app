@@ -20,6 +20,8 @@ const DEFAULT_TWEAKS = {
   "MemberApps-studio": { member_id: "{{composio_user_id}}", toolkits: "{{composio_toolkits}}" },
 };
 const GAME = /\b(quests?|xp|streaks?|badges?|achievements?|unlock\w*|level(?:s|ed)? up|leaderboards?|confetti|hatch\w*|evolv\w*|sketch\w*)\b/i;
+// A hello that reads their file back: "I've noticed you...", "I'll keep to that", "left to you".
+const RECITED = /\bnoticed\b|\bI'll keep to\b|\b(left|leave|leaving)\b[^.]{0,40}\bto you\b|\bup to you\b|\byour call\b|\bpick your own\b/i;
 const log: Record<string, unknown>[] = [];
 
 function tenantFor(over: Partial<AgentTenantContext> = {}): AgentTenantContext {
@@ -89,6 +91,14 @@ function onlyIdentity(p: AgentProposal | null) {
   expect([...p!.skills, ...p!.tasks, ...p!.memories]).toEqual([]);
 }
 
+/** A hello, not a recital: it offers the card's name in words and doesn't read their rules back. */
+function aHello(reply: string, p: AgentProposal) {
+  // Offered once, in words; a second mention is a line after the card repeating the offer.
+  expect(reply.split(p.identity!.name).length - 1).toBe(1);
+  expect(reply).not.toMatch(RECITED);
+  expect(p.identity!.manner).not.toMatch(RECITED);
+}
+
 describe.skipIf(!liveFlow)("introduce (live)", () => {
   it("introduces itself from what it knows, briefly, and suggests a name on the card", async () => {
     const tenant = tenantFor();
@@ -100,13 +110,17 @@ describe.skipIf(!liveFlow)("introduce (live)", () => {
     expect(reply).toMatch(/remote|ad-?tech|shortlist|reasons|portfolio|thursday|staff/i);
     expect(reply).not.toMatch(GAME);
     expect(reply).not.toMatch(/propose_agent|\bsetup\b/i);
+    aHello(reply, proposal!);
   }, 300_000);
 
   it("offers to keep the name they've heard on calls, and avoids another agent's", async () => {
     const tenant = tenantFor();
-    const { proposal } = await run(tenant, hello(tenant, "Rowan", ["June"]), "voice name");
+    const { reply, proposal } = await run(tenant, hello(tenant, "Rowan", ["June"]), "voice name");
     onlyIdentity(proposal);
     expect(proposal!.identity!.name).toBe("Rowan");
+    // Says why it's "keeping" a name, rather than offering to keep one it never introduced.
+    expect(reply).toMatch(/\bcalls?\b/i);
+    aHello(reply, proposal!);
   }, 300_000);
 
   it("says it's still learning when it knows little, rather than inventing", async () => {
@@ -123,6 +137,27 @@ describe.skipIf(!liveFlow)("introduce (live)", () => {
     const { reply, proposal } = await run(tenant, hello(tenant), "guardrail");
     onlyIdentity(proposal);
     expect(reply).not.toMatch(/\b(I recommend|you should|I'd suggest you)\b/i);
+  }, 300_000);
+
+  it("doesn't read the member's rules back as a promise, in the hello or on the card", async () => {
+    const tenant = tenantFor({
+      guardrail: { instructions: "Do research and keep my records, but don't make decisions for me, give opinions, or write messages for me.", recentChats: [] },
+      agentInstructions: "Check the tracker before adding anything so nothing repeats. Keep updates short and factual.",
+      memories: [
+        "Wants remote staff product designer roles at design-led companies.",
+        "Writes their own outreach; only wants contact emails that are verified.",
+        "Passes on anything in ad-tech.",
+      ],
+      tracker: [
+        { collection: "roles", key: "a", title: "Staff Product Designer, Northwind", status: "applied" },
+        { collection: "roles", key: "b", title: "Principal Designer, Contoso", status: "researching" },
+        { collection: "roles", key: "c", title: "Staff Designer, Fabrikam", status: "passed" },
+      ],
+    });
+    const { reply, proposal } = await run(tenant, hello(tenant), "rules");
+    onlyIdentity(proposal);
+    aHello(reply, proposal!);
+    expect(reply).not.toMatch(/\b(verified|outreach|short and factual)\b/i);
   }, 300_000);
 
   it("doesn't get longer once it has a manner", async () => {

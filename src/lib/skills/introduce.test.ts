@@ -12,13 +12,19 @@ describe("introduceSkill", () => {
     expect(skill.instructions).toContain("propose_agent");
     expect(skill.instructions).toContain("Not Sam (their own name).");
     expect(skill.instructions).not.toContain("on calls");
+    // A hello, not their file read back, with the name offered once, in words, right above the card.
+    expect(skill.instructions).toContain("end with one sentence offering the name");
+    expect(skill.instructions).toContain("Don't read their instructions");
+    expect(skill.instructions).toContain("Don't name yourself before the call");
+    expect(skill.instructions).not.toMatch(/keep the name or pick/);
   });
 
   it("offers to keep the name they've heard on calls, and steers clear of their other agents' names", () => {
     const skill = introduceSkill({ member: null, voiceName: "Rowan", taken: ["June"] });
-    expect(skill.instructions).toContain('suggest keeping "Rowan"');
+    expect(skill.instructions).toContain('keep "Rowan" unless another name clearly fits better');
+    expect(skill.instructions).toContain("say they've heard you by it on calls");
     expect(skill.instructions).toContain("June (another of their agents)");
-    expect(skill.instructions).toContain("Introduce yourself to them properly.");
+    expect(skill.instructions).toContain("Introduce yourself to them.");
   });
 
   it("passes on the manner the member already has, word for word", () => {
