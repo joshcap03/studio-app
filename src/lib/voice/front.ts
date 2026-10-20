@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TAP_ONLY_REASONS } from "@/lib/types";
-import { isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
+import { isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isLookIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
 import { plain, SAY_SEND_IT, TAP_REASON_LINE } from "./relay";
 import { cueLine, greeting, JUST_BACK, VOICE_TOOLS, voiceNoteLine, voicePrompt } from "./persona";
@@ -73,6 +73,7 @@ const stage = z
     approvalTap: z.enum([...TAP_ONLY_REASONS, "off", "spent"]).optional(),
     approving: z.boolean().optional(),
     longJob: z.boolean().optional(),
+    sharing: z.enum(["screen", "camera"]).optional(),
   })
   .strip();
 const marker = z.object({ say: z.array(z.string().max(600)).max(8).optional(), stage: stage.optional(), cue: z.enum(VOICE_CUES).optional() }).strip();
@@ -209,6 +210,8 @@ const HOLDING = {
   sent: ["Okay, that's sent.", "Sent."],
   stopped: ["Okay, I've stopped."],
   stopping: ["Okay, stopping."],
+  /** They asked it to look at what they're showing: a snapshot goes along with their words. */
+  look: ["Let me look.", "Okay, let me see."],
   /** They'll hang on while a long job works. */
   waiting: ["Sure, I'll keep going.", "Okay, still on it."],
 } as const;
@@ -260,7 +263,7 @@ export function speechForResults(results: string[], messages: FrontMessage[] = [
         lines.push(`Did you mean ${detail.split("?")[0].trim()}? Tap it on screen if so.`);
         break;
       case "handed off":
-        lines.push(holdingLine(answering(messages) ? "answer" : "request", messages));
+        lines.push(holdingLine(/^looking\b/i.test(detail) ? "look" : answering(messages) ? "answer" : "request", messages));
         break;
       case "held":
         lines.push(holdingLine(/\bOK\b/.test(detail) ? "approval" : "held", messages));
@@ -439,6 +442,8 @@ export function routeSpeech(said: string, stage: VoiceStage | null, tools: Brain
   if (isStopIntent(said)) return { tools: [{ name: "stop_work", args: {} }] };
   // Their answer to "hang on, or a voice note?" goes to the browser, which ends the call or carries on.
   if (answerToLongJob(said, stage)) return { tools: [{ name: "send_message", args: {} }] };
+  // "Look at this" while they share: their words go to the work with a snapshot, whatever's on stage.
+  if (stage?.sharing && isLookIntent(said)) return { tools: [{ name: "send_message", args: {} }] };
   const fills = (tools ?? []).filter((t) => t.name === "fill_card" || t.name === "answer_question");
   // "Send" sends what's on screen; the browser says what's missing if it can't.
   if (isSendIntent(said) && (stage?.form || stage?.questions?.length)) return { tools: [...fills, { name: "send_card", args: {} }] };
@@ -498,9 +503,11 @@ export function quickRoute(messages: FrontMessage[], { approvals = false }: { ap
         : "approval"
       : stage?.working && !isRedirect(said)
         ? "held"
-        : answering(messages)
-          ? "answer"
-          : "request";
+        : stage?.sharing && isLookIntent(said)
+          ? "look"
+          : answering(messages)
+            ? "answer"
+            : "request";
     return { ...reply, text: holdingLine(kind, messages) };
   }
   if (call === "stop_work") return stage?.working ? { ...reply, text: holdingLine("stopping", messages) } : { tools: [{ name: "skip_turn", args: {} }] };

@@ -68,6 +68,19 @@ export function isRedirect(text: string): boolean {
 
 const RETRY = /^(?:(?:ok|okay|yes|yeah|please|can you|could you|lets|just|um|uh)\s+)*(?:try (?:it |that |this )?again|retry(?: it| that)?|give it another (?:go|try)|have another go|go again)(?:\s+(?:please|now))*$/;
 
+const LOOK = /\b(?:look at (?:this|that|it|what im (?:showing|sharing)|my screen)|take a look|have a look|can you see (?:this|that|it|my screen)|do you see (?:this|that)|see (?:this|that)\b|check (?:this|that) out|whats (?:this|that) on (?:my|the) screen)\b/;
+const NOT_LOOK = /\b(?:dont|do not|never|no need to|stop) (?:look|see|check)/;
+
+/**
+ * The member asked the agent to look at what they're showing: "look at this", "can you see my
+ * screen?", "take a look at that error". Only counts while they share their screen or camera,
+ * and never when they're telling it not to.
+ */
+export function isLookIntent(text: string): boolean {
+  const words = normalizeSpeech(text);
+  return LOOK.test(words) && !NOT_LOOK.test(words);
+}
+
 /** The member asked to try again what just failed, and nothing more: "try again", "okay, retry that". */
 export function isRetryIntent(text: string): boolean {
   const all = clauses(text);

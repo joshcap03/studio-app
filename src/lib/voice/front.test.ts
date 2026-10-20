@@ -564,3 +564,16 @@ describe("a request waiting on the member's OK", () => {
     expect(voicePrompt(context, voiceOk)).toContain("never by you");
   });
 });
+
+describe("looking at what they share", () => {
+  it("sends “look at this” to the work with a look line while they share, whatever's on stage", () => {
+    const sharing = { ...stage, sharing: "screen" as const };
+    expect(routeSpeech("look at this", sharing, [{ name: "fill_card", args: { field: "roles", value: "[]" } }])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(quickRoute([mark({ stage: { working: false, sharing: "camera" } }), user("Can you see this?")])).toEqual({ text: "Let me look.", tools: [{ name: "send_message", args: {} }] });
+    // Not sharing: just words.
+    expect(quickRoute([mark({ stage: { working: false } }), user("Can you see this?")])?.text).not.toBe("Let me look.");
+  });
+  it("says the look line once the browser takes the snapshot", () => {
+    expect(speechForResults(["Handed off: looking at what they're showing."])).toBe("Let me look.");
+  });
+});

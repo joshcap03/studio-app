@@ -159,6 +159,8 @@ export interface VoiceStage {
    * long_job cue), and they haven't said yet.
    */
   longJob?: boolean;
+  /** They're showing their screen or camera to the call (it stays on their device until they ask the agent to look). */
+  sharing?: "screen" | "camera";
 }
 
 /** The title the setup interview's journey carries on screen. */
