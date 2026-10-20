@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { serviceClient, SUPABASE_ANON_KEY, SUPABASE_URL } from "./helpers";
 
 // Spoken approvals through the app's HTTP API, with the mock voice and the mock agent (`npm run
@@ -36,12 +36,20 @@ class Client {
 
   /** Runs a turn; its status, and its events when it ran. */
   async turn(conversationId: string, body: unknown) {
-    const res = await this.json(`/api/conversations/${conversationId}/messages`, "POST", body);
+    let res = await this.json(`/api/conversations/${conversationId}/messages`, "POST", body);
+    // This file runs more turns per account than the per-minute cap allows: wait it out once.
+    if (res.status === 429 && (await res.clone().text()).includes("rate_limited")) {
+      await new Promise((r) => setTimeout(r, 61_000));
+      res = await this.json(`/api/conversations/${conversationId}/messages`, "POST", body);
+    }
     const text = await res.text();
     const events = res.ok ? text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as { type: string; [k: string]: unknown }) : [];
     return { status: res.status, text, events };
   }
 }
+
+// A turn may wait out the per-minute cap (Client.turn), so tests get room for it.
+vi.setConfig({ testTimeout: 180_000 });
 
 interface Member {
   api: Client;
