@@ -2,7 +2,7 @@
 // The voice front is the agent's mouth and ears on a call; the worker (src/lib/agent) does all
 // the thinking and work. Shared by the browser and the server, so no runtime imports here.
 
-import type { Journey } from "@/lib/types";
+import type { Journey, TapOnlyReason } from "@/lib/types";
 import type { VoiceKey } from "./voices";
 
 export type VoiceProviderId = "mock" | "elevenlabs";
@@ -69,6 +69,11 @@ export interface VoiceGrant {
   persona: VoicePersona;
   /** How long this call may run. */
   maxSeconds: number;
+  /**
+   * Whether this call may approve a voice-ok request by voice (spoken approvals on, and not
+   * turned off by a report), as of when it started. Absent from servers from before: taps.
+   */
+  spokenApprovals?: boolean;
 }
 
 /**
@@ -95,6 +100,8 @@ export interface VoiceContext {
   guardrail: string | null;
   /** How the agent talks with this member, in its own words, once one is chosen (tone only). */
   manner?: string | null;
+  /** Whether this call may approve a request by voice (VoiceGrant.spokenApprovals). */
+  approvals?: boolean;
 }
 
 /** One field of the card on stage, as the voice sees it. */
@@ -139,7 +146,14 @@ export interface VoiceStage {
   form?: { id: string; title: string; fields: StageField[] };
   questions?: { question: string; options: string[]; multi: boolean }[];
   proposal?: string;
+  /** The request waiting on the member's OK, in the agent's words. */
   approval?: string;
+  /** This call may approve it by voice: its read-back is said, then their "send it" counts (Studio checks it). */
+  approvalVoice?: boolean;
+  /** Why it's a tap on this call, when it is ("off": spoken approvals are off; "spent": its spoken approval didn't go through). */
+  approvalTap?: TapOnlyReason | "off" | "spent";
+  /** Their "send it" is in, and the visible hold before it goes is running: anything they say stops it. */
+  approving?: boolean;
   /**
    * The call asked whether they'd rather hang on or get a voice note when the job is done (the
    * long_job cue), and they haven't said yet.

@@ -94,6 +94,9 @@ const schema = z.object({
   // notes) together, and the longest one call may run, in seconds.
   LIMIT_VOICE_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1800),
   LIMIT_VOICE_CALL_SECONDS: z.coerce.number().int().min(60).max(7200).default(1500),
+  // Spoken approvals on calls (docs/voice.md): on unless set to "off". One report that one wasn't
+  // what the member said turns them off for everyone anyway, until cleared with SQL.
+  VOICE_SPOKEN_APPROVALS: z.string().optional(),
 });
 
 const toolkitSchema = z.record(
@@ -157,6 +160,8 @@ export interface VoiceConfig {
   /** The model the voice front talks with; unset under the mock means its scripted replies. */
   llm?: { baseUrl: string; apiKey: string; model: string; extraBody?: Record<string, unknown> };
   limits: { secondsPerDay: number; callSeconds: number };
+  /** Whether a call may approve a request by voice at all (VOICE_SPOKEN_APPROVALS). */
+  spokenApprovals: boolean;
 }
 
 let cached: AppConfig | undefined;
@@ -247,6 +252,8 @@ function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
         }
       : undefined;
   const limits = { secondsPerDay: env.LIMIT_VOICE_SECONDS_PER_DAY, callSeconds: env.LIMIT_VOICE_CALL_SECONDS };
+  // Anything that reads as "off" turns it off, so a mistyped switch fails closed.
+  const spokenApprovals = !/^(off|false|0|no|disabled?)$/i.test(env.VOICE_SPOKEN_APPROVALS?.trim() ?? "");
   if (provider === "elevenlabs") {
     if (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_AGENT_ID || !env.VOICE_SEAL_SECRET || !env.VOICE_LLM_SECRET || !llm) {
       // A preview feature: half set up, calls stay off rather than taking the app down.
@@ -262,9 +269,10 @@ function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
       llmSecret: env.VOICE_LLM_SECRET,
       llm,
       limits,
+      spokenApprovals,
     };
   }
-  return { provider, sealSecret: env.VOICE_SEAL_SECRET ?? processSecret(), llm, limits };
+  return { provider, sealSecret: env.VOICE_SEAL_SECRET ?? processSecret(), llm, limits, spokenApprovals };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

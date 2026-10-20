@@ -25,7 +25,7 @@ import { VoicePlayer } from "@/components/voice/player";
 import { followEvents, joinedEvents } from "@/lib/chat/follow";
 import { callOf, originFor } from "@/lib/chat/modality";
 import { markOf, moveOf, type MarkedMove, type WhoseMove } from "@/lib/chat/move";
-import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
+import { ApiError, api, streamTurn, type SpokenDecision, type TurnBody } from "@/lib/client/api";
 import { openRequest, reopening } from "@/lib/client/open";
 import { registerServiceWorker } from "@/lib/client/push";
 import { INTRODUCE_SKILL_ID, INTRODUCE_SKILL_NAME } from "@/lib/skills/introduce";
@@ -852,10 +852,11 @@ function WorkspaceShell({
 
   /**
    * Answers the agent's pending request in `conversationId` (the open one, or a call's) and
-   * continues the same reply.
+   * continues the same reply. `spoken`: said on a call, with the words the member was heard to
+   * say; the server checks them and refuses what doesn't hold up (the request comes back).
    */
   const decide = useCallback(
-    (conversationId: string, approvalId: string, decision: "approve" | "reject") => {
+    (conversationId: string, approvalId: string, decision: "approve" | "reject", spoken?: SpokenDecision) => {
       if (running.has(conversationId)) return;
       const reply = threadsRef.current[conversationId]?.messages.find((m) => m.approvals?.some((a) => a.id === approvalId));
       if (!reply) return;
@@ -863,9 +864,13 @@ function WorkspaceShell({
       patchMessage(conversationId, reply.id, (m) => ({
         ...m,
         status: "streaming",
-        approvals: m.approvals?.map((a) => (a.id === approvalId ? { ...a, status: decision === "approve" ? "approved" : "declined" } : a)),
+        approvals: m.approvals?.map((a) =>
+          a.id === approvalId
+            ? { ...a, status: decision === "approve" ? "approved" : "declined", decidedVia: spoken ? "voice" : "tap", ...(spoken ? { decidedWords: spoken.heard } : {}) }
+            : a,
+        ),
       }));
-      void runTurn(conversationId, { kind: "decide", approvalId, decision }, { assistant: reply.id });
+      void runTurn(conversationId, spoken ? { kind: "decide", approvalId, decision, ...spoken } : { kind: "decide", approvalId, decision }, { assistant: reply.id });
     },
     [patchMessage, runTurn, running],
   );
@@ -1934,7 +1939,7 @@ function WorkspaceShell({
           }}
           onStop={() => stop(call.conversationId)}
           onRetry={(messageId) => retry(call.conversationId, messageId)}
-          onDecide={(approvalId, decision) => decide(call.conversationId, approvalId, decision)}
+          onDecide={(approvalId, decision, spoken) => decide(call.conversationId, approvalId, decision, spoken)}
           onUiResponse={(messageId, blockId, response) => recordUiResponse(call.conversationId, messageId, blockId, response)}
           onRunTask={(taskId) => runTaskNow(taskId, call.conversationId)}
           subscribe={subscribe}

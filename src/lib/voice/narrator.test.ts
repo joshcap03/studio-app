@@ -229,3 +229,36 @@ describe("a long job", () => {
     expect(spoken).toEqual(["Actually, it just came back.", "Found three roles. The best is remote."]);
   });
 });
+
+describe("a request's read-back", () => {
+  const readBack = "I'll email jo@acme.example, subject “March invoice”, saying “Hi Jo”.";
+  const awaiting = message({
+    status: "awaiting",
+    content: "Here's the email.",
+    approvals: [{ id: "a1", summary: "Email Jo", details: [], status: "pending", createdAt: 0, spoken: { ok: true, readBack } }],
+  });
+
+  it("is said whole, never cut at the dots in an address", () => {
+    const narrator = new CallNarrator();
+    narrator.reply(awaiting, { spokenApprovals: true });
+    expect(narrator.take(0, { running: false, quietMs: 0 })).toEqual(["Here's the email.", `${readBack} Say “send it” to go ahead, or tap.`]);
+  });
+
+  it("can be said again, word for word, when it must be heard again", () => {
+    const narrator = new CallNarrator();
+    narrator.reply(awaiting, { spokenApprovals: true });
+    narrator.take(0, { running: false, quietMs: 0 });
+    // The same reply isn't read twice...
+    narrator.reply(awaiting, { spokenApprovals: true });
+    expect(narrator.take(1, { running: false, quietMs: 0 })).toEqual([]);
+    // ...but the read-back is, when asked.
+    narrator.again(`${readBack} Say “send it” to go ahead, or tap.`);
+    expect(narrator.take(2, { running: false, quietMs: 0 })).toEqual([`${readBack} Say “send it” to go ahead, or tap.`]);
+  });
+
+  it("is a tap line where spoken approvals are off", () => {
+    const narrator = new CallNarrator();
+    narrator.reply(awaiting);
+    expect(narrator.take(0, { running: false, quietMs: 0 }).at(-1)).toBe("It needs your OK on screen: Email Jo. Approvals are taps for now.");
+  });
+});

@@ -114,7 +114,26 @@ export interface Approval {
   status: "pending" | "approved" | "declined" | "expired";
   createdAt: number;
   decidedAt?: number;
+  /**
+   * Whether it can be approved by voice on a call, and the words read back before a yes counts;
+   * or why it stays a tap. Decided when the agent asked, from the action itself
+   * (src/lib/approvals/spoken.ts). Absent on requests from before spoken approvals: a tap.
+   */
+  spoken?: { ok: true; readBack: string } | { ok: false; reason: TapOnlyReason };
+  /** How it was decided: by hand (a tap, or words typed) or by the member's spoken words. */
+  decidedVia?: "tap" | "voice";
+  /** What the member said, as the speech-to-text heard it, when it was decided by voice. */
+  decidedWords?: string;
+  /** The member said a spoken approval wasn't what they said. */
+  reported?: boolean;
 }
+
+/**
+ * Why a request is answered with a tap, never by voice: it moves money, deletes something, sends
+ * to more than a handful of people (or posts publicly), or Studio can't read it back plainly.
+ */
+export const TAP_ONLY_REASONS = ["money", "deletion", "bulk_send", "unsupported"] as const;
+export type TapOnlyReason = (typeof TAP_ONLY_REASONS)[number];
 
 /**
  * A fact the agent chose to remember while replying. Normally saved right away ("saved",

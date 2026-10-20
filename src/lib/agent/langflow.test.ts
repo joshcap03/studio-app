@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { approvalActions, buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -909,6 +909,37 @@ describe("Langflow approvals", () => {
     expect(JSON.stringify(approval.details)).not.toContain("abcdefghijklmnop");
     expect(approval.state).toEqual({ jobId: JOB, requestId: "Agent-1:job:nonce", lastEventId: "4" });
     expect(events.at(-1)?.type).toBe("approval");
+  });
+
+  it("says what approving would run, as the gateway will run it, for deciding whether a call may approve it", async () => {
+    const { events } = await run(base, streamResponse([sse(1, "add_message", user("Email Jo")), sse(2, "human_input_required", approvalRequest())]));
+    const approval = events.find((e) => e.type === "approval") as Extract<AgentEvent, { type: "approval" }>;
+    expect(approval.actions).toEqual([
+      { tool: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "jo@acme.example", subject: "March invoice", api_key: "sk-live-abcdefghijklmnopqrstuvwx" } },
+    ]);
+  });
+
+  it("unwraps calls the way the gateway's route() does, and leaves what it couldn't run unnamed", () => {
+    const request = (name: string, args: unknown) => ({ action_requests: [{ name, args }] });
+    const take = (tool_name: unknown, args: unknown) => request("take_action", { tool_name, arguments: args, summary: "x" });
+    // A bare slug, with JSON-text arguments.
+    expect(approvalActions(take("GMAIL_SEND_EMAIL", '{"recipient_email":"jo@acme.example"}'))).toEqual([{ tool: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "jo@acme.example" } }]);
+    // Nested execute_tool, three deep.
+    const nested = take("execute_tool", { tool_name: "execute_tool", arguments: JSON.stringify({ tool_name: "GMAIL_REPLY_TO_THREAD", arguments: { thread_id: "t" } }) });
+    expect(approvalActions(nested)).toEqual([{ tool: "GMAIL_REPLY_TO_THREAD", arguments: { thread_id: "t" } }]);
+    // Every tool of a multi-execute, not just the first; slugs as Composio reads them.
+    const multi = take("composio_multi_execute_tool", { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: {} }, { tool_slug: "stripe_create_refund", arguments: "{}" }] });
+    expect(approvalActions(multi)).toEqual([
+      { tool: "GMAIL_SEND_EMAIL", arguments: {} },
+      { tool: "STRIPE_CREATE_REFUND", arguments: {} },
+    ]);
+    // Anything else is itself; what can't be read is nameless; several requests are all of them.
+    expect(approvalActions(take("act", { action: "click buy" }))).toEqual([{ tool: "act", arguments: { action: "click buy" } }]);
+    expect(approvalActions(take("GMAIL_SEND_EMAIL", "{not json"))).toEqual([{ tool: "", arguments: null }]);
+    expect(approvalActions(take("composio_multi_execute_tool", { tools: "x" }))).toEqual([{ tool: "", arguments: null }]);
+    expect(approvalActions(request("some_other_tool", { a: 1 }))).toEqual([{ tool: "some_other_tool", arguments: { a: 1 } }]);
+    expect(approvalActions({ action_requests: [take("GMAIL_SEND_EMAIL", {}).action_requests[0], take("GMAIL_SEND_EMAIL", {}).action_requests[0]] })).toHaveLength(2);
+    expect(approvalActions(null)).toEqual([]);
   });
 
   it("continues a paused job with the decision and reads on from the last event", async () => {

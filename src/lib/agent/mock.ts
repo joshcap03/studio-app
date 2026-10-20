@@ -1,4 +1,4 @@
-import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput } from "./types";
+import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type ApprovalAction } from "./types";
 import type { Artifact, StepAction, StepPreview } from "@/lib/types";
 import type { Evidence } from "./tools/evidence";
 
@@ -32,7 +32,8 @@ type Step =
   | { kind: "artifact"; artifact: Artifact }
   | { kind: "text"; text: string }
   | { kind: "error"; message: string }
-  | { kind: "approval"; summary: string; app: string; details: [string, string][] }
+  /** `actions`: what approving it would run, as a real provider reports it, for deciding whether it may be approved by voice. */
+  | { kind: "approval"; summary: string; app: string; details: [string, string][]; actions?: ApprovalAction[]; after?: "payment" }
   | { kind: "remember"; content: string }
   | { kind: "timeline"; timeline: unknown }
   | { kind: "visual"; visual: unknown }
@@ -434,6 +435,36 @@ const SCENARIOS: Scenario[] = [
           ["Subject", "Re: Invoice #4471"],
           ["Body", "Hi, it looks like invoice #4471 was paid twice. Could you refund the second $1,240 payment? Thanks!"],
         ],
+        // A reply to one person: it may be approved by voice on a call (the summary's talk of a
+        // refund doesn't make it a payment; what it runs does).
+        actions: [
+          {
+            tool: "GMAIL_REPLY_TO_THREAD",
+            arguments: {
+              thread_id: "mock-thread-4471",
+              recipient_email: "billing@casting.example",
+              message_body: "Hi, it looks like invoice #4471 was paid twice. Could you refund the second $1,240 payment? Thanks!",
+            },
+          },
+        ],
+      },
+    ],
+  },
+  {
+    // A payment: always a tap, on a call too.
+    match: /\bpay (?:the )?(?:casting|invoice)\b/i,
+    steps: [
+      { kind: "activity", id: "invoice", running: "Finding the invoice in QuickBooks", done: "Found the invoice in QuickBooks", ms: 800, app: "quickbooks", action: "search" },
+      {
+        kind: "approval",
+        summary: "Pay Casting Co's invoice #4471 ($1,240) from the business account",
+        app: "quickbooks",
+        details: [
+          ["Vendor", "Casting Co"],
+          ["Amount", "$1,240.00"],
+        ],
+        actions: [{ tool: "QUICKBOOKS_CREATE_BILL_PAYMENT", arguments: { vendor: "Casting Co", amount: 1240, bill_id: "mock-4471" } }],
+        after: "payment",
       },
     ],
   },
@@ -763,6 +794,7 @@ Try one of these to see how the workspace handles real work:
 - *Research a competitor* — sources and links
 - *Run a long reconciliation* — a longer multi-step task
 - *Email Casting Co about the duplicate payment* — an action that waits for your approval
+- *Pay the Casting Co invoice* — a payment, which always waits for a tap
 - *Remember that Casting Co invoices are net 30* — a memory to confirm
 - *Simulate a failure* — error handling and retry
 
@@ -773,6 +805,11 @@ You can also attach a file with the paperclip.`,
 const AFTER_APPROVAL: Step[] = [
   { kind: "activity", id: "send", running: "Sending the reply in Gmail", done: "Sent the reply in Gmail", ms: 900, app: "gmail", action: "write" },
   { kind: "text", text: "Sent (mock — nothing actually left your account). I'll watch for Casting Co's answer." },
+];
+
+const AFTER_PAYMENT: Step[] = [
+  { kind: "activity", id: "pay", running: "Paying the invoice in QuickBooks", done: "Paid the invoice in QuickBooks", ms: 900, app: "quickbooks", action: "write" },
+  { kind: "text", text: "Paid (mock — no money moved). Casting Co's invoice #4471 is settled." },
 ];
 
 const AFTER_DECLINE: Step[] = [{ kind: "text", text: "Okay, I didn't send anything. Want me to change the wording instead?" }];
@@ -850,7 +887,8 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
 
       let steps: Step[];
       if (input.resume) {
-        steps = input.resume.decision === "approve" ? AFTER_APPROVAL : AFTER_DECLINE;
+        const paying = (input.resume.state as { after?: string } | null)?.after === "payment";
+        steps = input.resume.decision === "approve" ? (paying ? AFTER_PAYMENT : AFTER_APPROVAL) : AFTER_DECLINE;
       } else {
         steps = tidySteps(input.message) ?? SCENARIOS.find((s) => s.match.test(input.message))?.steps ?? FALLBACK;
         if (input.attachments.length > 0) steps = [...(await readAttachments(input)), ...(steps === FALLBACK ? ATTACHMENTS_ONLY : steps)];
@@ -878,7 +916,14 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
         } else if (step.kind === "error") {
           throw new AgentError(step.message);
         } else if (step.kind === "approval") {
-          yield { type: "approval", summary: step.summary, app: step.app, details: step.details, state: { mock: true } };
+          yield {
+            type: "approval",
+            summary: step.summary,
+            app: step.app,
+            details: step.details,
+            ...(step.actions ? { actions: step.actions } : {}),
+            state: { mock: true, ...(step.after ? { after: step.after } : {}) },
+          };
           return;
         } else if (step.kind === "timeline") {
           await wait(500 * pace, signal);

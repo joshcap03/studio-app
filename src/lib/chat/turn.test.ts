@@ -584,6 +584,99 @@ describe("approvals", () => {
     await expect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" })).rejects.toMatchObject({ status: 409 });
   });
 
+  describe("decided by voice", () => {
+    const actions = [{ tool: "GMAIL_REPLY_TO_THREAD", arguments: { thread_id: "t1", recipient_email: "jo@acme.example", message_body: "Hi Jo, sent it over." } }];
+    const pausingWith = (event: Partial<Extract<AgentEvent, { type: "approval" }>>, seen: AgentRunInput[] = []): AgentAdapter => ({
+      ...scripted([]),
+      discard: async () => {},
+      async *run(input) {
+        seen.push(input);
+        if (!input.resume) {
+          yield { type: "approval", summary: "Send the reply to Jo", app: "gmail", details: [["To", "jo@acme.example"]], state: { jobId: "job-1" }, ...event };
+          return;
+        }
+        yield { type: "text-delta", text: "Sent it." };
+      },
+    });
+    const spoken = { heard: "send it", voiceSessionId: "call-1" };
+
+    it("classifies the request when the agent asks, from what it would run, and tells the browser", async () => {
+      const voiceOk = await pause(createMemoryStore(scopeA), [], pausingWith({ actions }));
+      expect(voiceOk.approval.spoken).toEqual({ ok: true, readBack: "I'll reply in the thread to jo@acme.example, saying “Hi Jo, sent it over”." });
+      expect(await voiceOk.store.getApproval(voiceOk.approval.id)).toMatchObject({ tools: ["GMAIL_REPLY_TO_THREAD"] });
+      const money = await pause(createMemoryStore(scopeA), [], pausingWith({ actions: [{ tool: "STRIPE_CREATE_REFUND", arguments: {} }] }));
+      expect(money.approval.spoken).toEqual({ ok: false, reason: "money" });
+      // An adapter that can't say what it would run: a tap.
+      expect((await pause()).approval.spoken).toEqual({ ok: false, reason: "unsupported" });
+      // The raw arguments never reach the browser.
+      expect(JSON.stringify(voiceOk.events)).not.toContain("t1");
+    });
+
+    it("stands only when the check says so, before the run is counted, and keeps the member's words", async () => {
+      const seen: AgentRunInput[] = [];
+      const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), seen, pausingWith({ actions }, seen));
+      const claim = vi.fn(async () => null);
+      const allowSpokenDecision = vi.fn(async () => null);
+      const events = await collect(startTurn({ ...deps, claim, allowSpokenDecision }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken }));
+      expect(allowSpokenDecision).toHaveBeenCalledWith(expect.objectContaining({ id: approval.id, spoken: expect.objectContaining({ ok: true }) }), "approve", spoken);
+      expect(seen[1].resume).toMatchObject({ decision: "approve" });
+      const end = events.at(-1);
+      expect(end?.type === "end" && end.message.approvals?.[0]).toMatchObject({ status: "approved", decidedVia: "voice", decidedWords: "send it" });
+      expect(await store.getApproval(approval.id)).toMatchObject({ status: "approved", decidedVia: "voice", decidedWords: "send it" });
+    });
+
+    it("is refused without the check, or when it fails, and the request keeps waiting", async () => {
+      const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), [], pausingWith({ actions }));
+      const claim = vi.fn(async () => null);
+      await expect(startTurn({ ...deps, claim }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken })).rejects.toMatchObject({ status: 403 });
+      const refusing = vi.fn(async () => "Approvals are taps for now.");
+      await expect(
+        startTurn({ ...deps, claim, allowSpokenDecision: refusing }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken }),
+      ).rejects.toMatchObject({ status: 403, message: "Approvals are taps for now." });
+      expect(claim).not.toHaveBeenCalled();
+      expect(await store.getApproval(approval.id)).toMatchObject({ status: "pending" });
+      expect((await store.getApproval(approval.id))?.decidedVia).toBeUndefined();
+      // A tap still answers it, and says so.
+      await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve" }));
+      expect(await store.getApproval(approval.id)).toMatchObject({ status: "approved", decidedVia: "tap" });
+      expect((await store.getApproval(approval.id))?.decidedWords).toBeUndefined();
+    });
+
+    it("declines by voice with the member's words; writing instead declines with no one's", async () => {
+      const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), [], pausingWith({ actions: [{ tool: "STRIPE_CREATE_REFUND", arguments: {} }] }));
+      const allowSpokenDecision = vi.fn(async () => null);
+      await collect(startTurn({ ...deps, allowSpokenDecision }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "reject", spoken: { heard: "don't send it", voiceSessionId: "call-1" } }));
+      expect(allowSpokenDecision).toHaveBeenCalledWith(expect.anything(), "reject", { heard: "don't send it", voiceSessionId: "call-1" });
+      expect(await store.getApproval(approval.id)).toMatchObject({ status: "declined", decidedVia: "voice", decidedWords: "don't send it" });
+
+      const steered = await pause(createMemoryStore(scopeA), [], pausingWith({ actions }));
+      await collect(startTurn(steered.deps, { conversationId: steered.id, kind: "send", text: "Send it to Sam instead", steer: true }));
+      const declined = await steered.store.getApproval(steered.approval.id);
+      expect(declined).toMatchObject({ status: "declined" });
+      expect(declined?.decidedVia).toBeUndefined();
+    });
+
+    it("can't approve a tap-only request by voice even if the check were wrong", async () => {
+      const { id, deps, approval } = await pause(createMemoryStore(scopeA), [], pausingWith({ actions: [{ tool: "STRIPE_CREATE_REFUND", arguments: {} }] }));
+      // The database's own check (settle_spoken_approval, mirrored by the test store) refuses it, and it keeps waiting.
+      await expect(
+        startTurn({ ...deps, allowSpokenDecision: async () => null }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken }),
+      ).rejects.toMatchObject({ status: 409, message: expect.stringContaining("couldn't be answered by voice") });
+    });
+
+    it("records a spoken decision with the call it was said on, and refuses one with none", async () => {
+      const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), [], pausingWith({ actions }));
+      const settle = vi.spyOn(store, "settleApproval");
+      const allowSpokenDecision = async () => null;
+      await expect(
+        startTurn({ ...deps, allowSpokenDecision }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken: { heard: "send it", voiceSessionId: "" } }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(await store.getApproval(approval.id)).toMatchObject({ status: "pending" });
+      await collect(startTurn({ ...deps, allowSpokenDecision }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken }));
+      expect(settle).toHaveBeenLastCalledWith(approval.id, "pending", "approved", { via: "voice", words: "send it", call: "call-1" });
+    });
+  });
+
   it("won't let another tenant answer a request", async () => {
     const db = createMemoryDb();
     const { id, approval } = await pause(createMemoryStore(scopeA, db));

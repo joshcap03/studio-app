@@ -2,6 +2,7 @@
 
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useEffect, useMemo, useRef } from "react";
+import { normalizeSpeech } from "@/lib/voice/intent";
 import { VOICE_TOOL_NAMES, type VoiceCue, type VoiceStage } from "@/lib/voice/types";
 import { isMarker, markerText, type LinkProps, type VoiceLink } from "./link";
 
@@ -45,16 +46,18 @@ function Session({ grant, events, tools, onReady }: LinkProps) {
     onError: (message: string) => !closed.current && latest.current.events.onStatus("error", message || "The call dropped."),
     onModeChange: ({ mode }: { mode: "speaking" | "listening" }) => latest.current.events.onMode(mode),
     onInterruption: () => latest.current.events.onInterrupted(),
+    // What the voice said was cut short: a read-back it was saying wasn't heard in full.
+    onAgentResponseCorrection: () => latest.current.events.onInterrupted(),
     onVadScore: ({ vadScore }: { vadScore: number }) => latest.current.events.onVoiceActivity?.(vadScore),
     onMessage: ({ message, role }: { message: string; role: "user" | "agent" }) => {
       if (role !== "user") return latest.current.events.onVoiceText(message);
       if (isMarker(message)) return;
       const echo = typed.current;
-      if (echo && echo.text === message.trim() && Date.now() - echo.at < TYPED_ECHO_MS) {
+      if (echo && normalizeSpeech(echo.text) === normalizeSpeech(message) && Date.now() - echo.at < TYPED_ECHO_MS) {
         typed.current = null;
         return;
       }
-      latest.current.events.onMemberText(message);
+      latest.current.events.onMemberText(message, { typed: false });
     },
   });
   const controls = useRef(conversation);
@@ -78,7 +81,7 @@ function Session({ grant, events, tools, onReady }: LinkProps) {
           const said = text.trim();
           if (!said) return;
           typed.current = { text: said, at: Date.now() };
-          latest.current.events.onMemberText(said);
+          latest.current.events.onMemberText(said, { typed: true });
           controls.current.sendUserMessage(said);
         },
         setMuted: ({ mic, speaker }) => {

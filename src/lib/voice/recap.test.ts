@@ -156,3 +156,28 @@ describe("callLength", () => {
     expect(callLength(240)).toBe("4 min");
   });
 });
+
+describe("approvals decided by voice", () => {
+  it("quote the member's words", () => {
+    const call = { id: "call", startedAt: 1_000_000, endedAt: 1_300_000 };
+    const messages = [
+      msg({ id: "u1", role: "user", content: "Email Jo", origin: { kind: "voice", sessionId: "call" }, createdAt: 1_010_000 }),
+      msg({
+        id: "r1",
+        status: "complete",
+        content: "Sent.",
+        createdAt: 1_020_000,
+        approvals: [
+          approval({ id: "a1", status: "approved", decidedAt: 1_100_000, decidedVia: "voice", decidedWords: "send it" }),
+          approval({ id: "a2", summary: "Email Dana", status: "declined", decidedAt: 1_200_000, decidedVia: "voice", decidedWords: "don't send it" }),
+          approval({ id: "a3", summary: "Email Lee", status: "approved", decidedAt: 1_250_000, decidedVia: "tap" }),
+        ],
+      }),
+    ];
+    expect(callRecap(messages, call)?.decided).toEqual([
+      "Approved by voice (“send it”): Send the reply to Jo",
+      "Declined by voice (“don't send it”): Email Dana",
+      "Approved: Email Lee",
+    ]);
+  });
+});

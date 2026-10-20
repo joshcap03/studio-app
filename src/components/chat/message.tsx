@@ -216,6 +216,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         <ApprovalCard
           key={approval.id}
           approval={approval}
+          conversationId={message.conversationId}
           onDecide={onDecide && message.status === "awaiting" ? (decision) => onDecide(approval.id, decision) : undefined}
         />
       ))}

@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { isBackchannel, isHangOnIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
+import { TAP_ONLY_REASONS } from "@/lib/types";
+import { isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
-import { plain } from "./relay";
+import { plain, SAY_SEND_IT, TAP_REASON_LINE } from "./relay";
 import { cueLine, greeting, JUST_BACK, VOICE_TOOLS, voiceNoteLine, voicePrompt } from "./persona";
 import { CALL_PURPOSES, VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -67,6 +68,10 @@ const stage = z
     questions: z.array(z.object({ question: z.string().max(500), options: z.array(z.string().max(200)).max(6), multi: z.boolean() })).max(4).optional(),
     proposal: z.string().max(600).optional(),
     approval: z.string().max(600).optional(),
+    // Absent from pages loaded before spoken approvals: the request is a tap.
+    approvalVoice: z.boolean().optional(),
+    approvalTap: z.enum([...TAP_ONLY_REASONS, "off", "spent"]).optional(),
+    approving: z.boolean().optional(),
     longJob: z.boolean().optional(),
   })
   .strip();
@@ -194,6 +199,13 @@ const HOLDING = {
   held: ["Got it. I'll bring that in once this is done.", "Okay, I'll add that when this finishes.", "Noted. I'll fold that in next."],
   /** They spoke while a request waits on their OK. */
   approval: ["Got it. That goes along once you've OK'd the request on screen."],
+  /** They spoke while a request they can OK by voice waits on them. */
+  approvalVoice: ["Got it. That goes along once the request on screen is answered."],
+  /** Their "send it" is in: the hold before it goes. */
+  approving: ["Okay, going ahead in three seconds. Say “wait”, or tap Cancel."],
+  /** They spoke during that hold, which stopped it. */
+  heldOff: ["Okay, I've held off. It's still waiting on you."],
+  declined: ["Okay, declined."],
   sent: ["Okay, that's sent.", "Sent."],
   stopped: ["Okay, I've stopped."],
   stopping: ["Okay, stopping."],
@@ -270,12 +282,38 @@ export function speechForResults(results: string[], messages: FrontMessage[] = [
         // Their answer to "hang on, or a voice note?" came just as the job did: no note, the call reads it.
         lines.push(JUST_BACK);
         break;
+      case "approving":
+        lines.push(holdingLine("approving", messages));
+        break;
+      case "declined":
+        lines.push(holdingLine("declined", messages));
+        break;
+      case "held off":
+        lines.push(holdingLine("heldOff", messages));
+        break;
+      case "tap":
+        lines.push(tapLine(detail));
+        break;
+      case "reading":
+        // The browser says the read-back again, as a Studio line of its own.
+        break;
       default:
         return null;
     }
   }
   if (filled.length) lines.unshift(`Got it: ${filled.filter(Boolean).join("; ")}.`);
   return lines.length ? sayable([...new Set(lines)].join(" ")) : null;
+}
+
+/**
+ * Why a request isn't approved by voice, from the browser's word for it (`money`, `typed`…), in
+ * fixed words. Anything unknown is just a tap.
+ */
+export function tapLine(reason: string): string {
+  const key = reason.trim().toLowerCase().split(/[\s.;,]/)[0];
+  if (key === "typed") return "Typed words don't approve it. Say “send it”, or tap Approve.";
+  const line = (TAP_REASON_LINE as Record<string, string>)[key] ?? TAP_REASON_LINE.unsupported;
+  return `${line} It's on screen.`;
 }
 
 /**
@@ -307,6 +345,8 @@ export function planReply(context: VoiceContext, messages: FrontMessage[]): Fron
     const results = trailingResults(messages);
     // The line already went out with the call (quickRoute), and the result is what it said.
     if (alreadySaid(messages) && results.every((r) => /^\s*(handed off|held|stopped|waiting|ending):/i.test(r))) return { kind: "skip" };
+    // The read-back is said again by the browser, as a Studio line.
+    if (results.length && results.every((r) => /^\s*reading:/i.test(r))) return { kind: "skip" };
     const speech = speechForResults(results, messages);
     if (speech) return { kind: "say", text: speech };
   }
@@ -389,9 +429,13 @@ export const LOST_LINE = "Sorry, I lost that. Could you say it again?";
  * rest as the model chose. The member's words go to the work whenever the model called nothing,
  * so the call never asks questions of its own and the chat stays the one record of it.
  */
-export function routeSpeech(said: string, stage: VoiceStage | null, tools: BrainReply["tools"] = []): BrainReply {
+export function routeSpeech(said: string, stage: VoiceStage | null, tools: BrainReply["tools"] = [], { approvals = false }: { approvals?: boolean } = {}): BrainReply {
   const skip = { tools: [{ name: "skip_turn", args: {} }] };
   if (isBackchannel(said)) return skip;
+  // A request waiting on their OK: a clear no declines it (by stop_work), and a clear "send it"
+  // approves it (by send_card) only where this call may, after the browser's own checks.
+  const request = answeringRequest(said, stage, approvals);
+  if (request) return request;
   if (isStopIntent(said)) return { tools: [{ name: "stop_work", args: {} }] };
   // Their answer to "hang on, or a voice note?" goes to the browser, which ends the call or carries on.
   if (answerToLongJob(said, stage)) return { tools: [{ name: "send_message", args: {} }] };
@@ -403,24 +447,60 @@ export function routeSpeech(said: string, stage: VoiceStage | null, tools: Brain
 }
 
 /**
+ * What a clear answer to the request on stage does, by fixed rules (never the model's call):
+ * a decline goes to stop_work; a yes goes to send_card when this call may approve it by voice
+ * (`approvals`, sealed when it started, and the stage says this request can be), and is
+ * otherwise told it's a tap. Null when it's not that, or no request waits.
+ */
+function answeringRequest(said: string, stage: VoiceStage | null, approvals: boolean): BrainReply | null {
+  if (!stage?.approval || stage.working) return null;
+  // During the hold, "wait" or "cancel that" stops the hold (the browser saw to that), not the
+  // request: it keeps waiting on them. A decline the hold's words don't cover still declines.
+  if (stage.approving && isHoldOn(said)) return { text: holdingLine("heldOff") };
+  if (isDeclineIntent(said)) return { tools: [{ name: "stop_work", args: {} }] };
+  if (!isApproveIntent(said)) return null;
+  if (approvals && stage.approvalVoice === true) return { tools: [{ name: "send_card", args: {} }] };
+  return { text: tapLine(approvals ? (stage.approvalTap ?? "unsupported") : "off") };
+}
+
+/**
  * The turn decided without a model, when there's nothing to interpret: the member spoke and no
  * card is on screen, so their words go to the work (or stay quiet, or stop it) straight away.
  * Most of a setup is plain questions, so this is most turns, about a second faster. Null when
  * the model is needed (a card to fill from what they said).
  */
-export function quickRoute(messages: FrontMessage[]): BrainReply | null {
+export function quickRoute(messages: FrontMessage[], { approvals = false }: { approvals?: boolean } = {}): BrainReply | null {
   const last = callTurns(messages).at(-1);
   if (last?.role !== "user") return null;
   const stage = latestStage(messages);
   if (stage?.form || stage?.questions?.length) return null;
   const said = textOf(last.content);
-  const reply = routeSpeech(said, stage, []);
+  const reply = routeSpeech(said, stage, [], { approvals });
+  // A change of course while a request waits declines it (the browser steers), like any redirect.
+  const waiting = Boolean(stage?.approval && !stage.working) && !isRedirect(said);
+  if (waiting && !isBackchannel(said)) {
+    // The answer itself (approve, decline, or why it's a tap): its tool's result says what happened.
+    if (answeringRequest(said, stage, approvals)) return reply;
+    // Anything else said during the hold stopped it (the browser saw to that); their words go along as usual.
+    if (stage!.approving) return isHoldOn(said) || isAffirmation(said) ? { text: holdingLine("heldOff", messages) } : { ...reply, text: holdingLine("heldOff", messages) };
+    if (isHoldOn(said)) return { tools: [{ name: "skip_turn", args: {} }] };
+    // Agreeing isn't approving: how to approve, once more.
+    if (stage!.approvalVoice && approvals && isAffirmation(said)) return { text: SAY_SEND_IT };
+  }
   // The holding line goes out with the hand-off, in one turn rather than two.
   const call = reply.tools?.[0]?.name;
   const answer = answerToLongJob(said, stage);
   if (answer) return { ...reply, text: answer === "note" ? voiceNoteLine(stage) : holdingLine("waiting", messages) };
   if (call === "send_message") {
-    const kind: HoldingKind = stage?.approval ? "approval" : stage?.working && !isRedirect(said) ? "held" : answering(messages) ? "answer" : "request";
+    const kind: HoldingKind = waiting
+      ? stage!.approvalVoice && approvals
+        ? "approvalVoice"
+        : "approval"
+      : stage?.working && !isRedirect(said)
+        ? "held"
+        : answering(messages)
+          ? "answer"
+          : "request";
     return { ...reply, text: holdingLine(kind, messages) };
   }
   if (call === "stop_work") return stage?.working ? { ...reply, text: holdingLine("stopping", messages) } : { tools: [{ name: "skip_turn", args: {} }] };
@@ -489,9 +569,11 @@ export async function modelReply(
     }
     const body = (await res.json()) as { choices?: { message?: { content?: unknown; tool_calls?: { function?: { name?: string; arguments?: string } }[] } }[] };
     const message = body.choices?.[0]?.message;
+    // A request waiting on their OK is answered only by fixed rules on their own words (routeSpeech), never by the model.
+    const answered = latestStage(request.messages)?.approval ? new Set(["send_card", "stop_work"]) : new Set<string>();
     const tools = (message?.tool_calls ?? []).flatMap((t) => {
       const name = t.function?.name ?? "";
-      if (!ALLOWED_CALLS.has(name)) return [];
+      if (!ALLOWED_CALLS.has(name) || answered.has(name)) return [];
       let args: Record<string, unknown> = {};
       try {
         args = t.function?.arguments ? (JSON.parse(t.function.arguments) as Record<string, unknown>) : {};
@@ -501,7 +583,7 @@ export async function modelReply(
       return [{ name, args }];
     });
     const last = callTurns(request.messages).at(-1);
-    if (last?.role === "user") return routeSpeech(textOf(last.content), latestStage(request.messages), tools);
+    if (last?.role === "user") return routeSpeech(textOf(last.content), latestStage(request.messages), tools, { approvals: context.approvals === true });
     if (tools.length) return { tools };
     // Only after a tool was turned down may the model say why, in a few words.
     const text = spokenText(message?.content);

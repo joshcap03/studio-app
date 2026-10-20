@@ -50,7 +50,19 @@ const body = z.discriminatedUnion("kind", [
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
   z.object({ kind: z.literal("retry"), offers }),
   z.object({ kind: z.literal("edit"), messageId: z.uuid(), text, offers }),
-  z.object({ kind: z.literal("decide"), approvalId: z.uuid(), decision: z.enum(["approve", "reject"]), offers }),
+  z
+    .object({
+      kind: z.literal("decide"),
+      approvalId: z.uuid(),
+      decision: z.enum(["approve", "reject"]),
+      // Said on a call rather than tapped: what the member was heard to say, and the call. It
+      // stands only once checked (src/lib/voice/approvals.ts); otherwise the request stays waiting.
+      via: z.enum(["tap", "voice"]).optional(),
+      heard: z.string().trim().min(1).max(500).optional(),
+      voiceSessionId: z.uuid().optional(),
+      offers,
+    })
+    .refine((b) => (b.via === "voice") === (b.heard !== undefined && b.voiceSessionId !== undefined), "A spoken decision needs the words heard and the call."),
 ]);
 
 export async function POST(request: NextRequest, { params }: Context) {

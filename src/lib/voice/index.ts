@@ -4,6 +4,7 @@ import type { Tenant } from "@/lib/tenant-core";
 import { getGuardrail, getSettings } from "@/lib/workspace";
 import { ELEVENLABS_CAPABILITIES, ELEVENLABS_LABEL, ELEVENLABS_VOICES, openElevenLabsCall, VoiceUnavailable } from "./elevenlabs";
 import { MOCK_VOICE_LABEL } from "./mock";
+import { spokenApprovalsOn } from "./approvals";
 import { agentLabel, resolvePersona } from "./persona";
 import { clipKey, sealContext } from "./seal";
 import { voiceStatus } from "./status";
@@ -50,7 +51,8 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
     throw e instanceof VoiceUnavailable ? e : new VoiceUnavailable("Couldn't open the call.", { cause: e });
   }
 
-  const [settings, guardrail] = await Promise.all([getSettings(tenant), getGuardrail(tenant)]);
+  // Whether this call may approve by voice is settled when it starts; the server checks again on each decision.
+  const [settings, guardrail, approvals] = await Promise.all([getSettings(tenant), getGuardrail(tenant), spokenApprovalsOn(tenant)]);
   // The server picks the voice from what the member chose; the browser only applies it.
   const persona = await resolvePersona(tenant, { templateId: settings.templateId });
   // A little past the call's limit, for the last words and the hang-up.
@@ -69,6 +71,7 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
       agent: agentLabel(settings.templateId, settings.name),
       guardrail: guardrail ? guardrail.slice(0, GUARDRAIL_CHARS) : null,
       ...(persona.manner ? { manner: persona.manner.slice(0, MANNER_CHARS) } : {}),
+      approvals,
     },
     voice.sealSecret,
   );
@@ -86,6 +89,7 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
       context,
       persona: { name: persona.name, voice: persona.voice, voiceId: mock ? null : ELEVENLABS_VOICES[persona.voice] },
       maxSeconds: claim.max_seconds,
+      spokenApprovals: approvals,
     },
   };
 }

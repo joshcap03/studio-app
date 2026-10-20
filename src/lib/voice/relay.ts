@@ -1,6 +1,6 @@
 import { PLAN_STEP_LABEL, talksMachinery } from "@/lib/agent/tools";
 import { moveOf } from "@/lib/chat/move";
-import type { ActivityStep, ChatMessage, JourneyStep, StreamEvent, UiBlock } from "@/lib/types";
+import type { ActivityStep, Approval, ChatMessage, JourneyStep, StreamEvent, TapOnlyReason, UiBlock } from "@/lib/types";
 
 // What the voice may say about the worker's progress on a call, built only from what the
 // backend reported: step labels as they start, the agent's own opening lines, journey notes,
@@ -25,7 +25,7 @@ export interface RelayState {
 export const initialRelay = (): RelayState => ({ said: [] });
 
 /** Text a step's label would be dropped for: raw data or talk of the agent's own machinery. */
-const TECHNICAL = /[{}<>[\]`|]|https?:\/\/|\b(null|undefined|nonetype|traceback)\b|\w+_\w+\(/i;
+export const TECHNICAL = /[{}<>[\]`|]|https?:\/\/|\b(null|undefined|nonetype|traceback)\b|\w+_\w+\(/i;
 const MAX_LINE = 160;
 
 /** Whether a label may be said aloud as-is. */
@@ -77,8 +77,54 @@ export function relayJourney(before: JourneyStep[], after: JourneyStep[]): Relay
   });
 }
 
-/** What to say when a reply ends: its gist, then what it asks of the member. */
-export function relayReply(message: ChatMessage): RelayLine[] {
+/**
+ * Why a request is a tap on a call: its class, "off" (spoken approvals are off for this call), or
+ * "spent" (its spoken approval on this call didn't go through, so it's a tap from then on).
+ */
+export type CallTapReason = TapOnlyReason | "off" | "spent";
+
+/** Why a request is a tap on a call, in a few words. */
+export const TAP_REASON_LINE: Record<CallTapReason, string> = {
+  money: "Payments are a tap.",
+  deletion: "Deleting things is a tap.",
+  bulk_send: "Sending to that many people is a tap.",
+  unsupported: "That one's a tap.",
+  off: "Approvals are taps for now.",
+  spent: "That one's a tap now.",
+};
+
+/** How to approve by voice, said after the read-back. */
+export const SAY_SEND_IT = "Say “send it” to go ahead, or tap.";
+
+/**
+ * Why a request is a tap on a call, or null when the call may approve it by voice (`spoken`:
+ * spoken approvals are on for it; `spent`: requests whose spoken approval on this call came back
+ * undecided). A request from before spoken approvals is a tap.
+ */
+export function tapReason(approval: Approval, spoken: boolean, spent: readonly string[] = []): CallTapReason | null {
+  if (approval.spoken?.ok) return !spoken ? "off" : spent.includes(approval.id) ? "spent" : null;
+  return approval.spoken?.reason ?? "unsupported";
+}
+
+/**
+ * What the call says about a request waiting on the member's OK. One this call may approve by
+ * voice is read back word for word, then how to answer; the call's guard (approval-guard.ts)
+ * knows the read-back by its words. Any other says it's a tap, and why.
+ */
+export function approvalLine(approval: Approval, spoken: boolean, spent: readonly string[] = []): string {
+  const why = tapReason(approval, spoken, spent);
+  if (!why && approval.spoken?.ok) return `${sentence(approval.spoken.readBack)} ${SAY_SEND_IT}`;
+  return `It needs your OK on screen: ${sentence(approval.summary)} ${TAP_REASON_LINE[why ?? "unsupported"]}`;
+}
+
+/**
+ * What to say when a reply ends: its gist, then what it asks of the member. `spokenApprovals`:
+ * this call may approve a voice-ok request by voice, except the `spent` ones.
+ */
+export function relayReply(
+  message: ChatMessage,
+  { spokenApprovals = false, spent = [] }: { spokenApprovals?: boolean; spent?: readonly string[] } = {},
+): RelayLine[] {
   const lines: RelayLine[] = [];
   if (message.status === "error") {
     return [{ kind: "problem", text: `That didn't work. ${sentence(message.error ?? "Something went wrong.")} Say “try again”, or tap Retry.`, droppable: false }];
@@ -97,7 +143,7 @@ export function relayReply(message: ChatMessage): RelayLine[] {
   }
   const pending = message.approvals?.find((a) => a.status === "pending");
   if (message.status === "awaiting" && pending) {
-    lines.push({ kind: "approval", text: `It needs your OK on screen: ${sentence(pending.summary)} That one's a tap.`, droppable: false });
+    lines.push({ kind: "approval", text: approvalLine(pending, spokenApprovals, spent), droppable: false });
   }
   return lines;
 }

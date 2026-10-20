@@ -106,7 +106,19 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
           ...m,
           approvals: shared.approvals
             .filter((a) => a.messageId === m.id)
-            .map(({ id, summary, app, details, status, createdAt, decidedAt }) => ({ id, summary, app, details, status, createdAt, decidedAt })),
+            .map(({ id, summary, app, details, status, createdAt, decidedAt, spoken, decidedVia, decidedWords, reported }) => ({
+              id,
+              summary,
+              app,
+              details,
+              status,
+              createdAt,
+              decidedAt,
+              spoken,
+              ...(decidedVia ? { decidedVia } : {}),
+              ...(decidedWords ? { decidedWords } : {}),
+              ...(reported ? { reported } : {}),
+            })),
           attachments: shared.attachments.filter((a) => a.messageId === m.id).map(({ id, name, mimeType, size }) => ({ id, name, mimeType, size })),
           memoryProposals: m.memoryProposals ?? [],
         }));
@@ -163,7 +175,15 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       if (shared.approvals.some((x) => x.conversationId === a.conversationId && x.status === "pending")) {
         throw new Error("duplicate key value violates unique constraint");
       }
-      const row: StoredApproval & Scope = { ...a, ...scope, id: crypto.randomUUID(), status: "pending", createdAt: Date.now() };
+      const row: StoredApproval & Scope = {
+        ...a,
+        ...scope,
+        id: crypto.randomUUID(),
+        status: "pending",
+        createdAt: Date.now(),
+        spoken: a.spoken ?? { ok: false, reason: "unsupported" },
+        tools: a.tools ?? [],
+      };
       shared.approvals.push(row);
       return stripScope(row);
     },
@@ -178,11 +198,21 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
     async pendingApprovals() {
       return shared.approvals.filter((x) => x.status === "pending" && owns(x)).map(stripScope);
     },
-    async settleApproval(id, from, to) {
+    async settleApproval(id, from, to, how) {
       const a = shared.approvals.find((x) => x.id === id && owns(x) && x.status === from);
       if (!a) return false;
+      // The database's own checks (settle_spoken_approval): a spoken decision answers a pending
+      // request on a call, and only a voice-ok request is approved by voice.
+      if (how?.via === "voice") {
+        if (from !== "pending" || (to !== "approved" && to !== "declined")) throw new Error("A spoken decision answers a pending request.");
+        if (!how.call || (to === "approved" && !a.spoken?.ok)) return false;
+      }
       a.status = to;
       a.decidedAt = Date.now();
+      if (how) {
+        a.decidedVia = how.via;
+        a.decidedWords = how.via === "voice" ? how.words : undefined;
+      }
       return true;
     },
     async claimAttachments(ids, messageId) {

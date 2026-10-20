@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { findingsForReply } from "@/components/chat/findings";
-import { openingLineIndexes } from "@/lib/agent/langflow";
+import { approvalFor, openingLineIndexes } from "@/lib/agent/langflow";
+import { spokenApprovalFor } from "@/lib/approvals/spoken";
 import { evidenceFor, interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
 import { linksSeen } from "@/lib/chat/timeline";
 import type { ActivityStep, ChatMessage, RunReport } from "@/lib/types";
 import { voiceNoteFor } from "@/lib/voice/notes";
-import { initialRelay, relayEvent, speakableGist, spokenStep } from "@/lib/voice/relay";
+import { initialRelay, relayEvent, speakableGist, spokenStep, TECHNICAL as SPOKEN_TECHNICAL } from "@/lib/voice/relay";
 
 // Replays every tool call in a real Langflow flow's history through the same interpreter and
 // findings code the app uses, and checks the result reads like it should to a business
@@ -14,7 +15,9 @@ import { initialRelay, relayEvent, speakableGist, spokenStep } from "@/lib/voice
 //
 // The same goes for what the voice says on a call (src/lib/voice/relay.ts): it narrates only
 // labels the agent reported, word for word, and a reply's spoken gist carries no markup or links;
-// nor does a voice note (src/lib/voice/notes.ts), the reply's or a task run's report.
+// nor does a voice note (src/lib/voice/notes.ts), the reply's or a task run's report. Every
+// take_action the agent asked approval for is classified for spoken approval
+// (src/lib/approvals/spoken.ts): money and deletions are always taps, and a read-back is plain words.
 //
 // Read-only. Needs LANGFLOW_AUDIT_BASE_URL, LANGFLOW_AUDIT_API_KEY, LANGFLOW_AUDIT_FLOW_ID.
 
@@ -70,6 +73,8 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
     const technical: string[] = [];
     const uncitable: string[] = [];
     const spokenBadly: string[] = [];
+    const approvalsWrong: string[] = [];
+    let classified = 0;
     let checked = 0;
     let narrated = 0;
     for (const m of messages) {
@@ -119,6 +124,18 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
         ...reports.map((report) => voiceNoteFor(final, { answered: asked({ kind: "task", taskId: "t", title: "Task", runId: null }), report })),
       ];
       for (const note of notes) if (note && /[[\]{}<>`*#|]|https?:\/\//.test(note.script)) spokenBadly.push(`voice note: ${note.script}`);
+      // Every action the agent asked approval for, as the call would classify it.
+      for (const leaf of (m.content_blocks ?? []).flatMap((b) => b.contents ?? []).filter((l) => l.type === "tool_use" && l.name === "take_action")) {
+        const pause = approvalFor({ action_requests: [{ name: "take_action", args: leaf.tool_input ?? leaf.input ?? {} }] });
+        const spoken = spokenApprovalFor({ actions: pause.actions, summary: pause.summary });
+        classified++;
+        const slugs = pause.actions.map((a) => a.tool).join(", ");
+        const words = pause.actions.flatMap((a) => a.tool.split("_"));
+        const risky = words.some((w) => /^(PAY|PAYMENT|CHARGE|REFUND|TRANSFER|PAYOUT|INVOICE|DELETE|REMOVE|TRASH|PURGE|CLEAR|ARCHIVE)$/.test(w));
+        if (risky && spoken.voiceOk) approvalsWrong.push(`voice-ok money or deletion: ${slugs}`);
+        if (spoken.voiceOk && (SPOKEN_TECHNICAL.test(spoken.readBack) || spoken.readBack.length > 400)) approvalsWrong.push(`read-back: ${spoken.readBack}`);
+        if (!spoken.voiceOk && !spoken.tapOnly) approvalsWrong.push(`unclassified: ${slugs}`);
+      }
       // Every link a tool returned must come with that result's text, or the agent can't cite
       // it with a checkable quote (src/lib/chat/citations.ts).
       const leaves = (m.content_blocks ?? []).flatMap((b) => b.contents ?? []).filter((l) => l.type === "tool_use");
@@ -133,5 +150,8 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
     expect(uncitable, uncitable.join("\n")).toEqual([]);
     expect(narrated).toBeGreaterThan(0);
     expect(spokenBadly, spokenBadly.join("\n")).toEqual([]);
+    expect(approvalsWrong, approvalsWrong.join("\n")).toEqual([]);
+    // Logged, so a flow that never asked for approval is visible rather than passing quietly.
+    console.info(`[audit] ${classified} approvals classified`);
   }, 60_000);
 });

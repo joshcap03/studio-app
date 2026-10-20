@@ -25,6 +25,12 @@ const FILLER = new Set(["the rest is on screen"]);
 interface Queued {
   text: string;
   turn: number;
+  /**
+   * Said as written, never cut into sentences (a read-back: an address like jo@acme.example isn't
+   * two sentences), and `again` even when it's been said already.
+   */
+  whole?: boolean;
+  again?: boolean;
 }
 
 export class CallNarrator {
@@ -80,14 +86,14 @@ export class CallNarrator {
    * member has already said more (held while it worked), which goes along next: the question it
    * ends on is theirs to hear from the next reply, not this one.
    */
-  reply(message: ChatMessage, options: { superseded?: boolean } = {}): void {
+  reply(message: ChatMessage, options: { superseded?: boolean; spokenApprovals?: boolean; spent?: readonly string[] } = {}): void {
     const key = `${message.id}:${message.status}`;
     if (this.read.has(key)) return;
     this.read.add(key);
     // Progress isn't news once the run is over.
     this.progress = null;
     const question = closingQuestion(message.content);
-    let lines = relayReply(message);
+    let lines = relayReply(message, { spokenApprovals: options.spokenApprovals, spent: options.spent });
     // Its gist was read as soon as it was written; only a closing question that came after is new.
     const early = this.earlyGist;
     if (early) {
@@ -111,6 +117,14 @@ export class CallNarrator {
     this.lines.push({ text, turn: this.turns });
   }
 
+  /**
+   * A line said again, word for word, even though it was said this turn: a request's read-back,
+   * when what the member said after it means it has to be heard again before a yes counts.
+   */
+  again(text: string): void {
+    this.lines.push({ text, turn: this.turns, whole: true, again: true });
+  }
+
   /** What finishing each journey step gave the agent. */
   journey(before: JourneyStep[], after: JourneyStep[]): void {
     this.queue(relayJourney(before, after));
@@ -132,7 +146,7 @@ export class CallNarrator {
       this.lastProgressAt = now;
     }
     return out.flatMap((line) => {
-      const fresh = this.unsaid(line.text, line.turn);
+      const fresh = this.unsaid(line);
       return fresh ? [fresh] : [];
     });
   }
@@ -174,14 +188,20 @@ export class CallNarrator {
       }
       // Older progress isn't news once the reply is here.
       if (line.kind === "reply") this.progress = null;
-      this.lines.push({ text: line.text, turn: this.turns });
+      this.lines.push({ text: line.text, turn: this.turns, ...(line.kind === "approval" ? { whole: true } : {}) });
     }
   }
 
-  /** The line without the sentences already said this turn; nothing if only filler is left. */
-  private unsaid(line: string, turn: number): string | null {
+  /** The line without the sentences already said this turn; nothing if only filler is left. A whole line is said as it is, or not at all. */
+  private unsaid({ text: line, turn, whole, again }: Queued): string | null {
     const said = this.said.get(turn) ?? new Set<string>();
     this.said.set(turn, said);
+    if (whole) {
+      const all = sentences(line).map(sameWords).filter(Boolean);
+      if (!again && all.length && all.every((w) => said.has(w))) return null;
+      for (const w of all) said.add(w);
+      return line;
+    }
     const kept = sentences(line).filter((s) => {
       const words = sameWords(s);
       if (!words) return false;
