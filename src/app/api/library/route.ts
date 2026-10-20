@@ -1,14 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { addLink, addLinkBody, listLibrary } from "@/lib/library";
+import { summarizeTrackers } from "@/lib/tasks/records";
 import { authorizeTenant } from "@/lib/tenant";
 
-/** The member's Library for the active agent: what it made and links they filed. */
+/** The member's Library for the active agent: what it made, links they filed, and their trackers in brief. */
 export async function GET(request: NextRequest) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
   try {
-    return NextResponse.json({ items: await listLibrary(auth.value) }, noStore);
+    const [items, trackers] = await Promise.all([listLibrary(auth.value), summarizeTrackers(auth.value)]);
+    return NextResponse.json({ items, trackers }, noStore);
   } catch (error) {
     return errorResponse(error);
   }

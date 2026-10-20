@@ -1,7 +1,7 @@
 import type { Tenant } from "@/lib/tenant-core";
 import { check, fail, time } from "./db";
 import { MAX_RECORDS_PER_COLLECTION, type RecordPatch, type RecordUpsert } from "./schema";
-import type { AgentRecord } from "./types";
+import type { AgentRecord, TrackerSummary } from "./types";
 
 // The agent's tracker: rows it keeps across runs in named collections (e.g. job applications
 // keyed by job URL). Private to the member, like tasks; the database caps each collection.
@@ -56,6 +56,40 @@ export async function listRecords(tenant: Tenant, collection?: string): Promise<
   if (collection) query = query.eq("collection", collection);
   const rows = check(await query.order("updated_at", { ascending: false }).limit(MAX_RECORDS_PER_COLLECTION)) as RecordRow[];
   return rows.map(toRecord);
+}
+
+/** Each of the member's collections in brief: row count, statuses, and when it last changed. */
+export async function summarizeTrackers(tenant: Tenant): Promise<TrackerSummary[]> {
+  const rows = check(
+    await records(tenant)
+      .select("collection, status, updated_at")
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .order("updated_at", { ascending: false })
+      .limit(5000),
+  ) as Pick<RecordRow, "collection" | "status" | "updated_at">[];
+  return summarize(rows);
+}
+
+/** Groups rows (most recently changed first) into one summary per collection, most recent first. */
+export function summarize(rows: Pick<RecordRow, "collection" | "status" | "updated_at">[]): TrackerSummary[] {
+  const byCollection = new Map<string, { count: number; statuses: Map<string, number>; updatedAt: number }>();
+  for (const r of rows) {
+    const at = Date.parse(r.updated_at);
+    const entry = byCollection.get(r.collection) ?? { count: 0, statuses: new Map<string, number>(), updatedAt: at };
+    entry.count += 1;
+    entry.updatedAt = Math.max(entry.updatedAt, at);
+    if (r.status) entry.statuses.set(r.status, (entry.statuses.get(r.status) ?? 0) + 1);
+    byCollection.set(r.collection, entry);
+  }
+  return [...byCollection]
+    .map(([collection, e]) => ({
+      collection,
+      count: e.count,
+      statuses: [...e.statuses].map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count || a.status.localeCompare(b.status)),
+      updatedAt: e.updatedAt,
+    }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** Adds a record, or updates the one already in its collection under the same key. */

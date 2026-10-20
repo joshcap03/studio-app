@@ -12,7 +12,9 @@ import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { ProjectView } from "@/components/project/project-view";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { LibraryView } from "@/components/library/library-view";
+import { TrackerPage } from "@/components/library/tracker-page";
 import { TaskDetail } from "@/components/tasks/task-detail";
+import { collectionName } from "@/components/tasks/tracker";
 import { TasksView } from "@/components/tasks/tasks-view";
 import { CompanionContext } from "@/components/ui/companion";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
@@ -121,7 +123,12 @@ function taskPathFrom(pathname: string): string | null {
   return match && UUID.test(match[1]) ? match[1] : null;
 }
 
-const isLibraryPath = (pathname: string) => /^\/library\/?$/.test(pathname);
+/** "/library" gives "home", "/library/<collection>" that tracker's collection, anything else null. */
+function libraryPathFrom(pathname: string): string | null {
+  if (/^\/library\/?$/.test(pathname)) return "home";
+  const match = /^\/library\/([a-z0-9][a-z0-9_-]{0,39})\/?$/.exec(pathname);
+  return match ? match[1] : null;
+}
 
 function provisionalTitle(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
@@ -173,7 +180,9 @@ function WorkspaceShell({
   const activeProjectId = activeId ? null : projectIdFrom(pathname);
   /** The Tasks page on screen: "list", or the id of the open task. */
   const activeTask = taskPathFrom(pathname);
-  const libraryActive = isLibraryPath(pathname);
+  /** The Library on screen: "home", or the collection of the open tracker. */
+  const libraryPath = libraryPathFrom(pathname);
+  const libraryActive = libraryPath !== null;
   const [taskTitle, setTaskTitle] = useState<string | null>(null);
 
   useEffect(() => {
@@ -389,9 +398,9 @@ function WorkspaceShell({
   const activeProjectName = activeProject?.status === "ready" ? activeProject.project.name : undefined;
   const tasksTitle = activeTask === "list" ? "Tasks" : activeTask ? (taskTitle ?? undefined) : undefined;
   useEffect(() => {
-    const title = activeTitle ?? activeProjectName ?? tasksTitle ?? (libraryActive ? "Library" : undefined);
+    const title = activeTitle ?? activeProjectName ?? tasksTitle ?? (libraryPath === "home" ? "Library" : libraryPath ? collectionName(libraryPath) : undefined);
     document.title = title ? `${title} · Studio` : `${workspace.name} · Studio`;
-  }, [activeTitle, activeProjectName, tasksTitle, libraryActive, workspace.name]);
+  }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name]);
 
   /**
    * Opens a task's conversation. A run may have just created it or added to it on the server,
@@ -1314,8 +1323,10 @@ function WorkspaceShell({
             </IconButton>
           </header>
 
-          {libraryActive ? (
-            <LibraryView onOpenConversation={(id) => navigate(`/c/${id}`)} />
+          {libraryPath === "home" ? (
+            <LibraryView onOpenConversation={(id) => navigate(`/c/${id}`)} onOpenTracker={(collection) => navigate(`/library/${collection}`)} />
+          ) : libraryPath ? (
+            <TrackerPage key={libraryPath} collection={libraryPath} onBack={() => navigate("/library")} />
           ) : activeTask === "list" ? (
             <TasksView skills={skills} onOpen={(id) => navigate(`/tasks/${id}`)} />
           ) : activeTask ? (

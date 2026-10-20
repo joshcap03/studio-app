@@ -92,7 +92,7 @@ raw/technical text.
   filed from its tools' own artifact results as each reply streams (one row per link), links the agent
   files when the member asks it to keep one (`file_link`), and links the member pastes. Each run's
   context lists it so the agent reopens what it made. The page
-  (`src/components/library/`) also shows every tracker collection and the member's agent files.
+  (`src/components/library/`) lists each tracker collection in brief, opening to its own page (`/library/<collection>`), and the member's agent files.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).

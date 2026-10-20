@@ -1,13 +1,13 @@
 "use client";
 
-import { Archive, ArrowUpRight, File, MessageSquare, MoreHorizontal, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
+import { Archive, ArrowUpRight, ChevronRight, File, ListChecks, MessageSquare, MoreHorizontal, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ARTIFACT_KIND_STYLE } from "@/components/chat/artifact-card";
 import { errorText, field, formatDay, iconButton, primary, secondary } from "@/components/tasks/shared";
-import { Tracker } from "@/components/tasks/tracker";
+import { collectionName } from "@/components/tasks/tracker";
 import { api } from "@/lib/client/api";
-import type { AgentRecord } from "@/lib/tasks/types";
+import type { TrackerSummary } from "@/lib/tasks/types";
 import type { Attachment, LibraryItem } from "@/lib/types";
 
 // The member's Library for this agent: the docs and sheets it made for them (filed from its
@@ -16,6 +16,7 @@ import type { Attachment, LibraryItem } from "@/lib/types";
 
 interface Props {
   onOpenConversation: (conversationId: string) => void;
+  onOpenTracker: (collection: string) => void;
 }
 
 type Loaded<T> = T[] | null;
@@ -24,9 +25,9 @@ const card = "rounded-2xl border border-line bg-surface p-4";
 const menuItem =
   "flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover";
 
-export function LibraryView({ onOpenConversation }: Props) {
+export function LibraryView({ onOpenConversation, onOpenTracker }: Props) {
   const [items, setItems] = useState<Loaded<LibraryItem>>(null);
-  const [records, setRecords] = useState<Loaded<AgentRecord>>(null);
+  const [trackers, setTrackers] = useState<Loaded<TrackerSummary>>(null);
   const [files, setFiles] = useState<Loaded<Attachment>>(null);
   const [failed, setFailed] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -35,10 +36,10 @@ export function LibraryView({ onOpenConversation }: Props) {
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
-    Promise.all([api.listLibrary(signal), api.listRecords(signal), api.listAgentFiles(signal)])
-      .then(([library, tracked, own]) => {
+    Promise.all([api.listLibrary(signal), api.listAgentFiles(signal)])
+      .then(([library, own]) => {
         setItems(library.items);
-        setRecords(tracked.records);
+        setTrackers(library.trackers);
         setFiles(own.files);
       })
       .catch(() => {
@@ -47,8 +48,8 @@ export function LibraryView({ onOpenConversation }: Props) {
     return () => controller.abort();
   }, []);
 
-  const loading = !failed && (items === null || records === null || files === null);
-  const nothing = items?.length === 0 && records?.length === 0 && files?.length === 0;
+  const loading = !failed && (items === null || trackers === null || files === null);
+  const nothing = items?.length === 0 && trackers?.length === 0 && files?.length === 0;
 
   function sorted(list: LibraryItem[]): LibraryItem[] {
     return [...list].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
@@ -148,8 +149,17 @@ export function LibraryView({ onOpenConversation }: Props) {
               )}
             </section>
 
-            {records && records.length > 0 ? (
-              <Tracker records={records} onChange={setRecords} onError={setNotice} title="Trackers" empty="" />
+            {trackers && trackers.length > 0 ? (
+              <section className={card} aria-labelledby="library-trackers">
+                <h2 id="library-trackers" className="text-[13.5px] font-medium text-fg">
+                  Trackers
+                </h2>
+                <ul className="-mx-1 mt-2 divide-y divide-line">
+                  {trackers.map((t) => (
+                    <TrackerRow key={t.collection} tracker={t} onOpen={() => onOpenTracker(t.collection)} />
+                  ))}
+                </ul>
+              </section>
             ) : null}
 
             {files && files.length > 0 ? (
@@ -177,6 +187,37 @@ export function LibraryView({ onOpenConversation }: Props) {
         )}
       </div>
     </div>
+  );
+}
+
+/** One tracker in brief: its name, row count, top statuses, and last change. Opens its page. */
+function TrackerRow({ tracker, onOpen }: { tracker: TrackerSummary; onOpen: () => void }) {
+  const statuses = tracker.statuses.slice(0, 3).map((s) => `${s.count} ${s.status}`);
+  const more = tracker.statuses.length > 3 ? ` · +${tracker.statuses.length - 3} more` : "";
+  return (
+    <li>
+      <a
+        href={`/library/${tracker.collection}`}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+          onOpen();
+        }}
+        className="flex items-center gap-3 rounded-lg px-1 py-2 transition-colors hover:bg-hover"
+      >
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-subtle text-fg-2">
+          <ListChecks size={18} strokeWidth={1.75} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[14px] font-medium text-fg">{collectionName(tracker.collection)}</span>
+          <span className="block truncate text-[12.5px] text-fg-3">
+            {[`${tracker.count} ${tracker.count === 1 ? "row" : "rows"}`, ...statuses].join(" · ")}
+            {more} · {formatDay(tracker.updatedAt)}
+          </span>
+        </span>
+        <ChevronRight size={16} className="shrink-0 text-fg-4" aria-hidden="true" />
+      </a>
+    </li>
   );
 }
 
