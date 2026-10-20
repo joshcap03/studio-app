@@ -58,6 +58,12 @@ const chip =
   "inline-flex h-8 items-center gap-2 rounded-full border border-line px-3 text-[13px] text-fg-2 transition-colors hover:border-line-strong hover:bg-surface hover:text-fg";
 const SHOWN_SKILLS = 5;
 
+/** The skills offered as chips: the agent's own first (what it's for), then the built-ins every agent has. */
+export function chipSkills(skills: WorkspaceSkill[]): WorkspaceSkill[] {
+  const builtin = (s: WorkspaceSkill) => s.id.startsWith("builtin:");
+  return [...skills.filter((s) => !builtin(s)), ...skills.filter(builtin)].slice(0, SHOWN_SKILLS);
+}
+
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
   { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, onSayHello },
   composerRef,
@@ -119,7 +125,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
         </div>
         <ul className="mt-4 flex flex-wrap justify-center gap-1.5 animate-fade-up [animation-delay:120ms]" aria-label="Suggestions">
           {skills.length > 0
-            ? skills.slice(0, SHOWN_SKILLS).map((s) => (
+            ? chipSkills(skills).map((s) => (
                 <li key={s.id}>
                   <button type="button" onClick={() => attach(s)} className={chip} title={s.description || undefined}>
                     <Sparkles size={14} strokeWidth={1.75} className="text-fg-3" />
