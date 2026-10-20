@@ -27,6 +27,14 @@ describe("task schemas", () => {
     expect(patchTaskBody.safeParse({}).success).toBe(false);
   });
 
+  it("lets the member change or clear what done looks like, in one line", () => {
+    expect(patchTaskBody.parse({ goal: "  two roles\n worth applying to " })).toEqual({ goal: "two roles worth applying to" });
+    expect(patchTaskBody.parse({ goal: "   " })).toEqual({ goal: null });
+    expect(patchTaskBody.parse({ goal: null })).toEqual({ goal: null });
+    expect(patchTaskBody.safeParse({ goal: "x".repeat(201) }).success).toBe(false);
+    expect(createTaskBody.safeParse({ title: "x", goal: "y" }).success).toBe(false);
+  });
+
   it("caps plans at 30 steps with distinct ids", () => {
     expect(planSchema.safeParse(Array.from({ length: 30 }, (_, i) => step(String(i), "needs_you"))).success).toBe(true);
     expect(planSchema.safeParse(Array.from({ length: 31 }, (_, i) => step(String(i)))).success).toBe(false);

@@ -5,9 +5,10 @@ import { AlertDialog, Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/client/api";
 import { MAX_PLAN_STEPS, MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
+import { useInlineEdit } from "@/components/ui/inline-edit";
 import { JourneyBar } from "@/components/ui/journey";
 import type { AgentRecord, AgentTask, PlanStep, StepStatus, TaskRun } from "@/lib/tasks/types";
-import type { WorkspaceSkill } from "@/lib/types";
+import { MAX_GOAL_LENGTH, type WorkspaceSkill } from "@/lib/types";
 import {
   browserZone,
   draftFrom,
@@ -235,7 +236,7 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
         </div>
 
         <div className="mt-6 space-y-3 animate-fade-up [animation-delay:60ms]">
-          <PlanCard plan={task.plan} onSave={(plan) => patch({ plan })} />
+          <PlanCard plan={task.plan} goal={task.goal} onSave={(plan) => patch({ plan })} onGoal={(goal) => patch({ goal })} />
 
           <section className={card} aria-labelledby="task-settings">
             <div className="flex items-center gap-2">
@@ -321,7 +322,18 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
   );
 }
 
-function PlanCard({ plan, onSave }: { plan: PlanStep[]; onSave: (plan: PlanStep[]) => Promise<AgentTask | null> }) {
+function PlanCard({
+  plan,
+  goal,
+  onSave,
+  onGoal,
+}: {
+  plan: PlanStep[];
+  /** What done looks like, in the agent's words or the member's edit. */
+  goal: string | null;
+  onSave: (plan: PlanStep[]) => Promise<AgentTask | null>;
+  onGoal: (goal: string | null) => Promise<AgentTask | null>;
+}) {
   const [adding, setAdding] = useState("");
   // Shown while a save is in flight; the server's copy replaces it when the save lands.
   const [pending, setPending] = useState<PlanStep[] | null>(null);
@@ -354,6 +366,7 @@ function PlanCard({ plan, onSave }: { plan: PlanStep[]; onSave: (plan: PlanStep[
           </span>
         ) : null}
       </div>
+      <GoalLine goal={goal} onSave={onGoal} />
       {steps.length > 0 ? <JourneyBar steps={steps} className="mt-2.5 mb-1" /> : null}
       {steps.length === 0 ? <p className="mt-2 text-[13px] text-fg-3">No plan yet. I&apos;ll write one when I run, or you can add steps yourself.</p> : null}
       <ul className="mt-2">
@@ -388,17 +401,48 @@ function PlanCard({ plan, onSave }: { plan: PlanStep[]; onSave: (plan: PlanStep[
   );
 }
 
+/** "Done means …": the line the agent gave with its plan, which the member can change or clear. */
+function GoalLine({ goal, onSave }: { goal: string | null; onSave: (goal: string | null) => Promise<AgentTask | null> }) {
+  const [text, setText] = useState(goal ?? "");
+  useEffect(() => setText(goal ?? ""), [goal]);
+
+  const edit = useInlineEdit({
+    commit: () => {
+      const next = text.replace(/\s+/g, " ").trim();
+      if (next !== (goal ?? "")) void onSave(next || null);
+    },
+    revert: () => setText(goal ?? ""),
+  });
+
+  return (
+    <label className="mt-1.5 flex items-center gap-1 text-[13px]">
+      <span className="shrink-0 pl-1.5 text-fg-3">Done means</span>
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        {...edit}
+        maxLength={MAX_GOAL_LENGTH}
+        placeholder="what finished looks like"
+        className="h-8 min-w-0 flex-1 rounded-lg bg-transparent px-1.5 text-[13px] text-fg outline-none placeholder:text-fg-4 focus:bg-subtle focus-visible:outline-none"
+      />
+    </label>
+  );
+}
+
 function PlanItem({ step, onChange, onRemove }: { step: PlanStep; onChange: (step: PlanStep) => void; onRemove: () => void }) {
   const [text, setText] = useState(step.text);
   useEffect(() => setText(step.text), [step.text]);
   const isDone = step.status === "done";
   const extra = STEP_LABEL[step.status];
 
-  function commit() {
-    const next = text.trim();
-    if (!next) setText(step.text);
-    else if (next !== step.text) onChange({ ...step, text: next });
-  }
+  const edit = useInlineEdit({
+    commit: () => {
+      const next = text.trim();
+      if (!next) setText(step.text);
+      else if (next !== step.text) onChange({ ...step, text: next });
+    },
+    revert: () => setText(step.text),
+  });
 
   return (
     <li className="group/step flex items-start gap-2 py-0.5">
@@ -418,14 +462,7 @@ function PlanItem({ step, onChange, onRemove }: { step: PlanStep; onChange: (ste
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") {
-              setText(step.text);
-              e.currentTarget.blur();
-            }
-          }}
+          {...edit}
           maxLength={200}
           aria-label="Step"
           className={`h-9 w-full rounded-lg bg-transparent px-1.5 text-[13.5px] outline-none focus:bg-subtle focus-visible:outline-none ${

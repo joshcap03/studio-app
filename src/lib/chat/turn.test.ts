@@ -3,7 +3,7 @@ import { createMockAdapter } from "@/lib/agent/mock";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "@/lib/agent/types";
 import { readNdjson } from "@/lib/client/api";
 import { createMemoryDb, createMemoryStore } from "@/test/memory-store";
-import type { Artifact, ChatMessage, StreamEvent } from "@/lib/types";
+import type { Artifact, ChatMessage, Journey, StreamEvent } from "@/lib/types";
 import { sanitizeArtifact, startTurn, stopRun, titleFromMessage, TurnError } from "./turn";
 
 const scopeA = { workspaceId: "ws-a", userId: "user-a" };
@@ -725,7 +725,7 @@ describe("edits, files, and memory suggestions", () => {
           adapter,
           context: context(scopeA),
           idleTimeoutMs: 1000,
-          savePlan: async (plan) => (plans.push(plan), true),
+          savePlan: async (plan) => (plans.push(plan), null),
           saveRecord: async (record, source) => (records.push([record, source]), true),
         },
         { conversationId: id, kind: "send", text: "Find roles", origin: { kind: "task", taskId: "t1", title: "Job hunt", runId: null } },
@@ -736,6 +736,38 @@ describe("edits, files, and memory suggestions", () => {
     expect(records).toHaveLength(25);
     expect(records[0][1]).toEqual({ messageId: reply.id });
     expect(asked.origin).toEqual({ kind: "task", taskId: "t1", title: "Job hunt", runId: null });
+  });
+
+  it("saves the agent's plans one at a time, in order, and streams each saved journey as it lands", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const saving: string[] = [];
+    let saved: { steps: unknown; goal: unknown } | null = null;
+    const adapter = scripted([
+      { type: "plan-update", plan: [{ text: "Find caterers", status: "doing" }], goal: "three caterers under $40 a head" },
+      { type: "plan-update", plan: [{ text: "Find caterers", status: "done" }] },
+      // Refused by the saver: no journey goes out for it.
+      { type: "plan-update", plan: "not a plan" },
+      { type: "message", text: "Found three." },
+    ]);
+    const savePlan = async (plan: unknown, goal: unknown): Promise<Journey | null> => {
+      saving.push(`start ${JSON.stringify(plan)}`);
+      // The first save is the slowest; a later one still waits for it.
+      await new Promise((r) => setTimeout(r, saved ? 0 : 30));
+      saving.push(`end ${JSON.stringify(plan)}`);
+      if (!Array.isArray(plan)) return null;
+      saved = { steps: plan, goal: goal ?? (saved?.goal as string | undefined) ?? null };
+      return { kind: "conversation", goal: saved.goal as string | null, steps: plan as Journey["steps"], updatedAt: 1 };
+    };
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, savePlan }, { conversationId: id, kind: "send", text: "Find caterers" }));
+    expect(saving.map((s) => s.split(" ")[0])).toEqual(["start", "end", "start", "end", "start", "end"]);
+    const journeys = events.filter((e) => e.type === "journey").map((e) => e.type === "journey" && e.journey);
+    expect(journeys).toEqual([
+      { kind: "conversation", goal: "three caterers under $40 a head", steps: [{ text: "Find caterers", status: "doing" }], updatedAt: 1 },
+      { kind: "conversation", goal: "three caterers under $40 a head", steps: [{ text: "Find caterers", status: "done" }], updatedAt: 1 },
+    ]);
+    // Every journey goes out before the reply ends.
+    expect(events.findIndex((e) => e.type === "journey")).toBeLessThan(events.findIndex((e) => e.type === "end"));
   });
 
   it("files the reply's linked artifacts in the Library, once each and capped per run", async () => {

@@ -14,6 +14,7 @@ import { resolveMergeProposal } from "@/lib/memory-merge";
 import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { getSkill } from "@/lib/skills";
+import { SETUP_SKILL_ID } from "@/lib/skills/setup";
 import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
@@ -65,6 +66,8 @@ export async function buildTurnDeps(
     // Words said on a call, or held as a voice message, are labeled as spoken.
     if (asked.kind === "send") origin = originFor(asked.modality, asked.text);
   }
+  // A run started with the setup skill is the setup interview's, from its context to its first plan.
+  const setupRun = input.kind === "send" && input.skillId === SETUP_SKILL_ID;
   const store = storeFor(tenant);
   const earlier = store.listMessages(conversationId).catch(() => null);
   // A new message says how it was sent. A retry, an edit, or a decision answers the member's
@@ -83,7 +86,7 @@ export async function buildTurnDeps(
       const asks = (end < 0 ? messages : messages.slice(0, end)).filter((m) => m.role === "user").map((m) => m.content);
       return "text" in input ? [...asks, input.text] : asks;
     })
-    .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId, modality));
+    .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId, modality, { setupRun }));
   context.catch(() => undefined);
   const adapter = getAgentAdapter();
   const loadSkill = (id: string) => getSkill(tenant, id, { call: modality === "call" });
@@ -152,8 +155,11 @@ export async function buildTurnDeps(
     voiceNotes: Boolean(voiceStatus(tenant)?.speech.tts),
     loadAttachment: (attachment) => readAttachment(tenant, attachment),
     loadSkill,
-    // Plans save only in a task's conversation or the agent's setup interview (for everyone).
-    savePlan: (plan: unknown) => savePlanFromAgent(tenant, conversationId, plan),
+    // A plan saves where the work here keeps it: the conversation's task, the owner's setup
+    // checklist (a run started with the setup skill is the setup's from its first save), or the
+    // conversation itself.
+    savePlan: (plan: unknown, goal: unknown) =>
+      savePlanFromAgent(tenant, conversationId, plan, goal, { setup: setupRun }),
     saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source),
     fileArtifact: (artifact, source) => fileArtifact(tenant, artifact, { conversationId, messageId: source.messageId }),
     onFinished: finished,

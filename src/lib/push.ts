@@ -1,4 +1,5 @@
 import webpush from "web-push";
+import { moveOf } from "@/lib/chat/move";
 import { getConfig } from "@/lib/config";
 import type { Session } from "@/lib/tenant-core";
 import type { ChatMessage, ConversationSummary, RunReport } from "@/lib/types";
@@ -61,9 +62,12 @@ export function excerpt(markdown: string, max = EXCERPT): string {
 
 /**
  * What to tell the member about a run that ended while they weren't watching, or null when
- * there's nothing to say (they stopped it themselves). `from` is the agent's own name, once it
- * has one (with voice, the name its calls go by), so a member with several agents can tell
- * which one it is. A reply with a voice note says so, and opens on its play button (?play=).
+ * there's nothing to say (they stopped it themselves, or a task's run found nothing new). It
+ * follows whose move it is (src/lib/chat/move.ts): their OK, anything else waiting on them (a card,
+ * a question, a run that needs them), a run that couldn't finish, or done. `from` is the agent's
+ * own name, once it has one (with voice, the name its calls go by), so a member with several
+ * agents can tell which one it is. A reply with a voice note says so first, and opens on its play
+ * button (?play=): the note says what they need to do.
  */
 export function notificationFor(
   message: ChatMessage,
@@ -75,27 +79,28 @@ export function notificationFor(
   const tag = `conversation:${conversation.id}`;
   const title = conversation.title || "Studio";
   const by = (text: string) => (from ? `${from}: ${text}` : text);
-  switch (message.status) {
-    case "complete":
-      if (message.voiceNote && report?.outcome !== "nothing_new") {
-        return {
-          title: `${from || "Studio"} left you a voice note`,
-          body: excerpt(message.voiceNote.script) || title,
-          url: `${url}?play=${encodeURIComponent(message.id)}`,
-          tag,
-        };
+  if (message.status === "complete" && message.voiceNote && report?.outcome !== "nothing_new") {
+    return {
+      title: `${from || "Studio"} left you a voice note`,
+      body: excerpt(message.voiceNote.script) || title,
+      url: `${url}?play=${encodeURIComponent(message.id)}`,
+      tag,
+    };
+  }
+  const { move, reason } = moveOf(message, { report });
+  switch (move) {
+    case "your_call":
+      if (reason === "approval") {
+        const pending = message.approvals?.find((a) => a.status === "pending");
+        return { title: by("Needs your OK"), body: excerpt(pending?.summary ?? title), url, tag };
       }
-      // A task's run that found nothing new stays quiet; one that needs the member says so.
-      if (report?.outcome === "nothing_new") return null;
-      if (report?.outcome === "needs_you") return { title: by("Needs you"), body: excerpt(report.summary || message.content) || title, url, tag };
-      return { title: by(title), body: excerpt(report?.summary || message.content) || "Studio finished.", url, tag };
-    case "awaiting": {
-      const pending = message.approvals?.find((a) => a.status === "pending");
-      return { title: by("Needs your OK"), body: excerpt(pending?.summary ?? title), url, tag };
-    }
-    case "error":
-    case "interrupted":
+      return { title: by("Needs you"), body: excerpt(report?.summary || message.content) || title, url, tag };
+    case "stuck":
       return { title: by("Couldn't finish"), body: title, url, tag };
+    case "done":
+      // A task's run that found nothing new stays quiet.
+      if (report?.outcome === "nothing_new") return null;
+      return { title: by(title), body: excerpt(report?.summary || message.content) || "Studio finished.", url, tag };
     default:
       return null;
   }

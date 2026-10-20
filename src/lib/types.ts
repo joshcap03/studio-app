@@ -335,11 +335,13 @@ export interface SetupSummary {
   total: number;
   /** The checklist as the agent last reported it, or the template's steps before it has. */
   plan: JourneyStep[];
+  /** What done looks like for the setup, in the agent's words, once it has said. */
+  goal: string | null;
 }
 
 /**
- * One step of a journey the agent reports with update_plan (a setup checklist, a task's plan):
- * `note` is what finishing it gave the agent, or what's in the way.
+ * One step of a journey the agent reports with update_plan (a setup checklist, a task's or a
+ * conversation's plan): `note` is what finishing it gave the agent, or what's in the way.
  */
 export interface JourneyStep {
   text: string;
@@ -354,6 +356,24 @@ export interface AgentSetup {
   conversationId: string | null;
   /** The checklist as the agent last reported it (update_plan), with each step's status and outcome. */
   plan: JourneyStep[];
+  /** What done looks like, as the agent last reported it with the checklist (absent before it did). */
+  goal?: string | null;
+  updatedAt: number;
+}
+
+/** The longest "Done means …" line the agent can give a piece of work. */
+export const MAX_GOAL_LENGTH = 200;
+
+/**
+ * A piece of work the agent keeps a plan for, as the member sees it (src/lib/journey.ts): a task's
+ * plan, the setup interview's checklist, or an ordinary conversation's. `goal` is what done looks
+ * like, in the agent's own words ("Done means …"), or null until it says.
+ */
+export interface Journey {
+  kind: "task" | "setup" | "conversation";
+  goal: string | null;
+  steps: JourneyStep[];
+  /** When the plan last changed. */
   updatedAt: number;
 }
 
@@ -410,6 +430,8 @@ export type StreamEvent =
   | { type: "citations"; citations: Citation[] }
   | { type: "questions"; questions: Question[] }
   | { type: "ui"; ui: UiBlock[] }
+  /** The conversation's plan, each time the agent saved a change to it. */
+  | { type: "journey"; journey: Journey }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
 export const MAX_MESSAGE_LENGTH = 32_000;

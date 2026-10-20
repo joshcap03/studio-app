@@ -8,6 +8,8 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./helpers";
 // Requires the QA server (mock agent) on APP_URL.
 
 const APP = process.env.APP_URL ?? "http://127.0.0.1:3100";
+/** What the mock agent's "track" run says done means (src/lib/agent/mock.ts). */
+const MOCK_GOAL = "two roles worth your time in your tracker, with outreach drafted (demo)";
 const PASSWORD = "pw-local-tasks-api-only";
 
 class Client {
@@ -136,12 +138,18 @@ describe("tasks API", () => {
     const patched = await alice.api.json(`/api/tasks/${aliceTask}`, "PATCH", {
       status: "paused",
       plan: [{ id: "a", text: "Search boards", status: "done", note: "Found 3" }],
+      goal: "  three design roles   worth applying to ",
     });
     expect(patched.status).toBe(200);
-    expect(((await patched.json()) as { task: { status: string; nextRunAt: number | null } }).task).toMatchObject({
+    expect(((await patched.json()) as { task: { status: string; nextRunAt: number | null; goal: string | null } }).task).toMatchObject({
       status: "paused",
       nextRunAt: null,
+      goal: "three design roles worth applying to",
     });
+    // Cleared by an empty line; Bob can't change it.
+    expect((await bob.api.json(`/api/tasks/${aliceTask}`, "PATCH", { goal: "forged" })).status).toBe(404);
+    const cleared = (await (await alice.api.json(`/api/tasks/${aliceTask}`, "PATCH", { goal: "" })).json()) as { task: { goal: string | null } };
+    expect(cleared.task.goal).toBeNull();
     const runs = (await (await alice.api.json(`/api/tasks/${aliceTask}/runs`, "GET")).json()) as { runs: { status: string }[] };
     expect(runs.runs.map((r) => r.status)).toEqual(["queued"]);
   });
@@ -158,6 +166,7 @@ describe("tasks API", () => {
       expect((await alice.api.json("/api/tasks", "POST", body)).status, JSON.stringify(body)).toBe(400);
     }
     expect((await alice.api.json(`/api/tasks/${aliceTask}`, "PATCH", {})).status).toBe(400);
+    expect((await alice.api.json(`/api/tasks/${aliceTask}`, "PATCH", { goal: "x".repeat(201) })).status).toBe(400);
     expect((await alice.api.json(`/api/tasks/${aliceTask}`, "PATCH", { templateTaskId: "x" })).status).toBe(400);
   });
 
@@ -241,10 +250,15 @@ describe("running a task", () => {
       expect(messages[0].origin).toMatchObject({ kind: "task", taskId });
 
       const task = ((await (await alice.api.json(`/api/tasks/${taskId}`, "GET")).json()) as {
-        task: { conversationId: string; plan: { text: string; status: string }[]; lastRunAt: number | null };
+        task: { conversationId: string; plan: { text: string; status: string }[]; goal: string | null; lastRunAt: number | null };
       }).task;
       expect(task.conversationId).toBe(conversationId);
+      // The later of its two plan updates, with the goal the first one gave.
       expect(task.plan.map((s) => s.status)).toEqual(["done", "doing", "todo"]);
+      expect(task.goal).toBe(MOCK_GOAL);
+      // The task's conversation shows the task's plan.
+      const thread = (await (await alice.api.json(`/api/conversations/${conversationId}`, "GET")).json()) as { journey: { kind: string; goal: string | null } | null };
+      expect(thread.journey).toMatchObject({ kind: "task", goal: MOCK_GOAL });
       expect(task.lastRunAt).not.toBeNull();
 
       const runs = ((await (await alice.api.json(`/api/tasks/${taskId}/runs`, "GET")).json()) as {
@@ -261,6 +275,74 @@ describe("running a task", () => {
     } finally {
       await alice.db.from("agent_records").delete().eq("collection", "applications").like("key", "https://jobs.example/%");
       await alice.api.json(`/api/tasks/${taskId}`, "DELETE");
+    }
+  }, 60_000);
+});
+
+describe("a plan in any conversation", () => {
+  type Journey = { kind: string; goal: string | null; steps: { text: string; status: string }[] };
+
+  it("keeps the plan and goal the agent reports, live and on reload, for its member only", async () => {
+    // The mock agent's "track" run says what done means, plans, searches, then updates the plan.
+    const conversationId = crypto.randomUUID();
+    try {
+      const res = await alice.api.json(`/api/conversations/${conversationId}/messages`, "POST", { kind: "send", text: "Track a few roles for me" });
+      expect(res.status, await res.clone().text()).toBe(200);
+      const events = (await res.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; journey?: Journey });
+      const journeys = events.filter((e) => e.type === "journey").map((e) => e.journey!);
+      expect(journeys.map((j) => j.steps.map((s) => s.status))).toEqual([
+        ["doing", "todo", "todo"],
+        ["done", "doing", "todo"],
+      ]);
+      for (const j of journeys) expect(j).toMatchObject({ kind: "conversation", goal: MOCK_GOAL });
+      // Before the reply ends.
+      expect(events.findIndex((e) => e.type === "journey")).toBeLessThan(events.findIndex((e) => e.type === "end"));
+
+      const got = (await (await alice.api.json(`/api/conversations/${conversationId}`, "GET")).json()) as { journey: Journey | null };
+      expect(got.journey).toMatchObject({ kind: "conversation", goal: MOCK_GOAL, steps: journeys[1].steps });
+      expect((await bob.api.json(`/api/conversations/${conversationId}`, "GET")).status).toBe(404);
+      // In the list, conversations carry no plan.
+      const listed = (await (await alice.api.json("/api/conversations", "GET")).json()) as { conversations: Record<string, unknown>[] };
+      expect(Object.keys(listed.conversations.find((c) => c.id === conversationId) ?? {})).not.toContain("goal");
+
+      // The member can clear it; no one else can.
+      expect((await bob.api.json(`/api/conversations/${conversationId}`, "PATCH", { plan: null })).status).toBe(404);
+      expect(((await (await alice.api.json(`/api/conversations/${conversationId}`, "GET")).json()) as { journey: Journey | null }).journey).not.toBeNull();
+      expect((await alice.api.json(`/api/conversations/${conversationId}`, "PATCH", { plan: [] })).status).toBe(400);
+      const cleared = await alice.api.json(`/api/conversations/${conversationId}`, "PATCH", { plan: null });
+      expect(cleared.status, await cleared.clone().text()).toBe(200);
+      expect(((await cleared.json()) as { conversation: { id: string } }).conversation.id).toBe(conversationId);
+      expect(((await (await alice.api.json(`/api/conversations/${conversationId}`, "GET")).json()) as { journey: Journey | null }).journey).toBeNull();
+      expect((await alice.db.from("conversations").select("plan, goal").eq("id", conversationId).single()).data).toEqual({ plan: [], goal: null });
+      expect((await alice.api.json(`/api/conversations/${crypto.randomUUID()}`, "PATCH", { plan: null })).status).toBe(404);
+    } finally {
+      await alice.db.from("agent_records").delete().eq("collection", "applications").like("key", "https://jobs.example/%");
+      await alice.api.json(`/api/conversations/${conversationId}`, "DELETE");
+    }
+  }, 60_000);
+
+  it("says whose move it is, only for the caller's own conversations", async () => {
+    // The mock's form leaves it the member's call; a finished reply needs no mark.
+    const asking = crypto.randomUUID();
+    try {
+      await (await alice.api.json(`/api/conversations/${asking}/messages`, "POST", { kind: "send", text: "show me a form" })).text();
+      const ids = [asking, aliceConv, crypto.randomUUID()].join(",");
+      const mine = (await (await alice.api.json(`/api/conversations/moves?ids=${ids}`, "GET")).json()) as { moves: Record<string, string> };
+      expect(mine.moves).toEqual({ [asking]: "your_call" });
+      const theirs = await bob.api.json(`/api/conversations/moves?ids=${ids}`, "GET");
+      expect(theirs.status).toBe(200);
+      expect(((await theirs.json()) as { moves: Record<string, string> }).moves).toEqual({});
+      // A forged workspace cookie changes nothing.
+      expect(((await (await bob.api.json(`/api/conversations/moves?ids=${ids}`, "GET", undefined, { lj_ws: alice.workspaceId })).json()) as { moves: unknown }).moves).toEqual({});
+      expect((await alice.api.json("/api/conversations/moves?ids=not-an-id", "GET")).status).toBe(400);
+      const many = Array.from({ length: 101 }, () => crypto.randomUUID()).join(",");
+      expect((await alice.api.json(`/api/conversations/moves?ids=${many}`, "GET")).status).toBe(400);
+      expect(((await (await alice.api.json("/api/conversations/moves", "GET")).json()) as { moves: unknown }).moves).toEqual({});
+    } finally {
+      await alice.api.json(`/api/conversations/${asking}`, "DELETE");
     }
   }, 60_000);
 });

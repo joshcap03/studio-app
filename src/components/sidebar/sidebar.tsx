@@ -28,6 +28,7 @@ import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Companion, companionHint } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
+import { MOVE_LABEL, type MarkedMove } from "@/lib/chat/move";
 import { api } from "@/lib/client/api";
 import {
   MAX_PROJECT_NAME_LENGTH,
@@ -41,7 +42,8 @@ import {
 interface Props {
   conversations: ConversationSummary[];
   activeId: string | null;
-  running: ReadonlySet<string>;
+  /** Whose move it is, by conversation, where it's worth a mark: working, the member's call, or stuck. */
+  moves: Record<string, MarkedMove>;
   agent: AgentStatus;
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
@@ -73,7 +75,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   {
     conversations,
     activeId,
-    running,
+    moves,
     agent,
     workspace,
     workspaces,
@@ -144,7 +146,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   return (
     <div className="flex h-full w-[264px] flex-col">
       <div className="flex h-14 shrink-0 items-center justify-between gap-1 pr-2 pl-2">
-        <AgentMenu workspace={workspace} workspaces={workspaces} companions={companions} working={running.size > 0} email={email} />
+        <AgentMenu workspace={workspace} workspaces={workspaces} companions={companions} working={Object.values(moves).includes("working")} email={email} />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
           <PanelLeftClose size={17} strokeWidth={1.75} />
         </IconButton>
@@ -243,7 +245,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
                     key={p.id}
                     project={p}
                     active={p.id === activeProjectId}
-                    running={inProject.some((c) => running.has(c.id))}
+                    move={projectMove(inProject.map((c) => moves[c.id]))}
                     onSelect={onSelectProject}
                     onRename={onRenameProject}
                     onDelete={() => setPendingProjectDelete(p)}
@@ -255,7 +257,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
                             key={c.id}
                             conversation={c}
                             active={c.id === activeId}
-                            running={running.has(c.id)}
+                            move={moves[c.id]}
                             onSelect={onSelect}
                             onRename={onRename}
                             onDelete={() => setPendingDelete(c)}
@@ -294,7 +296,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
                     key={c.id}
                     conversation={c}
                     active={c.id === activeId}
-                    running={running.has(c.id)}
+                    move={moves[c.id]}
                     onSelect={onSelect}
                     onRename={onRename}
                     onDelete={() => setPendingDelete(c)}
@@ -453,10 +455,30 @@ function NewProjectDialog({ onCreate }: { onCreate: (name: string) => Promise<vo
   );
 }
 
+/** A project's mark, from its chats': one waiting on the member first, then one working, then one stuck. */
+function projectMove(marks: (MarkedMove | undefined)[]): MarkedMove | undefined {
+  return (["your_call", "working", "stuck"] as const).find((m) => marks.includes(m));
+}
+
+/**
+ * Whose move it is in a chat (or a project's chats) at a glance: the agent working on it, the
+ * member's call (held still), or stuck. Nothing for done: there's no "unread" to show.
+ */
+function MoveMark({ move }: { move?: MarkedMove }) {
+  if (!move) return null;
+  if (move === "working") return <span className="spinner shrink-0" aria-label="Working" />;
+  return (
+    <span className="flex size-4 shrink-0 items-center justify-center">
+      <span className={`size-1.5 rounded-full ${move === "stuck" ? "bg-danger" : "bg-accent"}`} aria-hidden="true" />
+      <span className="sr-only">{MOVE_LABEL[move]}</span>
+    </span>
+  );
+}
+
 function ProjectItem({
   project,
   active,
-  running,
+  move,
   onSelect,
   onRename,
   onDelete,
@@ -464,7 +486,7 @@ function ProjectItem({
 }: {
   project: ProjectSummary;
   active: boolean;
-  running: boolean;
+  move?: MarkedMove;
   onSelect: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: () => void;
@@ -512,7 +534,7 @@ function ProjectItem({
           >
             <FolderOpen size={15} strokeWidth={1.75} className="shrink-0 text-fg-3" />
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
-            {running ? <span className="spinner shrink-0" aria-label="Working" /> : null}
+            <MoveMark move={move} />
           </a>
         )}
         <DropdownMenu.Root modal={false}>
@@ -566,7 +588,7 @@ function ProjectItem({
 function ConversationItem({
   conversation,
   active,
-  running,
+  move,
   onSelect,
   onRename,
   onDelete,
@@ -576,7 +598,7 @@ function ConversationItem({
 }: {
   conversation: ConversationSummary;
   active: boolean;
-  running: boolean;
+  move?: MarkedMove;
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: () => void;
@@ -627,7 +649,7 @@ function ConversationItem({
           className="flex h-8 items-center gap-2 rounded-lg pr-8 pl-2.5 text-[13.5px] text-fg-2 transition-colors hover:bg-hover hover:text-fg aria-[current=page]:bg-press aria-[current=page]:text-fg"
         >
           <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
-          {running ? <span className="spinner shrink-0" aria-label="Working" /> : null}
+          <MoveMark move={move} />
         </a>
       )}
       <DropdownMenu.Root modal={false}>
@@ -742,7 +764,7 @@ function AgentMenu({
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
   companions: Record<string, CompanionInfo> | null;
-  /** The agent is running in one of its conversations. */
+  /** The agent is running in one of its conversations, here or out of view (a task's run). */
   working: boolean;
   email: string | null;
 }) {
@@ -766,8 +788,11 @@ function AgentMenu({
         {companion ? (
           <Companion stage={companion.stage} look={companion.look} mood={working ? "working" : "idle"} size={22} seenKey={workspace.id} />
         ) : (
-          <BrandMark size={22} />
+          <span className={`flex shrink-0 ${working ? "breathe-soft" : ""}`}>
+            <BrandMark size={22} />
+          </span>
         )}
+        {working ? <span className="sr-only">Working</span> : null}
         <AgentLabel workspace={workspace} companion={companion} bold />
         <ChevronsUpDown size={13} className="shrink-0 text-fg-3" />
       </DropdownMenu.Trigger>

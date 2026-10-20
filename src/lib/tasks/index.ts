@@ -17,6 +17,7 @@ interface TaskRow {
   timezone: string;
   status: AgentTask["status"];
   plan: PlanStep[];
+  goal: string | null;
   conversation_id: string | null;
   next_run_at: string | null;
   last_run_at: string | null;
@@ -38,7 +39,7 @@ interface RunRow {
 }
 
 const COLUMNS =
-  "id, title, instructions, skill_id, schedule, timezone, status, plan, conversation_id, next_run_at, last_run_at, template_task_id, created_at, updated_at";
+  "id, title, instructions, skill_id, schedule, timezone, status, plan, goal, conversation_id, next_run_at, last_run_at, template_task_id, created_at, updated_at";
 const RUN_COLUMNS = "id, task_id, scheduled_for, status, reason, message_id, cancel_requested_at, created_at, updated_at";
 const MISSING_LINK = "That skill or conversation doesn't exist.";
 
@@ -51,6 +52,7 @@ const toTask = (r: TaskRow): AgentTask => ({
   timezone: r.timezone,
   status: r.status,
   plan: r.plan,
+  goal: r.goal ?? null,
   conversationId: r.conversation_id,
   nextRunAt: time(r.next_run_at),
   lastRunAt: time(r.last_run_at),
@@ -155,6 +157,7 @@ export async function updateTask(tenant: Tenant, id: string, patch: TaskPatch): 
   if (patch.timezone !== undefined) row.timezone = patch.timezone;
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.plan !== undefined) row.plan = patch.plan;
+  if (patch.goal !== undefined) row.goal = patch.goal;
   if (patch.conversationId !== undefined) row.conversation_id = patch.conversationId;
   // A new schedule, zone, or status moves the next run; anything else leaves it alone.
   if (patch.schedule !== undefined || patch.timezone !== undefined || patch.status !== undefined) {

@@ -109,6 +109,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     project && projectContext(project),
     tenant.task && taskContext(tenant.task, { voiceNotes: tenant.voiceNotes === true }),
     tenant.setup && setupContext(tenant.setup),
+    tenant.plan && planContext(tenant.plan),
     tenant.tracker && trackerContext(tenant.tracker),
     tenant.notes?.length && notesContext(tenant.notes),
     tenant.library?.length && libraryContext(tenant.library),
@@ -209,12 +210,19 @@ function missedBatchContext(batch: NonNullable<NonNullable<AgentTenantContext["b
   ].join("\n");
 }
 
+/** Plan steps as the agent's context lists them, under what done looks like when it said. */
+function planLines(steps: { text: string; status: string; note?: string | null }[], goal: string | null | undefined): string {
+  const lines = steps.map((s) => `- [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ""}`);
+  return [goal && `Done means: ${goal}`, ...lines].filter(Boolean).join("\n");
+}
+
 /** This conversation is the agent's setup interview: its checklist so far. */
 function setupContext(setup: NonNullable<AgentTenantContext["setup"]>): string {
-  const plan = setup.plan.map((s) => `- [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ""}`).join("\n");
   return [
     "This conversation is this agent's setup interview with the member.",
-    plan ? `Setup checklist so far:\n${plan}` : "There's no setup checklist yet; write one with update_plan.",
+    setup.plan.length
+      ? `Setup checklist so far:\n${planLines(setup.plan, setup.goal)}`
+      : [setup.goal && `Done means: ${setup.goal}`, "There's no setup checklist yet; write one with update_plan."].filter(Boolean).join("\n"),
     "Keep the checklist current with update_plan as steps finish or are skipped.",
     setup.instructions &&
       `How to run the setup interview (until they apply your proposal, carry on from the current step; you're still setting up, not doing the job):\n${setup.instructions}`,
@@ -265,11 +273,16 @@ export function libraryContext(items: NonNullable<AgentTenantContext["library"]>
  * a run's news comes back as a voice note that says its report_run summary.
  */
 export function taskContext(task: NonNullable<AgentTenantContext["task"]>, { voiceNotes = false }: { voiceNotes?: boolean } = {}): string {
-  const plan = task.plan.map((s) => `- [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ""}`).join("\n");
   return [
     `This conversation works on the member's task "${task.title}". Each run continues it.`,
     task.instructions.trim() && `Task brief:\n${task.instructions.trim()}`,
-    plan ? `Plan so far:\n${plan}` : "There's no plan yet. If the task has several steps, write one with update_plan.",
+    task.plan.length
+      ? `Plan so far:\n${planLines(task.plan, task.goal)}`
+      : task.goal
+        ? `There's no plan yet.\nDone means: ${task.goal}\nIf the task has several steps, write a plan toward that with update_plan.`
+        : "There's no plan yet. If the task has several steps, write one with update_plan, with what done looks like as its goal.",
+    // The member can set or change it on the task page, so it's theirs as much as the agent's.
+    task.goal && "The task's goal stays as it is when you leave update_plan's goal empty; give one only if the member asks to change what done means.",
     "Keep the plan current with update_plan whenever a step starts, finishes, gets blocked, or needs the member.",
     "When this run's work is done, call report_run once: nothing_new if you found nothing worth their attention, update if there's something to read, needs_you if they must decide or act. They're only notified for update and needs_you.",
     voiceNotes &&
@@ -277,6 +290,17 @@ export function taskContext(task: NonNullable<AgentTenantContext["task"]>, { voi
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * The plan the agent keeps for the work in this conversation (neither a task's nor the setup's):
+ * what done looks like and the steps so far, so it carries on from them rather than starting over.
+ */
+export function planContext(plan: NonNullable<AgentTenantContext["plan"]>): string {
+  return [
+    `Your plan for the work in this conversation so far (the member sees it above the chat):\n${planLines(plan.steps, plan.goal)}`,
+    "Keep it current with update_plan when a step is finished, blocked, or needs the member, or the steps or what done means change. If the member has set it aside for something else, don't carry it on unasked; new work with several steps gets a new plan, which replaces this one.",
+  ].join("\n\n");
 }
 
 /**
@@ -612,7 +636,7 @@ export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
     if (tool.output == null || tool.error) continue;
     const result = unwrapResult(tool.output);
     if (!isRecord(result)) continue;
-    if (isRecord(result.plan_update)) events.push({ type: "plan-update", plan: result.plan_update.steps });
+    if (isRecord(result.plan_update)) events.push({ type: "plan-update", plan: result.plan_update.steps, goal: result.plan_update.goal });
     if (isRecord(result.record)) events.push({ type: "record", record: result.record });
     if (isRecord(result.library_item)) events.push({ type: "library-item", item: result.library_item });
     if (isRecord(result.run_report)) events.push({ type: "run-report", report: result.run_report });

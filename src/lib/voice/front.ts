@@ -51,7 +51,16 @@ const stageField = z
 const stage = z
   .object({
     working: z.boolean(),
-    journey: z.object({ done: z.number(), total: z.number(), current: z.string().max(200).nullable() }).optional(),
+    journey: z
+      .object({
+        done: z.number(),
+        total: z.number(),
+        current: z.string().max(200).nullable(),
+        goal: z.string().max(200).nullable().optional(),
+        // Absent from pages loaded before journeys had kinds, which sent only the setup's.
+        kind: z.enum(["setup", "task", "conversation"]).optional(),
+      })
+      .optional(),
     form: z.object({ id: z.string().max(80), title: z.string().max(300), fields: z.array(stageField).max(10) }).optional(),
     questions: z.array(z.object({ question: z.string().max(500), options: z.array(z.string().max(200)).max(6), multi: z.boolean() })).max(4).optional(),
     proposal: z.string().max(600).optional(),

@@ -1,4 +1,6 @@
+import type { Ask, LastMessage } from "@/lib/chat/move";
 import type { Db } from "@/lib/supabase/db";
+import type { PlanStep } from "@/lib/tasks/types";
 import type {
   ActivityStep,
   Approval,
@@ -63,6 +65,16 @@ export interface StoredAttachment extends Attachment {
   storagePath: string;
 }
 
+/**
+ * A conversation's own plan (one that isn't a task's or the setup's), as the agent last saved it:
+ * its steps, what done looks like, and when it changed (null before it ever had one).
+ */
+export interface ConversationPlan {
+  steps: PlanStep[];
+  goal: string | null;
+  updatedAt: number | null;
+}
+
 export interface Store {
   readonly scope: Scope;
   listConversations(query?: string): Promise<ConversationSummary[]>;
@@ -82,6 +94,15 @@ export interface Store {
   deleteAllConversations(): Promise<string[]>;
   setAgentThread(conversationId: string, provider: string, threadId: string): Promise<void>;
   touchConversation(conversationId: string): Promise<ConversationSummary>;
+  /** The conversation's own plan, or null when there's no such conversation. */
+  getPlan(conversationId: string): Promise<ConversationPlan | null>;
+  /** Replaces the conversation's plan and goal; null when there's no such conversation. */
+  savePlan(conversationId: string, plan: { steps: PlanStep[]; goal: string | null }): Promise<ConversationPlan | null>;
+  /**
+   * The latest message in each of these conversations, as far as whose move it is, by
+   * conversation id. Ids that aren't the caller's, or have no messages, are left out.
+   */
+  lastMessages(conversationIds: string[]): Promise<Record<string, LastMessage>>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
   /** One message of the caller's in a conversation, or null when there's no such message. */
   getMessage(conversationId: string, id: string): Promise<ChatMessage | null>;
@@ -173,7 +194,30 @@ interface AttachmentRow {
   storage_path: string;
 }
 
+interface PlanRow {
+  plan: PlanStep[];
+  goal: string | null;
+  plan_updated_at: string | null;
+}
+
+/** What conversation_moves returns for one conversation (see its migration). */
+interface MoveRow {
+  conversation_id: string;
+  role: "user" | "assistant";
+  status: MessageStatus;
+  updated_at: string;
+  open_ask: string | null;
+}
+
+const ASKS: readonly Ask[] = ["approval", "form", "proposal", "merge", "question"];
+
+/** Most conversations whose moves one call looks up. */
+export const MAX_MOVES = 100;
+
+// The plan columns stay out of the conversation list and summaries, which go to the browser
+// for every conversation; only the plan's own reads and writes touch them.
 const CONVERSATION_COLUMNS = "id, title, project_id, agent_provider, agent_thread_id, created_at, updated_at";
+const PLAN_COLUMNS = "plan, goal, plan_updated_at";
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
@@ -217,15 +261,25 @@ const toConversation = (r: ConversationRow): Conversation => ({
   agentThreadId: r.agent_thread_id,
 });
 
+const toPlan = (r: PlanRow): ConversationPlan => ({
+  steps: Array.isArray(r.plan) ? r.plan : [],
+  goal: r.goal,
+  updatedAt: r.plan_updated_at ? Date.parse(r.plan_updated_at) : null,
+});
+
 /** How long a `streaming` message may go without a checkpoint before it counts as interrupted. */
 export const STALE_STREAM_MS = 60_000;
+
+/** A message's status as it really stands: one still "streaming" with no checkpoint lately was cut off. */
+const liveStatus = (status: MessageStatus, updatedAt: string): MessageStatus =>
+  status === "streaming" && Date.now() - Date.parse(updatedAt) > STALE_STREAM_MS ? "interrupted" : status;
 
 const toMessage = (r: MessageRow): ChatMessage => ({
   id: r.id,
   conversationId: r.conversation_id,
   role: r.role,
   content: r.content,
-  status: r.status === "streaming" && Date.now() - Date.parse(r.updated_at) > STALE_STREAM_MS ? "interrupted" : r.status,
+  status: liveStatus(r.status, r.updated_at),
   activity: r.activity ?? [],
   artifacts: r.artifacts ?? [],
   approvals: (r.approvals ?? []).map(toApproval).sort((a, b) => a.createdAt - b.createdAt),
@@ -421,6 +475,38 @@ export function createStore(db: Db, scope: Scope): Store {
           .single(),
       ) as ConversationRow;
       return toSummary(row);
+    },
+
+    async getPlan(conversationId) {
+      const row = check(
+        await conversations().select(PLAN_COLUMNS).eq("id", conversationId).eq("workspace_id", workspaceId).eq("user_id", userId).maybeSingle(),
+      ) as PlanRow | null;
+      return row ? toPlan(row) : null;
+    },
+
+    async savePlan(conversationId, { steps, goal }) {
+      const row = check(
+        await conversations()
+          .update({ plan: steps, goal, plan_updated_at: new Date().toISOString() })
+          .eq("id", conversationId)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .select(PLAN_COLUMNS)
+          .maybeSingle(),
+      ) as PlanRow | null;
+      return row ? toPlan(row) : null;
+    },
+
+    async lastMessages(conversationIds) {
+      const ids = [...new Set(conversationIds)].slice(0, MAX_MOVES);
+      if (ids.length === 0) return {};
+      const rows = check(await db.rpc("conversation_moves", { p_workspace: workspaceId, p_ids: ids })) as MoveRow[] | null;
+      return Object.fromEntries(
+        (rows ?? []).map((r) => [
+          r.conversation_id,
+          { role: r.role, status: liveStatus(r.status, r.updated_at), ask: ASKS.find((a) => a === r.open_ask) ?? null },
+        ]),
+      );
     },
 
     async listMessages(conversationId) {

@@ -2,9 +2,12 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import { Workspace, type InitialProject, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
+import { marksOf } from "@/lib/chat/move";
 import { storeFor } from "@/lib/chat/store-for";
+import { MAX_MOVES } from "@/lib/db/store";
 import { getCompanions } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
+import { journeyOrNone } from "@/lib/journey";
 import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
@@ -77,16 +80,29 @@ export default async function WorkspacePage({
     ? (await resolvePersona(tenant, { templateId: settings.templateId, ...(own ? { companion: own[tenant.workspace.id] ?? null } : {}) })).name
     : null;
 
+  // The open conversation with the plan of the work in it, and whose move it is in the latest
+  // conversations for the sidebar's marks (best-effort: the browser asks again).
+  const [thread, moves] = await Promise.all([
+    conversation ? Promise.all([store.listMessages(conversation.id), journeyOrNone(tenant, conversation.id)]) : null,
+    store
+      .lastMessages(conversations.slice(0, MAX_MOVES).map((c) => c.id))
+      .then(marksOf)
+      .catch((error) => {
+        console.error("[moves] unavailable", error);
+        return {};
+      }),
+  ]);
   let initialThread: InitialThread | null = null;
   if (conversationId) {
-    initialThread = conversation
-      ? { id: conversationId, status: "ready", messages: await store.listMessages(conversationId) }
-      : { id: conversationId, status: "missing", messages: [] };
+    initialThread = thread
+      ? { id: conversationId, status: "ready", messages: thread[0], journey: thread[1] }
+      : { id: conversationId, status: "missing", messages: [], journey: null };
   }
 
   return (
     <Workspace
       initialConversations={conversations}
+      initialMoves={moves}
       initialThread={initialThread}
       initialProjects={projects}
       initialProject={initialProject}

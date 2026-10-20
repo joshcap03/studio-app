@@ -140,6 +140,26 @@ already open, the service worker asks it to go there without a reload (`studio:o
 conversation already on screen is loaded again in place); a window that doesn't answer within a
 second (a page from before the latest build) is sent there instead.
 
+## The journey and whose move it is
+
+Any work with several steps has a plan the member sees above the chat: the rail, titled by what
+done looks like ("Done means three caterers under $40 a head…"), which the agent says in one line
+before it starts and passes as `update_plan`'s `goal` (`langflow/agent_instructions.md`). The plan
+lives with the conversation's task, the owner's setup checklist, or the conversation itself
+(`src/lib/journey.ts`), and each save streams to the browser, so the rail fills in as the agent
+works, on a call as in the chat. On a call, the stage carries the journey's goal and whose plan it
+is (`kind`: setup, task, or conversation): the voice says "Setup: …" for setup and "Done means …"
+for anything else, in its greeting and its view of the stage. A page loaded before journeys had
+kinds sends none, and only ever sent the setup's, so the voice reads a journey without one as setup.
+
+Whose move it is comes from one place (`src/lib/chat/move.ts`): working, the member's call (an
+approval, an open card or question, a task run that needs them), done, stuck, or idle. The call's
+orb takes working, your call, and stuck from it and keeps its own floor states (listening,
+speaking, on it, connecting); the rail marks "Your call" or "Stuck", held still; the sidebar marks
+conversations working, waiting on the member, or stuck, and the agent's mark breathes while any run
+is going, including one out of view; and a push for a reply that ends on a card or question says
+"Needs you". An offer to talk (a later version's card) is never the member's call.
+
 ## Turning it on
 
 1. **ElevenLabs:** an account on a paid plan (calls are billed per minute) and an API key

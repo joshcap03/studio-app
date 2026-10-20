@@ -645,6 +645,7 @@ function SetupInterview({ setup }: { setup: WorkspaceSettings["setup"] }) {
       {/* What each step of the interview gave this agent, as the agent reported it. */}
       {setup?.plan.length && setup.status !== "skipped" ? (
         <div className="mt-2.5 border-t border-line pt-1.5">
+          {setup.goal ? <p className="pt-1 text-[12.5px] font-medium text-fg-2 [overflow-wrap:anywhere]">Done means {setup.goal}</p> : null}
           <JourneyList steps={setup.plan} />
         </div>
       ) : null}

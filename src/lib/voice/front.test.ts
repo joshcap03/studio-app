@@ -10,7 +10,7 @@ const providerPrompt: FrontMessage = { role: "system", content: "You are a helpf
 
 const stage: VoiceStage = {
   working: false,
-  journey: { done: 1, total: 6, current: "Your search" },
+  journey: { done: 1, total: 6, current: "Your search", kind: "setup" },
   form: {
     id: "f1",
     title: "Trial run",
@@ -38,13 +38,56 @@ describe("planReply", () => {
   });
 
   it("greets them by name, and says where setup starts", () => {
-    const fresh: VoiceStage = { working: false, journey: { done: 0, total: 2, current: "What you're after: understand the search challenges" } };
+    const fresh: VoiceStage = { working: false, journey: { done: 0, total: 2, current: "What you're after: understand the search challenges", kind: "setup" } };
     expect(planReply({ ...context, member: "Josh" }, [mark({ cue: "hello", stage: fresh })])).toEqual({
       kind: "say",
       text: "Hey Josh, it's Rowan. I'll walk you through getting me set up, one step at a time. First, what you're after.",
     });
-    const linked: VoiceStage = { working: false, journey: { done: 1, total: 3, current: "LinkedIn contacts" } };
+    const linked: VoiceStage = { working: false, journey: { done: 1, total: 3, current: "LinkedIn contacts", kind: "setup" } };
     expect(planReply({ ...context, member: "Josh" }, [mark({ cue: "hello", stage: linked })])).toEqual({ kind: "say", text: "Hey Josh, it's Rowan. Welcome back. We're on LinkedIn contacts." });
+  });
+
+  it("opens other work on what done means, and says where it's got to", () => {
+    const work: VoiceStage = { working: false, journey: { done: 1, total: 3, current: "Shortlist the best fits", goal: "three caterers under $40 a head.", kind: "conversation" } };
+    expect(planReply({ ...context, member: "Josh" }, [mark({ cue: "hello", stage: work })])).toEqual({
+      kind: "say",
+      text: "Hey Josh, it's Rowan. Done means three caterers under $40 a head. We're on shortlist the best fits.",
+    });
+    // Not yet under way, or no goal said: no "welcome back", and never "setting up".
+    const fresh: VoiceStage = { working: false, journey: { done: 0, total: 3, current: "Search", goal: "three caterers", kind: "conversation" } };
+    expect(planReply(context, [mark({ cue: "hello", stage: fresh })])).toEqual({ kind: "say", text: "Hey, it's Rowan. Done means three caterers." });
+    const plain: VoiceStage = { working: false, journey: { done: 2, total: 3, current: "Draft outreach", kind: "task" } };
+    expect(planReply(context, [mark({ cue: "hello", stage: plain })])).toEqual({ kind: "say", text: "Hey, it's Rowan. We're on draft outreach." });
+  });
+
+  it("describes the journey as setup only for the setup", () => {
+    expect(describeStage(stage)).toContain("Setup: 1 step done so far; now: Your search.");
+    expect(describeStage({ working: false, journey: { done: 1, total: 6, current: "Your search", kind: "setup", goal: "a setup you'd trust" } })).toContain(
+      "Setup (done means a setup you'd trust): 1 step done so far",
+    );
+    const work = describeStage({ working: true, journey: { done: 2, total: 3, current: "Draft outreach", goal: "three caterers under $40 a head", kind: "conversation" } });
+    expect(work).toContain("Done means three caterers under $40 a head: 2 steps done so far; now: Draft outreach.");
+    expect(work).not.toContain("Setup");
+    expect(describeStage({ working: false, journey: { done: 0, total: 2, current: "Search", kind: "task" } })).toContain("The plan: 0 steps done so far; now: Search.");
+  });
+
+  it("reads a journey from a page loaded before journeys had kinds as the setup's, which was all it sent", () => {
+    const old: VoiceStage = { working: false, journey: { done: 0, total: 3, current: "What you're after" } };
+    expect(planReply({ ...context, member: "Josh" }, [mark({ cue: "hello", stage: old })])).toEqual({
+      kind: "say",
+      text: "Hey Josh, it's Rowan. I'll walk you through getting me set up, one step at a time. First, what you're after.",
+    });
+    expect(describeStage(old)).toContain("Setup: 0 steps done so far; now: What you're after.");
+    // That stage still reads, without a kind.
+    expect(latestStage([mark({ stage: old })])?.journey).toEqual(old.journey);
+  });
+
+  it("reads a journey's goal and kind from the stage, capped", () => {
+    const journey = { done: 0, total: 1, current: "Search", goal: "three caterers", kind: "setup" as const };
+    expect(latestStage([mark({ stage: { working: false, journey } })])?.journey).toEqual(journey);
+    // Too long to be Studio's: the marker isn't read at all.
+    expect(latestStage([mark({ stage: { working: false, journey: { ...journey, goal: "x".repeat(201) } } })])).toBeNull();
+    expect(latestStage([mark({ stage: { working: false, journey: { ...journey, kind: "Setting up" } } } as never)])).toBeNull();
   });
 
   it("doesn't greet twice", () => {

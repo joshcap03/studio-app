@@ -23,16 +23,22 @@ export interface AgentTenantContext {
   agentInstructions: string;
   /** What memory recalls for this run: workspace and personal facts, most relevant first, size-capped. */
   memories: string[];
-  /** The member's task this conversation works on, if any: its brief and current plan. */
-  task?: { title: string; instructions: string; plan: { text: string; status: string; note: string | null }[] } | null;
+  /** The member's task this conversation works on, if any: its brief, what done looks like, and current plan. */
+  task?: { title: string; instructions: string; goal?: string | null; plan: { text: string; status: string; note: string | null }[] } | null;
+  /**
+   * In a conversation that's neither a task's nor the setup interview, the plan the agent keeps
+   * for the work in it (update_plan), and what done looks like. Absent while it has none.
+   */
+  plan?: { goal: string | null; steps: { text: string; status: string; note: string | null }[] } | null;
   /**
    * The member's tracker rows (most recently changed first), so the agent doesn't re-add what
    * it found. Absent when the member has no tracker, so the agent knows not to save to one.
    */
   tracker?: { collection: string; key: string; title: string; status: string | null }[];
-  /** Set when this conversation is the agent's setup interview: its checklist so far. */
+  /** Set when this conversation is the agent's setup interview: its checklist so far, and what done looks like. */
   setup?: {
     plan: { text: string; status: string; note?: string | null }[];
+    goal?: string | null;
     /**
      * While the interview is under way, how to run it (the setup skill's instructions). Only the
      * first message carries the skill, and a long interview scrolls it out of the agent's view.
@@ -168,8 +174,12 @@ export type AgentEvent =
   | { type: "questions"; questions: unknown }
   /** A form or a proposed agent setup to show the member (`{form}` or `{proposal}`), unvalidated. */
   | { type: "ui"; block: unknown }
-  /** The task's plan as the agent rewrote it, unvalidated; saved only in a task's conversation. */
-  | { type: "plan-update"; plan: unknown }
+  /**
+   * The plan for the work in this conversation as the agent rewrote it, and what done looks like
+   * (absent from flows that don't send one), unvalidated. Saved on the conversation's task, the
+   * setup checklist, or the conversation itself (src/lib/journey.ts).
+   */
+  | { type: "plan-update"; plan: unknown; goal?: unknown }
   /** A tracker row the agent added or updated (upserted by collection and key), unvalidated. */
   | { type: "record"; record: unknown }
   /** A link the agent filed in the member's Library on their request (file_link), unvalidated. */

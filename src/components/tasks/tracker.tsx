@@ -2,6 +2,7 @@
 
 import { ExternalLink, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useInlineEdit } from "@/components/ui/inline-edit";
 import { api } from "@/lib/client/api";
 import type { AgentRecord } from "@/lib/tasks/types";
 import { errorText, formatDay, iconButton } from "./shared";
@@ -152,23 +153,19 @@ function RecordStatus({ record, onSave }: { record: AgentRecord; onSave: (status
   const [value, setValue] = useState(record.status ?? "");
   useEffect(() => setValue(record.status ?? ""), [record.status]);
 
-  function commit() {
-    const next = value.trim() || null;
-    if (next !== record.status) onSave(next);
-  }
+  const edit = useInlineEdit({
+    commit: () => {
+      const next = value.trim() || null;
+      if (next !== record.status) onSave(next);
+    },
+    revert: () => setValue(record.status ?? ""),
+  });
 
   return (
     <input
       value={value}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-        if (e.key === "Escape") {
-          setValue(record.status ?? "");
-          e.currentTarget.blur();
-        }
-      }}
+      {...edit}
       maxLength={40}
       placeholder="No status"
       aria-label={`Status of ${record.title || record.key}`}

@@ -102,12 +102,26 @@ export function voicePrompt(context: VoiceContext, stage: VoiceStage | null): st
   return parts.filter(Boolean).join("\n\n");
 }
 
-/** The stage in a few lines for the voice: the journey, then the card and how to address it. */
+/**
+ * Whether the stage's journey is the setup interview's. A page loaded before journeys had kinds
+ * sends none, and then only ever sent the setup's (VoiceStage.journey).
+ */
+function isSetupJourney(journey: NonNullable<VoiceStage["journey"]>): boolean {
+  return (journey.kind ?? "setup") === "setup";
+}
+
+/**
+ * The stage in a few lines for the voice: the journey (the setup's, or what done means for the
+ * work on screen), then the card and how to address it.
+ */
 export function describeStage(stage: VoiceStage | null): string {
   if (!stage) return "Nothing yet.";
   const lines: string[] = [stage.working ? "You're working on something now." : "You're not working on anything right now."];
-  if (stage.journey) {
-    lines.push(`Setup: ${stage.journey.done} ${stage.journey.done === 1 ? "step" : "steps"} done so far${stage.journey.current ? `; now: ${stage.journey.current}` : ""}.`);
+  const journey = stage.journey;
+  if (journey) {
+    const progress = `${journey.done} ${journey.done === 1 ? "step" : "steps"} done so far${journey.current ? `; now: ${journey.current}` : ""}.`;
+    if (isSetupJourney(journey)) lines.push(`Setup${journey.goal ? ` (done means ${journey.goal})` : ""}: ${progress}`);
+    else lines.push(`${journey.goal ? `Done means ${journey.goal}` : "The plan"}: ${progress}`);
   }
   if (stage.form) {
     lines.push(`Card on screen: "${stage.form.title}"`);
@@ -134,14 +148,19 @@ function fieldLine(f: StageField): string {
 }
 
 /**
- * The opening line, said by the voice before the worker's first words: hello by name, and where
- * setup stands (no step count: the checklist grows as the agent learns what they need).
+ * The opening line, said by the voice before the worker's first words: hello by name, then where
+ * setup stands (no step count: the checklist grows as the agent learns what they need), or what
+ * done means for the work on screen and where it's got to.
  */
 export function greeting(context: VoiceContext, stage: VoiceStage | null): string {
   const hello = `Hey${context.member ? ` ${context.member}` : ""}, it's ${context.name}.`;
   const journey = stage?.journey;
   if (!journey) return hello;
   const step = journey.current ? stepName(journey.current) : "";
+  if (!isSetupJourney(journey)) {
+    const goal = journey.goal ? ` Done means ${journey.goal.replace(/[.!?]+$/, "")}.` : "";
+    return `${hello}${goal}${journey.done > 0 && step ? ` We're on ${step}.` : ""}`;
+  }
   if (journey.done > 0) return `${hello} Welcome back.${step ? ` We're on ${step}.` : ""}`;
   return `${hello} I'll walk you through getting me set up, one step at a time.${step ? ` First, ${step}.` : ""}`;
 }

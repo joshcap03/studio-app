@@ -67,6 +67,24 @@ describe("notificationFor", () => {
     expect(notificationFor({ ...noted, status: "error" }, conversation, null, "Rowan")).toMatchObject({ title: "Rowan: Couldn't finish", url: "/c/c-1" });
   });
 
+  it("says a reply that ends on a card or a question needs them, as the rail and the sidebar do", () => {
+    const form = { kind: "form" as const, id: "f", title: "Your bar", fields: [], submitLabel: "Send" };
+    expect(notificationFor(reply({ content: "A few things first.", ui: [form] }), conversation, null, "Rowan")).toMatchObject({
+      title: "Rowan: Needs you",
+      body: "A few things first.",
+      url: "/c/c-1",
+    });
+    const question = { question: "Remote?", options: [{ label: "Yes" }, { label: "No" }], multiSelect: false };
+    expect(notificationFor(reply({ content: "One question.", questions: [question] }), conversation)).toMatchObject({ title: "Needs you" });
+    // Ahead of a quiet run: it still waits on them.
+    expect(notificationFor(reply({ content: "Which one?", questions: [question] }), conversation, { outcome: "nothing_new", summary: "" })).toMatchObject({ title: "Needs you" });
+    // Once answered, it's just done.
+    expect(notificationFor(reply({ content: "Thanks.", ui: [form], uiResponse: { f: { status: "submitted", at: 1 } } }), conversation)).toMatchObject({ title: "March invoices" });
+    // A voice note still comes first: it says what they need to do.
+    const noted = reply({ id: "m-9", content: "Which one?", questions: [question], voiceNote: { script: "Two fit. Which one?", source: "reply" } });
+    expect(notificationFor(noted, conversation, null, "June")).toMatchObject({ title: "June left you a voice note", url: "/c/c-1?play=m-9" });
+  });
+
   it("stays quiet when the member stopped it", () => {
     expect(notificationFor(reply({ status: "stopped" }), conversation)).toBeNull();
   });

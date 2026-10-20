@@ -77,7 +77,7 @@ export async function POST(request: NextRequest, { params }: Context) {
       // The owner started (or restarted) the agent's setup here: this conversation holds it now.
       const current = await getSetup(tenant).catch(() => null);
       const fresh = current?.conversationId !== conversationId.data;
-      await updateSetup(tenant, { status: "in_progress", conversationId: conversationId.data, ...(fresh ? { plan: [] } : {}) }).catch((e) =>
+      await updateSetup(tenant, { status: "in_progress", conversationId: conversationId.data, ...(fresh ? { plan: [], goal: null } : {}) }).catch((e) =>
         console.error("[setup] couldn't record the setup's start", e),
       );
     }

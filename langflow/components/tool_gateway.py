@@ -57,9 +57,13 @@ PLAN_STEP_SCHEMA = {
 
 
 class PlanArgs(BaseModel):
-    steps: list[dict] = Field(description=("The task's whole plan, in order, replacing the old one: each step an object "
+    steps: list[dict] = Field(description=("The whole plan, in order, replacing the old one: each step an object "
                                            "with text, status (todo, doing, done, blocked, needs_you), and an optional note."),
                               json_schema_extra={"items": PLAN_STEP_SCHEMA})
+    goal: str = Field(default="", description=("What done looks like, in one line the owner would agree with: the words you "
+                                               "said after 'Done means', e.g. 'three caterers under $40 a head, with a quote "
+                                               "request ready for you'. Leave it empty to keep the current one for the same "
+                                               "work (a task's stays until the owner asks to change it)."))
 
 
 class RecordArgs(BaseModel):
@@ -747,9 +751,10 @@ class ToolGatewayComponent(Component):
         async def remember_async(content: str, scope: str = "workspace", category: str = "other") -> str:
             return remember(content, scope, category)
 
-        def update_plan(steps: list) -> str:
-            # Like remember, this changes nothing here: the app checks the plan and saves it to
-            # the task this conversation belongs to, where the owner can edit it.
+        def update_plan(steps: list, goal: str = "") -> str:
+            # Like remember, this changes nothing here: the app checks the plan and saves it where
+            # the work in this conversation keeps it (its task, the setup checklist, or the
+            # conversation), where the owner sees it above the chat.
             def plain(v):
                 return v.model_dump() if hasattr(v, "model_dump") else dict(v) if isinstance(v, dict) else {"text": str(v)}
             rows = [plain(s) for s in (steps or [])][:30]
@@ -757,11 +762,15 @@ class ToolGatewayComponent(Component):
             rows = [r for r in rows if r["text"]]
             if not rows:
                 return "No plan to save: give at least one step with text."
-            return json.dumps({"plan_update": {"steps": rows},
-                               "note": "Plan saved. The owner sees it with the task; no need to repeat it."})
+            update = {"steps": rows}
+            goal = " ".join(str(goal or "").split())[:200]
+            if goal:
+                update["goal"] = goal
+            return json.dumps({"plan_update": update,
+                               "note": "The owner sees it above the chat; no need to mention it."})
 
-        async def update_plan_async(steps: list) -> str:
-            return update_plan(steps)
+        async def update_plan_async(steps: list, goal: str = "") -> str:
+            return update_plan(steps, goal)
 
         def save_record(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
             # The app upserts this into the owner's own tracker (by collection and key). Nothing
@@ -1065,10 +1074,12 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=update_plan, coroutine=update_plan_async, name="update_plan",
                 args_schema=PlanArgs,
-                description=("Only in a conversation that works on a task or is this agent's setup interview (see "
-                             "CONTEXT): write or update its plan or checklist, the whole list of steps each time. Call it when you make a plan and whenever "
-                             "a step starts, finishes, gets blocked, or needs the owner. Saved for the owner; changes "
-                             "nothing in their accounts."),
+                description=("Keep the plan for work with several steps, or work that spans more than one reply (a "
+                             "task's run, the setup interview, or anything else in a conversation): the whole list of "
+                             "steps each time, and the goal, what done looks like, in the words you said it in. Not for "
+                             "a simple answer. Call it when you make the plan, when the goal or the steps change, and "
+                             "when a step is blocked, needs the owner, or is finished. Saved for the owner, who sees it "
+                             "above the chat; changes nothing in their accounts."),
             ),
             StructuredTool.from_function(
                 func=save_record, coroutine=save_record_async, name="save_record",
