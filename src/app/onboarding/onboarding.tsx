@@ -245,6 +245,19 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
                 Talk it through
               </button>
             ) : null}
+            {account ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setStep("you");
+                }}
+                disabled={Boolean(pending)}
+                className="text-[13.5px] text-fg-3 hover:text-fg disabled:opacity-50"
+              >
+                Back
+              </button>
+            ) : null}
             {canCancel ? (
               <a href="/" className="text-[13.5px] text-fg-3 hover:text-fg">
                 Cancel
