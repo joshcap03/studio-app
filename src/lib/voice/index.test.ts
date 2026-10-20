@@ -32,4 +32,14 @@ describe("claimVoiceClip", () => {
     const { tenant } = tenantWith([{ clip_id: null, seconds: 0, refused: "daily" }]);
     expect(await claimVoiceClip(tenant, { kind: "note", ref: "m1:abc", seconds: 3 })).toEqual({ ok: false, refused: "daily" });
   });
+
+  it("charges time already spent past today's limit, and never more than one clip holds", async () => {
+    const { rpc, tenant } = tenantWith([{ clip_id: "clip_2", seconds: 90, refused: null }]);
+    expect(await claimVoiceClip(tenant, { kind: "transcribe", ref: "r1:rest", seconds: 90 }, { spent: true })).toEqual({ ok: true, charged: 90 });
+    const sent = (rpc.mock.calls[0] as unknown[])[1] as { p_daily_seconds: number };
+    // No limit the database can hold that a day's voice time could pass.
+    expect(sent.p_daily_seconds).toBe(2 ** 31 - 1);
+    await expect(claimVoiceClip(tenant, { kind: "transcribe", ref: "r1:rest", seconds: 3601 }, { spent: true })).rejects.toBeInstanceOf(RangeError);
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
 });

@@ -14,6 +14,7 @@ import {
   type Project,
   type WorkspaceSkill,
 } from "@/lib/types";
+import type { VoiceStatus } from "@/lib/voice/types";
 
 // A project's home: start a chat in it, set the instructions and files the agent gets with
 // every message here, and find the project's earlier chats.
@@ -32,6 +33,8 @@ interface Props {
   /** Whether the agent can read files (project files and attachments). */
   allowFiles: boolean;
   footnote: React.ReactNode;
+  /** Voice for this member, for the message box's mic. */
+  voice?: VoiceStatus | null;
 }
 
 const card = "flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-4";
@@ -48,7 +51,7 @@ interface Upload {
 }
 
 export const ProjectView = forwardRef<ComposerHandle, Props>(function ProjectView(
-  { project, conversations, running, draft, onDraftChange, onSubmit, onOpen, onChange, skills, allowFiles, footnote },
+  { project, conversations, running, draft, onDraftChange, onSubmit, onOpen, onChange, skills, allowFiles, footnote, voice },
   composerRef,
 ) {
   const [editing, setEditing] = useState(false);
@@ -121,6 +124,7 @@ export const ProjectView = forwardRef<ComposerHandle, Props>(function ProjectVie
             skills={skills}
             autoFocus
             allowFiles={allowFiles}
+            voice={voice}
           />
           {footnote ? <div className="mt-3 text-center">{footnote}</div> : null}
         </div>

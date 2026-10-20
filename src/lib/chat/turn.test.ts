@@ -3,7 +3,7 @@ import { createMockAdapter } from "@/lib/agent/mock";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "@/lib/agent/types";
 import { readNdjson } from "@/lib/client/api";
 import { createMemoryDb, createMemoryStore } from "@/test/memory-store";
-import type { Artifact, StreamEvent } from "@/lib/types";
+import type { Artifact, ChatMessage, StreamEvent } from "@/lib/types";
 import { sanitizeArtifact, startTurn, stopRun, titleFromMessage, TurnError } from "./turn";
 
 const scopeA = { workspaceId: "ws-a", userId: "user-a" };
@@ -1005,6 +1005,98 @@ describe("helpers", () => {
     const long = titleFromMessage("word ".repeat(40));
     expect(long.length).toBeLessThanOrEqual(61);
     expect(long.endsWith("…")).toBe(true);
+  });
+});
+
+describe("voice notes", () => {
+  const VOICE_MESSAGE = { kind: "voice", via: "note" } as const;
+  const TASK = { kind: "task", taskId: "t1", title: "Job hunt", runId: null } as const;
+
+  async function turn(origin: ChatMessage["origin"], events: AgentEvent[], { voiceNotes = true, fail }: { voiceNotes?: boolean; fail?: AgentError } = {}) {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const finished: ChatMessage[] = [];
+    const streamed = await collect(
+      startTurn(
+        { store, adapter: scripted(events, fail), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes, onFinished: (m) => void finished.push(m) },
+        { conversationId: id, kind: "send", text: "Find me roles", origin: origin ?? undefined },
+      ),
+    );
+    const end = streamed.at(-1);
+    if (end?.type !== "end") throw new Error("no end event");
+    return { store, id, end: end.message, finished: finished[0], saved: (await store.listMessages(id))[1] };
+  }
+
+  it("come back on a reply to a voice message, saved with the reply and carried by its end event", async () => {
+    const { end, saved, finished } = await turn(VOICE_MESSAGE, [{ type: "message", text: "Found three. The best is remote.\n\n- Acme\n- Globex\n- Initech" }]);
+    const note = { script: "Found three. The best is remote. The rest is on screen.", source: "reply" };
+    expect(end.voiceNote).toEqual(note);
+    expect(saved.voiceNote).toEqual(note);
+    expect(finished.voiceNote).toEqual(note);
+  });
+
+  it("say a task run's report when it brought something back", async () => {
+    const { saved } = await turn(TASK, [{ type: "run-report", report: { outcome: "update", summary: "Three roles cleared your bar." } }, { type: "message", text: "## Roles\n\nDetails." }]);
+    expect(saved.voiceNote).toEqual({ script: "Three roles cleared your bar.", source: "summary" });
+    const quiet = await turn(TASK, [{ type: "run-report", report: { outcome: "nothing_new", summary: "Nothing" } }, { type: "message", text: "Nothing new." }]);
+    expect(quiet.saved.voiceNote ?? null).toBeNull();
+  });
+
+  it("don't come back for typing, a call, a failed run, or a member without voice", async () => {
+    for (const origin of [null, { kind: "voice" } as const]) {
+      expect((await turn(origin, [{ type: "message", text: "Done." }])).saved.voiceNote ?? null).toBeNull();
+    }
+    const failed = await turn(VOICE_MESSAGE, [{ type: "text-delta", text: "Half" }], { fail: new AgentError("Boom") });
+    expect(failed.saved).toMatchObject({ status: "error" });
+    expect(failed.saved.voiceNote ?? null).toBeNull();
+    const off = await turn(VOICE_MESSAGE, [{ type: "message", text: "Done." }], { voiceNotes: false });
+    expect(off.end.voiceNote ?? null).toBeNull();
+    expect(off.saved.voiceNote ?? null).toBeNull();
+  });
+
+  it("after the member decides on an approval, say what the reply went on to say, not what they read before deciding", async () => {
+    const asked = "Here's the reply to Jo. It's waiting for your OK below.";
+    for (const [decision, resumed, script] of [
+      ["approve", "Sent it. Jo will see it in a minute.", "Sent it. Jo will see it in a minute."],
+      ["reject", "Okay, I won't send it.", "Okay, I won't send it."],
+      ["approve", "", null],
+    ] as const) {
+      const store = createMemoryStore(scopeA);
+      const id = crypto.randomUUID();
+      const adapter: AgentAdapter = {
+        ...scripted([]),
+        discard: async () => {},
+        async *run(input) {
+          if (!input.resume) {
+            yield { type: "text-delta", text: asked };
+            yield { type: "approval", summary: "Send the reply to Jo", app: "gmail", details: [], state: { jobId: "job-1" } };
+            return;
+          }
+          if (resumed) yield { type: "text-delta", text: resumed };
+        },
+      };
+      const deps = { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true };
+      const first = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "Reply to Jo for me", origin: VOICE_MESSAGE }));
+      const approval = first.find((e) => e.type === "approval");
+      if (approval?.type !== "approval") throw new Error("no approval");
+      // Nothing to hear while it waits on the member.
+      expect((await store.listMessages(id))[1].voiceNote ?? null).toBeNull();
+      const events = await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.approval.id, decision }));
+      const end = events.at(-1);
+      if (end?.type !== "end") throw new Error("no end event");
+      const note = script ? { script, source: "reply" } : null;
+      expect(end.message.voiceNote ?? null).toEqual(note);
+      expect((await store.listMessages(id))[1].voiceNote ?? null).toEqual(note);
+    }
+  });
+
+  it("follow the member's voice message through a retry", async () => {
+    const { store, id } = await turn(VOICE_MESSAGE, [{ type: "message", text: "First try." }]);
+    const events = await collect(
+      startTurn({ store, adapter: scripted([{ type: "message", text: "Second try." }]), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true }, { conversationId: id, kind: "retry" }),
+    );
+    const end = events.at(-1);
+    expect(end?.type === "end" && end.message.voiceNote).toEqual({ script: "Second try.", source: "reply" });
   });
 });
 

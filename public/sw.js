@@ -26,10 +26,29 @@ self.addEventListener("push", (event) => {
 // The chat's pages, which move between themselves without a reload (src/components/workspace).
 const CHAT_PAGE = /^\/(?:$|[cp]\/|tasks(?:\/|$)|library(?:\/|$))/;
 
+// How long a chat page has to say it heard studio:open before it's sent there instead.
+const HEARD_MS = 1000;
+
+/** Whether `client` heard `message`: the chat page answers on the port it's given. */
+function heard(client, message) {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const done = (yes) => {
+      clearTimeout(timer);
+      channel.port1.close();
+      resolve(yes);
+    };
+    const timer = setTimeout(() => done(false), HEARD_MS);
+    channel.port1.onmessage = () => done(true);
+    client.postMessage(message, [channel.port2]);
+  });
+}
+
 // A tap opens what the notification is about in a Studio window that's already open, if there
 // is one. On a chat page, the page moves there itself (studio:open), without reloading, so a
-// voice note's play button is ready to tap; another page is sent there. A window this worker
-// doesn't control can't hear either, so a new one opens instead.
+// voice note's play button is ready to tap. A page that doesn't say it heard (one loaded before
+// this worker, which doesn't listen for it, or one still starting) is sent there, like any other
+// page. A window this worker doesn't control can't hear either, so a new one opens instead.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const target = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin);
@@ -40,10 +59,7 @@ self.addEventListener("notificationclick", (event) => {
       const client = windows.find((c) => new URL(c.url).origin === self.location.origin);
       if (!client) return self.clients.openWindow(url);
       await client.focus();
-      if (CHAT_PAGE.test(new URL(client.url).pathname)) {
-        client.postMessage({ type: "studio:open", url: url.slice(self.location.origin.length) });
-        return;
-      }
+      if (CHAT_PAGE.test(new URL(client.url).pathname) && (await heard(client, { type: "studio:open", url: url.slice(self.location.origin.length) }))) return;
       if ("navigate" in client) return client.navigate(url);
       return self.clients.openWindow(url);
     })(),

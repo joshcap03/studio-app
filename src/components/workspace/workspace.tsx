@@ -21,8 +21,10 @@ import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { Call } from "@/components/voice/call";
-import { VoicePreviews } from "@/components/voice/voice-preview";
+import { VoicePlayer } from "@/components/voice/player";
+import { originFor } from "@/lib/chat/modality";
 import { ApiError, api, streamTurn, type TurnBody } from "@/lib/client/api";
+import { openRequest, reopening } from "@/lib/client/open";
 import { registerServiceWorker } from "@/lib/client/push";
 import { INTRODUCE_SKILL_ID, INTRODUCE_SKILL_NAME } from "@/lib/skills/introduce";
 import { SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
@@ -54,7 +56,7 @@ function hasOpenAsk(message: ChatMessage | undefined): boolean {
   return Boolean(message.questions?.length) || Boolean(message.ui?.some((b) => b.kind === "form" && !message.uiResponse?.[b.id]));
 }
 
-/** What a message is sent with besides its text, and how (on a call, the member spoke it). */
+/** What a message is sent with besides its text, and how (on a call or held to the mic, the member spoke it). */
 type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality };
 const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
@@ -93,7 +95,7 @@ interface Props {
   initialSkillId: string | null;
   /** The owner's setup interview for this agent; null for other members. */
   setup: SetupSummary | null;
-  /** Voice calls (a preview), when this member has them. */
+  /** Voice (a preview), when this member has it: the mic, voice notes, and calls. */
   voice: VoiceStatus | null;
   /** What the member goes by, for the agent's greeting. */
   member: string | null;
@@ -146,14 +148,14 @@ export function Workspace(props: Props) {
   // Who each agent is to the member, shared with the thread's marks through context.
   const [companions, setCompanions] = useState(props.companions);
   const updateCompanion = useCallback((next: Companion) => setCompanions((all) => (all ? { ...all, [next.workspaceId]: next } : all)), []);
-  // Voices can be heard where they're offered (a proposed setup), but never over a call.
+  // Voice notes and voices offered (a proposed setup) play one at a time, but never over a call.
   const [onCall, setOnCall] = useState(false);
   return (
     <CardDraftsProvider>
       <CompanionContext.Provider value={companions?.[props.workspace.id] ?? null}>
-        <VoicePreviews voice={props.voice} onCall={onCall}>
+        <VoicePlayer voice={props.voice} onCall={onCall}>
           <WorkspaceShell {...props} companions={companions} onCompanion={updateCompanion} onCallChange={setOnCall} />
-        </VoicePreviews>
+        </VoicePlayer>
       </CompanionContext.Provider>
     </CardDraftsProvider>
   );
@@ -411,17 +413,28 @@ function WorkspaceShell({
   }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name]);
 
   /**
-   * Opens a task's conversation. A run may have just created it or added to it on the server,
-   * so a copy loaded earlier is dropped and the conversation list refreshed.
+   * Opens a task's conversation (or one a notification is about). A run may have just created it
+   * or added to it on the server, so the copy loaded earlier is loaded again (src/lib/client/open.ts)
+   * and the conversation list refreshed.
    */
   const openTaskConversation = useCallback(
     (conversationId: string) => {
-      if (!controllers.current.has(conversationId)) {
+      const how = reopening(conversationId, { onScreen: conversationIdFrom(window.location.pathname), streaming: controllers.current.has(conversationId) });
+      if (how === "drop") {
         setThreads((all) => {
           if (!all[conversationId]) return all;
           const { [conversationId]: _, ...rest } = all;
           return rest;
         });
+      } else if (how === "refresh") {
+        // Going where the page already is loads nothing, so it's loaded here, keeping what's on
+        // screen until the new copy is in.
+        api
+          .getConversation(conversationId)
+          .then(({ messages }) => {
+            if (!controllers.current.has(conversationId)) setThreads((all) => ({ ...all, [conversationId]: { status: "ready", messages } }));
+          })
+          .catch(() => undefined);
       }
       navigate(`/c/${conversationId}`);
       api
@@ -593,7 +606,9 @@ function WorkspaceShell({
       const { skill, attachments } = extras;
       const now = Date.now();
       const base = { conversationId, activity: [], artifacts: [], createdAt: now };
-      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete", skill, attachments };
+      // Labeled at once the way the server will label it ("Voice message", "On a call").
+      const origin = originFor(extras.modality, text);
+      const user: ChatMessage = { ...base, id: `pending-user-${now}`, role: "user", content: text, status: "complete", skill, attachments, ...(origin ? { origin } : {}) };
       const assistant: ChatMessage = {
         ...base,
         id: `pending-assistant-${now}`,
@@ -652,7 +667,7 @@ function WorkspaceShell({
 
   const send = useCallback(
     (text: string, extras: Partial<SendExtras> = {}) => {
-      const full: SendExtras = { skill: extras.skill ?? null, attachments: extras.attachments ?? [] };
+      const full: SendExtras = { skill: extras.skill ?? null, attachments: extras.attachments ?? [], ...(extras.modality ? { modality: extras.modality } : {}) };
       if (activeId) {
         // Sending while the agent works (or waits for an approval) redirects it.
         const awaitingHere = threadsRef.current[activeId]?.messages.at(-1)?.status === "awaiting";
@@ -995,6 +1010,44 @@ function WorkspaceShell({
     window.history.replaceState(null, "", window.location.pathname);
     sendTo(crypto.randomUUID(), tidyRequest(topic), true, { skill: { id: tidySkillId(topic), name: TIDY_SKILL_NAME }, attachments: [] });
   }, [sendTo]);
+
+  // A notification about a voice note opens its conversation with ?play=<reply>: the note is
+  // brought into view and its play button pointed out. It doesn't play: sound needs a tap.
+  const [noteFocus, setNoteFocus] = useState<{ conversationId: string; messageId: string } | null>(null);
+  const playRequested = useRef(false);
+  useEffect(() => {
+    if (playRequested.current) return;
+    playRequested.current = true;
+    const messageId = new URLSearchParams(window.location.search).get("play");
+    if (!messageId) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    const conversationId = conversationIdFrom(window.location.pathname);
+    if (conversationId && UUID.test(messageId)) setNoteFocus({ conversationId, messageId });
+  }, []);
+  useEffect(() => {
+    if (noteFocus && activeId !== noteFocus.conversationId) setNoteFocus(null);
+  }, [activeId, noteFocus]);
+
+  // A tapped notification, in a Studio window that's already open (public/sw.js): go there
+  // without a reload. A conversation may have changed on the server since it was loaded. The
+  // worker is told it was heard, or it sends the window there itself (an older page can't hear).
+  useEffect(() => {
+    const worker = typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
+    if (!worker) return;
+    const onMessage = (event: MessageEvent) => {
+      const open = openRequest(event.data, window.location.origin);
+      if (!open) return;
+      event.ports[0]?.postMessage("opened");
+      if (open.kind === "page") {
+        window.location.assign(open.path);
+        return;
+      }
+      setNoteFocus(open.play ? { conversationId: open.conversationId, messageId: open.play } : null);
+      openTaskConversation(open.conversationId);
+    };
+    worker.addEventListener("message", onMessage);
+    return () => worker.removeEventListener("message", onMessage);
+  }, [openTaskConversation]);
 
   const rename = useCallback(
     (id: string, title: string) => {
@@ -1362,6 +1415,7 @@ function WorkspaceShell({
                 skills={skills}
                 allowFiles={agent.attachments}
                 footnote={footnote}
+                voice={voice}
               />
             ) : activeProject?.status === "missing" || activeProject?.status === "error" ? (
               <Unavailable what="project" missing={activeProject.status === "missing"} onNew={newChat} />
@@ -1389,9 +1443,10 @@ function WorkspaceShell({
               greeter={greeter}
               onSetup={() => startSetup()}
               onSkipSetup={skipSetup}
-              onTalk={voice ? () => void talkItThrough() : undefined}
+              onTalk={voice && setup ? () => void talkItThrough() : undefined}
               talking={calling}
               talkNotice={callNotice}
+              voice={voice}
             />
           ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
             <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
@@ -1410,6 +1465,7 @@ function WorkspaceShell({
               onFeedback={rateMessage}
               onOpenPanel={openPanel}
               sendCount={sendCount}
+              noteFocus={noteFocus?.conversationId === activeId ? noteFocus.messageId : null}
               footer={
                 <div className="mx-auto w-full max-w-[46rem] px-3 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
                   {notice ? (
@@ -1447,6 +1503,8 @@ function WorkspaceShell({
                     autoFocus={desktop}
                     allowFiles={agent.attachments}
                     hint={awaiting ? "Approve or decline above, or reply to change course" : asking ? "Answer above, or type your own" : undefined}
+                    voice={voice}
+                    redirects={isRunning || awaiting}
                   />
                   {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
                 </div>

@@ -440,6 +440,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       let content = assistant.content;
       // A run resumed after an approval carries on the same reply: its first text is a new part.
       let resumedSeam = Boolean(continued && content);
+      // What the member read before deciding, which a voice note doesn't say again.
+      const earlier = continued ? content : null;
       const activity: ActivityStep[] = [...assistant.activity];
       const artifacts: Artifact[] = [...assistant.artifacts];
       const approvals: Approval[] = [...(assistant.approvals ?? [])];
@@ -763,7 +765,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       await saving;
       // Saved with the final state, so the end event and the stored reply carry the same note. A
       // reply that never had one doesn't write it.
-      const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report }) : null;
+      const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier }) : null;
       const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
       let updated = summary;
       try {

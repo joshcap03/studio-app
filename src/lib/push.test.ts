@@ -50,6 +50,23 @@ describe("notificationFor", () => {
     expect(notificationFor(reply({ status: "error" }), conversation, null, null)).toMatchObject({ title: "Couldn't finish" });
   });
 
+  it("says the agent left a voice note, opening on its play button", () => {
+    const noted = reply({ id: "m-9", content: "## Roles\n\nThree cleared your bar.", voiceNote: { script: "Three roles cleared your **bar**. The best is remote.", source: "summary" } });
+    expect(notificationFor(noted, conversation, { outcome: "update", summary: "Three roles cleared your bar." }, "Rowan")).toEqual({
+      title: "Rowan left you a voice note",
+      body: "Three roles cleared your bar. The best is remote.",
+      url: "/c/c-1?play=m-9",
+      tag: "conversation:c-1",
+    });
+    // Ahead of "Needs you": the note says what they need to do.
+    expect(notificationFor(noted, conversation, { outcome: "needs_you", summary: "Pick one" }, "Rowan")).toMatchObject({ title: "Rowan left you a voice note" });
+    // A reply to a voice message has no report.
+    expect(notificationFor(noted, conversation, null, "June")).toMatchObject({ title: "June left you a voice note", url: "/c/c-1?play=m-9" });
+    // A note never makes a quiet run loud, nor hides a failure.
+    expect(notificationFor(noted, conversation, { outcome: "nothing_new", summary: "" }, "Rowan")).toBeNull();
+    expect(notificationFor({ ...noted, status: "error" }, conversation, null, "Rowan")).toMatchObject({ title: "Rowan: Couldn't finish", url: "/c/c-1" });
+  });
+
   it("stays quiet when the member stopped it", () => {
     expect(notificationFor(reply({ status: "stopped" }), conversation)).toBeNull();
   });

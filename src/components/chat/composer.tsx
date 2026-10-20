@@ -5,6 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, u
 import { Tooltip } from "radix-ui";
 import { TooltipContent } from "@/components/ui/icon-button";
 import { useMedia } from "@/components/ui/use-media";
+import { usePlayerControls } from "@/components/voice/player";
 import { ApiError, api, uploadAttachment } from "@/lib/client/api";
 import {
   ATTACHMENT_TYPES,
@@ -13,9 +14,13 @@ import {
   MAX_MESSAGE_LENGTH,
   type Attachment,
   type MessageSkill,
+  type Modality,
   type WorkspaceSkill,
 } from "@/lib/types";
+import { draftSpoken, heldGoesTo, insertWords, type MicMode } from "@/lib/voice/mic";
+import type { VoiceStatus } from "@/lib/voice/types";
 import { PendingFiles, type PendingFile } from "./attachments";
+import { MicButton, MicStatus, useMic } from "./mic";
 
 export interface ComposerHandle {
   focus(): void;
@@ -27,10 +32,11 @@ export interface ComposerHandle {
   addFiles(files: FileList | File[]): void;
 }
 
-/** What goes with a message besides its text. */
+/** What goes with a message besides its text, and how it was said (held to the mic: a voice message). */
 export interface MessageExtras {
   skill: MessageSkill | null;
   attachments: Attachment[];
+  modality?: Modality;
 }
 
 interface Props {
@@ -48,6 +54,13 @@ interface Props {
   allowFiles?: boolean;
   /** Replaces the placeholder, e.g. while the agent waits for an approval. */
   hint?: string;
+  /** Voice for this member: with speech to text, the mic (hold for a voice message, tap to dictate). */
+  voice?: VoiceStatus | null;
+  /**
+   * Sending now would change the agent's course (a run going, or an approval waiting, which a
+   * message declines), so a held voice message goes into the draft instead. Defaults to `running`.
+   */
+  redirects?: boolean;
 }
 
 const MAX_HEIGHT = 240;
@@ -68,6 +81,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     skills = [],
     allowFiles = false,
     hint,
+    voice = null,
+    redirects = running,
   },
   ref,
 ) {
@@ -79,8 +94,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const textarea = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const sent = useRef(new Set<string>());
+  // The draft holds a held voice message, waiting for the member's Send (src/lib/voice/mic.ts).
+  const spoken = useRef(false);
   const filesRef = useRef(files);
   filesRef.current = files;
+  // Typing stops a voice note or preview that's playing.
+  const player = usePlayerControls();
   // On touch devices Return inserts a newline; sending is done with the button.
   const coarse = useMedia("(pointer: coarse)");
   const uploading = files.some((f) => f.status === "uploading");
@@ -98,17 +117,22 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const menuOpen = matches.length > 0 && !menuDismissed;
 
   function focusEnd(next: string) {
+    focusAt(next.length);
+  }
+
+  function focusAt(caret: number) {
     requestAnimationFrame(() => {
       const el = textarea.current;
       if (!el) return;
       el.focus();
-      el.setSelectionRange(next.length, next.length);
+      el.setSelectionRange(caret, caret);
     });
   }
 
   useImperativeHandle(ref, () => ({
     focus: () => textarea.current?.focus(),
     setValue: (next) => {
+      spoken.current = draftSpoken(spoken.current, { replaced: true });
       update(next);
       focusEnd(next);
     },
@@ -142,10 +166,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   );
 
   function update(next: string) {
+    spoken.current = draftSpoken(spoken.current, { edited: next });
     setValue(next);
     setHighlight(0);
     setMenuDismissed(false);
     onDraftChange?.(next);
+    player?.stop();
   }
 
   function pick(s: WorkspaceSkill) {
@@ -187,15 +213,40 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     if (file?.attachment) void api.deleteAttachment(file.attachment.id).catch(() => {});
   }
 
-  function submit() {
-    if (!canSend) return;
+  /** Sends the draft (or `text`); a draft holding a held voice message goes as one. */
+  function submit(text = value.trim(), modality: Modality | undefined = spoken.current ? "voice_note" : undefined) {
+    if (!(text || skill) || uploading) return;
     const ready = files.flatMap((f) => (f.status === "ready" && f.attachment ? [f.attachment] : []));
     for (const a of ready) sent.current.add(a.id);
-    onSubmit(value.trim(), { skill, attachments: ready });
+    onSubmit(text, { skill, attachments: ready, ...(modality ? { modality } : {}) });
+    spoken.current = draftSpoken(spoken.current, { replaced: true });
     update("");
     setSkill(null);
     setFiles([]);
   }
+
+  // What the member said into the mic: a held voice message is sent as one (with any skill and
+  // files already attached), unless sending now would redirect the agent or leave typed words
+  // behind; then it joins the draft, like dictation, where the caret is. Held into an empty
+  // draft, it's still a voice message once the member sends it.
+  const holdsToDraft = heldGoesTo({ redirects, draft: value, uploading }) === "draft";
+  const heard = useRef<(words: string, mode: MicMode) => void>(() => undefined);
+  heard.current = (words, mode) => {
+    const said = words.trim().slice(0, MAX_MESSAGE_LENGTH);
+    if (!said) return;
+    if (mode === "message" && !holdsToDraft) {
+      submit(said, "voice_note");
+      return;
+    }
+    const el = textarea.current;
+    const at = el ? [el.selectionStart, el.selectionEnd] : [value.length, value.length];
+    const next = insertWords(value, at[0], at[1], said);
+    if (mode === "message") spoken.current = draftSpoken(spoken.current, { heldInto: value });
+    update(next.value.slice(0, MAX_MESSAGE_LENGTH));
+    focusAt(Math.min(next.caret, MAX_MESSAGE_LENGTH));
+  };
+  const mic = useMic({ mock: voice ? !voice.live : false, onWords: (words, mode) => heard.current(words, mode) });
+  const hasMic = Boolean(voice?.speech.stt && mic);
 
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (menuOpen) {
@@ -293,6 +344,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           </span>
         </span>
       ) : null}
+      {hasMic && mic ? <MicStatus mic={mic} holdsToDraft={holdsToDraft} /> : null}
       {allowFiles ? (
         <Tooltip.Root>
           <Tooltip.Trigger asChild>
@@ -350,6 +402,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           hero ? "min-h-[56px] py-1.5 text-[16px]" : "min-h-8 py-1 text-[15px]"
         }`}
       />
+      {hasMic && mic ? <MicButton mic={mic} /> : null}
       {running && !hasDraft ? (
         <Tooltip.Root>
           <Tooltip.Trigger asChild>

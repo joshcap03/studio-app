@@ -84,7 +84,7 @@ describe("speech", () => {
     await expect(transcribe(new Uint8Array(4), "audio/webm")).rejects.toBeInstanceOf(SpeechUnavailable);
   });
 
-  it("transcribes with Scribe, timing the recording by its last word, or by its size when there are none", async () => {
+  it("transcribes with Scribe, timing the recording by the length it measured, else the last thing it timed, else its size", async () => {
     config.voice = ELEVENLABS;
     const words = [
       { text: "Find", type: "word", start: 0.1, end: 0.4 },
@@ -92,15 +92,18 @@ describe("speech", () => {
       { text: "roles", type: "word", start: 0.5, end: 3.2 },
       { text: "(laughs)", type: "audio_event", start: 3.2, end: 9 },
     ];
-    const fetch = vi.fn(async () => Response.json({ text: " Find roles ", words }));
+    // A long silence after the words: the provider's own length is what it charges for.
+    const fetch = vi.fn(async () => Response.json({ text: " Find roles ", words, audio_duration_secs: 64.2 }));
     vi.stubGlobal("fetch", fetch);
-    expect(await transcribe(new Uint8Array(10), "audio/webm")).toEqual({ text: "Find roles", seconds: 4 });
+    expect(await transcribe(new Uint8Array(10), "audio/webm")).toEqual({ text: "Find roles", seconds: 65 });
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.elevenlabs.io/v1/speech-to-text");
     const form = init.body as FormData;
     expect(form.get("model_id")).toBe(ELEVENLABS_STT_MODEL);
     expect((form.get("file") as Blob).type).toBe("audio/webm");
 
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ text: "Find roles", words })));
+    expect(await transcribe(new Uint8Array(10), "audio/webm")).toEqual({ text: "Find roles", seconds: 9 });
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ text: "", words: [] })));
     expect(await transcribe(new Uint8Array(20_000), "audio/mp4")).toEqual({ text: "", seconds: 5 });
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ words: [] })));

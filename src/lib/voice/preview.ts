@@ -6,9 +6,9 @@ import type { VoiceKey } from "./voices";
 // everyone. Each server instance keeps the few clips in memory, never on disk.
 
 /** Bump with any change to the line, so members hear (and are charged for) the new one. */
-export const PREVIEW_VERSION = 1;
+export const PREVIEW_VERSION = 2;
 
-export const PREVIEW_LINE = "Hi, this is how I'd sound when we talk on a call: what I found, what's next, and what I need from you.";
+export const PREVIEW_LINE = "Hi, this is how I'd sound on a call and in voice notes: what I found, what's next, and what I need from you.";
 
 /** The clip's name for the member's daily voice time: once per voice and line a day. */
 export function previewRef(voice: VoiceKey): string {

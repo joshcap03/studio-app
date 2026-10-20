@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, AudioLines, CalendarClock, Check, Copy, Pencil, RotateCcw, Sparkles } from "lucide-react";
+import { AlertCircle, AudioLines, CalendarClock, Check, Copy, Mic, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Companion, companionHint, useCompanion, type CompanionMood } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
@@ -15,6 +15,7 @@ import { Markdown } from "./markdown";
 import { ApprovalCard, MemoryProposalCard, QuestionCard } from "./requests";
 import { UiCards } from "./ui-cards";
 import { VisualView } from "./visuals";
+import { VoiceNote } from "./voice-note";
 
 interface UserProps {
   message: ChatMessage;
@@ -41,8 +42,8 @@ export const UserMessage = memo(function UserMessage({ message, onEdit }: UserPr
       ) : null}
       {message.origin?.kind === "voice" ? (
         <span className="inline-flex items-center gap-1 text-[12px] text-fg-3">
-          <AudioLines size={12} className="shrink-0" />
-          On a call
+          {message.origin.via === "note" ? <Mic size={12} className="shrink-0" /> : <AudioLines size={12} className="shrink-0" />}
+          {message.origin.via === "note" ? "Voice message" : "On a call"}
         </span>
       ) : null}
       {message.skill ? (
@@ -146,6 +147,8 @@ interface AssistantProps {
   onRunTask?: (taskId: string) => Promise<void>;
   /** Rates this reply (null clears the rating). */
   onFeedback?: (messageId: string, feedback: MessageFeedback | null) => void;
+  /** A notification opened this reply's voice note: its play button is pointed out (it never plays on its own). */
+  noteFocus?: boolean;
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
@@ -159,6 +162,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   onUiResponse,
   onRunTask,
   onFeedback,
+  noteFocus,
 }: AssistantProps) {
   const streaming = message.status === "streaming";
   const feedback = message.feedback ?? null;
@@ -211,6 +215,13 @@ export const AssistantMessage = memo(function AssistantMessage({
           onDecide={onDecide && message.status === "awaiting" ? (decision) => onDecide(approval.id, decision) : undefined}
         />
       ))}
+
+      {/* The voice note comes first; its text twin, the reply, is underneath. */}
+      {message.voiceNote && message.status === "complete" ? (
+        <div className={message.approvals?.length ? "mt-4" : undefined}>
+          <VoiceNote message={message} highlight={noteFocus} />
+        </div>
+      ) : null}
 
       {hasContent ? (
         <div className={message.approvals?.length ? "mt-4" : undefined}>

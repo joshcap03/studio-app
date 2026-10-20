@@ -3,7 +3,8 @@ import { findingsForReply } from "@/components/chat/findings";
 import { openingLineIndexes } from "@/lib/agent/langflow";
 import { evidenceFor, interpretCalls, talksMachinery, type ToolCall } from "@/lib/agent/tools";
 import { linksSeen } from "@/lib/chat/timeline";
-import type { ActivityStep } from "@/lib/types";
+import type { ActivityStep, ChatMessage, RunReport } from "@/lib/types";
+import { voiceNoteFor } from "@/lib/voice/notes";
 import { initialRelay, relayEvent, speakableGist, spokenStep } from "@/lib/voice/relay";
 
 // Replays every tool call in a real Langflow flow's history through the same interpreter and
@@ -12,7 +13,8 @@ import { initialRelay, relayEvent, speakableGist, spokenStep } from "@/lib/voice
 // leaks raw data or technical text. Covers every tool the agent has used, not just one.
 //
 // The same goes for what the voice says on a call (src/lib/voice/relay.ts): it narrates only
-// labels the agent reported, word for word, and a reply's spoken gist carries no markup or links.
+// labels the agent reported, word for word, and a reply's spoken gist carries no markup or links;
+// nor does a voice note (src/lib/voice/notes.ts), the reply's or a task run's report.
 //
 // Read-only. Needs LANGFLOW_AUDIT_BASE_URL, LANGFLOW_AUDIT_API_KEY, LANGFLOW_AUDIT_FLOW_ID.
 
@@ -103,6 +105,20 @@ describe.skipIf(!base || !key || !flow)("every real tool call reads well", () =>
       }
       const gist = speakableGist(m.text ?? "");
       if (/[[\]{}<>`*#|]|https?:\/\//.test(gist)) spokenBadly.push(`spoken reply: ${gist}`);
+      // The same reply as a voice note: to a voice message, and as a task run's news, with each
+      // report the run made.
+      const final = { id: "r", conversationId: "c", role: "assistant", content: m.text ?? "", status: "complete", activity: [], artifacts: [], createdAt: 0 } as ChatMessage;
+      const asked = (origin: ChatMessage["origin"]) => ({ ...final, role: "user", origin }) as ChatMessage;
+      const reports = (m.content_blocks ?? [])
+        .flatMap((b) => b.contents ?? [])
+        .filter((l) => l.type === "tool_use" && l.name === "report_run")
+        .map((l) => (l.tool_input ?? l.input ?? {}) as Partial<RunReport>)
+        .map((r): RunReport => ({ outcome: r.outcome === "needs_you" ? "needs_you" : "update", summary: typeof r.summary === "string" ? r.summary : "" }));
+      const notes = [
+        voiceNoteFor(final, { answered: asked({ kind: "voice", via: "note" }) }),
+        ...reports.map((report) => voiceNoteFor(final, { answered: asked({ kind: "task", taskId: "t", title: "Task", runId: null }), report })),
+      ];
+      for (const note of notes) if (note && /[[\]{}<>`*#|]|https?:\/\//.test(note.script)) spokenBadly.push(`voice note: ${note.script}`);
       // Every link a tool returned must come with that result's text, or the agent can't cite
       // it with a checkable quote (src/lib/chat/citations.ts).
       const leaves = (m.content_blocks ?? []).flatMap((b) => b.contents ?? []).filter((l) => l.type === "tool_use");

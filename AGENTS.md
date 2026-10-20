@@ -108,6 +108,10 @@ raw/technical text.
   with one member everywhere it speaks, `relay.ts` what it may say about a run, `intent.ts` what the
   member's own words ask for. The call screen is `src/components/voice/call.tsx`; card drafts it
   shares with the thread are `src/components/chat/card-drafts.tsx`, checked by `src/lib/chat/ui-fill.ts`.
+  Outside calls: the message box's mic (`mic.ts`, `src/components/chat/mic.tsx`: hold to send a voice
+  message, tap to dictate; `/api/voice/transcribe`), and voice notes (`notes.ts` picks which replies
+  get one and its words, saved as `messages.voice_note`; `clips.ts` says one on play through
+  `…/messages/<id>/speech`). One clip plays at a time (`src/components/voice/player.tsx`).
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
@@ -173,7 +177,9 @@ raw/technical text.
   Apply, "Do the first one now", and approvals stay taps. A spoken approval (Phase 3) needs a
   read-back, the member's yes from speech-to-text, and a visible cancel hold, is stored with
   their words, and never covers money, deletions, or bulk sends.
-- Studio never stores audio. Screen or camera frames are taken only when the member asks.
+- Studio never stores audio. Dictation and voice messages send a recording once to be turned
+  into words and keep only the words; a voice note keeps only its words and is spoken each time
+  it's played. Screen or camera frames are taken only when the member asks.
 - Navigation in the chat shell is client-side history with the path in `Workspace` state.
 - Design tokens live in `src/app/globals.css`; use the token utilities, not raw colors.
 - Don't add dependencies without need.

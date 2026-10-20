@@ -4,6 +4,7 @@ import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Attachment, ChatMessage, MessageFeedback, UiResponse } from "@/lib/types";
 import { AssistantMessage, UserMessage } from "./message";
+import { pointOutNote } from "./voice-note";
 
 const STICK_THRESHOLD = 64;
 
@@ -25,6 +26,8 @@ interface Props {
   onOpenPanel?: (messageId: string) => void;
   /** Changes whenever the user sends, to pull the view back to the latest message. */
   sendCount: number;
+  /** A reply whose voice note a notification opened: brought into view, its play button pointed out. */
+  noteFocus?: string | null;
   footer: React.ReactNode;
 }
 
@@ -32,7 +35,7 @@ interface Props {
  * The scrolling message list. Follows new output while the reader is at the bottom, and
  * leaves the scroll position alone once they scroll up to read earlier messages.
  */
-export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onRunTask, onFeedback, onOpenPanel, sendCount, footer }: Props) {
+export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onRunTask, onFeedback, onOpenPanel, sendCount, noteFocus, footer }: Props) {
   const lastUserId = messages.findLast((m) => m.role === "user")?.id;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -54,6 +57,15 @@ export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposa
     // reader scrolling up and switch off follow mode.
     if (sendCount > 0) scrollToBottom();
   }, [sendCount, scrollToBottom]);
+
+  // Once the reply is on screen, point out its voice note (in view, and focused, so the keyboard
+  // and screen readers land on it too) and stop following new output, so the view stays on it.
+  const noteShown = Boolean(noteFocus && messages.some((m) => m.id === noteFocus && m.voiceNote));
+  useEffect(() => {
+    if (!noteFocus || !noteShown || !pointOutNote(noteFocus)) return;
+    stick.current = false;
+    setAtBottom(false);
+  }, [noteFocus, noteShown]);
 
   useEffect(() => {
     const el = scroller.current;
@@ -98,6 +110,7 @@ export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposa
                     onUiResponse={onUiResponse}
                     onRunTask={onRunTask}
                     onFeedback={message.id.startsWith("pending-") ? undefined : onFeedback}
+                    noteFocus={message.id === noteFocus}
                   />
                 )}
               </div>
