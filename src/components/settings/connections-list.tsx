@@ -8,7 +8,14 @@ import type { ConnectionsState, ToolkitConnection } from "@/lib/types";
  * The signed-in member's own connected apps. Connecting sends them to the provider's
  * authorization page; credentials never pass through this app.
  */
-export function ConnectionsList({ returnTo }: { returnTo: "/onboarding" | "/settings" }) {
+export function ConnectionsList({
+  returnTo,
+  onConnectedCount,
+}: {
+  returnTo: "/onboarding" | "/settings";
+  /** Told how many apps are connected each time the list loads. */
+  onConnectedCount?: (count: number) => void;
+}) {
   const [state, setState] = useState<ConnectionsState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -19,7 +26,9 @@ export function ConnectionsList({ returnTo }: { returnTo: "/onboarding" | "/sett
       setError("Couldn't load your connected apps.");
       return;
     }
-    setState((await res.json()) as ConnectionsState);
+    const next = (await res.json()) as ConnectionsState;
+    setState(next);
+    onConnectedCount?.(next.toolkits.filter((t) => t.status === "connected").length);
   }
 
   useEffect(() => {

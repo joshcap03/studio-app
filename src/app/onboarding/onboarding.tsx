@@ -6,7 +6,7 @@ import { ConnectionsList } from "@/components/settings/connections-list";
 import { appName } from "@/lib/apps";
 import { api } from "@/lib/client/api";
 import type { AccountProfile } from "@/lib/tenant-core";
-import { DEFAULT_TEMPLATE_ID, TEMPLATES, templateById } from "@/lib/templates";
+import { DEFAULT_TEMPLATE_ID, TEMPLATES, templateById, templatesFor } from "@/lib/templates";
 
 type Step = "you" | "workspace" | "connect";
 
@@ -40,6 +40,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
   const [created, setCreated] = useState(workspaceName);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<false | "continue" | "talk">(false);
+  const [connectedCount, setConnectedCount] = useState(0);
 
   async function saveYou(event: React.FormEvent) {
     event.preventDefault();
@@ -87,6 +88,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
   }
 
   const current = steps.findIndex((s) => s.id === step);
+  const choices = templatesFor(!canCancel);
   const template = templateById(templateId) ?? TEMPLATES[0];
   const suggested = created && step === "connect" ? template.apps : [];
 
@@ -161,15 +163,15 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
           <h1 className="font-display text-[28px] leading-tight tracking-[-0.01em]">{canCancel ? "New agent" : "Pick your first agent"}</h1>
           <p className="mt-1.5 text-[14px] text-fg-3">
             {canCancel ? null : <>Studio is where you make your agents, as many as you need. </>}
-            Each agent has its own focus, instructions, and chats: one for your business, one for a job search, one for the rest of your
-            life. They all know you, and share your connected apps and what they remember about you. Pick a starting point
+            Each agent has its own focus, instructions, and chats: one to run your business, one to keep your inbox and calendar, one for a
+            side project. They all know you, and share your connected apps and what they remember about you. Pick a starting point
             {canCancel ? null : <> for this one</>}; you can change everything later in agent setup{canCancel ? null : <>, and add more agents anytime</>}.
           </p>
 
           <fieldset className="mt-7">
             <legend className="text-[13px] font-medium text-fg-2">Start from</legend>
             <div className="mt-1.5 grid gap-2">
-              {TEMPLATES.map((t) => (
+              {choices.map((t) => (
                 <label
                   key={t.id}
                   className={`flex cursor-pointer gap-3 rounded-xl border px-3.5 py-3 transition-colors ${
@@ -279,7 +281,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
             </p>
           ) : null}
           <div className="mt-6">
-            <ConnectionsList returnTo="/onboarding" />
+            <ConnectionsList returnTo="/onboarding" onConnectedCount={setConnectedCount} />
           </div>
           <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3">
             {/* The agent's setup interview opens next, typed or on a call; it asks for anything it still needs. */}
@@ -287,7 +289,7 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
               href="/?setup=1"
               className="flex h-10 items-center gap-2 rounded-xl bg-inverse px-4 text-[14px] font-medium text-on-inverse transition-opacity hover:opacity-90"
             >
-              Set up your agent
+              {connectedCount > 0 ? "Set up your agent" : "Skip"}
               <ArrowRight size={15} />
             </a>
             {canTalk ? (
@@ -299,7 +301,9 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
                 Talk it through
               </a>
             ) : null}
-            <span className="text-[12.5px] text-fg-3">You can skip this and connect apps anytime, or during setup.</span>
+            <span className="text-[12.5px] text-fg-3">
+              {connectedCount > 0 ? "You can connect more apps anytime, or during setup." : "You can connect apps anytime, or during setup."}
+            </span>
           </div>
         </div>
       )}
