@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, AudioLines, Mic, MicOff, PhoneOff, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, AudioLines, Camera, Mic, MicOff, MonitorUp, PhoneOff, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCardDrafts, type FillResult } from "@/components/chat/card-drafts";
@@ -10,9 +10,9 @@ import { UiCards } from "@/components/chat/ui-cards";
 import { Journey } from "@/components/ui/journey";
 import { moveOf } from "@/lib/chat/move";
 import type { FormValues } from "@/lib/chat/ui-answer";
-import { api, type SpokenDecision } from "@/lib/client/api";
+import { api, uploadAttachment, type SpokenDecision } from "@/lib/client/api";
 import { guardStep, HOLD_MS, initialGuard, type GuardEffect, type GuardEvent, type GuardRequest } from "@/lib/voice/approval-guard";
-import { isBackchannel, isDeclineIntent, isHoldOn, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
+import { isBackchannel, isDeclineIntent, isHoldOn, isLookIntent, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
 import { clock, micProblem } from "@/lib/voice/mic";
 import { CallNarrator } from "@/lib/voice/narrator";
 import { noteCanCome } from "@/lib/voice/notes";
@@ -20,10 +20,11 @@ import { JUST_BACK } from "@/lib/voice/persona";
 import { withHeldWords } from "@/lib/voice/recap";
 import { approvalLine, tapReason, waitsOnMember } from "@/lib/voice/relay";
 import { SETUP_JOURNEY_TITLE, type CallPurpose, type StageField, type VoiceGrant, type VoiceStage } from "@/lib/voice/types";
-import type { Approval, Attachment, ChatMessage, Journey as JourneyInfo, StreamEvent, UiField, UiForm, UiResponse } from "@/lib/types";
+import { MAX_ATTACHMENTS, type Approval, type Attachment, type ChatMessage, type Journey as JourneyInfo, type StreamEvent, type UiField, type UiForm, type UiResponse } from "@/lib/types";
 import type { LinkStatus, VoiceLink, VoiceLinkEvents, VoiceTools } from "./link";
 import MockVoiceLink from "./mock-link";
 import { Orb, ORB_LABEL, type OrbState } from "./orb";
+import { useShare } from "./share";
 
 // A call with the agent, from any conversation: the orb (who has the floor, and whose move it is)
 // beside the stage, which shows only what the backend reported: the journey rail, the latest
@@ -212,6 +213,14 @@ export function Call({
   waitForTap = false,
 }: CallProps) {
   const drafts = useCardDrafts();
+  // What they show the call (their screen or camera), kept on their device until they ask it to look.
+  const share = useShare({ mock: !grant.capabilities.audio });
+  const shareRef = useRef(share);
+  shareRef.current = share;
+  /** Snapshots waiting to go with their next words: taken while the agent worked, or with Snap. */
+  const filesRef = useRef<Attachment[]>([]);
+  const [snapped, setSnapped] = useState(0);
+  const [snapping, setSnapping] = useState(false);
   const [joined, setJoined] = useState(!waitForTap);
   const link = useRef<VoiceLink | null>(null);
   const [status, setStatus] = useState<LinkStatus>("connecting");
@@ -370,8 +379,9 @@ export function Call({
           }
         : {}),
       ...(longJob && running ? { longJob: true } : {}),
+      ...(share.kind ? { sharing: share.kind } : {}),
     };
-  }, [approving, ask.form, ask.questions, ask.reply, drafts, journey, longJob, pendingApproval, purpose, questionsKey, running, spent, spokenOn]);
+  }, [approving, ask.form, ask.questions, ask.reply, drafts, journey, longJob, pendingApproval, purpose, questionsKey, running, share.kind, spent, spokenOn]);
   const stageRef = useRef(stage);
   stageRef.current = stage;
   /** The stage the voice last heard, with a line or as an update. */
@@ -491,10 +501,35 @@ export function Call({
       setOnIt(true);
       setProgressSeen(false);
       steered.current = options.steer && live.current.running;
-      onSend(text, options);
+      // Snapshots waiting for their words go with them.
+      const files = filesRef.current;
+      filesRef.current = [];
+      setSnapped(0);
+      const attachments = [...(options.attachments ?? []), ...files].slice(0, MAX_ATTACHMENTS);
+      onSend(text, attachments.length ? { ...options, attachments } : options);
     },
     [onSend],
   );
+
+  /** One frame of what they're sharing, uploaded like any file; null when it couldn't be taken. */
+  const snapshot = useCallback(async (): Promise<Attachment | null> => {
+    setSnapping(true);
+    try {
+      const file = await shareRef.current.snap();
+      return file ? await uploadAttachment(file) : null;
+    } catch {
+      return null;
+    } finally {
+      setSnapping(false);
+    }
+  }, []);
+  /** Snap: a frame that goes with whatever they say or type next. */
+  const snapNow = useCallback(async () => {
+    const taken = await snapshot();
+    if (!taken) return;
+    filesRef.current = [...filesRef.current, taken].slice(-MAX_ATTACHMENTS);
+    setSnapped(filesRef.current.length);
+  }, [snapshot]);
 
   const handOff = useCallback((): string => {
     const said = pending();
@@ -527,6 +562,20 @@ export function Call({
       noteExit.current = { at: Date.now(), heard: modeRef.current === "speaking" };
       return "Ending: they'd rather have a voice note when it's done; the call ends once that's said.";
     }
+    // "Look at this" while they share: one frame goes with their words (the reply waits for it, so
+    // the tool answers at once). While the agent works, both wait for it like any talk-over.
+    if (shareRef.current.kind && isLookIntent(words)) {
+      const steer = (busy || awaiting) && isRedirect(words);
+      if ((busy || awaiting) && !steer) hold(words);
+      void snapshot().then((taken) => {
+        if (taken) filesRef.current = [...filesRef.current, taken].slice(-MAX_ATTACHMENTS);
+        setSnapped(filesRef.current.length);
+        if (steer) send(words, { steer: true });
+        else if (!(busy || awaiting)) send(withHeld(words), { steer: false });
+      });
+      if ((busy || awaiting) && !steer) return awaiting ? "Held: it's waiting on their OK on screen; their words and a snapshot go along after." : "Held: until the current work lands, with a snapshot.";
+      return "Handed off: looking at what they're showing.";
+    }
     if (busy || awaiting) {
       if (isRedirect(words)) {
         send(words, { steer: true });
@@ -539,7 +588,7 @@ export function Call({
     }
     send(withHeld(words), { steer: false });
     return "Handed off: sent to the worker.";
-  }, [closeLongJob, hold, onRetry, send, withHeld]);
+  }, [closeLongJob, hold, onRetry, send, snapshot, withHeld]);
 
   const tools: VoiceTools = {
     send_message: () => handOff(),
@@ -805,6 +854,8 @@ export function Call({
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== "hidden") return;
+      // Showing something in another tab or window is the point of sharing: the call stays live.
+      if (shareRef.current.kind) return;
       // They may not have heard what was said while away: a hold stops, and a read-back is said again.
       step({ type: "cancel", reason: "hidden", at: Date.now() });
       step({ type: "speaker", on: false, at: Date.now() });
@@ -1003,6 +1054,8 @@ export function Call({
                 </button>
               </form>
 
+              <SharePanel share={share} snapping={snapping} snapped={snapped} onSnap={() => void snapNow()} disabled={status !== "connected"} />
+
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -1130,6 +1183,89 @@ export function Call({
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+/** The live picture of what they're sharing, small, so they can see what the agent would see. */
+function SharePreview({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
+  return <video ref={ref} autoPlay muted playsInline aria-hidden="true" className="h-12 w-20 shrink-0 rounded-md bg-press object-cover" />;
+}
+
+/**
+ * Showing the call your screen or camera: a tap starts it (the browser asks which screen), and
+ * it stays on the device until they say "look at this" or tap Snap, which sends one frame with
+ * their words. The plain line says what a snapshot can catch.
+ */
+function SharePanel({
+  share,
+  snapping,
+  snapped,
+  onSnap,
+  disabled,
+}: {
+  share: ReturnType<typeof useShare>;
+  snapping: boolean;
+  snapped: number;
+  onSnap: () => void;
+  disabled: boolean;
+}) {
+  const quiet =
+    "inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg disabled:opacity-40";
+  if (!share.kind) {
+    if (!share.canScreen && !share.canCamera) return null;
+    return (
+      <div className="flex w-full max-w-sm flex-col items-center gap-1.5">
+        <div className="flex items-center gap-2">
+          {share.canScreen ? (
+            <button type="button" disabled={disabled} onClick={() => void share.start("screen")} className={quiet}>
+              <MonitorUp size={14} />
+              Show my screen
+            </button>
+          ) : null}
+          {share.canCamera ? (
+            <button type="button" disabled={disabled} onClick={() => void share.start("camera")} className={quiet}>
+              <Camera size={14} />
+              Show camera
+            </button>
+          ) : null}
+        </div>
+        {share.problem ? (
+          <p role="status" className="text-center text-[12px] text-fg-3">
+            {share.problem}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  return (
+    <div className="flex w-full max-w-sm flex-col gap-1.5 rounded-xl border border-line p-2.5">
+      <div className="flex items-center gap-2.5">
+        {share.stream ? <SharePreview stream={share.stream} /> : null}
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium text-fg">Sharing your {share.kind}</p>
+          <p className="text-[12px] text-fg-3">Say “look at this”, or tap Snap.</p>
+        </div>
+        <button type="button" disabled={disabled || snapping} onClick={onSnap} className={quiet}>
+          Snap
+        </button>
+        <button type="button" onClick={share.stop} className="inline-flex h-8 items-center rounded-lg px-2.5 text-[13px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg">
+          Stop
+        </button>
+      </div>
+      <p aria-live="polite" className="text-[12px] leading-[1.45] text-fg-3">
+        {snapping
+          ? "Taking a snapshot…"
+          : share.problem
+            ? share.problem
+            : snapped
+              ? `${snapped === 1 ? "A snapshot is" : `${snapped} snapshots are`} ready: ${snapped === 1 ? "it goes" : "they go"} with what you say next.`
+              : "Nothing is sent until you ask. A snapshot shows whatever's in view, including other people, and is saved with your message."}
+      </p>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isLookIntent,
   isAffirmation,
   isApproveIntent,
   isBackchannel,
@@ -265,5 +266,18 @@ describe("agreeing, and holding off", () => {
   it("knows holding off that asks for nothing", () => {
     for (const said of ["Wait", "Hold on a sec", "No, wait", "Not yet", "Stop", "Cancel", "One second", "Let me think"]) expect(isHoldOn(said), said).toBe(true);
     for (const said of ["Wait, change the subject", "Stop sending emails", "Hold the Tuesday slot", "No", "Send it", ""]) expect(isHoldOn(said), said).toBe(false);
+  });
+});
+
+describe("isLookIntent", () => {
+  it("hears a request to look at what they're showing", () => {
+    for (const said of ["Look at this", "can you see my screen?", "Take a look at that error", "do you see this", "have a look", "check this out"]) {
+      expect(isLookIntent(said), said).toBe(true);
+    }
+  });
+  it("ignores other talk and being told not to look", () => {
+    for (const said of ["I'll look into it later", "find roles that look good", "don't look at that", "send it", "okay"]) {
+      expect(isLookIntent(said), said).toBe(false);
+    }
   });
 });

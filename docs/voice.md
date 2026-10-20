@@ -281,6 +281,23 @@ delete from public.spoken_approval_reports;            -- spoken approvals back 
 
 `VOICE_SPOKEN_APPROVALS=off` turns them off without a report.
 
+## Showing the call your screen or camera
+
+On a call, "Show my screen" or "Show camera" starts a share with a tap (the browser asks which
+screen; screen sharing isn't available on phones, the camera is). The stream stays on the member's
+device and a small preview shows what the agent would see. Nothing is sent until they ask: a clear
+"look at this" in their own speech-to-text (`isLookIntent`), or a tap on Snap. Then one frame,
+downscaled to a JPEG of at most 1600 px, is uploaded like any attachment and goes with their words
+(the voice says "Let me look."). Said while the agent works, the words and the snapshot wait
+together like any talk-over; Snap holds the frame for whatever they say next. While sharing,
+leaving the tab doesn't mute the call, since showing another window is the point. The plain line
+under the share says a snapshot catches whatever's in view, including other people. The mock voice
+shares a labeled drawing instead, so QA needs no picker or camera.
+
+The live view of the agent's own browser isn't built: Browserbase has no view-only link (its live
+view is interactive and the link grants control), so it waits on a choice between a read-only
+iframe, server-side screenshots, or a replay after the run.
+
 ## Turning it on
 
 1. **ElevenLabs:** an account on a paid plan (calls are billed per minute) and an API key

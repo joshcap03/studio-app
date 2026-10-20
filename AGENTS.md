@@ -199,7 +199,9 @@ raw/technical text.
   cleared with SQL (docs/voice.md).
 - Studio never stores audio. Dictation and voice messages send a recording once to be turned
   into words and keep only the words; a voice note keeps only its words and is spoken each time
-  it's played. Screen or camera frames are taken only when the member asks.
+  it's played. Showing a call your screen or camera starts only with a tap and stays on the
+  member's device; a frame is taken only on their own "look at this" (from speech-to-text) or a tap
+  on Snap, and goes as an ordinary attachment with their words (`src/components/voice/share.ts`).
 - Navigation in the chat shell is client-side history with the path in `Workspace` state.
 - Design tokens live in `src/app/globals.css`; use the token utilities, not raw colors.
 - Don't add dependencies without need.
