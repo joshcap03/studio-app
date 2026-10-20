@@ -63,7 +63,7 @@ export function excerpt(markdown: string, max = EXCERPT): string {
  * What to tell the member about a run that ended while they weren't watching, or null when
  * there's nothing to say (they stopped it themselves). `from` is the agent's own name, once it
  * has one (with voice, the name its calls go by), so a member with several agents can tell
- * which one it is.
+ * which one it is. A reply with a voice note says so, and opens on its play button (?play=).
  */
 export function notificationFor(
   message: ChatMessage,
@@ -77,6 +77,14 @@ export function notificationFor(
   const by = (text: string) => (from ? `${from}: ${text}` : text);
   switch (message.status) {
     case "complete":
+      if (message.voiceNote && report?.outcome !== "nothing_new") {
+        return {
+          title: `${from || "Studio"} left you a voice note`,
+          body: excerpt(message.voiceNote.script) || title,
+          url: `${url}?play=${encodeURIComponent(message.id)}`,
+          tag,
+        };
+      }
       // A task's run that found nothing new stays quiet; one that needs the member says so.
       if (report?.outcome === "nothing_new") return null;
       if (report?.outcome === "needs_you") return { title: by("Needs you"), body: excerpt(report.summary || message.content) || title, url, tag };

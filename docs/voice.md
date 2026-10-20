@@ -69,12 +69,76 @@ calls (`LIMIT_VOICE_SECONDS_PER_DAY`, per person, UTC): `claim_voice_clip` recor
 `voice_clips` (kind, a name for the clip, never its words, and seconds) under the same lock as
 `claim_voice`, which counts clip seconds too. A call that's still open counts for all the time
 it was granted, so a clip can't spend what the call may still use; ending it gives the rest back.
-The same clip again the same day is free, so a replay or a second tab charges nothing. The ledger
-keeps only a keyed hash of the app's name for a clip (`clipKey`, under `VOICE_SEAL_SECRET`), so a
-row a member writes by calling `claim_voice_clip` directly never passes for one already paid.
-Rows (and calls) outlast a deleted agent, so deleting one gives no time back. Text to speech
-counts about 15 characters a second; speech to text counts to the last word's end (or estimates
-from the recording's size).
+A voice's preview again the same day is free (each server instance makes the clip once). A
+voice note or a recording is charged every time the provider makes or hears it, so no loop on a
+route is free: the browser keeps a played note for a day, so replaying it there costs nothing.
+Time a recording already took is charged in full once it's heard, even past the day's limit,
+which then refuses more (`claimVoiceClip(…, { spent: true })`). The ledger keeps only a keyed
+hash of the app's name for a clip (`clipKey`, under `VOICE_SEAL_SECRET`), so a row a member writes
+by calling `claim_voice_clip` directly never passes for one already paid. Rows (and calls)
+outlast a deleted agent, so deleting one gives no time back. Text to speech counts about 15
+characters a second; speech to text counts the length the provider measured (else the end of the
+last thing it timed, else an estimate from the recording's size).
+
+## The mic in the message box
+
+Every message box (a chat, a new chat, a project) has a mic for members with voice whose speech
+provider can hear (`VoiceStatus.speech.stt`). The rules are pure (`src/lib/voice/mic.ts`); the
+recorder is `src/components/chat/mic.tsx`.
+
+- **Hold it** (300 ms or more) to send a voice message: let go and it's sent, labeled "Voice
+  message"; slide away or press Esc to drop it. A timer shows, and two minutes is the most (it's
+  sent then). While the agent is working or waits on an approval, or with words already typed,
+  the message goes into the draft instead, so sending it (and redirecting the work, or declining
+  the approval) stays the member's call. Held into an empty draft, it's still sent as a voice
+  message; joining typed words, it's typing. A hold the mic opened too late for (a slow headset)
+  catches nothing and closes the mic, rather than dictating.
+- **Tap it** to dictate: the words go into the draft where the caret is, and are never sent on
+  their own. Tap again to stop. With the keyboard, Enter or Space on the mic does the same.
+- Recording starts at the press (`MediaRecorder`: Opus in WebM or Ogg, AAC in MP4 on Safari, at
+  32 kbit/s). The recording goes once to `POST /api/voice/transcribe` (the member's session, raw
+  audio up to 4 MB, two minutes at any rate a browser records speech; recorders' types only),
+  which charges it to the day's voice time by its size (up to two minutes, then the rest of the
+  provider's own length), turns it into words, and drops it. One the provider says ran past two
+  minutes gets no words back (413). Hiding the page while recording (a locked phone stops the mic)
+  puts what was said into the draft; a call starting takes the mic, dropping the recording, and
+  the mic waits until the call ends.
+- Under the mock voice nothing is recorded: the mic opens a box labeled "Mock voice: type what
+  you'd say", held or tapped the same way.
+
+A voice message is sent with `modality: "voice_note"`, stored as the origin
+`{kind: "voice", via: "note"}` (a plain `{kind: "voice"}` is a call). The agent is told the member
+spoke it, and that the start of its reply is what they'll hear. A retry, an edit, or a decision on
+an approval answers the latest message again, so it's said the way that one was: the server reads
+it from that message's origin, not from the browser.
+
+## Voice notes
+
+Some replies come back as a voice note to tap and play, with the text underneath
+(`src/lib/voice/notes.ts`, decided when the reply is saved, for members with voice):
+
+- a reply to a voice message says its gist: the first two sentences, as a call would (a reply
+  carried on after the member decided on an approval says what it went on to say, not what they
+  read before deciding);
+- a task run that reports `update` or `needs_you` says its `report_run` summary (the agent is told
+  it's heard, so it writes two or three short spoken sentences), shown as the note's caption.
+
+Calls, typed messages, and runs that found nothing, failed, stopped, or wait on an approval get
+none. Only the words are saved (`messages.voice_note`, at most 600 characters). Playing one asks
+`GET /api/conversations/<id>/messages/<reply>/speech`, which says the words in the voice this
+member chose for the agent (`resolvePersona`) and sends the audio straight back, never stored.
+Each play the server makes is charged (the browser keeps the clip for a day, so replays there are
+free), and the route refuses what the browser marks as coming from another site. If the day's
+voice time is used up, the note says so and the text stays.
+
+One clip plays at a time across the app (`src/components/voice/player.tsx`, shared with voice
+previews): it stops when the tab is hidden, when the member types or opens the mic, and when a call
+starts. A run that ends while the member is away with a voice note sends "<Name> left you a voice
+note", which opens the conversation at the note (`?play=<reply>`) with its play button pointed
+out and focused. It never plays on its own: browsers need a tap first. With a Studio window
+already open, the service worker asks it to go there without a reload (`studio:open`; the
+conversation already on screen is loaded again in place); a window that doesn't answer within a
+second (a page from before the latest build) is sent there instead.
 
 ## Turning it on
 

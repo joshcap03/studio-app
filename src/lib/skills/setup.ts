@@ -77,7 +77,7 @@ function library(): string {
  * proposal, none marked as its pick, so the choice stays theirs whatever their rules on advice.
  */
 function voices(): string {
-  return `\n\nHow you'll sound: they can talk with you by voice, on calls. In propose_agent, also offer two or three ways you could sound as sound, each a voice (by id) from the list below with two first-person sentences on how you'd talk with them, drawn from how they like to work. Lay them side by side; don't mark one as yours or say which you'd pick. They choose one, or none and keep how you sound now. Your name isn't part of this.\nVoices (by id):\n${VOICES.map((v) => `- ${v.key}: ${v.label}. ${v.description}`).join("\n")}`;
+  return `\n\nHow you'll sound: they can talk with you by voice, on calls, and hear your replies in voice notes. In propose_agent, also offer two or three ways you could sound as sound, each a voice (by id) from the list below with two first-person sentences on how you'd talk with them, drawn from how they like to work. Lay them side by side; don't mark one as yours or say which you'd pick. They choose one, or none and keep how you sound now. Your name isn't part of this.\nVoices (by id):\n${VOICES.map((v) => `- ${v.key}: ${v.label}. ${v.description}`).join("\n")}`;
 }
 
 /**

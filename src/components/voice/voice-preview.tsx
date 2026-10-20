@@ -1,17 +1,16 @@
 "use client";
 
 import { Check, Play, Square } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api } from "@/lib/client/api";
-import type { VoiceStatus } from "@/lib/voice/types";
+import { useMemo } from "react";
+import { api } from "@/lib/client/api";
 import { voiceByKey, type VoiceKey } from "@/lib/voice/voices";
+import { usePlayer, VoicePlayer } from "./player";
 
 // Hearing a voice before choosing it, wherever voices are offered (the agent's page, a proposed
-// setup). One preview plays at a time, and none while a call is live: the proposal card also
-// shows on the call's stage, under the agent's own voice. The audio element is started inside
-// the tap (iOS plays sound only from one) and gets the clip once it arrives, from a blob, so
-// playback never depends on the server answering range requests. Wherever a ▶ shows, a
-// PreviewNote shows with it, so the mock is always labeled and a pause or failure always said.
+// setup), on the app's one player (./player.tsx): one clip at a time, and none while a call is
+// live, since the proposal card also shows on the call's stage, under the agent's own voice.
+// Wherever a ▶ shows, a PreviewNote shows with it, so the mock is always labeled and a pause or
+// failure always said.
 
 interface PreviewValue {
   /** Why previews can't play right now, or null. */
@@ -26,127 +25,29 @@ interface PreviewValue {
   toggle: (voice: VoiceKey, from?: string) => void;
 }
 
-const Context = createContext<PreviewValue | null>(null);
+const PREVIEW = "preview:";
+const voiceOf = (key: string | null) => (key?.startsWith(PREVIEW) ? (key.slice(PREVIEW.length) as VoiceKey) : null);
 
 /** Previews on this page, or null where voice is off. */
 export function useVoicePreview(): PreviewValue | null {
-  return useContext(Context);
-}
-
-let silent: string | null = null;
-
-/** A twentieth of a second of silence (8-bit WAV), played inside the tap so the element may play the clip that follows. */
-function silence(): string {
-  if (silent) return silent;
-  const samples = 400;
-  const wav = new DataView(new ArrayBuffer(44 + samples));
-  const text = (at: number, s: string) => [...s].forEach((c, i) => wav.setUint8(at + i, c.charCodeAt(0)));
-  text(0, "RIFF");
-  wav.setUint32(4, 36 + samples, true);
-  text(8, "WAVEfmt ");
-  wav.setUint32(16, 16, true);
-  wav.setUint16(20, 1, true);
-  wav.setUint16(22, 1, true);
-  wav.setUint32(24, 8000, true);
-  wav.setUint32(28, 8000, true);
-  wav.setUint16(32, 1, true);
-  wav.setUint16(34, 8, true);
-  text(36, "data");
-  wav.setUint32(40, samples, true);
-  for (let i = 0; i < samples; i++) wav.setUint8(44 + i, 128);
-  silent = `data:audio/wav;base64,${btoa(String.fromCharCode(...new Uint8Array(wav.buffer)))}`;
-  return silent;
+  const player = usePlayer();
+  return useMemo(() => {
+    if (!player) return null;
+    const failed = player.error && voiceOf(player.error.key) ? player.error : null;
+    return {
+      held: player.held ? "You can hear these after our call." : null,
+      mock: player.mock,
+      playing: voiceOf(player.playing),
+      loading: voiceOf(player.loading),
+      error: failed ? (failed.message ?? "Couldn't play that one. Try again.") : null,
+      errorFrom: failed?.from ?? null,
+      toggle: (voice: VoiceKey, from?: string) => player.toggle(`${PREVIEW}${voice}`, () => api.voicePreview(voice), from),
+    };
+  }, [player]);
 }
 
 /** Previews for a member with voice (and speech that can say a line); without, voices aren't offered. */
-export function VoicePreviews({ voice, onCall, children }: { voice: VoiceStatus | null; onCall?: boolean; children: React.ReactNode }) {
-  return voice?.speech.tts ? (
-    <VoicePreviewProvider mock={!voice.live} onCall={onCall}>
-      {children}
-    </VoicePreviewProvider>
-  ) : (
-    children
-  );
-}
-
-function VoicePreviewProvider({ mock, onCall = false, children }: { mock: boolean; onCall?: boolean; children: React.ReactNode }) {
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const url = useRef<string | null>(null);
-  // Bumped on every stop, so a clip that arrives after its preview was stopped never plays.
-  const turn = useRef(0);
-  const [playing, setPlaying] = useState<VoiceKey | null>(null);
-  const [loading, setLoading] = useState<VoiceKey | null>(null);
-  const [error, setError] = useState<{ message: string; from: string | null } | null>(null);
-
-  const stop = useCallback(() => {
-    turn.current += 1;
-    const el = audio.current;
-    if (el) {
-      el.onended = null;
-      el.pause();
-    }
-    if (url.current) URL.revokeObjectURL(url.current);
-    url.current = null;
-    setPlaying(null);
-    setLoading(null);
-  }, []);
-
-  useEffect(() => {
-    if (onCall) stop();
-  }, [onCall, stop]);
-
-  useEffect(() => {
-    const hidden = () => {
-      if (document.visibilityState === "hidden") stop();
-    };
-    document.addEventListener("visibilitychange", hidden);
-    return () => {
-      document.removeEventListener("visibilitychange", hidden);
-      stop();
-    };
-  }, [stop]);
-
-  const toggle = useCallback(
-    (voice: VoiceKey, from?: string) => {
-      if (onCall) return;
-      const again = playing === voice || loading === voice;
-      stop();
-      setError(null);
-      if (again) return;
-      const mine = turn.current;
-      const el = (audio.current ??= new Audio());
-      el.src = silence();
-      void el.play().catch(() => undefined);
-      setLoading(voice);
-      api
-        .voicePreview(voice)
-        .then(async (clip) => {
-          if (turn.current !== mine) return;
-          url.current = URL.createObjectURL(clip);
-          el.src = url.current;
-          el.onended = () => {
-            if (turn.current === mine) stop();
-          };
-          await el.play();
-          if (turn.current !== mine) return;
-          setLoading(null);
-          setPlaying(voice);
-        })
-        .catch((e: unknown) => {
-          if (turn.current !== mine) return;
-          stop();
-          setError({ message: e instanceof ApiError ? e.message : "Couldn't play that one. Try again.", from: from ?? null });
-        });
-    },
-    [loading, onCall, playing, stop],
-  );
-
-  const value = useMemo(
-    () => ({ held: onCall ? "You can hear these after our call." : null, mock, playing, loading, error: error?.message ?? null, errorFrom: error?.from ?? null, toggle }),
-    [error, loading, mock, onCall, playing, toggle],
-  );
-  return <Context.Provider value={value}>{children}</Context.Provider>;
-}
+export const VoicePreviews = VoicePlayer;
 
 /** ▶ for one voice's preview, ■ while it plays, in a `group` of voices with its own PreviewNote. Nothing where voice is off. */
 export function PreviewButton({ voice, group }: { voice: VoiceKey; group?: string }) {

@@ -11,6 +11,7 @@ import { buildTimeline, linksSeen } from "./timeline";
 import { seamBetween } from "./seam";
 import { buildVisual, withVisual } from "./visuals";
 import { describeLink } from "@/lib/library";
+import { voiceNoteFor } from "@/lib/voice/notes";
 import {
   ARTIFACT_KINDS,
   MAX_MEMORY_LENGTH,
@@ -123,6 +124,11 @@ export interface TurnDeps {
   resolveMerge?: (raw: unknown) => Promise<UiBlock | null>;
   /** Whether this member gets investigation timelines; when false they're dropped (visuals are kept). */
   timelines?: boolean;
+  /**
+   * Whether replies can come back as voice notes (the member has voice, with speech): a reply to
+   * their voice message, or a task run's news (src/lib/voice/notes.ts). Without it, none do.
+   */
+  voiceNotes?: boolean;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -366,6 +372,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     promptMessageId = userMessage.id;
   }
   if (!conversation) throw new TurnError(404, "Conversation not found.");
+  /** The member's message this reply answers, which says how they said it (for a voice note). */
+  const answered = userMessage ?? existing.findLast((m) => m.role === "user") ?? null;
 
   const attachments: AgentAttachment[] = resume ? [] : [...(deps.projectFiles ?? [])];
   if (promptMessageId && !resume) {
@@ -432,6 +440,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       let content = assistant.content;
       // A run resumed after an approval carries on the same reply: its first text is a new part.
       let resumedSeam = Boolean(continued && content);
+      // What the member read before deciding, which a voice note doesn't say again.
+      const earlier = continued ? content : null;
       const activity: ActivityStep[] = [...assistant.activity];
       const artifacts: Artifact[] = [...assistant.artifacts];
       const approvals: Approval[] = [...(assistant.approvals ?? [])];
@@ -753,16 +763,20 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       }
       await Promise.all(remembering);
       await saving;
+      // Saved with the final state, so the end event and the stored reply carry the same note. A
+      // reply that never had one doesn't write it.
+      const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier }) : null;
+      const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
       let updated = summary;
       try {
-        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error });
+        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted });
         updated = await store.touchConversation(conversationId);
       } catch (e) {
         console.error("[turn] failed to save final state", e);
       }
       finished();
       const watched = open;
-      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, ui, error };
+      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted };
       send({ type: "end", message: final, conversation: updated });
       if (open) {
         try {

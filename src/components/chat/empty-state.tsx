@@ -6,6 +6,7 @@ import { Companion, companionHint, useCompanion } from "@/components/ui/companio
 import { JourneyBar } from "@/components/ui/journey";
 import { stepName } from "@/lib/setup-words";
 import type { SetupSummary, WorkspaceSkill } from "@/lib/types";
+import type { VoiceStatus } from "@/lib/voice/types";
 import { Composer, type ComposerHandle, type MessageExtras } from "./composer";
 
 interface Suggestion {
@@ -52,6 +53,8 @@ interface Props {
   talkNotice?: string | null;
   /** Present once the agent knows the member well enough to introduce itself. */
   onSayHello?: () => void;
+  /** Voice for this member, for the message box's mic. */
+  voice?: VoiceStatus | null;
 }
 
 const chip =
@@ -65,7 +68,7 @@ export function chipSkills(skills: WorkspaceSkill[]): WorkspaceSkill[] {
 }
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, onSayHello },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, onSayHello, voice },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
@@ -121,6 +124,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
             skills={skills}
             autoFocus
             allowFiles={allowFiles}
+            voice={voice}
           />
         </div>
         <ul className="mt-4 flex flex-wrap justify-center gap-1.5 animate-fade-up [animation-delay:120ms]" aria-label="Suggestions">

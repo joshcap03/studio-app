@@ -107,7 +107,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
     tenant.agentFiles?.length && `Your files (the member's, attached to every message with this agent): ${tenant.agentFiles.join(", ")}`,
     project && projectContext(project),
-    tenant.task && taskContext(tenant.task),
+    tenant.task && taskContext(tenant.task, { voiceNotes: tenant.voiceNotes === true }),
     tenant.setup && setupContext(tenant.setup),
     tenant.tracker && trackerContext(tenant.tracker),
     tenant.notes?.length && notesContext(tenant.notes),
@@ -158,11 +158,16 @@ export function selfContext(self: NonNullable<AgentTenantContext["self"]>): stri
 /**
  * How the member is talking on this turn. On a call, a voice front greets them, reads out the
  * gist of each reply and the steps it reports, and shows its cards, so the reply is written for
- * the ear and doesn't greet them again.
+ * the ear and doesn't greet them again. A voice message gets a voice note back: the reply's
+ * first two sentences, spoken (src/lib/voice/notes.ts), so those carry the gist.
  */
 export function modalityContext(modality: NonNullable<AgentTenantContext["modality"]>): string {
   if (modality === "voice_note") {
-    return "The member sent this as a voice message, so it was spoken: expect speech-to-text slips. Write your reply so it also works read aloud: the gist first, short sentences.";
+    return [
+      "The member sent this as a voice message, so it was spoken: expect speech-to-text slips.",
+      "They'll hear the start of your reply as a voice note, with the text underneath: your first two sentences, under about 50 words together, are what they hear, so put the gist there, in plain spoken words.",
+      "Details, links, lists, and choices go after them, in writing.",
+    ].join(" ");
   }
   return [
     "The member is on a live voice call with you. A voice reads out the gist of your reply and the steps you report, and shows your cards on their screen; their words reach you as they said them (expect speech-to-text slips).",
@@ -255,8 +260,11 @@ export function libraryContext(items: NonNullable<AgentTenantContext["library"]>
   return `The member's Library (docs you made for them and links they filed; title | kind | link; pinned first, then most recent). When they ask for something one of these already covers, open and update that one rather than making a new copy, and give them its link:\n${lines.join("\n")}`;
 }
 
-/** The task this conversation works on: what it's for, and the plan so far. */
-function taskContext(task: NonNullable<AgentTenantContext["task"]>): string {
+/**
+ * The task this conversation works on: what it's for, and the plan so far. With `voiceNotes`,
+ * a run's news comes back as a voice note that says its report_run summary.
+ */
+export function taskContext(task: NonNullable<AgentTenantContext["task"]>, { voiceNotes = false }: { voiceNotes?: boolean } = {}): string {
   const plan = task.plan.map((s) => `- [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ""}`).join("\n");
   return [
     `This conversation works on the member's task "${task.title}". Each run continues it.`,
@@ -264,6 +272,8 @@ function taskContext(task: NonNullable<AgentTenantContext["task"]>): string {
     plan ? `Plan so far:\n${plan}` : "There's no plan yet. If the task has several steps, write one with update_plan.",
     "Keep the plan current with update_plan whenever a step starts, finishes, gets blocked, or needs the member.",
     "When this run's work is done, call report_run once: nothing_new if you found nothing worth their attention, update if there's something to read, needs_you if they must decide or act. They're only notified for update and needs_you.",
+    voiceNotes &&
+      "For update and needs_you, they hear your report_run summary as a voice note: write it to be heard, in two or three short spoken sentences with the best result first, with no symbols, lists, or links, in 300 characters at most.",
   ]
     .filter(Boolean)
     .join("\n\n");

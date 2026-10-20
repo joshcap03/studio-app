@@ -16,6 +16,7 @@ import type {
   UiResponse,
   Citation,
   Timeline,
+  VoiceNote,
 } from "@/lib/types";
 
 // The conversation persistence boundary, scoped to one tenant (workspace + user). Every
@@ -43,6 +44,7 @@ export interface MessagePatch {
   questions?: Question[] | null;
   ui?: UiBlock[] | null;
   uiResponse?: Record<string, UiResponse> | null;
+  voiceNote?: VoiceNote | null;
   error?: string | null;
 }
 
@@ -81,6 +83,8 @@ export interface Store {
   setAgentThread(conversationId: string, provider: string, threadId: string): Promise<void>;
   touchConversation(conversationId: string): Promise<ConversationSummary>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
+  /** One message of the caller's in a conversation, or null when there's no such message. */
+  getMessage(conversationId: string, id: string): Promise<ChatMessage | null>;
   insertMessage(message: Omit<ChatMessage, "createdAt">): Promise<ChatMessage>;
   updateMessage(id: string, patch: MessagePatch): Promise<void>;
   /** Records the member's rating of one of their replies (null clears it). False if no such reply. */
@@ -137,6 +141,7 @@ interface MessageRow {
   ui: UiBlock[] | null;
   ui_response: Record<string, UiResponse> | null;
   feedback: MessageFeedback | null;
+  voice_note: VoiceNote | null;
   error: string | null;
   skill: MessageSkill | null;
   origin: MessageOrigin | null;
@@ -172,7 +177,7 @@ const CONVERSATION_COLUMNS = "id, title, project_id, agent_provider, agent_threa
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
-  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, error, skill, origin, created_at, updated_at, " +
+  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, error, skill, origin, created_at, updated_at, " +
   "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS = "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at";
@@ -231,6 +236,7 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   ui: r.ui ?? null,
   uiResponse: r.ui_response ?? null,
   feedback: r.feedback ?? null,
+  voiceNote: r.voice_note ?? null,
   attachments: (r.attachments ?? []).map(toAttachment),
   error: r.error,
   skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
@@ -429,6 +435,19 @@ export function createStore(db: Db, scope: Scope): Store {
       return rows.map(toMessage);
     },
 
+    async getMessage(conversationId, id) {
+      const row = check(
+        await messages()
+          .select(MESSAGE_COLUMNS)
+          .eq("id", id)
+          .eq("conversation_id", conversationId)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .maybeSingle(),
+      ) as unknown as MessageRow | null;
+      return row ? toMessage(row) : null;
+    },
+
     async insertMessage(m) {
       const row = check(
         await messages()
@@ -465,6 +484,7 @@ export function createStore(db: Db, scope: Scope): Store {
       if (patch.questions !== undefined) values.questions = patch.questions;
       if (patch.ui !== undefined) values.ui = patch.ui;
       if (patch.uiResponse !== undefined) values.ui_response = patch.uiResponse;
+      if (patch.voiceNote !== undefined) values.voice_note = patch.voiceNote;
       if (patch.error !== undefined) values.error = patch.error;
       check(await messages().update(values).eq("id", id).eq("workspace_id", workspaceId).eq("user_id", userId));
     },

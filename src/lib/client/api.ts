@@ -45,6 +45,13 @@ async function errorMessage(res: Response): Promise<string> {
   return body?.error ?? "Something went wrong. Try again.";
 }
 
+/** Audio from one of the app's own routes, as a blob to play from (no range requests needed). */
+async function audio(path: string): Promise<Blob> {
+  const res = await fetch(path);
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  return res.blob();
+}
+
 export const api = {
   updateAccount: (patch: { name?: string; about?: string }) =>
     request<{ account: { name: string; about: string } }>("/api/account", { method: "PATCH", body: JSON.stringify(patch) }),
@@ -70,10 +77,18 @@ export const api = {
   updateCompanion: (patch: { name?: string; manner?: string; voice?: VoiceKey | null }) =>
     request<{ companion: Companion }>("/api/agent/companion", { method: "PATCH", body: JSON.stringify(patch) }),
   /** A voice's preview line as audio, for playing in the browser. */
-  voicePreview: async (voice: VoiceKey): Promise<Blob> => {
-    const res = await fetch(`/api/voice/preview?voice=${encodeURIComponent(voice)}`);
+  voicePreview: (voice: VoiceKey): Promise<Blob> => audio(`/api/voice/preview?voice=${encodeURIComponent(voice)}`),
+  /** A reply's voice note as audio, said in the agent's voice. */
+  voiceNote: (conversationId: string, messageId: string): Promise<Blob> => audio(`/api/conversations/${conversationId}/messages/${messageId}/speech`),
+  /** What the member said in a recording from the message box's mic; the recording isn't kept. */
+  transcribe: async (recording: Blob): Promise<{ text: string; mock?: true }> => {
+    const res = await fetch("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": recording.type || "audio/webm" }, body: recording });
+    if (res.status === 401) {
+      window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
+      throw new ApiError(401, "Signed out.");
+    }
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
-    return res.blob();
+    return (await res.json()) as { text: string; mock?: true };
   },
   skipSetup: () => request<{ ok: true }>("/api/agent/setup", { method: "POST", body: JSON.stringify({ status: "skipped" }) }),
   decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss" | "undo") =>

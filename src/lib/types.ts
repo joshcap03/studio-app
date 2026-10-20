@@ -175,7 +175,11 @@ export interface RunReport {
   summary: string;
 }
 
-/** Where a message came from when the member didn't type it: a task's run, or their words on a call. */
+/**
+ * Where a message came from when the member didn't type it: a task's run, or their spoken words,
+ * on a call (plain "voice", as rows from before voice messages say) or held as a voice message
+ * (`via: "note"`).
+ */
 export type MessageOrigin =
   | {
       kind: "task";
@@ -184,7 +188,20 @@ export type MessageOrigin =
       title: string;
       runId: string | null;
     }
-  | { kind: "voice" };
+  | { kind: "voice"; via?: "note" };
+
+/** The most a voice note says: about forty seconds. */
+export const MAX_VOICE_NOTE_CHARS = 600;
+
+/**
+ * A reply the member can hear as well as read (src/lib/voice/notes.ts): the words the agent's
+ * voice says when they tap play, from the reply itself or from a task run's report. Only the
+ * words are kept; the audio is made on each play and never stored.
+ */
+export interface VoiceNote {
+  script: string;
+  source: "reply" | "summary";
+}
 
 /**
  * How the member is talking to the agent on this turn: typing, a held voice message, or a live
@@ -221,6 +238,8 @@ export interface ChatMessage {
   uiResponse?: Record<string, UiResponse> | null;
   /** Assistant messages only: the member's thumbs up or down on this reply, and why. */
   feedback?: MessageFeedback | null;
+  /** Assistant messages only: what the agent's voice says about this reply, when it has a voice note. */
+  voiceNote?: VoiceNote | null;
   createdAt: number;
 }
 

@@ -351,6 +351,27 @@ describe("Langflow request", () => {
     expect(templateValues(tenantA).system_context).not.toContain("voice");
   });
 
+  it("tells the agent a voice message gets a voice note back, said from the reply's first two sentences", () => {
+    const guardrail = { instructions: "Only look things up; no opinions.", recentChats: [] };
+    const note = templateValues({ ...tenantA, guardrail, modality: "voice_note" }).system_context;
+    expect(note).toContain("expect speech-to-text slips");
+    expect(note).toContain("your first two sentences, under about 50 words together, are what they hear");
+    expect(note).toContain("Details, links, lists, and choices go after them");
+    expect(note.indexOf("no opinions")).toBeLessThan(note.indexOf("voice message"));
+    // A call isn't a voice note.
+    expect(templateValues({ ...tenantA, modality: "call" }).system_context).not.toContain("voice note");
+  });
+
+  it("asks for a task report written for the ear only when it's heard as a voice note", () => {
+    const task = { title: "Job hunt", instructions: "Find PM roles.", plan: [] };
+    const heard = templateValues({ ...tenantA, task, voiceNotes: true }).system_context;
+    expect(heard).toContain("they hear your report_run summary as a voice note");
+    expect(heard).toContain("no symbols, lists, or links, in 300 characters at most");
+    expect(templateValues({ ...tenantA, task }).system_context).not.toContain("voice note");
+    // Only a task's runs report.
+    expect(templateValues({ ...tenantA, voiceNotes: true }).system_context).not.toContain("report_run summary");
+  });
+
   it("gives the Member Apps node this member's id and the offered apps, nobody else's", () => {
     const tweaks = { "MemberApps-studio": { member_id: "{{composio_user_id}}", toolkits: "{{composio_toolkits}}" } };
     const tenant = { ...tenantA, composioToolkits: { gmail: "ac_gmail" } };

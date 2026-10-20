@@ -8,7 +8,9 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./helpers";
 // call its sealed context was made for, from that member's own session. A member picks the
 // voice it speaks with (and hears each first), and the server, not the browser, puts it on the
 // call. Hearing one is charged to their voice time, so another site can't ask for it, and no row
-// a member writes in their own voice ledger makes it free. Requires the QA server.
+// a member writes in their own voice ledger makes it free. A voice message's reply comes back as
+// a voice note only its member can play, and the mic's recordings are heard only for members
+// with voice. Requires the QA server.
 
 const APP = process.env.APP_URL ?? "http://127.0.0.1:3100";
 const PASSWORD = "pw-local-voice-api-only";
@@ -19,11 +21,34 @@ class Client {
   private cookies = new Map<string, string>();
 
   async json(path: string, method: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
+    return this.send(path, method, body === undefined ? undefined : JSON.stringify(body), { "Content-Type": "application/json", ...headers });
+  }
+
+  /** A raw body (a recording), as the browser's mic sends it. */
+  async raw(path: string, body: Uint8Array, type: string, headers: Record<string, string> = {}): Promise<Response> {
+    return this.send(path, "POST", body as BodyInit, { "Content-Type": type, ...headers });
+  }
+
+  /** Runs a turn; the reply as its end event carried it. */
+  async turn(conversationId: string, body: unknown): Promise<{ id: string; voiceNote?: { script: string; source: string } | null }> {
+    const res = await this.json(`/api/conversations/${conversationId}/messages`, "POST", body);
+    const text = await res.text();
+    expect(res.status, text).toBe(200);
+    const end = text
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { type: string; message?: { id: string; voiceNote?: { script: string; source: string } | null } })
+      .find((e) => e.type === "end");
+    expect(end?.message).toBeTruthy();
+    return end!.message!;
+  }
+
+  private async send(path: string, method: string, body: BodyInit | undefined, headers: Record<string, string>): Promise<Response> {
     const res = await fetch(APP + path, {
       method,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body,
       redirect: "manual",
-      headers: { Origin: APP, "Content-Type": "application/json", Cookie: [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; "), ...headers },
+      headers: { Origin: APP, Cookie: [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; "), ...headers },
     });
     for (const header of res.headers.getSetCookie()) {
       const [pair] = header.split(";");
@@ -214,8 +239,106 @@ describe("voices over the API", () => {
     for (let i = 0; i < 3; i++) expect((await own("transcribe", `spent:${crypto.randomUUID()}`, 3600)).error).toBeNull();
     expect((await spent.json("/api/voice/preview?voice=bright", "GET")).status).toBe(429);
     // A free row named the way a preview of "warm" is: the app's own claim doesn't take it as paid.
-    expect((await own("preview", "preview:warm:v1", 0)).error).toBeNull();
+    expect((await own("preview", "preview:warm:v2", 0)).error).toBeNull();
     const res = await spent.json("/api/voice/preview?voice=warm", "GET");
     expect(res.status, await res.clone().text()).toBe(429);
+  });
+});
+
+describe("voice notes over the API", () => {
+  it("come back on a reply to a voice message, played only by its member, as the mock's labeled tone", async () => {
+    const conversation = crypto.randomUUID();
+    const reply = await alice.turn(conversation, { kind: "send", text: "Honestly I'm drowning in invoices", modality: "voice_note" });
+    expect(reply.voiceNote?.source).toBe("reply");
+    expect(reply.voiceNote?.script.length).toBeGreaterThan(0);
+    // Labeled at once as spoken.
+    const thread = (await (await alice.json(`/api/conversations/${conversation}`, "GET")).json()) as { messages: { role: string; origin: unknown; voiceNote?: unknown }[] };
+    expect(thread.messages[0].origin).toEqual({ kind: "voice", via: "note" });
+    expect(thread.messages[1].voiceNote).toEqual(reply.voiceNote);
+
+    const path = `/api/conversations/${conversation}/messages/${reply.id}/speech`;
+    const res = await alice.json(path, "GET");
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(res.headers.get("content-type")).toBe("audio/wav");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=86400");
+    const audio = new Uint8Array(await res.arrayBuffer());
+    expect(String.fromCharCode(...audio.slice(0, 4))).toBe("RIFF");
+    expect(Number(res.headers.get("content-length"))).toBe(audio.byteLength);
+
+    // Another member, a wrong id, and another site get nothing.
+    expect((await bob.json(path, "GET")).status).toBe(404);
+    expect((await alice.json(`/api/conversations/${crypto.randomUUID()}/messages/${reply.id}/speech`, "GET")).status).toBe(404);
+    expect((await alice.json(`/api/conversations/${conversation}/messages/not-an-id/speech`, "GET")).status).toBe(404);
+    expect((await alice.json(path, "GET", undefined, { "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
+  });
+
+  it("charge each play the server makes (the browser keeps its own copy for a day)", async () => {
+    const db = await ownDb("voice-api-alice@example.test");
+    const count = async () => (await db.from("voice_clips").select("id", { count: "exact", head: true }).eq("kind", "note")).count;
+    const conversation = crypto.randomUUID();
+    const reply = await alice.turn(conversation, { kind: "send", text: "Read me the plan for today", modality: "voice_note" });
+    const before = await count();
+    for (let i = 0; i < 3; i++) expect((await alice.json(`/api/conversations/${conversation}/messages/${reply.id}/speech`, "GET")).status).toBe(200);
+    // No play is made for free: a loop on the route spends the member's own voice time.
+    expect(await count()).toBe((before ?? 0) + 3);
+  });
+
+  it("don't come back on typed messages, or for members without voice", async () => {
+    const conversation = crypto.randomUUID();
+    const typed = await alice.turn(conversation, { kind: "send", text: "What's on my plate today" });
+    expect(typed.voiceNote ?? null).toBeNull();
+    expect((await alice.json(`/api/conversations/${conversation}/messages/${typed.id}/speech`, "GET")).status).toBe(404);
+
+    // Even a note they wrote themselves isn't played without voice.
+    const email = `voice-outsider-${crypto.randomUUID().slice(0, 8)}@example.test`;
+    const outsider = await member(email);
+    const theirs = crypto.randomUUID();
+    const spoken = await outsider.turn(theirs, { kind: "send", text: "What's on my plate today", modality: "voice_note" });
+    expect(spoken.voiceNote ?? null).toBeNull();
+    const db = await ownDb(email);
+    expect((await db.from("messages").update({ voice_note: { script: "Hi.", source: "reply" } }).eq("id", spoken.id)).error).toBeNull();
+    expect((await outsider.json(`/api/conversations/${theirs}/messages/${spoken.id}/speech`, "GET")).status).toBe(404);
+  });
+});
+
+describe("the mic over the API", () => {
+  const recording = new Uint8Array(4000).fill(7);
+
+  it("hears a recording only for members with voice, from the app's own pages", async () => {
+    const outsider = await member(`voice-outsider-${crypto.randomUUID().slice(0, 8)}@example.test`);
+    expect((await outsider.raw("/api/voice/transcribe", recording, "audio/webm")).status).toBe(404);
+    expect((await alice.raw("/api/voice/transcribe", recording, "audio/webm", { Origin: "https://elsewhere.test" })).status).toBe(403);
+    // The mock hears nothing: the browser asks for typed words instead.
+    const res = await alice.raw("/api/voice/transcribe", recording, "audio/webm;codecs=opus");
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ text: "", mock: true });
+  });
+
+  it("takes only recordings, and not long ones", async () => {
+    expect((await alice.raw("/api/voice/transcribe", recording, "text/plain")).status).toBe(415);
+    expect((await alice.raw("/api/voice/transcribe", recording, "application/octet-stream")).status).toBe(415);
+    expect((await alice.raw("/api/voice/transcribe", new Uint8Array(0), "audio/mp4")).status).toBe(400);
+    expect((await alice.raw("/api/voice/transcribe", new Uint8Array(4 * 1024 * 1024 + 1), "audio/mp4")).status).toBe(413);
+  });
+
+  it("charges each recording it hears to the member's voice time, even the same one sent again", async () => {
+    const db = await ownDb("voice-api-alice@example.test");
+    const count = async () => (await db.from("voice_clips").select("id", { count: "exact", head: true }).eq("kind", "transcribe")).count;
+    const before = await count();
+    const fresh = crypto.getRandomValues(new Uint8Array(6000));
+    for (let i = 0; i < 2; i++) expect((await alice.raw("/api/voice/transcribe", fresh, "audio/ogg")).status).toBe(200);
+    expect(await count()).toBe((before ?? 0) + 2);
+    // A member whose day is spent isn't heard (allowlisted by qa:serve; spent here by their own claims).
+    const email = "voice-api-spent@example.test";
+    const spent = await member(email);
+    const own = await ownDb(email);
+    const ws = ((await (await spent.json("/api/workspaces", "GET")).json()) as { active: string }).active;
+    for (let i = 0; i < 3; i++) {
+      const claim = await own.rpc("claim_voice_clip", { ws, p_kind: "transcribe", p_ref: `spent:${crypto.randomUUID()}`, p_seconds: 3600, p_daily_seconds: 2_000_000_000 });
+      expect(claim.error).toBeNull();
+    }
+    const refused = await spent.raw("/api/voice/transcribe", fresh, "audio/ogg");
+    expect(refused.status).toBe(429);
+    expect(((await refused.json()) as { error: string }).error).toContain("You've used today's voice time");
   });
 });

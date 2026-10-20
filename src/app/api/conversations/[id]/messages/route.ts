@@ -36,7 +36,8 @@ const body = z.discriminatedUnion("kind", [
       steer: z.boolean().optional(),
       // One of the caller's projects to start a new conversation in. Ignored for existing ones.
       projectId: z.uuid().optional(),
-      // How the member is talking: on a call, their words were spoken and the agent writes for the ear.
+      // How the member is talking: on a call or in a voice message their words were spoken, and the
+      // agent writes for the ear. A retry, an edit, or a decision is said the way the latest message was.
       modality: z.enum(MODALITIES).optional(),
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),

@@ -287,9 +287,10 @@ class ProposeArgs(BaseModel):
                                                              "sentences, how you talk with them."),
                            json_schema_extra={"properties": {"name": {"type": "string"}, "manner": {"type": "string"}}})
     sound: list[dict] = Field(default_factory=list, description=("Optional, when your context lists voices: two or three ways "
-                                                                "you could sound on calls, side by side, each a voice id from "
-                                                                "that list and, in two first-person sentences, how you'd talk "
-                                                                "with them. Don't mark one as yours: they choose one or none."),
+                                                                "you could sound on calls and in voice notes, side by side, "
+                                                                "each a voice id from that list and, in two first-person "
+                                                                "sentences, how you'd talk with them. Don't mark one as yours: "
+                                                                "they choose one or none."),
                               json_schema_extra={"items": {"type": "object", "properties": {"voice": {"type": "string"},
                                                                                             "manner": {"type": "string"}},
                                                            "required": ["voice"]}, "maxItems": 3})

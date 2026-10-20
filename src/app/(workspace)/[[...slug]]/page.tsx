@@ -70,9 +70,10 @@ export default async function WorkspacePage({
   // The owner's setup interview: how far along it is, for the "Finish setting up" banner.
   const setup = summarizeSetup(tenant, settings.setup, settings.templateId);
 
-  const voice = setup ? voiceStatus(tenant) : null;
-  // The name the voice greets them with, as the server picks it for calls.
-  const greeter = voice
+  // Voice for every member with it (the mic, voice notes, calls); talking setup through stays the owner's.
+  const voice = voiceStatus(tenant);
+  // The name the voice greets them with on the setup banner, as the server picks it for calls.
+  const greeter = voice && setup
     ? (await resolvePersona(tenant, { templateId: settings.templateId, ...(own ? { companion: own[tenant.workspace.id] ?? null } : {}) })).name
     : null;
 

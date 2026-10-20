@@ -74,8 +74,9 @@ export async function elevenLabsSpeak(apiKey: string, voice: VoiceKey, text: str
 }
 
 /**
- * What the member said in a recording, and how long it ran (the last word's end), when
- * ElevenLabs reports it. Throws when it doesn't answer or refuses.
+ * What the member said in a recording, and how long it ran: the length ElevenLabs measured (what
+ * it charges for), else the end of the last thing it timed, so a long silence after a few words
+ * still counts. Null when it reports neither. Throws when it doesn't answer or refuses.
  */
 export async function elevenLabsTranscribe(apiKey: string, audio: Blob): Promise<{ text: string; seconds: number | null }> {
   const form = new FormData();
@@ -91,8 +92,10 @@ export async function elevenLabsTranscribe(apiKey: string, audio: Blob): Promise
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new Error(`ElevenLabs refused speech to text (${res.status}).`);
-  const body = (await res.json().catch(() => null)) as { text?: unknown; words?: { type?: unknown; end?: unknown }[] } | null;
+  const body = (await res.json().catch(() => null)) as { text?: unknown; words?: { end?: unknown }[]; audio_duration_secs?: unknown } | null;
   if (typeof body?.text !== "string") throw new Error("ElevenLabs sent no transcript.");
-  const ends = (Array.isArray(body.words) ? body.words : []).flatMap((w) => (w?.type === "word" && typeof w.end === "number" && Number.isFinite(w.end) ? [w.end] : []));
-  return { text: body.text.trim(), seconds: ends.length ? Math.max(...ends) : null };
+  const timed = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  const ends = (Array.isArray(body.words) ? body.words : []).flatMap((w) => (timed(w?.end) ? [w.end] : []));
+  const heard = [...(timed(body.audio_duration_secs) ? [body.audio_duration_secs] : []), ...ends];
+  return { text: body.text.trim(), seconds: heard.length ? Math.max(...heard) : null };
 }

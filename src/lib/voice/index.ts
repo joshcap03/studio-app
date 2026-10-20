@@ -97,25 +97,37 @@ export async function endVoiceCall(tenant: Tenant, sessionId: string): Promise<n
 
 export type ClipKind = "preview" | "note" | "transcribe";
 
+/** The most one clip charges (claim_voice_clip's own limit): longer time is charged in parts. */
+export const MAX_CLIP_SECONDS = 3600;
+
+/** No daily limit (Postgres's largest integer), for time already spent. */
+const NO_LIMIT = 2_147_483_647;
+
 /**
  * Charges one clip of speech outside a call to the member's daily voice time (shared with
  * calls), before it's made. `ref` names the clip, never its words (a message id and a hash, say):
  * the same clip again the same day is already paid for, so a replay charges nothing. The ledger
  * keeps only a keyed hash of it (clipKey), so no row a member writes can pass for one of these.
+ *
+ * `spent`: the time is already used (the provider has heard the recording), so it's charged even
+ * past today's limit, and nothing more is made for them today. Never refused.
  */
 export async function claimVoiceClip(
   tenant: Tenant,
   clip: { kind: ClipKind; ref: string; seconds: number },
+  { spent = false }: { spent?: boolean } = {},
 ): Promise<{ ok: true; charged: number } | { ok: false; refused: "daily" }> {
   const voice = getConfig().voice;
   if (!voice) throw new VoiceUnavailable("Voice isn't set up.");
+  const seconds = Math.max(0, Math.ceil(clip.seconds));
+  if (seconds > MAX_CLIP_SECONDS) throw new RangeError(`A clip charges at most ${MAX_CLIP_SECONDS} seconds.`);
   const rows = check(
     await tenant.db.rpc("claim_voice_clip", {
       ws: tenant.workspace.id,
       p_kind: clip.kind,
       p_ref: clipKey(clip.kind, clip.ref, voice.sealSecret),
-      p_seconds: Math.max(0, Math.ceil(clip.seconds)),
-      p_daily_seconds: voice.limits.secondsPerDay,
+      p_seconds: seconds,
+      p_daily_seconds: spent ? NO_LIMIT : voice.limits.secondsPerDay,
     }),
   ) as { clip_id: string | null; seconds: number; refused: string | null }[];
   const claim = rows[0];

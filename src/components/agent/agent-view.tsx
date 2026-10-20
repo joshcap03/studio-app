@@ -209,7 +209,7 @@ function CompanionPanel({ initial, withManner, onNamed }: { initial: CompanionIn
   );
 }
 
-// How the agent sounds to this member on calls (and later in voice notes): the voice they chose,
+// How the agent sounds to this member on calls and in voice notes: the voice they chose,
 // heard before choosing, and how it talks with them, in its words. Theirs to change at any
 // stage; the name it goes by on calls changes only when it introduces itself.
 function VoicePanel({ initial, keptName }: { initial: AgentVoice; keptName: string | null }) {
@@ -244,7 +244,7 @@ function VoicePanel({ initial, keptName }: { initial: AgentVoice; keptName: stri
 
   const name = keptName ?? initial.start.name;
   return (
-    <Section title="Voice" description="How I sound when we talk on a call.">
+    <Section title="Voice" description="How I sound on calls and in voice notes.">
       <VoicePreviews voice={initial.status}>
         <form onSubmit={save} onKeyDown={submitOnModEnter} className="space-y-4">
           <p className="text-[14px] text-fg-2">{keptName ? `On calls I go by ${name}.` : `On calls I go by ${name}, the name I started with.`}</p>
@@ -270,7 +270,7 @@ function VoicePanel({ initial, keptName }: { initial: AgentVoice; keptName: stri
               className={`${input} mt-1 resize-y py-2.5 leading-[1.5]`}
             />
           </div>
-          <p className="text-[12.5px] text-fg-3">A new voice starts on our next call.</p>
+          <p className="text-[12.5px] text-fg-3">A new voice starts with our next call or voice note.</p>
           <SaveRow dirty={dirty} status={status} error={error} label="Save" />
         </form>
       </VoicePreviews>

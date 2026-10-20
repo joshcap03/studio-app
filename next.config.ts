@@ -5,7 +5,8 @@ const securityHeaders = [
   { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  // The microphone is Studio's own, for voice calls; nothing embedded gets it, and the rest stay off.
+  // The microphone is Studio's own, for voice calls and the message box's mic; nothing embedded gets
+  // it, and the rest stay off.
   { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=(), payment=(), usb=(), browsing-topics=()" },
   // Browsers ignore HSTS over plain http, so this is inert on the local dev/QA servers.
   // No `preload`: that's a one-way commitment for the whole domain; add it deliberately.

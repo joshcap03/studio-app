@@ -4,7 +4,7 @@ import type { ChatMessage } from "@/lib/types";
 /** In-memory Store for unit tests. Mirrors the Supabase store's per-tenant scoping. */
 export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryDb()): Store {
   const owns = (c: { workspaceId: string; userId: string }) => c.workspaceId === scope.workspaceId && c.userId === scope.userId;
-  return {
+  const store: Store = {
     scope,
     async listConversations(query) {
       const q = query?.trim().toLowerCase();
@@ -89,6 +89,9 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
           attachments: shared.attachments.filter((a) => a.messageId === m.id).map(({ id, name, mimeType, size }) => ({ id, name, mimeType, size })),
           memoryProposals: m.memoryProposals ?? [],
         }));
+    },
+    async getMessage(conversationId, id) {
+      return (await store.listMessages(conversationId)).find((m) => m.id === id) ?? null;
     },
     async insertMessage(m) {
       const c = shared.conversations.get(m.conversationId);
@@ -184,6 +187,7 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       return shared.attachments.filter((a) => owns(a) && a.messageId).map((a) => a.storagePath);
     },
   };
+  return store;
 }
 
 type Row = Conversation & Scope;
