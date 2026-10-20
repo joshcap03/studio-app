@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openContext, sealContext } from "./seal";
+import { clipKey, openContext, sealContext } from "./seal";
 import type { VoiceContext } from "./types";
 
 const secret = "s".repeat(40);
@@ -32,5 +32,19 @@ describe("voice context seal", () => {
     expect(openContext(sealContext({ ...context, exp: Date.now() - 1 }, secret), "conv_alice", secret)).toBeNull();
     expect(openContext(null, "conv_alice", secret)).toBeNull();
     expect(openContext(sealed, null, secret)).toBeNull();
+  });
+});
+
+describe("voice clip keys", () => {
+  it("name a clip the same way every time, never as the plain name, and can't be made without the key", () => {
+    const key = clipKey("preview", "preview:warm:v1", secret);
+    expect(key).toBe(clipKey("preview", "preview:warm:v1", secret));
+    expect(key).not.toContain("warm");
+    // Fits the ledger's ref (1-200 characters).
+    expect(key.length).toBeGreaterThan(0);
+    expect(key.length).toBeLessThanOrEqual(200);
+    expect(clipKey("note", "preview:warm:v1", secret)).not.toBe(key);
+    expect(clipKey("preview", "preview:bright:v1", secret)).not.toBe(key);
+    expect(clipKey("preview", "preview:warm:v1", "t".repeat(40))).not.toBe(key);
   });
 });

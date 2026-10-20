@@ -11,12 +11,15 @@ export const INTRODUCE_SKILL_NAME = "Say hello";
 export function introduceSkill({
   member,
   voiceName,
+  manner,
   taken,
 }: {
   /** What the member goes by, if known. */
   member: string | null;
   /** The name they've heard on calls, if they've had any. */
   voiceName: string | null;
+  /** How it already talks with them, if they have one (chosen when it was set up, say); it stays. */
+  manner?: string | null;
   /** Names their other agents already go by. */
   taken: string[];
 }): WorkspaceSkill {
@@ -29,7 +32,7 @@ export function introduceSkill({
   3. One sentence on how you'll show up for them, drawn from what they've told you matters.
 - Then call propose_agent with a one-sentence summary and only identity:
   - name: a short, warm, human first name that fits who you've been for them.${voiceName ? ` They've heard you as "${voiceName}" on calls, so suggest keeping "${voiceName}" unless another name clearly fits better.` : ""}${avoid.length ? ` Not ${avoid.join(", or ")}.` : ""}
-  - manner: two first-person sentences on how you talk with them (how brief you are, how you bring news, what you always do first), true to how they like to work.
+  - manner: ${manner ? `how you already talk with them, word for word: "${manner}" It's theirs and stays as it is, so don't reword it.` : "two first-person sentences on how you talk with them (how brief you are, how you bring news, what you always do first), true to how they like to work."}
 - End right after the card with one short sentence: they can keep the name or pick their own. Don't call anything else, and don't mention tools, setup or anything behind the scenes.`;
   return { id: INTRODUCE_SKILL_ID, catalogId: null, name: INTRODUCE_SKILL_NAME, description: "The agent introduces itself and suggests a name.", instructions, createdAt: 0 };
 }

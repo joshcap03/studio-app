@@ -1,5 +1,6 @@
 import type { Attachment, ChatMessage, Companion, ConversationSummary, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
+import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
 import type { AgentRecord, AgentTask, PlanStep, TaskRun, TrackerSummary } from "@/lib/tasks/types";
 import type { VerdictCall } from "@/lib/verdicts";
@@ -66,8 +67,14 @@ export const api = {
   stopRun: (id: string) => request<void>(`/api/conversations/${id}/stop`, { method: "POST" }),
   getSetup: () => request<{ setup: SetupSummary | null }>("/api/agent/setup"),
   getCompanion: () => request<{ companion: Companion | null }>("/api/agent/companion"),
-  updateCompanion: (patch: { name?: string; manner?: string }) =>
+  updateCompanion: (patch: { name?: string; manner?: string; voice?: VoiceKey | null }) =>
     request<{ companion: Companion }>("/api/agent/companion", { method: "PATCH", body: JSON.stringify(patch) }),
+  /** A voice's preview line as audio, for playing in the browser. */
+  voicePreview: async (voice: VoiceKey): Promise<Blob> => {
+    const res = await fetch(`/api/voice/preview?voice=${encodeURIComponent(voice)}`);
+    if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+    return res.blob();
+  },
   skipSetup: () => request<{ ok: true }>("/api/agent/setup", { method: "POST", body: JSON.stringify({ status: "skipped" }) }),
   decideProposal: (conversationId: string, proposalId: string, decision: "save" | "dismiss" | "undo") =>
     request<{ proposal: MemoryProposal }>(`/api/conversations/${conversationId}/proposals/${proposalId}`, {

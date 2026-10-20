@@ -3,6 +3,8 @@ import { toolkitForApp } from "@/lib/apps";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
+import { companionName } from "@/lib/companion";
+import { isVoiceKey } from "@/lib/voice/voices";
 import { DEFAULT_TEMPLATE_ID, PLAN_STEP, TEMPLATES, setupSteps, templateById } from "./index";
 
 describe("templates", () => {
@@ -75,6 +77,21 @@ describe("templates", () => {
       expect(t.namePlaceholder.length, t.id).toBeLessThanOrEqual(80);
     }
     expect(TEMPLATES.at(-1)!.id).toBe("blank");
+  });
+
+  it("each start with their own name and a voice from Studio's catalog", () => {
+    for (const t of TEMPLATES) {
+      expect(companionName(t.persona.name), t.id).toBe(t.persona.name);
+      expect(isVoiceKey(t.persona.voice), t.id).toBe(true);
+    }
+    // Two agents from different templates never introduce themselves by the same name on calls.
+    expect(new Set(TEMPLATES.map((t) => t.persona.name.toLowerCase())).size).toBe(TEMPLATES.length);
+    // The voices members have already heard stay with their templates.
+    expect(Object.fromEntries(TEMPLATES.map((t) => [t.id, t.persona]))).toMatchObject({
+      "job-search": { name: "Rowan", voice: "steady" },
+      "small-business": { name: "June", voice: "clear" },
+      blank: { name: "Sam", voice: "easygoing" },
+    });
   });
 
   it("include the default and look up by id", () => {

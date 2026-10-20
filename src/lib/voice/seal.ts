@@ -40,3 +40,13 @@ export function openContext(sealed: string | null | undefined, conversationId: s
   if (context.cid !== conversationId) return null;
   return context;
 }
+
+/**
+ * The name a clip of speech goes by in the member's voice ledger (voice_clips): a keyed hash of
+ * the app's own name for it. A member can call claim_voice_clip themselves, and could work out a
+ * plain name (a message id and a hash of words they can read), so a row they wrote would pass
+ * for a clip already paid for. Without the key they can only charge themselves.
+ */
+export function clipKey(kind: string, ref: string, secret: string): string {
+  return createHmac("sha256", secret).update(`studio-voice-clip:${kind}:${ref}`).digest("base64url");
+}

@@ -4,6 +4,7 @@ import { MAX_MANNER, companionName } from "@/lib/companion";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { TEMPLATES } from "@/lib/templates";
+import { isVoiceKey } from "@/lib/voice/voices";
 import {
   ATTACHMENT_TYPES,
   MAX_FORM_FIELDS,
@@ -11,10 +12,12 @@ import {
   MAX_LIST_ITEMS,
   MAX_LIST_PARTS,
   MAX_PROPOSED_ITEMS,
+  MAX_SOUND_OPTIONS,
   MAX_VERDICT_ITEMS,
   MAX_VERDICT_REASONS,
   type AgentProposal,
   type ProposedSkill,
+  type ProposedSound,
   type ProposedTask,
   type UiBlock,
   type UiField,
@@ -456,6 +459,13 @@ export function scheduleFrom(raw: unknown): unknown {
   return raw;
 }
 
+/** One way it could sound: a voice from Studio's catalog (anything else is dropped) and how it'd talk. */
+function sound(raw: unknown): ProposedSound | null {
+  if (!isRecord(raw)) return null;
+  const voice = line(raw.voice ?? raw.key, 40).toLowerCase();
+  return isVoiceKey(voice) ? { voice, manner: para(raw.manner ?? raw.style, MAX_MANNER) } : null;
+}
+
 function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal | null {
   const summary = para(raw.summary, 600);
   const profile = para(raw.profile, 8000);
@@ -467,6 +477,10 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
   const self = isRecord(raw.identity) ? raw.identity : null;
   const name = self ? companionName(self.name) : null;
   const identity = name ? { name, manner: para(self?.manner, MAX_MANNER) } : undefined;
+  // A list of options, one option alone, or the options under a key.
+  const soundRaw = isRecord(raw.sound) ? (Array.isArray(raw.sound.options) ? raw.sound.options : [raw.sound]) : list(raw.sound);
+  const sounds = soundRaw.map(sound).filter((o): o is ProposedSound => Boolean(o));
+  const options = sounds.filter((o, i) => sounds.findIndex((p) => p.voice === o.voice && p.manner === o.manner) === i).slice(0, MAX_SOUND_OPTIONS);
   const proposal: AgentProposal = {
     kind: "proposal",
     id,
@@ -477,8 +491,9 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
     tasks: tasks.slice(0, MAX_PROPOSED_ITEMS),
     memories: memories.slice(0, MAX_PROPOSED_ITEMS),
     ...(identity ? { identity } : {}),
+    ...(options.length ? { sound: options } : {}),
   };
-  const empty = !profile && !instructions && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length && !identity;
+  const empty = !profile && !instructions && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length && !identity && !options.length;
   return empty ? null : proposal;
 }
 
@@ -505,4 +520,5 @@ export const proposalPicksSchema = z.strictObject({
   tasks: z.array(z.number().int().min(0).max(MAX_PROPOSED_ITEMS)).max(MAX_PROPOSED_ITEMS),
   memories: z.array(z.number().int().min(0).max(MAX_PROPOSED_ITEMS)).max(MAX_PROPOSED_ITEMS),
   identity: z.boolean().optional(),
+  sound: z.number().int().min(0).max(MAX_SOUND_OPTIONS - 1).optional(),
 });

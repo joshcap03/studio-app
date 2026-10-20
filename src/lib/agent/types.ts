@@ -73,10 +73,12 @@ export interface AgentTenantContext {
   /** How the member is talking on this turn, when it isn't typing (see modalityContext in langflow.ts). */
   modality?: "voice_note" | "call";
   /**
-   * Who the agent is to this member (src/lib/companion.ts): its name and how it talks with them
-   * once they kept one, else nulls. Absent where companions aren't on.
+   * Who the agent is to this member (src/lib/companion.ts): the name they kept (else null) and
+   * how it talks with them once one is chosen. `callName` is the starting name calls introduce
+   * it by while it has none of its own (voice on); `naming: false` where it can't be given one
+   * (companions off). Absent where neither companions nor voice are on.
    */
-  self?: { name: string | null; manner: string | null } | null;
+  self?: { name: string | null; manner: string | null; callName?: string | null; naming?: boolean } | null;
 }
 
 /** A file the member attached to the message being answered. */

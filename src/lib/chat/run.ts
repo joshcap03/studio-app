@@ -17,6 +17,8 @@ import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
 import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
+import { resolvePersona } from "@/lib/voice/persona";
+import { voiceStatus } from "@/lib/voice/status";
 import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
 
 // Builds everything one turn needs for one member, from their tenant alone: the chat route
@@ -100,7 +102,8 @@ export async function buildTurnDeps(
   const named = (list: AgentAttachment[]) => list.filter((f) => sent.has(f.id)).map((f) => f.name);
 
   // A member who wasn't watching when the run ended gets a notification, from the agent by
-  // name once it has one. Each chat run also moves its companion along (best-effort).
+  // name once it has one (with voice, the name its calls go by). Each chat run also moves its
+  // companion along (best-effort).
   const companion = previewEnabled(tenant, "companion");
   const finished: NonNullable<TurnDeps["onFinished"]> = async (message, conversation, info) => {
     try {
@@ -110,7 +113,15 @@ export async function buildTurnDeps(
             return null;
           })
         : null;
-      const notification = info.watched || !pushEnabled() ? null : notificationFor(message, conversation, info.report, self?.name);
+      const notifying = !info.watched && pushEnabled();
+      const from =
+        notifying && voiceStatus(tenant)
+          ? await resolvePersona(tenant, self ? { companion: self } : {}).then(
+              (p) => p.name,
+              () => self?.name,
+            )
+          : self?.name;
+      const notification = notifying ? notificationFor(message, conversation, info.report, from) : null;
       if (notification) await notify(tenant, notification);
     } finally {
       await onFinished?.(message, conversation, info);

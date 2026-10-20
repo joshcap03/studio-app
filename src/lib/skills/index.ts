@@ -2,8 +2,8 @@ import { getCompanions } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { listMemories, memoryEnabled } from "@/lib/memory";
 import { firstName } from "@/lib/setup-words";
-import { voiceStatus } from "@/lib/voice";
-import { personaFor } from "@/lib/voice/persona";
+import { resolvePersona } from "@/lib/voice/persona";
+import { voiceStatus } from "@/lib/voice/status";
 import type { Tenant } from "@/lib/tenant-core";
 import { MAX_SKILLS, type WorkspaceSkill } from "@/lib/types";
 import { builtinSkill } from "./builtin";
@@ -67,20 +67,18 @@ export async function getSkill(tenant: Tenant, id: string, { call = false }: { c
     const row = check(
       await tenant.db.from("workspace_settings").select("template_id").eq("workspace_id", tenant.workspace.id).maybeSingle(),
     ) as { template_id: string | null } | null;
-    return setupSkill(row?.template_id, { call });
+    return setupSkill(row?.template_id, { call, voice: Boolean(voiceStatus(tenant)) });
   }
   if (id === INTRODUCE_SKILL_ID) {
     // The agent introducing itself, knowing what the member has heard it called and the
     // names their other agents already have.
     if (!previewEnabled(tenant, "companion")) return null;
-    const [row, companions] = await Promise.all([
-      tenant.db.from("workspace_settings").select("template_id").eq("workspace_id", tenant.workspace.id).maybeSingle(),
-      getCompanions(tenant),
-    ]);
-    const templateId = (check(row) as { template_id: string | null } | null)?.template_id;
+    const companions = await getCompanions(tenant);
+    const persona = await resolvePersona(tenant, { companion: companions[tenant.workspace.id] ?? null });
     return introduceSkill({
       member: firstName(tenant.account.name),
-      voiceName: voiceStatus(tenant) ? personaFor(templateId).name : null,
+      voiceName: voiceStatus(tenant) ? persona.name : null,
+      manner: persona.manner,
       taken: Object.values(companions).flatMap((c) => (c.workspaceId !== tenant.workspace.id && c.name ? [c.name] : [])),
     });
   }

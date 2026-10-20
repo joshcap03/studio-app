@@ -1,6 +1,7 @@
 import { describeSchedule } from "@/lib/tasks/schedule";
 import { DEFAULT_TEMPLATE_ID, SUCCESS_STEP, setupSteps, templateById, type AgentTemplate } from "@/lib/templates";
 import type { WorkspaceSkill } from "@/lib/types";
+import { VOICES } from "@/lib/voice/voices";
 import { CATALOG } from "./catalog";
 
 // The setup interview every agent opens with: one built-in skill whose steps come from the
@@ -71,8 +72,19 @@ function library(): string {
   return `\n\nLibrary skills you can propose (by id):\n${CATALOG.map((e) => `- ${e.id}: ${e.name}. ${e.description}`).join("\n")}`;
 }
 
-/** The setup skill for an agent made from `templateId` (the blank template when unknown), as said on a `call` or typed. */
-export function setupSkill(templateId: string | null | undefined, { call = false }: { call?: boolean } = {}): WorkspaceSkill {
+/**
+ * How it could sound, for members who talk with it by voice: offered side by side in the
+ * proposal, none marked as its pick, so the choice stays theirs whatever their rules on advice.
+ */
+function voices(): string {
+  return `\n\nHow you'll sound: they can talk with you by voice, on calls. In propose_agent, also offer two or three ways you could sound as sound, each a voice (by id) from the list below with two first-person sentences on how you'd talk with them, drawn from how they like to work. Lay them side by side; don't mark one as yours or say which you'd pick. They choose one, or none and keep how you sound now. Your name isn't part of this.\nVoices (by id):\n${VOICES.map((v) => `- ${v.key}: ${v.label}. ${v.description}`).join("\n")}`;
+}
+
+/**
+ * The setup skill for an agent made from `templateId` (the blank template when unknown), as said
+ * on a `call` or typed, offering ways to sound when the member has `voice`.
+ */
+export function setupSkill(templateId: string | null | undefined, { call = false, voice = false }: { call?: boolean; voice?: boolean } = {}): WorkspaceSkill {
   const template = templateById(templateId) ?? templateById(DEFAULT_TEMPLATE_ID)!;
   const opener = call ? OPENERS.call : OPENERS.text;
   return {
@@ -85,7 +97,7 @@ export function setupSkill(templateId: string | null | undefined, { call = false
 This agent started from the "${template.name}" template.${call ? "" : ` ${template.setup.intro}`}
 
 What setup may cover, in order (your guide, not their checklist):
-${steps(template, opener)}${templateTasks(template)}${library()}`,
+${steps(template, opener)}${templateTasks(template)}${library()}${voice ? voices() : ""}`,
     createdAt: 0,
   };
 }

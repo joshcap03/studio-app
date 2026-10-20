@@ -2,13 +2,28 @@
 // The voice front is the agent's mouth and ears on a call; the worker (src/lib/agent) does all
 // the thinking and work. Shared by the browser and the server, so no runtime imports here.
 
+import type { VoiceKey } from "./voices";
+
 export type VoiceProviderId = "mock" | "elevenlabs";
 
 /** What the app shows about voice for one member; absent when calls are off for them. */
 export interface VoiceStatus {
   provider: VoiceProviderId;
   label: string;
+  /** False for the mock: its calls take typed speech, and its speech is a tone. */
   live: boolean;
+  /** What works outside a call (src/lib/voice/speech.ts). */
+  speech: SpeechCapabilities;
+}
+
+/**
+ * Speech outside a call: an agent's voice saying a line (previews, voice notes) and a member's
+ * recording turned into text. Under the mock (live false) speech is a short tone and the member
+ * types what they'd say.
+ */
+export interface SpeechCapabilities {
+  tts: boolean;
+  stt: boolean;
 }
 
 /** What a voice provider has been verified to do. The call adapts to these. */
@@ -24,10 +39,15 @@ export interface VoiceCapabilities {
 /** How the browser joins a call the server opened. */
 export type VoiceJoin = { kind: "mock" } | { kind: "elevenlabs"; conversationToken: string };
 
-/** A call's persona: a name and voice per agent (the template's default until Phase 2). */
+/**
+ * A call's persona: the name it goes by with this member and the voice they chose (or its
+ * template's), as the server picked them (src/lib/voice/persona.ts).
+ */
 export interface VoicePersona {
   name: string;
-  /** The provider's voice id; null keeps the provider agent's own default voice. */
+  /** Studio's key for the voice (src/lib/voice/voices.ts). */
+  voice: VoiceKey;
+  /** The provider's voice id, applied when the browser joins; null keeps the provider agent's own voice. */
   voiceId: string | null;
 }
 
@@ -72,7 +92,7 @@ export interface VoiceContext {
   agent: string;
   /** The member's personal guardrail, which comes first and overrides everything else. */
   guardrail: string | null;
-  /** How the agent talks with this member, in its own words, once it has a name with them (tone only). */
+  /** How the agent talks with this member, in its own words, once one is chosen (tone only). */
   manner?: string | null;
 }
 

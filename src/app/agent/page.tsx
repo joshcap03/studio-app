@@ -9,6 +9,8 @@ import { getCompanion } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { listMemories, memoryEnabled } from "@/lib/memory";
 import { barScore, describeScore } from "@/lib/verdicts";
+import { defaultPersona } from "@/lib/voice/persona";
+import { voiceStatus } from "@/lib/voice/status";
 import { getSettings, getUsage } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Agent" };
@@ -24,7 +26,10 @@ export default async function AgentPage() {
       })
     : Promise.resolve(null);
   const promotions = brain && memoryEnabled() ? listPromotions(tenant).catch(() => []) : Promise.resolve(null);
-  const companion = previewEnabled(tenant, "companion") ? getCompanion(tenant).catch(() => null) : Promise.resolve(null);
+  // Who it is to them (companions), and how it sounds (voice): both on the member's own row.
+  const named = previewEnabled(tenant, "companion");
+  const voice = voiceStatus(tenant);
+  const companion = named || voice ? getCompanion(tenant).catch(() => null) : Promise.resolve(null);
   const [settings, initialMemories, usage, initialPromotions, files, score, initialCompanion] = await Promise.all([
     getSettings(tenant),
     memories,
@@ -54,7 +59,12 @@ export default async function AgentPage() {
           initialFiles={files}
           allowFiles={getAgentAdapter().capabilities.attachments}
           score={score}
-          initialCompanion={initialCompanion}
+          initialCompanion={named ? initialCompanion : null}
+          voice={
+            voice && initialCompanion
+              ? { status: voice, start: defaultPersona(settings.templateId), keptName: named ? initialCompanion.name : null, voice: initialCompanion.voice, manner: initialCompanion.manner }
+              : null
+          }
         />
       </div>
     </main>

@@ -20,4 +20,13 @@ describe("introduceSkill", () => {
     expect(skill.instructions).toContain("June (another of their agents)");
     expect(skill.instructions).toContain("Introduce yourself to them properly.");
   });
+
+  it("passes on the manner the member already has, word for word", () => {
+    const fresh = introduceSkill({ member: "Sam", voiceName: "Rowan", taken: [] });
+    expect(fresh.instructions).toContain("two first-person sentences on how you talk with them");
+    const chosen = introduceSkill({ member: "Sam", voiceName: "Rowan", manner: "I keep it short.", taken: [] });
+    expect(chosen.instructions).toContain('how you already talk with them, word for word: "I keep it short." It\'s theirs and stays as it is, so don\'t reword it.');
+    expect(chosen.instructions).not.toContain("two first-person sentences on how you talk with them");
+    expect(chosen.instructions).not.toContain("change only that part");
+  });
 });

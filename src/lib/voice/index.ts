@@ -1,33 +1,24 @@
 import { firstName } from "@/lib/setup-words";
-import { getCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
-import { previewEnabled } from "@/lib/flags";
 import type { Tenant } from "@/lib/tenant-core";
 import { getGuardrail, getSettings } from "@/lib/workspace";
-import { ELEVENLABS_CAPABILITIES, ELEVENLABS_LABEL, openElevenLabsCall, VoiceUnavailable } from "./elevenlabs";
+import { ELEVENLABS_CAPABILITIES, ELEVENLABS_LABEL, ELEVENLABS_VOICES, openElevenLabsCall, VoiceUnavailable } from "./elevenlabs";
 import { MOCK_VOICE_LABEL } from "./mock";
-import { agentLabel, personaFor } from "./persona";
-import { sealContext } from "./seal";
+import { agentLabel, resolvePersona } from "./persona";
+import { clipKey, sealContext } from "./seal";
+import { voiceStatus } from "./status";
 import type { VoiceCapabilities, VoiceGrant, VoiceJoin, VoiceStatus } from "./types";
 
 // Voice calls, server side: whether a member can call, starting a call (cap, provider, seal),
-// and ending one. Everything runs under the member's own session; the voice front, which has
-// none, gets only the sealed context.
+// ending one, and charging speech outside calls (previews, voice notes, voice messages) to the
+// same daily voice time. Everything runs under the member's own session; the voice front, which
+// has none, gets only the sealed context.
 
-export { VoiceUnavailable, type VoiceStatus };
+export { VoiceUnavailable, voiceStatus, type VoiceStatus };
 
 const MOCK_CAPABILITIES: VoiceCapabilities = { audio: false, bargeIn: true, verbatimTranscripts: true };
 const GUARDRAIL_CHARS = 4000;
 const MANNER_CHARS = 600;
-
-/** Whether this member can call: null when calls are off for them. */
-export function voiceStatus(tenant: Pick<Tenant, "email">): VoiceStatus | null {
-  const voice = getConfig().voice;
-  if (!voice || !previewEnabled(tenant, "voice")) return null;
-  return voice.provider === "mock"
-    ? { provider: "mock", label: MOCK_VOICE_LABEL, live: false }
-    : { provider: "elevenlabs", label: ELEVENLABS_LABEL, live: true };
-}
 
 function check<T>(result: { data: T; error: { message: string } | null }): T {
   if (result.error) throw new Error(result.error.message);
@@ -59,12 +50,9 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
     throw e instanceof VoiceUnavailable ? e : new VoiceUnavailable("Couldn't open the call.", { cause: e });
   }
 
-  const [settings, guardrail, self] = await Promise.all([
-    getSettings(tenant),
-    getGuardrail(tenant),
-    previewEnabled(tenant, "companion") ? getCompanion(tenant).catch(() => null) : null,
-  ]);
-  const persona = personaFor(settings.templateId, self?.name);
+  const [settings, guardrail] = await Promise.all([getSettings(tenant), getGuardrail(tenant)]);
+  // The server picks the voice from what the member chose; the browser only applies it.
+  const persona = await resolvePersona(tenant, { templateId: settings.templateId });
   // A little past the call's limit, for the last words and the hang-up.
   const exp = Date.now() + (claim.max_seconds + 120) * 1000;
   const context = sealContext(
@@ -80,7 +68,7 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
       member: firstName(tenant.account.name),
       agent: agentLabel(settings.templateId, settings.name),
       guardrail: guardrail ? guardrail.slice(0, GUARDRAIL_CHARS) : null,
-      ...(self?.manner ? { manner: self.manner.slice(0, MANNER_CHARS) } : {}),
+      ...(persona.manner ? { manner: persona.manner.slice(0, MANNER_CHARS) } : {}),
     },
     voice.sealSecret,
   );
@@ -96,7 +84,7 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
       conversationId: opened.conversationId,
       join: opened.join,
       context,
-      persona,
+      persona: { name: persona.name, voice: persona.voice, voiceId: mock ? null : ELEVENLABS_VOICES[persona.voice] },
       maxSeconds: claim.max_seconds,
     },
   };
@@ -105,4 +93,31 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
 /** Ends one of the member's calls; the seconds it used, or null when it isn't theirs or already ended. */
 export async function endVoiceCall(tenant: Tenant, sessionId: string): Promise<number | null> {
   return check(await tenant.db.rpc("end_voice_session", { p_id: sessionId })) as number | null;
+}
+
+export type ClipKind = "preview" | "note" | "transcribe";
+
+/**
+ * Charges one clip of speech outside a call to the member's daily voice time (shared with
+ * calls), before it's made. `ref` names the clip, never its words (a message id and a hash, say):
+ * the same clip again the same day is already paid for, so a replay charges nothing. The ledger
+ * keeps only a keyed hash of it (clipKey), so no row a member writes can pass for one of these.
+ */
+export async function claimVoiceClip(
+  tenant: Tenant,
+  clip: { kind: ClipKind; ref: string; seconds: number },
+): Promise<{ ok: true; charged: number } | { ok: false; refused: "daily" }> {
+  const voice = getConfig().voice;
+  if (!voice) throw new VoiceUnavailable("Voice isn't set up.");
+  const rows = check(
+    await tenant.db.rpc("claim_voice_clip", {
+      ws: tenant.workspace.id,
+      p_kind: clip.kind,
+      p_ref: clipKey(clip.kind, clip.ref, voice.sealSecret),
+      p_seconds: Math.max(0, Math.ceil(clip.seconds)),
+      p_daily_seconds: voice.limits.secondsPerDay,
+    }),
+  ) as { clip_id: string | null; seconds: number; refused: string | null }[];
+  const claim = rows[0];
+  return claim?.clip_id ? { ok: true, charged: claim.seconds } : { ok: false, refused: "daily" };
 }

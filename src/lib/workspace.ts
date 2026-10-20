@@ -12,6 +12,8 @@ import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, Modality, UsageSummary, WorkspaceSettings } from "@/lib/types";
 import { setupSkill } from "@/lib/skills/setup";
 import { barScore, lastMissedBatch, recentPasses } from "@/lib/verdicts";
+import { resolvePersona } from "@/lib/voice/persona";
+import { voiceStatus } from "@/lib/voice/status";
 
 // Workspace-level data: settings, usage, and the per-run agent context. All reads and writes
 // go through the tenant's RLS-bound client and are filtered by the tenant's workspace id.
@@ -153,8 +155,9 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
  * being answered, left out of the recent chats a guardrail run sees.
  */
 export async function buildAgentContext(tenant: Tenant, query?: string, conversationId?: string, modality?: Modality): Promise<AgentTenantContext> {
+  const loading = getSettings(tenant);
   const [settings, memories, guardrail, tasks, bar, self, library] = await Promise.all([
-    getSettings(tenant),
+    loading,
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
     guardrailForRun(tenant, conversationId),
     // A run goes ahead without its task context rather than failing over it.
@@ -163,7 +166,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
       return {};
     }),
     barFor(tenant, conversationId),
-    selfFor(tenant),
+    selfFor(tenant, loading),
     libraryContextFor(tenant),
   ]);
   return {
@@ -182,7 +185,9 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
       conversationId && settings.setup?.conversationId === conversationId
         ? {
             plan: settings.setup.plan,
-            ...(settings.setup.status === "in_progress" ? { instructions: setupSkill(settings.templateId, { call: modality === "call" }).instructions } : {}),
+            ...(settings.setup.status === "in_progress"
+              ? { instructions: setupSkill(settings.templateId, { call: modality === "call", voice: Boolean(voiceStatus(tenant)) }).instructions }
+              : {}),
           }
         : null,
     notes: await notesFor(tenant, settings.templateId),
@@ -193,12 +198,24 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
   };
 }
 
-/** Who the agent is to this member, when companions are on; a run goes ahead without it on error. */
-async function selfFor(tenant: Tenant): Promise<AgentTenantContext["self"]> {
-  if (!previewEnabled(tenant, "companion")) return null;
+/**
+ * Who the agent is to this member, when companions or voice are on (a run goes ahead without it
+ * on error): the same persona its calls and notes use, so the two never disagree on its name.
+ */
+async function selfFor(tenant: Tenant, settings: Promise<WorkspaceSettings>): Promise<AgentTenantContext["self"]> {
+  const naming = previewEnabled(tenant, "companion");
+  const voice = Boolean(voiceStatus(tenant));
+  if (!naming && !voice) return null;
   try {
-    const { name, manner } = await getCompanion(tenant);
-    return { name, manner };
+    // Read here, so a failed read leaves the context without it rather than saying it has no name.
+    const [{ templateId }, companion] = await Promise.all([settings, getCompanion(tenant)]);
+    const persona = await resolvePersona(tenant, { templateId, companion });
+    return {
+      name: persona.nameKept ? persona.name : null,
+      manner: persona.manner,
+      ...(voice && !persona.nameKept ? { callName: persona.name } : {}),
+      ...(naming ? {} : { naming: false }),
+    };
   } catch (e) {
     console.error("[context] couldn't load who the agent is to the member", e);
     return null;

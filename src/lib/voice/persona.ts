@@ -1,26 +1,64 @@
+import { getCompanion } from "@/lib/companion";
+import { previewEnabled } from "@/lib/flags";
 import { stepName } from "@/lib/setup-words";
-import { templateById } from "@/lib/templates";
-import type { StageField, VoiceContext, VoiceCue, VoicePersona, VoiceStage, VoiceToolName } from "./types";
+import { DEFAULT_TEMPLATE_ID, templateById } from "@/lib/templates";
+import type { Tenant } from "@/lib/tenant-core";
+import type { Companion } from "@/lib/types";
+import { voiceStatus } from "./status";
+import type { StageField, VoiceContext, VoiceCue, VoiceStage, VoiceToolName } from "./types";
+import type { VoiceKey } from "./voices";
 
 // Who the voice is on a call and what it may say, built per call from the member's session.
 // The prompt puts the member's personal guardrail first, then the four things the voice may
 // do, then the persona. The voice has no memory, knowledge base, or tools that act: everything
 // that needs thinking or work goes to the worker in the member's exact words.
 
-/**
- * Each template's default name and voice, until "How I'll sound" lets the member choose. Once
- * the agent has a name with the member (src/lib/companion.ts), the voice goes by it.
- */
-const PERSONAS: Record<string, VoicePersona> = {
-  // ElevenLabs library voices; check them on the account when configuring the voice agent.
-  "job-search": { name: "Rowan", voiceId: "SAz9YHcvj6GT2YYXdXww" },
-  "small-business": { name: "June", voiceId: "Xb7hH8MSUJpSbSDYk0k2" },
-  blank: { name: "Sam", voiceId: "cjVigY5qzO86Huf0OWal" },
-};
+/** An agent's starting name and voice, from its template, until the member chooses. */
+export function defaultPersona(templateId: string | null | undefined): { name: string; voice: VoiceKey } {
+  return (templateById(templateId) ?? templateById(DEFAULT_TEMPLATE_ID)!).persona;
+}
 
-export function personaFor(templateId: string | null | undefined, ownName?: string | null): VoicePersona {
-  const persona = PERSONAS[templateId ?? ""] ?? PERSONAS.blank;
-  return ownName ? { ...persona, name: ownName } : persona;
+/** Who the agent is to one member wherever it speaks: calls, push, its own context (and later voice notes). */
+export interface Persona {
+  /** The name the member kept, else its template's starting name. */
+  name: string;
+  /** Whether the member kept that name (it introduced itself and they kept one). */
+  nameKept: boolean;
+  /** The voice the member chose, else its template's. */
+  voice: VoiceKey;
+  /** How it talks with them, in its own words, once one is chosen. */
+  manner: string | null;
+}
+
+/**
+ * The agent's persona for the member in `tenant`, decided on the server from what they chose
+ * (src/lib/companion.ts) and the agent's template. Their choices count where their preview is
+ * on: a kept name with companions, a voice with voice. Pass what the caller already loaded.
+ */
+export async function resolvePersona(
+  tenant: Tenant,
+  known: { templateId?: string | null; companion?: Companion | null } = {},
+): Promise<Persona> {
+  const voiceOn = Boolean(voiceStatus(tenant));
+  const named = previewEnabled(tenant, "companion");
+  const [templateId, self] = await Promise.all([
+    known.templateId !== undefined ? known.templateId : templateIdFor(tenant),
+    known.companion !== undefined ? known.companion : voiceOn || named ? getCompanion(tenant).catch(() => null) : null,
+  ]);
+  const fallback = defaultPersona(templateId);
+  const kept = named && self?.stage === "arrived" ? self.name : null;
+  return {
+    name: kept ?? fallback.name,
+    nameKept: Boolean(kept),
+    voice: voiceOn && self?.voice ? self.voice : fallback.voice,
+    manner: self?.manner ?? null,
+  };
+}
+
+async function templateIdFor(tenant: Tenant): Promise<string | null> {
+  const { data, error } = await tenant.db.from("workspace_settings").select("template_id").eq("workspace_id", tenant.workspace.id).maybeSingle();
+  if (error) throw error;
+  return (data as { template_id: string | null } | null)?.template_id ?? null;
 }
 
 /** What the agent is, for the voice's bearings: its template's name, or the agent's own. */

@@ -4,7 +4,7 @@ import { claimAsAgentFile } from "@/lib/agent-files";
 import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { proposalPicksSchema } from "@/lib/chat/ui";
-import { nameCompanion } from "@/lib/companion";
+import { nameCompanion, setCompanionSound } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { isSetupConversation, updateSetup } from "@/lib/setup-state";
 import { memoryEnabled, remember } from "@/lib/memory";
@@ -16,6 +16,8 @@ import { authorizeTenant, jsonError, type Tenant } from "@/lib/tenant";
 import { MAX_CONTEXT_LENGTH, MAX_FORM_FIELDS, MAX_FORM_FILES, MAX_VERDICT_ITEMS, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
 import { firstName } from "@/lib/setup-words";
 import { saveVerdicts } from "@/lib/verdicts";
+import { voiceStatus } from "@/lib/voice/status";
+import type { VoiceKey } from "@/lib/voice/voices";
 import { updateSettings } from "@/lib/workspace";
 
 type Context = { params: Promise<{ id: string; blockId: string }> };
@@ -147,8 +149,8 @@ const unique = (picked: number[], length: number) => [...new Set(picked)].filter
 
 /**
  * Applies the picked items and reports which ones took effect, so the card shows only what
- * really changed. Settings and skills are the owner's, and
- * memories need memory to be set up; anything else is left out rather than failing the rest.
+ * really changed. Settings and skills are the owner's, memories need memory to be set up, and
+ * how it sounds needs voice; anything else is left out rather than failing the rest.
  */
 async function applyProposal(
   tenant: Tenant,
@@ -163,8 +165,10 @@ async function applyProposal(
   const taskIds: string[] = [];
 
   // Its name first, since a name the member typed can be refused before anything else changes.
-  // Who it is to them is theirs, so any member can keep one.
+  // Who it is to them is theirs, so any member can keep one. A manner they already have stays.
   let name: string | undefined;
+  // How it talks with them once this is applied, when its name or sound was, for the card.
+  let manner: string | null | undefined;
   if (picks.identity && proposal.identity && previewEnabled(tenant, "companion")) {
     const kept = await nameCompanion(tenant, {
       name: edits.name?.trim() || proposal.identity.name,
@@ -174,7 +178,19 @@ async function applyProposal(
     });
     if (!kept.ok) throw new NameRefused(kept.error);
     name = kept.companion.name ?? undefined;
+    manner = kept.companion.manner;
     done.identity = true;
+  }
+
+  // How it sounds is theirs too, for any member with voice: the option they picked is their own
+  // choice, manner and all. Never makes it arrive: only keeping a name does that.
+  const sound = picks.sound !== undefined && voiceStatus(tenant) ? proposal.sound?.[picks.sound] : undefined;
+  let voice: VoiceKey | undefined;
+  if (sound) {
+    const chosen = await setCompanionSound(tenant, { voice: sound.voice, ...(sound.manner ? { manner: sound.manner } : {}) });
+    voice = sound.voice;
+    manner = chosen.manner;
+    done.sound = picks.sound;
   }
 
   const profile = owner && picks.profile && proposal.profile !== undefined ? (edits.profile ?? proposal.profile).trim() : undefined;
@@ -261,6 +277,7 @@ async function applyProposal(
 
   const count = (p: ProposalPicks, lengths: AgentProposal) =>
     Number(Boolean(p.identity) && lengths.identity !== undefined) +
+    Number(p.sound !== undefined && lengths.sound?.[p.sound] !== undefined) +
     Number(p.profile && lengths.profile !== undefined) +
     Number(p.instructions && lengths.instructions !== undefined) +
     unique(p.skills, lengths.skills.length).length +
@@ -275,6 +292,8 @@ async function applyProposal(
       memories: done.memories.length,
       skipped: count(picks, proposal) - count(done, proposal),
       ...(name ? { name } : {}),
+      ...(voice ? { voice } : {}),
+      ...(manner !== undefined ? { manner } : {}),
     },
     ...(taskIds.length ? { taskIds } : {}),
   };

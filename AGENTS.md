@@ -63,6 +63,8 @@ raw/technical text.
 - `src/lib/companion.ts`: who each agent is to one member (the "companion" preview). It starts as a
   sketch of the Studio diamond (`src/components/ui/companion.tsx`), is drawn in with their chat runs,
   is ready once it knows them (thresholds in `KNOWS_YOU`), and arrives with a name the member keeps.
+  Its voice and manner are the member's to choose at any stage (`setCompanionSound`); only the name waits,
+  and keeping one never replaces a manner they have.
   Moved forward after each run, never back; it never gates what the agent can do. Once ready, "Say
   hello" runs `builtin:introduce` (`src/lib/skills/introduce.ts`): the agent introduces itself from what
   it really knows and suggests a name with `propose_agent` (identity), which the member keeps or changes.
@@ -97,9 +99,13 @@ raw/technical text.
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
 - `src/lib/voice/`: voice calls (preview; `docs/voice.md`). `index.ts` starts and ends calls under
-  the member's session (`claim_voice` caps daily voice time), `seal.ts` seals the call's context,
+  the member's session (`claim_voice` caps daily voice time; `claimVoiceClip` charges speech outside
+  calls to the same time), `voices.ts` is Studio's voice catalog (keys only; `elevenlabs.ts` alone
+  maps them to provider voices), `speech.ts` says text and hears recordings (a labeled tone under
+  the mock), `seal.ts` seals the call's context and keys the names clips are charged under,
   `front.ts` is the voice front ElevenLabs calls (`/api/voice/llm/v1/chat/completions`),
-  `persona.ts` its prompt and tools, `relay.ts` what it may say about a run, `intent.ts` what the
+  `persona.ts` its prompt and tools, and (`resolvePersona`) the name, voice and manner an agent has
+  with one member everywhere it speaks, `relay.ts` what it may say about a run, `intent.ts` what the
   member's own words ask for. The call screen is `src/components/voice/call.tsx`; card drafts it
   shares with the thread are `src/components/chat/card-drafts.tsx`, checked by `src/lib/chat/ui-fill.ts`.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
@@ -129,7 +135,8 @@ raw/technical text.
   (verified with Supabase Auth; `src/proxy.ts` lets only that route through without a cookie).
   The other cookieless route is the voice front (`/api/voice/llm/v1/chat/completions`), which
   checks the voice provider's key and the call's sealed context and touches no data. Every other
-  route takes cookie sessions only.
+  route takes cookie sessions only. Writes are refused from other sites; a GET that changes
+  something anyway (one that charges voice time) passes `authorizeTenant(request, { writes: true })`.
 - Keep provider-specific logic inside its adapter. Declare capabilities honestly; don't
   assume streaming, cancellation, or tool events a provider hasn't been verified to send.
 - Never hardcode a tenant, template, or use case into agent or app logic. Templates are

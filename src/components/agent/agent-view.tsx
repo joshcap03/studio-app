@@ -7,6 +7,7 @@ import { Companion, companionHint } from "@/components/ui/companion";
 import { JourneyList } from "@/components/ui/journey";
 import { BusinessBrain } from "@/components/settings/business-brain";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "@/components/settings/section";
+import { PreviewNote, VoicePreviews, VoiceTile } from "@/components/voice/voice-preview";
 import { appName } from "@/lib/apps";
 import { ApiError, api, uploadAgentFile } from "@/lib/client/api";
 import { TEMPLATES, templateById } from "@/lib/templates";
@@ -20,6 +21,20 @@ import {
   type UsageSummary,
   type WorkspaceSettings,
 } from "@/lib/types";
+import type { VoiceStatus } from "@/lib/voice/types";
+import { VOICES, type VoiceKey } from "@/lib/voice/voices";
+
+/** How the agent sounds to the caller, when they have voice. */
+export interface AgentVoice {
+  status: VoiceStatus;
+  /** Its template's starting name and voice. */
+  start: { name: string; voice: VoiceKey };
+  /** The name the caller kept for it, if any. */
+  keptName: string | null;
+  /** The voice they chose; null keeps the starting one. */
+  voice: VoiceKey | null;
+  manner: string | null;
+}
 
 interface Props {
   initialSettings: WorkspaceSettings;
@@ -37,6 +52,8 @@ interface Props {
   score?: string | null;
   /** Who this agent is to the caller (a preview); null where it isn't shown. */
   initialCompanion?: CompanionInfo | null;
+  /** How it sounds to them (the voice preview); null where it isn't shown. */
+  voice?: AgentVoice | null;
 }
 
 async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
@@ -51,11 +68,13 @@ async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<Workspa
 }
 
 // Everything about the active agent: who it is, what it knows, and how much it's used.
-export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles, score, initialCompanion }: Props) {
+export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles, score, initialCompanion, voice }: Props) {
   const [settings, setSettings] = useState(initialSettings);
+  // The name it goes by on calls follows a rename here.
+  const [keptName, setKeptName] = useState(voice?.keptName ?? null);
   return (
     <>
-      {initialCompanion ? <CompanionPanel initial={initialCompanion} /> : null}
+      {initialCompanion ? <CompanionPanel initial={initialCompanion} withManner={!voice} onNamed={setKeptName} /> : null}
       <AgentName name={settings.name} canEdit={canEdit} onSaved={setSettings} />
       <p className="mt-1 text-[14px] text-fg-3">
         {canEdit ? "What this agent is for and how it works. It reads this before every conversation." : "Only the owner can change this agent."}
@@ -68,6 +87,7 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
       ) : null}
       <div className="mt-10 space-y-14">
         <AgentSection initial={settings} canEdit={canEdit} onSaved={setSettings} />
+        {voice ? <VoicePanel initial={voice} keptName={keptName} /> : null}
         {allowFiles || initialFiles.length > 0 ? <FilesSection initial={initialFiles} allowFiles={allowFiles} /> : null}
         {initialPromotions ? (
           <Section
@@ -110,14 +130,15 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
 }
 
 // Who the agent is to this member: still getting to know them, ready to introduce itself, or
-// with the name they kept, which they can change, and how it talks with them, in its words.
-function CompanionPanel({ initial }: { initial: CompanionInfo }) {
+// with the name they kept, which they can change, and how it talks with them, in its words
+// (in the Voice section instead, for members with voice).
+function CompanionPanel({ initial, withManner, onNamed }: { initial: CompanionInfo; withManner: boolean; onNamed: (name: string | null) => void }) {
   const [companion, setCompanion] = useState(initial);
   const [name, setName] = useState(initial.name ?? "");
   const [manner, setManner] = useState(initial.manner ?? "");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
-  const dirty = companion.stage === "arrived" && (name.trim() !== (companion.name ?? "") || manner.trim() !== (companion.manner ?? ""));
+  const dirty = companion.stage === "arrived" && (name.trim() !== (companion.name ?? "") || (withManner && manner.trim() !== (companion.manner ?? "")));
   useWarnUnsaved(dirty);
 
   async function save(event: React.FormEvent) {
@@ -126,10 +147,11 @@ function CompanionPanel({ initial }: { initial: CompanionInfo }) {
     setStatus("saving");
     setError(null);
     try {
-      const { companion: next } = await api.updateCompanion({ name: name.trim(), manner: manner.trim() });
+      const { companion: next } = await api.updateCompanion({ name: name.trim(), ...(withManner ? { manner: manner.trim() } : {}) });
       setCompanion(next);
       setName(next.name ?? "");
       setManner(next.manner ?? "");
+      onNamed(next.name);
       setStatus("saved");
     } catch (e) {
       setStatus("error");
@@ -166,22 +188,93 @@ function CompanionPanel({ initial }: { initial: CompanionInfo }) {
           </label>
           <input id="companion-name" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} className={`${input} mt-1 h-10`} />
         </div>
-        <div>
-          <label htmlFor="companion-manner" className="text-[12.5px] font-medium text-fg-3">
-            How it talks with you, in its words
-          </label>
-          <textarea
-            id="companion-manner"
-            value={manner}
-            maxLength={600}
-            rows={3}
-            onChange={(e) => setManner(e.target.value)}
-            className={`${input} mt-1 resize-y py-2.5 leading-[1.5]`}
-          />
-        </div>
+        {withManner ? (
+          <div>
+            <label htmlFor="companion-manner" className="text-[12.5px] font-medium text-fg-3">
+              How it talks with you, in its words
+            </label>
+            <textarea
+              id="companion-manner"
+              value={manner}
+              maxLength={600}
+              rows={3}
+              onChange={(e) => setManner(e.target.value)}
+              className={`${input} mt-1 resize-y py-2.5 leading-[1.5]`}
+            />
+          </div>
+        ) : null}
         <SaveRow dirty={dirty} status={status} error={error} label="Save" disabled={!name.trim()} />
       </div>
     </form>
+  );
+}
+
+// How the agent sounds to this member on calls (and later in voice notes): the voice they chose,
+// heard before choosing, and how it talks with them, in its words. Theirs to change at any
+// stage; the name it goes by on calls changes only when it introduces itself.
+function VoicePanel({ initial, keptName }: { initial: AgentVoice; keptName: string | null }) {
+  const [saved, setSaved] = useState({ voice: initial.voice ?? initial.start.voice, manner: initial.manner ?? "" });
+  const [voice, setVoice] = useState<VoiceKey>(saved.voice);
+  const [manner, setManner] = useState(saved.manner);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const dirty = voice !== saved.voice || manner.trim() !== saved.manner;
+  useWarnUnsaved(dirty);
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!dirty) return;
+    setStatus("saving");
+    setError(null);
+    try {
+      const { companion } = await api.updateCompanion({
+        ...(voice !== saved.voice ? { voice } : {}),
+        ...(manner.trim() !== saved.manner ? { manner: manner.trim() } : {}),
+      });
+      const next = { voice: companion.voice ?? initial.start.voice, manner: companion.manner ?? "" };
+      setSaved(next);
+      setVoice(next.voice);
+      setManner(next.manner);
+      setStatus("saved");
+    } catch (e) {
+      setStatus("error");
+      setError(e instanceof ApiError ? e.message : "Couldn't save. Try again.");
+    }
+  }
+
+  const name = keptName ?? initial.start.name;
+  return (
+    <Section title="Voice" description="How I sound when we talk on a call.">
+      <VoicePreviews voice={initial.status}>
+        <form onSubmit={save} onKeyDown={submitOnModEnter} className="space-y-4">
+          <p className="text-[14px] text-fg-2">{keptName ? `On calls I go by ${name}.` : `On calls I go by ${name}, the name I started with.`}</p>
+          <div className="space-y-2">
+            <div role="radiogroup" aria-label="My voice" className="grid gap-2 sm:grid-cols-2">
+              {VOICES.map((v) => (
+                <VoiceTile key={v.key} voice={v.key} chosen={voice === v.key} onChoose={() => setVoice(v.key)} />
+              ))}
+            </div>
+            <PreviewNote />
+          </div>
+          <div>
+            <label htmlFor="voice-manner" className="text-[12.5px] font-medium text-fg-3">
+              How I talk with you, in my words
+            </label>
+            <textarea
+              id="voice-manner"
+              value={manner}
+              maxLength={600}
+              rows={3}
+              placeholder="How brief I am, how I bring you news, what I always do first."
+              onChange={(e) => setManner(e.target.value)}
+              className={`${input} mt-1 resize-y py-2.5 leading-[1.5]`}
+            />
+          </div>
+          <p className="text-[12.5px] text-fg-3">A new voice starts on our next call.</p>
+          <SaveRow dirty={dirty} status={status} error={error} label="Save" />
+        </form>
+      </VoicePreviews>
+    </Section>
   );
 }
 

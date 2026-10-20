@@ -135,15 +135,21 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   };
 }
 
-/** Who the agent is to the member: the name they kept and how it talks with them, or not yet. */
+/**
+ * Who the agent is to the member: the name they kept and how it talks with them, or that it has
+ * no name of its own yet. On calls it's introduced by its starting name, so it says so rather
+ * than denying the name the member just heard.
+ */
 export function selfContext(self: NonNullable<AgentTenantContext["self"]>): string {
-  if (!self.name) {
-    return "You don't have a name of your own with them yet. If they ask, say so plainly; if they offer you one, suggest it with propose_agent (identity) so they can keep it. Never make one up.";
-  }
+  const offered = self.naming === false ? "" : "; if they offer you one, suggest it with propose_agent (identity) so they can keep it";
   return [
-    `Who you are to them: you go by ${self.name}.`,
+    self.name
+      ? `Who you are to them: you go by ${self.name}.`
+      : self.callName
+        ? `You don't have a name of your own with them yet: on calls you're introduced as ${self.callName}, this agent's starting name, not one they chose for you. If they ask, say that plainly${offered}. Never make up another.`
+        : `You don't have a name of your own with them yet. If they ask, say so plainly${offered}. Never make one up.`,
     self.manner && `How you talk with them, in your own words: ${self.manner}`,
-    "Let it show in how you say things, never in how much you say, and never make a show of it.",
+    (self.name || self.manner) && "Let it show in how you say things, never in how much you say, and never make a show of it.",
   ]
     .filter(Boolean)
     .join(" ");

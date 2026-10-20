@@ -1,6 +1,8 @@
 // Shared domain types. Imported by the browser and the server, so this file must stay
 // free of runtime dependencies on either side.
 
+import type { VoiceKey } from "@/lib/voice/voices";
+
 export type MessageRole = "user" | "assistant";
 
 /**
@@ -288,8 +290,10 @@ export interface Companion {
   stage: CompanionStage;
   /** Its own name, once it has arrived. */
   name: string | null;
-  /** How it talks, in its own words, once it has arrived. */
+  /** How it talks with the member, in its own words, once one is chosen (at any stage). */
   manner: string | null;
+  /** The voice the member chose for it (src/lib/voice/voices.ts); null keeps its template's. */
+  voice: VoiceKey | null;
   look: CompanionLook;
 }
 
@@ -625,6 +629,16 @@ export interface AgentProposal {
    * change) and, in its own words, how it talks with them.
    */
   identity?: { name: string; manner: string };
+  /**
+   * Ways it could sound with the member, side by side and none marked as its pick: a voice from
+   * Studio's catalog and, in its own words, how it would talk. The member chooses one or none.
+   */
+  sound?: ProposedSound[];
+}
+
+export interface ProposedSound {
+  voice: VoiceKey;
+  manner: string;
 }
 
 /** One proposed merge: facts that overlap, and the one fact that would replace them. */
@@ -682,6 +696,8 @@ export interface ProposalPicks {
   tasks: number[];
   memories: number[];
   identity?: boolean;
+  /** The sound option they chose, by its place in the proposal; none when absent. */
+  sound?: number;
 }
 
 /** What the member did with one card, keyed by its id in ChatMessage.uiResponse. */
@@ -692,8 +708,12 @@ export type UiResponse =
       at: number;
       /** What took effect, which can be less than the member picked. */
       picks: ProposalPicks;
-      /** `skipped`: picked items that couldn't be applied (not the owner, a preview off, memory not set up). */
-      applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number; name?: string };
+      /**
+       * `skipped`: picked items that couldn't be applied (not the owner, a preview off, memory not
+       * set up). `manner`: how it talks with them after this, when its name or sound was applied
+       * (absent from cards applied before it was reported).
+       */
+      applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number; name?: string; voice?: VoiceKey; manner?: string | null };
       /** The tasks it switched on or created, in the proposal's order, so the first can run right away. */
       taskIds?: string[];
     }
@@ -711,6 +731,8 @@ export const MAX_LIST_ITEMS = 8;
 export const MAX_LIST_PARTS = 5;
 export const MAX_FORM_FILES = 5;
 export const MAX_PROPOSED_ITEMS = 8;
+/** Ways to sound a proposal offers side by side. */
+export const MAX_SOUND_OPTIONS = 3;
 export const MAX_VERDICT_ITEMS = 8;
 export const MAX_VERDICT_REASONS = 6;
 

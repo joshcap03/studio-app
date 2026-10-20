@@ -77,7 +77,8 @@ const schema = z.object({
   VOICE_PROVIDER: z.enum(["mock", "elevenlabs"]).optional(),
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_AGENT_ID: z.string().optional(),
-  // Signs the voice context sealed into each call (see src/lib/voice/seal.ts). 32+ characters.
+  // Signs the voice context sealed into each call, and keys the names clips go by in the voice
+  // ledger (see src/lib/voice/seal.ts). 32+ characters.
   VOICE_SEAL_SECRET: z.string().min(32).optional(),
   // What ElevenLabs sends the voice front (/api/voice/llm) as its custom-LLM API key.
   VOICE_LLM_SECRET: z.string().min(24).optional(),
@@ -89,7 +90,8 @@ const schema = z.object({
   // Extra fields for the voice model's requests, as JSON, e.g. {"reasoning":{"enabled":false}} to
   // skip thinking on OpenRouter (a voice should answer fast).
   VOICE_LLM_EXTRA_BODY: jsonRecord,
-  // Voice time per person per day (UTC), and the longest one call may run, in seconds.
+  // Voice time per person per day (UTC), calls and speech outside them (voice previews, voice
+  // notes) together, and the longest one call may run, in seconds.
   LIMIT_VOICE_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1800),
   LIMIT_VOICE_CALL_SECONDS: z.coerce.number().int().min(60).max(7200).default(1500),
 });
@@ -148,7 +150,7 @@ export interface AppConfig {
 export interface VoiceConfig {
   provider: "mock" | "elevenlabs";
   elevenlabs?: { apiKey: string; agentId: string };
-  /** Signs each call's sealed context. Under the mock without one, a per-process random key. */
+  /** Signs each call's sealed context and keys clip names. Under the mock without one, a per-process random key. */
   sealSecret: string;
   /** The custom-LLM key ElevenLabs sends the voice front. */
   llmSecret?: string;

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./helpers";
+import { SUPABASE_ANON_KEY, SUPABASE_URL, serviceClient } from "./helpers";
 
 // Forms and proposals under a reply, through the app's HTTP API: only the member the card was
 // shown to can answer it, an answer is saved once, and Apply changes exactly the stored
@@ -219,6 +219,120 @@ describe("ui card answers", () => {
   it("reject picks that aren't indexes", async () => {
     const res = await alice.api.json(url(proposalId), "POST", { action: "apply", picks: { ...picks, tasks: [{ title: "forged" }] } });
     expect(res.status).toBe(400);
+  });
+});
+
+// Choosing how the agent sounds from a proposal: the member's own pick of the stored options,
+// saved on their companion without making it arrive (only keeping a name does that).
+describe("choosing how it sounds", () => {
+  const soundId = crypto.randomUUID();
+  const none = { profile: false, instructions: false, skills: [], tasks: [], memories: [] };
+  let before: { stage: string; voice: string | null; manner: string | null };
+
+  beforeAll(async () => {
+    const card = {
+      kind: "proposal",
+      id: soundId,
+      summary: "How I could sound.",
+      skills: [],
+      tasks: [],
+      memories: [],
+      sound: [
+        { voice: "steady", manner: `Even and brief ${tag}.` },
+        { voice: "bright", manner: `Quick and upbeat ${tag}.` },
+      ],
+    };
+    const inserted = await alice.db.from("messages").insert({ conversation_id: conversation, workspace_id: alice.workspaceId, role: "assistant", content: "", status: "complete", ui: [card] });
+    expect(inserted.error).toBeNull();
+    before = ((await (await alice.api.json("/api/agent/companion", "GET")).json()) as { companion: typeof before }).companion;
+  }, 60_000);
+
+  afterAll(async () => {
+    await alice?.api.json("/api/agent/companion", "PATCH", { manner: before?.manner ?? "", voice: before?.voice ?? null });
+  });
+
+  it("refuses a pick that isn't a place in the card", async () => {
+    expect((await alice.api.json(url(soundId), "POST", { action: "apply", picks: { ...none, sound: "steady" } })).status).toBe(400);
+    expect((await alice.api.json(url(soundId), "POST", { action: "apply", picks: { ...none, sound: 7 } })).status).toBe(400);
+    expect((await bob.api.json(url(soundId), "POST", { action: "apply", picks: { ...none, sound: 1 } })).status).toBe(404);
+  });
+
+  it("applies the option the member picked, voice and manner, and nothing else, without the agent arriving", async () => {
+    const res = await alice.api.json(url(soundId), "POST", { action: "apply", picks: { ...none, sound: 1 } });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const { response } = (await res.json()) as { response: { applied: unknown; picks: unknown } };
+    expect(response.applied).toEqual({ settings: false, skills: 0, tasks: 0, memories: 0, skipped: 0, voice: "bright", manner: `Quick and upbeat ${tag}.` });
+    expect(response.picks).toEqual({ ...none, sound: 1 });
+    const after = ((await (await alice.api.json("/api/agent/companion", "GET")).json()) as { companion: typeof before }).companion;
+    expect(after).toMatchObject({ stage: before.stage, voice: "bright", manner: `Quick and upbeat ${tag}.` });
+    expect((await alice.api.json(url(soundId), "POST", { action: "apply", picks: { ...none, sound: 0 } })).status).toBe(409);
+    // The next call speaks with it.
+    const call = await alice.api.json("/api/voice/session", "POST", {});
+    expect(call.status, await call.clone().text()).toBe(201);
+    const { grant } = (await call.json()) as { grant: { sessionId: string; persona: { voice: string } } };
+    expect(grant.persona.voice).toBe("bright");
+    await alice.api.json(`/api/voice/session/${grant.sessionId}/end`, "POST", {});
+  });
+});
+
+// Keeping a name and how it sounds: the manner the member chose stays theirs (a picked option's
+// replaces any other, and the agent's introduction never rewrites it), and the card is told the
+// manner that was stored, so it shows only what took effect.
+describe("keeping a name with how it sounds", () => {
+  const setupId = crypto.randomUUID();
+  const helloId = crypto.randomUUID();
+  const none = { profile: false, instructions: false, skills: [], tasks: [], memories: [] };
+  const chosen = `I take it slowly ${tag}.`;
+  type Row = Record<string, unknown> | null;
+  let saved: Row = null;
+
+  const companion = async () => ((await (await alice.api.json("/api/agent/companion", "GET")).json()) as { companion: { stage: string; name: string | null; manner: string | null; voice: string | null } }).companion;
+
+  beforeAll(async () => {
+    // Keeping a name can't be undone in the app, so the row is put back as it was afterwards.
+    const admin = await serviceClient();
+    const { data: me } = await alice.db.auth.getUser();
+    saved = (await admin.from("agent_companions").select("*").eq("workspace_id", alice.workspaceId).eq("user_id", me.user!.id).maybeSingle()).data as Row;
+    const setup = {
+      kind: "proposal",
+      id: setupId,
+      summary: "Who I'll be.",
+      skills: [],
+      tasks: [],
+      memories: [],
+      identity: { name: "Wren", manner: `I'm brief ${tag}.` },
+      sound: [{ voice: "warm", manner: chosen }],
+    };
+    const hello = { kind: "proposal", id: helloId, summary: "Hello.", skills: [], tasks: [], memories: [], identity: { name: "Juniper", manner: `I go on at length ${tag}.` } };
+    const inserted = await alice.db
+      .from("messages")
+      .insert({ conversation_id: conversation, workspace_id: alice.workspaceId, role: "assistant", content: "", status: "complete", ui: [setup, hello] });
+    expect(inserted.error).toBeNull();
+  }, 60_000);
+
+  afterAll(async () => {
+    const admin = await serviceClient();
+    const { data: me } = await alice.db.auth.getUser();
+    const mine = admin.from("agent_companions");
+    if (saved) await mine.update(saved).eq("workspace_id", alice.workspaceId).eq("user_id", me.user!.id);
+    else await mine.delete().eq("workspace_id", alice.workspaceId).eq("user_id", me.user!.id);
+  });
+
+  it("stores the picked option's manner over the one that came with the name, and reports it", async () => {
+    const res = await alice.api.json(url(setupId), "POST", { action: "apply", picks: { ...none, identity: true, sound: 0 } });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const { response } = (await res.json()) as { response: { applied: Record<string, unknown>; picks: unknown } };
+    expect(response.picks).toEqual({ ...none, identity: true, sound: 0 });
+    expect(response.applied).toMatchObject({ name: "Wren", voice: "warm", manner: chosen, skipped: 0 });
+    expect(await companion()).toMatchObject({ stage: "arrived", name: "Wren", voice: "warm", manner: chosen });
+  });
+
+  it("keeps the manner they chose when they keep the name the agent introduces itself with", async () => {
+    const res = await alice.api.json(url(helloId), "POST", { action: "apply", picks: { ...none, identity: true } });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const { response } = (await res.json()) as { response: { applied: Record<string, unknown> } };
+    expect(response.applied).toMatchObject({ name: "Juniper", manner: chosen });
+    expect(await companion()).toMatchObject({ name: "Juniper", manner: chosen, voice: "warm" });
   });
 });
 
