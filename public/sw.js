@@ -23,18 +23,28 @@ self.addEventListener("push", (event) => {
   );
 });
 
+// The chat's pages, which move between themselves without a reload (src/components/workspace).
+const CHAT_PAGE = /^\/(?:$|[cp]\/|tasks(?:\/|$)|library(?:\/|$))/;
+
+// A tap opens what the notification is about in a Studio window that's already open, if there
+// is one. On a chat page, the page moves there itself (studio:open), without reloading, so a
+// voice note's play button is ready to tap; another page is sent there. A window this worker
+// doesn't control can't hear either, so a new one opens instead.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;
+  const target = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin);
+  const url = target.origin === self.location.origin ? target.href : self.location.origin + "/";
   event.waitUntil(
     (async () => {
-      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      for (const client of windows) {
-        if (new URL(client.url).origin !== self.location.origin) continue;
-        await client.focus();
-        if ("navigate" in client) return client.navigate(url);
+      const windows = await self.clients.matchAll({ type: "window" });
+      const client = windows.find((c) => new URL(c.url).origin === self.location.origin);
+      if (!client) return self.clients.openWindow(url);
+      await client.focus();
+      if (CHAT_PAGE.test(new URL(client.url).pathname)) {
+        client.postMessage({ type: "studio:open", url: url.slice(self.location.origin.length) });
         return;
       }
+      if ("navigate" in client) return client.navigate(url);
       return self.clients.openWindow(url);
     })(),
   );

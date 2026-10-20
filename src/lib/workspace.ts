@@ -194,6 +194,7 @@ export async function buildAgentContext(tenant: Tenant, query?: string, conversa
     ...(library?.length ? { library } : {}),
     bar,
     ...(modality && modality !== "text" ? { modality } : {}),
+    ...(voiceStatus(tenant)?.speech.tts ? { voiceNotes: true } : {}),
     ...(self ? { self } : {}),
   };
 }

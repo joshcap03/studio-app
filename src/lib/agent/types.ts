@@ -72,6 +72,8 @@ export interface AgentTenantContext {
   guardrail?: { instructions: string; recentChats: string[] } | null;
   /** How the member is talking on this turn, when it isn't typing (see modalityContext in langflow.ts). */
   modality?: "voice_note" | "call";
+  /** The member hears a task run's news as a voice note (src/lib/voice/notes.ts), so its report is written for the ear. */
+  voiceNotes?: boolean;
   /**
    * Who the agent is to this member (src/lib/companion.ts): the name they kept (else null) and
    * how it talks with them once one is chosen. `callName` is the starting name calls introduce

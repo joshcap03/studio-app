@@ -1,6 +1,7 @@
 import { getAgentAdapter } from "@/lib/agent";
 import { agentFilesForRun, runFiles } from "@/lib/agent-files";
 import { readAttachment } from "@/lib/attachments";
+import { modalityOf, originFor } from "@/lib/chat/modality";
 import { storeFor } from "@/lib/chat/store-for";
 import type { AgentAttachment } from "@/lib/agent/types";
 import { TurnError, type TurnDeps, type TurnRequest } from "@/lib/chat/turn";
@@ -16,7 +17,7 @@ import { getSkill } from "@/lib/skills";
 import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
-import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
+import type { MessageOrigin, Modality } from "@/lib/types";
 import { resolvePersona } from "@/lib/voice/persona";
 import { voiceStatus } from "@/lib/voice/status";
 import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
@@ -61,23 +62,27 @@ export async function buildTurnDeps(
     input = { kind: "send", text: task.instructions.trim() || task.title, skillId: task.skillId ?? undefined };
   } else {
     input = asked;
-    // Words said on a call are labeled as spoken.
-    if (asked.kind === "send" && asked.modality === "call" && asked.text.trim()) origin = { kind: "voice" };
+    // Words said on a call, or held as a voice message, are labeled as spoken.
+    if (asked.kind === "send") origin = originFor(asked.modality, asked.text);
   }
-  const modality = input.kind === "send" ? input.modality : undefined;
+  const store = storeFor(tenant);
+  const earlier = store.listMessages(conversationId).catch(() => null);
+  // A new message says how it was sent. A retry, an edit, or a decision answers the member's
+  // latest message again, so it's said the way that one was (spoken on a call, or a voice
+  // message), whatever the browser sends.
+  const modality: Modality | undefined =
+    input.kind === "send" ? input.modality : modalityOf((await earlier)?.findLast((m) => m.role === "user")?.origin);
   // Context (settings and memory recall) loads alongside the skill and project lookups rather
   // than after them; it only reads, so a refused run just discards it.
   // Memory is searched with the member's recent messages, not just this one, so a follow-up
   // recalls what the conversation is about rather than only the business's standing facts.
-  const store = storeFor(tenant);
-  const context = store
-    .listMessages(conversationId)
+  const context = earlier
     .then((messages) => {
+      if (!messages) return "text" in input ? [input.text] : [];
       const end = input.kind === "edit" ? messages.findIndex((m) => m.id === input.messageId) : -1;
       const asks = (end < 0 ? messages : messages.slice(0, end)).filter((m) => m.role === "user").map((m) => m.content);
       return "text" in input ? [...asks, input.text] : asks;
     })
-    .catch(() => ("text" in input ? [input.text] : []))
     .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId, modality));
   context.catch(() => undefined);
   const adapter = getAgentAdapter();
@@ -143,6 +148,8 @@ export async function buildTurnDeps(
     // Checks the limits and records the run in one step, so a burst can't slip under them.
     claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
     timelines: previewEnabled(tenant, "why"),
+    // Replies to a voice message, and a task run's news, come back as voice notes for members with speech.
+    voiceNotes: Boolean(voiceStatus(tenant)?.speech.tts),
     loadAttachment: (attachment) => readAttachment(tenant, attachment),
     loadSkill,
     // Plans save only in a task's conversation or the agent's setup interview (for everyone).
