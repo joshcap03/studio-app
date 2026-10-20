@@ -17,7 +17,7 @@ import { getSkill } from "@/lib/skills";
 import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import type { Tenant } from "@/lib/tenant-core";
-import type { MessageOrigin, Modality } from "@/lib/types";
+import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
 import { resolvePersona } from "@/lib/voice/persona";
 import { voiceStatus } from "@/lib/voice/status";
 import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
