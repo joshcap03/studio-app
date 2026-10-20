@@ -1,7 +1,7 @@
 import type { Attachment, ChatMessage, Companion, ConversationSummary, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
-import type { AgentRecord, AgentTask, PlanStep, TaskRun } from "@/lib/tasks/types";
+import type { AgentRecord, AgentTask, PlanStep, TaskRun, TrackerSummary } from "@/lib/tasks/types";
 import type { VerdictCall } from "@/lib/verdicts";
 import { disablePush } from "./push";
 
@@ -109,11 +109,12 @@ export const api = {
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
   listTaskRuns: (id: string, signal?: AbortSignal) => request<{ runs: TaskRun[] }>(`/api/tasks/${id}/runs`, { signal }),
   runTask: (id: string) => request<{ conversationId: string; runId: string }>(`/api/tasks/${id}/run`, { method: "POST" }),
-  listRecords: (signal?: AbortSignal) => request<{ records: AgentRecord[] }>("/api/records", { signal }),
+  listRecords: (signal?: AbortSignal, collection?: string) =>
+    request<{ records: AgentRecord[] }>(collection ? `/api/records?collection=${encodeURIComponent(collection)}` : "/api/records", { signal }),
   updateRecord: (id: string, patch: { status?: string | null }) =>
     request<{ record: AgentRecord }>(`/api/records/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteRecord: (id: string) => request<void>(`/api/records/${id}`, { method: "DELETE" }),
-  listLibrary: (signal?: AbortSignal) => request<{ items: LibraryItem[] }>("/api/library", { signal }),
+  listLibrary: (signal?: AbortSignal) => request<{ items: LibraryItem[]; trackers: TrackerSummary[] }>("/api/library", { signal }),
   addLibraryLink: (link: { url: string; title?: string }) => request<{ item: LibraryItem }>("/api/library", { method: "POST", body: JSON.stringify(link) }),
   updateLibraryItem: (id: string, patch: { title?: string; pinned?: boolean }) =>
     request<{ item: LibraryItem }>(`/api/library/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),

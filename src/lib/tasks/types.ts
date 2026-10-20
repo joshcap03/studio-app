@@ -43,6 +43,15 @@ export interface TaskRun {
   updatedAt: number;
 }
 
+/** One tracker collection at a glance, for the Library: how many rows, in which statuses. */
+export interface TrackerSummary {
+  collection: string;
+  count: number;
+  /** Rows per status, most common first; rows without one are left out. */
+  statuses: { status: string; count: number }[];
+  updatedAt: number;
+}
+
 /** One row of the agent's tracker, e.g. a job application keyed by its URL. */
 export interface AgentRecord {
   id: string;

@@ -6,8 +6,8 @@ import { api } from "@/lib/client/api";
 import type { AgentRecord } from "@/lib/tasks/types";
 import { errorText, formatDay, iconButton } from "./shared";
 
-// The agent's tracker (job applications, contacts, posts), on a task's page for that task's rows
-// and in the Library for all of them.
+// The agent's tracker (job applications, contacts, posts): on a task's page for that task's rows,
+// and in the Library one page per collection.
 
 const card = "rounded-2xl border border-line bg-surface p-4";
 
@@ -21,13 +21,11 @@ export function Tracker({
   records,
   onChange,
   onError,
-  title = "Tracker",
   empty,
 }: {
   records: AgentRecord[] | null;
   onChange: (records: AgentRecord[]) => void;
   onError: (message: string | null) => void;
-  title?: string;
   /** What an empty tracker says. */
   empty: string;
 }) {
@@ -35,7 +33,7 @@ export function Tracker({
     return (
       <section className={card} aria-labelledby="tracker-heading">
         <h2 id="tracker-heading" className="text-[13.5px] font-medium text-fg">
-          {title}
+          Tracker
         </h2>
         <p className="mt-2 text-[13px] text-fg-3">{records ? empty : "Loading…"}</p>
       </section>
@@ -69,7 +67,7 @@ export function Tracker({
   return (
     <section className={card} aria-labelledby="tracker-heading">
       <h2 id="tracker-heading" className="text-[13.5px] font-medium text-fg">
-        {title}
+        Tracker
       </h2>
       {[...groups].map(([collection, rows]) => (
         <div key={collection} className="mt-3">
@@ -77,45 +75,76 @@ export function Tracker({
             {collectionName(collection)} <span className="font-normal text-fg-4">· {rows.length}</span>
           </h3>
           <div className="-mx-1 mt-1">
-            <table className="w-full text-left text-[13px]">
-              <thead className="sr-only">
-                <tr>
-                  <th>Title</th>
-                  <th>Status</th>
-                  <th className="max-sm:hidden">Updated</th>
-                  <th>Remove</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td className="w-full max-w-0 px-1 py-1.5">
-                      {r.url ? (
-                        <a href={r.url} target="_blank" rel="noopener noreferrer" className="group/link inline-flex max-w-full items-center gap-1 text-fg hover:underline">
-                          <span className="truncate">{r.title || r.key}</span>
-                          <ExternalLink size={12} className="shrink-0 text-fg-4" aria-hidden="true" />
-                        </a>
-                      ) : (
-                        <span className="block truncate text-fg">{r.title || r.key}</span>
-                      )}
-                    </td>
-                    <td className="px-1 py-1.5">
-                      <RecordStatus record={r} onSave={(status) => setStatus(r, status)} />
-                    </td>
-                    <td className="px-1 py-1.5 text-right text-[12.5px] whitespace-nowrap text-fg-3 max-sm:hidden">{formatDay(r.updatedAt)}</td>
-                    <td className="px-0 py-1.5">
-                      <button type="button" aria-label={`Remove ${r.title || r.key}`} onClick={() => remove(r)} className={`${iconButton} hover:text-danger`}>
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <TrackerTable rows={rows} onSave={setStatus} onRemove={remove} />
           </div>
         </div>
       ))}
     </section>
+  );
+}
+
+/** A few short fields of a row (e.g. "location: Remote · score: 4"), for its details line. */
+export function recordDetails(record: AgentRecord, max = 3): string {
+  return Object.entries(record.fields)
+    .filter(([, v]) => (typeof v === "string" && v.trim() && v.length <= 40) || typeof v === "number")
+    .slice(0, max)
+    .map(([k, v]) => `${k.replace(/[-_]+/g, " ")}: ${String(v).trim()}`)
+    .join(" · ");
+}
+
+/** Rows as a table: title (linked when there's a url), editable status, last change, remove. */
+export function TrackerTable({
+  rows,
+  onSave,
+  onRemove,
+  details = false,
+}: {
+  rows: AgentRecord[];
+  onSave: (record: AgentRecord, status: string | null) => void;
+  onRemove: (record: AgentRecord) => void;
+  /** Show a line of each row's short fields under its title. */
+  details?: boolean;
+}) {
+  return (
+    <table className="w-full text-left text-[13px]">
+      <thead className="sr-only">
+        <tr>
+          <th>Title</th>
+          <th>Status</th>
+          <th className="max-sm:hidden">Updated</th>
+          <th>Remove</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-line">
+        {rows.map((r) => {
+          const extra = details ? recordDetails(r) : "";
+          return (
+            <tr key={r.id}>
+              <td className={`w-full max-w-0 px-1 ${extra ? "py-2" : "py-1.5"}`}>
+                {r.url ? (
+                  <a href={r.url} target="_blank" rel="noopener noreferrer" className="group/link inline-flex max-w-full items-center gap-1 text-fg hover:underline">
+                    <span className="truncate">{r.title || r.key}</span>
+                    <ExternalLink size={12} className="shrink-0 text-fg-4" aria-hidden="true" />
+                  </a>
+                ) : (
+                  <span className="block truncate text-fg">{r.title || r.key}</span>
+                )}
+                {extra ? <span className="mt-0.5 block truncate text-[12px] text-fg-3">{extra}</span> : null}
+              </td>
+              <td className="px-1 py-1.5">
+                <RecordStatus record={r} onSave={(status) => onSave(r, status)} />
+              </td>
+              <td className="px-1 py-1.5 text-right text-[12.5px] whitespace-nowrap text-fg-3 max-sm:hidden">{formatDay(r.updatedAt)}</td>
+              <td className="px-0 py-1.5">
+                <button type="button" aria-label={`Remove ${r.title || r.key}`} onClick={() => onRemove(r)} className={`${iconButton} hover:text-danger`}>
+                  <Trash2 size={14} />
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 

@@ -204,7 +204,12 @@ describe("records API", () => {
       expect(theirs.records).toEqual([]);
       expect((await bob.api.json(`/api/records/${aliceRecord}`, "PATCH", { title: "pwned" }, cookies)).status).toBe(404);
       expect((await bob.api.json(`/api/records/${aliceRecord}`, "DELETE", undefined, cookies)).status).toBe(404);
+      // Nor does her tracker show up in Bob's Library.
+      const library = (await (await bob.api.json("/api/library", "GET", undefined, cookies)).json()) as { trackers: { collection: string }[] };
+      expect(library.trackers.map((t) => t.collection)).not.toContain(collection);
     }
+    const summary = (await (await alice.api.json("/api/library", "GET")).json()) as { trackers: { collection: string; count: number }[] };
+    expect(summary.trackers.find((t) => t.collection === collection)).toMatchObject({ count: 1 });
     const kept = (await (await alice.api.json(`/api/records?collection=${collection}`, "GET")).json()) as { records: { title: string }[] };
     expect(kept.records.map((r) => r.title)).toEqual(["alice-secret-job"]);
   });
