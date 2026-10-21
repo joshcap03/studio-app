@@ -56,6 +56,17 @@ describe("accounts", () => {
     expect(steal.error).not.toBeNull();
   });
 
+  it("let the owner keep a sealed id for their browser's sign-ins, seen by no one else", async () => {
+    const sealed = "ctx_0123456789abcdef.mac";
+    const own = await alice.client.from("accounts").update({ browser_context: sealed }).eq("user_id", alice.userId).select("browser_context").single();
+    expect(own.data?.browser_context).toBe(sealed);
+    for (const other of [teammate, bob]) {
+      expect((await other.client.from("accounts").update({ browser_context: "x.y" }).eq("user_id", alice.userId).select("user_id")).data ?? []).toEqual([]);
+    }
+    expect((await alice.client.from("accounts").update({ browser_context: "x".repeat(201) }).eq("user_id", alice.userId)).error).not.toBeNull();
+    expect((await alice.client.from("accounts").update({ browser_context: null }).eq("user_id", alice.userId)).error).toBeNull();
+  });
+
   it("can't be changed, created, or removed by anyone else", async () => {
     for (const other of [teammate, bob]) {
       const update = await other.client.from("accounts").update({ display_name: "Mallory" }).eq("user_id", alice.userId).select("user_id");

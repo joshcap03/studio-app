@@ -16,6 +16,14 @@ reaches the model, chat history, or traces. When the plan's concurrent browsers 
 use, opening one ends the browser idle longest (five minutes or more) in this process and tries
 again; nothing else ends a browser early (Browserbase ends each after its session timeout).
 
+Saved sign-ins: the app fills `context_id` per run with the member's own Browserbase context (one
+per person). The hosted server's `start` can't take a context, so this node opens the
+conversation's browser itself through Browserbase's API with that context (persisted, so a site
+the member signed in to there stays signed in once that browser closes) and passes the new session
+to `start`. Tweaks are dropped when a paused run resumes, so the member's context is also kept in
+the process cache under their id from the session id. If the browser can't be opened that way it
+opens without sign-ins, as before.
+
 Tool names stay Browserbase's (start, end, navigate, act, observe, extract): the Tool Gateway
 routes `act` through take_action, so it still needs the owner's approval. Wire the output to
 the Tool Gateway's Tools input. Authenticates with a Langflow global variable sent in one
@@ -29,6 +37,7 @@ import json
 import re
 import time
 
+import httpx
 from langchain_core.tools import StructuredTool
 from lfx.base.agents.utils import safe_cache_get, safe_cache_set
 from lfx.base.mcp.util import MCPStreamableHttpClient, update_tools
@@ -58,6 +67,11 @@ BINDING_TTL_S = 3600
 # (Long enough that an owner reading an approval card doesn't lose the browser it's for.)
 MIN_IDLE_TO_END_S = 300
 CONCURRENCY_LIMIT = re.compile(r"concurrent sessions", re.IGNORECASE)
+# Browserbase's own API, for opening a browser with the member's saved sign-ins.
+BROWSERBASE_API = "https://api.browserbase.com/v1"
+# The app's format for a context id; anything else (an unfilled "{{browser_context}}") is ignored.
+CONTEXT_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 # How lfx reports a client that lost its MCP session (the browser itself may be fine).
 DISCONNECTED = re.compile(r"not initialized or disconnected", re.IGNORECASE)
 
@@ -184,6 +198,8 @@ class StudioBrowserComponent(ComponentWithCache):
         MessageTextInput(name="auth_header", display_name="Credential Header", value="x-bb-api-key", advanced=True,
                          info="x-bb-api-key for a bare key, Authorization for 'Bearer <key>'."),
         MessageTextInput(name="url", display_name="Browserbase MCP URL", value="https://mcp.browserbase.com/mcp", advanced=True),
+        MessageTextInput(name="context_id", display_name="Saved Sign-ins", value="", advanced=True,
+                         info="Filled per run by the Studio app: the member's Browserbase context. Leave empty here."),
     ]
     outputs = [Output(display_name="Tools", name="tools", method="build_tools", types=["Tool"])]
 
@@ -298,14 +314,66 @@ class StudioBrowserComponent(ComponentWithCache):
             schemas = (time.monotonic(), [(t.name, t.description or "", t.args_schema) for t in listed.values()])
             safe_cache_set(cache, schema_key, schemas)
 
+        # The member's saved sign-ins: this run's, else the ones last seen for them in this process
+        # (a resumed run has no tweaks). Keyed by a hash of their id from the session id.
+        contexts_key = f"studio_browser:contexts:{server}"
+        parts = session_id.split(".")
+        member = hashlib.sha256(parts[1].encode()).hexdigest()[:32] if len(parts) == 3 else None
+        given = str(self.context_id or "").strip()
+        known = {k: v for k, v in (safe_cache_get(cache, contexts_key) or {}).items() if time.monotonic() - v[0] < BINDING_TTL_S}
+        if member and CONTEXT_ID.match(given):
+            known[member] = (time.monotonic(), given)
+            if len(known) > MAX_CONNECTIONS:
+                known = dict(sorted(known.items(), key=lambda kv: kv[1][0])[-MAX_CONNECTIONS:])
+            safe_cache_set(cache, contexts_key, known)
+        context = known[member][1] if member in known else None
+        api_key = auth[7:].strip() if auth.lower().startswith("bearer ") else auth
+
+        async def open_signed_in() -> str | None:
+            """A new browser with the member's saved sign-ins (saved again when it closes), or None."""
+            body = {"browserSettings": {"context": {"id": context, "persist": True}}}
+            for attempt in (0, 1):
+                try:
+                    async with httpx.AsyncClient(timeout=20) as client:
+                        res = await client.post(f"{BROWSERBASE_API}/sessions", json=body,
+                                                headers={"X-BB-API-Key": api_key, "Content-Type": "application/json"})
+                except httpx.HTTPError:
+                    return None
+                if res.status_code == 429 and attempt == 0 and await make_room():
+                    continue
+                if res.status_code >= 300:
+                    return None
+                try:
+                    sid = res.json().get("id")  # Only the id: its connection details stay here.
+                except ValueError:
+                    return None
+                return sid if isinstance(sid, str) and SESSION_ID.match(sid) else None
+            return None
+
+        async def release(sid: str) -> None:
+            """Ends a browser opened here that `start` couldn't use, rather than leave it running."""
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post(f"{BROWSERBASE_API}/sessions/{sid}", json={"status": "REQUEST_RELEASE"},
+                                      headers={"X-BB-API-Key": api_key, "Content-Type": "application/json"})
+            except httpx.HTTPError:
+                pass
+
         async def start(tool, kwargs: dict):
             """Starts (or reuses) this conversation's browser, making room once if the plan is full."""
             current = bound()
+            opened = None
+            if current is None and context:
+                current = opened = await open_signed_in()
+                if current is None:
+                    self.status = "Couldn't open the browser with saved sign-ins; opening it without"
             _, session_field = without_session_arg(tool.args_schema)
             args = {**kwargs, **({session_field: current} if session_field and current else {})}
             try:
                 return await tool.coroutine(**args)
             except ValueError as exc:
+                if opened:
+                    await release(opened)
                 if current and not DISCONNECTED.search(str(exc)):
                     # The bound browser ended; start a fresh one for this conversation.
                     bind(None)

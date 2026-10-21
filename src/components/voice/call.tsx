@@ -656,6 +656,7 @@ export function Call({
       }
       if (reply.ui?.some((b) => b.kind === "proposal")) return "Refused: the proposed setup is applied with a tap on screen.";
       if (reply.ui?.some((b) => b.kind === "memory-merge")) return "Refused: merging facts is done with a tap on screen.";
+      if (reply.ui?.some((b) => b.kind === "browser")) return "Refused: taking over the browser is a tap on screen.";
       return "Refused: there's no card open on screen.";
     },
   };

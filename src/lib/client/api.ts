@@ -60,9 +60,10 @@ export const api = {
     request<{ account: { name: string; about: string } }>("/api/account", { method: "PATCH", body: JSON.stringify(patch) }),
   listConversations: (query = "", signal?: AbortSignal) =>
     request<{ conversations: ConversationSummary[] }>(`/api/conversations?q=${encodeURIComponent(query)}`, { signal }),
-  // This page knows the agent's offers to call, so it asks for them (pages from before them don't get any).
+  // This page knows the agent's offers to call and its browser handed over, so it asks for them
+  // (pages from before them don't get any).
   getConversation: (id: string, signal?: AbortSignal) =>
-    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null; calls: CallSummary[] }>(`/api/conversations/${id}?offers=1&secrets=1`, { signal }),
+    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null; calls: CallSummary[] }>(`/api/conversations/${id}?offers=1&secrets=1&handoffs=1`, { signal }),
   /** Whose move it is in these conversations: only those working, waiting on the member, or stuck. */
   conversationMoves: (ids: string[], signal?: AbortSignal) =>
     request<{ moves: Record<string, MarkedMove> }>(`/api/conversations/moves?ids=${ids.map(encodeURIComponent).join(",")}`, { signal }),
@@ -135,6 +136,11 @@ export const api = {
     request<{ ok: true }>(`/api/conversations/${conversationId}/browser/input`, { method: "POST", body: JSON.stringify(input) }),
   listCredentials: () => request<{ credentials: CredentialSummary[]; enabled: boolean }>("/api/account/credentials"),
   deleteCredential: (id: string) => request<{ ok: true }>(`/api/account/credentials/${id}`, { method: "DELETE" }),
+  /** A live view of the agent's browser in this conversation that the member can click and type in. */
+  takeBrowser: (conversationId: string) =>
+    request<{ url: string }>(`/api/conversations/${conversationId}/browser/control`, { method: "POST" }),
+  browserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser"),
+  forgetBrowserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser", { method: "DELETE" }),
   answerUi: (
     conversationId: string,
     blockId: string,
@@ -142,6 +148,7 @@ export const api = {
       | { action: "submit"; keepFiles?: string[]; verdicts?: VerdictCall[] }
       | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string }
       | { action: "merge"; picks: number[]; edits?: Record<string, string> }
+      | { action: "handback" }
       | { action: "undo" }
       | { action: "accept"; sessionId: string }
       | { action: "decline" },
@@ -245,9 +252,9 @@ export async function streamTurn(
   const res = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    // This page can show the agent's offer to call and its requests for a login or card; the
+    // This page can show the agent's offer to call and its requests for a login or card, and its browser handed over; the
     // server leaves them out for a page that can't.
-    body: JSON.stringify({ ...body, offers: true, secrets: true }),
+    body: JSON.stringify({ ...body, offers: true, secrets: true, handoffs: true }),
     signal,
   });
   if (res.status === 401) {

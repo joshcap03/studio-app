@@ -231,7 +231,7 @@ interface MoveRow {
   open_ask: string | null;
 }
 
-const ASKS: readonly Ask[] = ["approval", "form", "proposal", "merge", "question"];
+const ASKS: readonly Ask[] = ["approval", "form", "proposal", "merge", "browser", "question"];
 
 /** Most conversations whose moves one call looks up. */
 export const MAX_MOVES = 100;

@@ -98,6 +98,7 @@ export function callRecap(messages: ChatMessage[], call: RecapCall): CallRecap |
       if (block.kind === "form" && response.status === "submitted") decided.push(`Sent “${block.title}”`);
       else if (block.kind === "proposal" && response.status === "applied") decided.push(appliedText(response.applied).replace(/\.$/, ""));
       else if (block.kind === "memory-merge" && response.status === "merged") decided.push(`Merged ${response.merges.length} ${response.merges.length === 1 ? "fact" : "facts"}`);
+      else if (block.kind === "browser" && response.status === "handed-back") decided.push(`Took over the browser${block.site ? ` on ${block.site}` : ""}`);
     }
     for (const a of m.approvals ?? []) {
       if (!during(a.decidedAt)) continue;

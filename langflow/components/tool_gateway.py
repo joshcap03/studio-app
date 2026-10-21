@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -331,6 +331,10 @@ class SecretArgs(BaseModel):
     reason: str = Field(description=("Why, in one short sentence as you'd say it, e.g. 'To sign in to your Acme account and "
                                      "download the March invoice.'"))
     username_hint: str = Field(default="", description="Optional: the username or email the site seems to expect, if you know it.")
+class HandBrowserArgs(BaseModel):
+    reason: str = Field(description=("What the owner needs to do in the browser, in one sentence as you'd say it, e.g. "
+                                     "'Solve the robot check on the USPS page, then tap Done and I'll make the label.'"))
+    site: str = Field(default="", description="Optional: the site, 1-3 words, e.g. 'USPS'.")
 
 
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
@@ -347,6 +351,7 @@ ProposeArgs.model_rebuild()
 MergeArgs.model_rebuild()
 OfferCallArgs.model_rebuild()
 SecretArgs.model_rebuild()
+HandBrowserArgs.model_rebuild()
 
 
 def words(s):
@@ -1088,15 +1093,33 @@ class ToolGatewayComponent(Component):
                 "note": ("The owner now sees a secure card that fills this into your browser's current page; you will "
                          "never see the values. End your reply here with one short sentence, without asking for them. "
                          "A message saying what was filled arrives next; then carry on (e.g. press Sign in). Never ask "
-                         "for a password, card number, or security code in chat or a form."),
+                         "for a password, card number, or card security code in chat or a form."),
             })
 
         async def request_secret_async(kind: str, reason: str, username_hint: str = "") -> str:
             return request_secret(kind, reason, username_hint)
 
+        def hand_browser(reason: str, site: str = "") -> str:
+            # Changes nothing: the app shows a "Your turn in the browser" card under the reply, and
+            # the owner gets the browser only when they tap Take over (for a CAPTCHA, or a page only
+            # they can use). You never see what they do there; their Done arrives as their next message.
+            reason = " ".join(str(reason or "").split())[:200]
+            if not reason:
+                return "Not shown: say in one sentence what they need to do in the browser."
+            return json.dumps({
+                "hand_browser": {"reason": reason, "site": " ".join(str(site or "").split())[:40]},
+                "note": ("The owner now sees a card to take over your browser where you left it, and Done to hand it "
+                         "back. End your reply here with one short sentence; don't explain how to take over. When "
+                         "their Done arrives, look at the page again before going on: they may have gone elsewhere, "
+                         "or not finished."),
+            })
+
+        async def hand_browser_async(reason: str, site: str = "") -> str:
+            return hand_browser(reason, site)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1249,7 +1272,21 @@ class ToolGatewayComponent(Component):
                 description=("When your browser reaches a sign-in form or a payment form, ask the owner to fill it in "
                              "securely: they pick a saved login or card (or type one) and Studio types it into the "
                              "page you have open. You never see it. Open the page with the fields first. Never ask "
-                             "for passwords, card numbers, or security codes any other way. Call it as the last "
+                             "for passwords, card numbers, or card security codes any other way. Call it as the last "
                              "thing in your reply. Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=hand_browser, coroutine=hand_browser_async, name="hand_browser",
+                args_schema=HandBrowserArgs,
+                description=("Hand your browser to the owner only for a CAPTCHA (an 'I'm not a robot' check or picture "
+                             "puzzle), or when they have to use the page themself and nothing else will do: signing "
+                             "in with Google or another account button, a passkey, or choosing something only they "
+                             "can. They take over where you left off and hand it back; you never see what they do. "
+                             "Not for a sign-in or payment form (use request_secret), and not for a code sent to "
+                             "their phone or email: find the code in their connected email if you can, otherwise "
+                             "ask them for it, then type it in yourself. Open the page first, then call it as the "
+                             "last thing in your reply; their Done arrives as the next message. Never for something "
+                             "you can do yourself, and never to get around their approval of a change. Changes "
+                             "nothing."),
             ),
         ]

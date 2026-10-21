@@ -304,7 +304,8 @@ app's own Browserbase key, since the member can write that column. `GET
 /api/conversations/<id>/browser` then asks Browserbase for that session (only while it's running),
 connects to it over CDP server-side, takes one JPEG of the page the agent is on, and disconnects.
 The page only ever gets pictures: no connection URL or debugger link leaves the server, and
-nothing is stored.
+nothing is stored. (Taking over the browser, outside calls too, is the agent's `hand_browser`
+card: see `src/components/chat/browser-handoff.tsx`.)
 
 To turn it on, set `BROWSERBASE_API_KEY` in Vercel to the raw API key of the same Browserbase
 project the flow's Studio Browser uses, and reinstall the flow (Studio Browser's tagging). It

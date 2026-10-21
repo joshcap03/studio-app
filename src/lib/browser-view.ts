@@ -8,14 +8,23 @@ import type { Tenant } from "@/lib/tenant-core";
 // Browserbase key, since the member can write that column. When the member watches, the server
 // asks Browserbase for the session (only this conversation's, only while it runs), connects to it
 // over CDP itself, takes one JPEG of the page, and disconnects. The page gets pictures only: no
-// connection URL, debugger link or anything that could drive the browser ever reaches it. The
-// CDP helpers here are shared with filling a login or card and taking the browser over
-// (src/lib/browser-fill.ts), which reach it the same way. Free of next/* (the turn records the session).
+// connection URL ever reaches it. The CDP helpers here are shared with filling a login or card and
+// taking the browser over from that card (src/lib/browser-fill.ts), which reach it the same way.
+//
+// The one exception is the agent's hand_browser card, for a CAPTCHA or a page the member has to
+// use themself: on their tap, the server asks Browserbase for a live view of the page the agent
+// is on, good for CONTROL_S, and returns it to that member alone, uncached (browserControl). It's
+// never stored or sent to the agent, and the connection URL still never leaves the server. Free of
+// next/* (the turn records the session).
 
 const API = "https://api.browserbase.com/v1";
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** How long one screenshot may take, start to finish. */
 const FRAME_MS = 8000;
+/** How long a link to take over the browser can be opened, from the member's tap. */
+const CONTROL_S = 600;
+/** Where Browserbase serves its live view. */
+const LIVE_VIEW = /^https:\/\/(?:[a-z0-9-]+\.)*browserbase\.com\//i;
 
 function mac(apiKey: string, conversationId: string, userId: string, sessionId: string): string {
   return createHmac("sha256", apiKey).update(`studio-browser:${conversationId}:${userId}:${sessionId}`).digest("base64url");
@@ -68,6 +77,17 @@ export type SocketFactory = (url: string) => Socket;
  * (no Browserbase key), none recorded for this conversation and member, ended, or failed.
  */
 export async function browserConnection(tenant: Tenant, conversationId: string): Promise<{ ok: true; url: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" }> {
+  const running = await runningSession(tenant, conversationId);
+  if (!running.ok) return running;
+  const { connectUrl } = running;
+  if (typeof connectUrl !== "string" || !/^wss:\/\//.test(connectUrl)) return { ok: false, reason: "failed" };
+  return { ok: true, url: connectUrl };
+}
+
+type Running = { ok: true; apiKey: string; sessionId: string; connectUrl: unknown } | { ok: false; reason: "off" | "none" | "ended" | "failed" };
+
+/** The conversation's browser, if it's this member's and still running. */
+async function runningSession(tenant: Tenant, conversationId: string): Promise<Running> {
   const browser = getConfig().browser;
   if (!browser) return { ok: false, reason: "off" };
   const { data, error } = await tenant.db
@@ -91,8 +111,35 @@ export async function browserConnection(tenant: Tenant, conversationId: string):
     return { ok: false, reason: "failed" };
   }
   if (session.status !== "RUNNING") return { ok: false, reason: "ended" };
-  if (typeof session.connectUrl !== "string" || !/^wss:\/\//.test(session.connectUrl)) return { ok: false, reason: "failed" };
-  return { ok: true, url: session.connectUrl };
+  return { ok: true, apiKey: browser.apiKey, sessionId, connectUrl: session.connectUrl };
+}
+
+export type Control = { ok: true; url: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" };
+
+/**
+ * A live view of the conversation's browser that the member can click and type in, open to them
+ * for CONTROL_S: the page the agent is on (its last tab). Only for the member's own conversation,
+ * only while its browser runs. The caller hands it to that member alone and never keeps it.
+ */
+export async function browserControl(tenant: Tenant, conversationId: string): Promise<Control> {
+  const running = await runningSession(tenant, conversationId);
+  if (!running.ok) return running;
+  let live: { debuggerFullscreenUrl?: unknown; pages?: { debuggerFullscreenUrl?: unknown }[] };
+  try {
+    const res = await fetch(`${API}/sessions/${running.sessionId}/debug?expiresIn=${CONTROL_S}`, {
+      headers: { "X-BB-API-Key": running.apiKey },
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.status === 404) return { ok: false, reason: "ended" };
+    if (!res.ok) return { ok: false, reason: "failed" };
+    live = (await res.json()) as typeof live;
+  } catch {
+    return { ok: false, reason: "failed" };
+  }
+  const pages = Array.isArray(live.pages) ? live.pages : [];
+  const url = pages.at(-1)?.debuggerFullscreenUrl ?? live.debuggerFullscreenUrl;
+  return typeof url === "string" && LIVE_VIEW.test(url) ? { ok: true, url } : { ok: false, reason: "failed" };
 }
 
 /** One picture of what the conversation's browser shows now, or why there isn't one. */

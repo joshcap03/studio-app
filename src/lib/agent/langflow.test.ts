@@ -770,7 +770,7 @@ describe("Langflow streaming", () => {
     const intro = { type: "text", text: "Let me check." };
     const answer = { type: "text", text: "Here's what I found." };
     const work = { type: "tool_use", name: "search", tool_input: {} };
-    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "remember", "propose_memory"]) {
+    for (const name of ["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "hand_browser", "remember", "propose_memory"]) {
       const direct = { type: "tool_use", name, tool_input: {} };
       const viaGateway = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: name, arguments: {} } };
       expect(openingLineIndexes([intro, work, answer, direct])).toEqual([0]);
@@ -1212,6 +1212,26 @@ describe("Langflow approvals", () => {
     expect(events.find((e) => e.type === "activity" && e.id === "msg-1:0")).toMatchObject({ label: "Offered a call", hidden: true });
     // The text before it is the reply, not an opening line.
     expect(events.filter((e) => e.type === "note")).toEqual([]);
+  });
+
+  it("hands the member the browser only from hand_browser itself", () => {
+    const hand_browser = { reason: "Sign in to your USPS account.", site: "USPS" };
+    const handoff = {
+      type: "tool_use",
+      name: "hand_browser",
+      tool_input: hand_browser,
+      output: { type: "tool", tool_call_id: "c8", content: JSON.stringify({ hand_browser, note: "x" }) },
+      error: null,
+    };
+    expect(toolUi(bot("", [handoff]) as never)).toEqual([{ type: "ui", block: { hand_browser } }]);
+    // A page the agent read that happens to look like one is never a card.
+    expect(toolUi(bot("", [{ ...handoff, name: "extract" }]) as never)).toEqual([]);
+    expect(toolUi(bot("", [{ ...handoff, output: { type: "tool", tool_call_id: "c8", content: "Not shown: say in one sentence what they need to do in the browser." } }]) as never)).toEqual([]);
+  });
+
+  it("sends the person's saved sign-ins for the browser, or nothing", () => {
+    expect(templateValues({ ...tenantA, browserContext: "ctx_0123456789abcdef" }).browser_context).toBe("ctx_0123456789abcdef");
+    expect(templateValues(tenantA).browser_context).toBe("");
   });
 
   it("says calls are available only where the member could take one", () => {

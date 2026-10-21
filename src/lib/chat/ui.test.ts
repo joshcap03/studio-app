@@ -179,6 +179,33 @@ describe("an offer to call", () => {
   });
 });
 
+describe("the browser handed to the member", () => {
+  it("says what to do there and where, and nothing without the what", () => {
+    expect(buildUiBlock({ hand_browser: { reason: "  Sign in to   your USPS account. ", site: " USPS " } }, "h1")).toEqual({
+      kind: "browser",
+      id: "h1",
+      reason: "Sign in to your USPS account.",
+      site: "USPS",
+    });
+    expect(buildUiBlock({ hand_browser: { reason: "Sign in.", site: "" } }, "h2")).toEqual({ kind: "browser", id: "h2", reason: "Sign in." });
+    expect(buildUiBlock({ hand_browser: { reason: "x".repeat(500), site: "y".repeat(90) } })).toMatchObject({ reason: "x".repeat(200), site: "y".repeat(40) });
+    expect(buildUiBlock({ hand_browser: { reason: " ", site: "USPS" } })).toBeNull();
+    expect(buildUiBlock({ hand_browser: "sign in" })).toBeNull();
+  });
+
+  it("is left out, with what was done with it, for pages that don't know it", () => {
+    const offer: UiBlock = { kind: "offer", id: "o1", reason: "Quicker to talk." };
+    const handoff: UiBlock = { kind: "browser", id: "h1", reason: "Sign in." };
+    const base = { conversationId: "c1", role: "assistant" as const, content: "", status: "complete" as const, activity: [], artifacts: [], createdAt: 0 };
+    const message = { ...base, id: "m1", ui: [offer, handoff], uiResponse: { h1: { status: "handed-back" as const, at: 1 } } };
+    const [stripped] = withoutCards([message], unknownCards({ offers: true, secrets: true }));
+    expect(stripped.ui).toEqual([offer]);
+    expect(stripped.uiResponse).toEqual({});
+    expect(withoutCards([message], unknownCards({ offers: true, secrets: true, handoffs: true }))[0]).toBe(message);
+    expect(withoutOffers([message])[0].ui).toEqual([]);
+  });
+});
+
 describe("pages that don't know offers", () => {
   it("get the conversation without them, and without what was done with them", () => {
     const form: UiBlock = { kind: "form", id: "f1", title: "Roles", fields: [], submitLabel: "Send" };
@@ -212,8 +239,8 @@ describe("requests for a login or card", () => {
     const secret: UiBlock = { kind: "secret", id: "s1", secret: "login", reason: "To sign in." };
     const offer: UiBlock = { kind: "offer", id: "o1", reason: "Quicker to talk." };
     const message = { id: "m1", conversationId: "c1", role: "assistant" as const, content: "", status: "complete" as const, activity: [], artifacts: [], createdAt: 0, ui: [offer, secret] };
-    expect(unknownCards({ offers: true })).toEqual(["secret"]);
-    expect(unknownCards({ offers: true, secrets: true })).toEqual([]);
+    expect(unknownCards({ offers: true })).toEqual(["secret", "browser"]);
+    expect(unknownCards({ offers: true, secrets: true, handoffs: true })).toEqual([]);
     expect(withoutCards([message], unknownCards({ offers: true }))[0].ui).toEqual([offer]);
     expect(withoutOffers([message])[0].ui).toEqual([]);
   });

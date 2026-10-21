@@ -134,6 +134,15 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // A page with a CAPTCHA: the browser handed to the member as a card (shown only where the app
+    // can reach a hosted browser; the turn drops it otherwise).
+    match: /\b(robot check|take over the browser)\b/i,
+    steps: [
+      { kind: "text", text: "The label page wants a robot check, so it's your turn (mock)." },
+      { kind: "ui", block: { hand_browser: { reason: "Solve the robot check, then tap Done and I'll finish the label (mock).", site: "USPS" } } },
+    ],
+  },
+  {
     // A job that runs for over a minute with nothing new after it starts, so a call following it
     // asks whether to hang on or leave a voice note when it's done.
     match: /\b(takes a few minutes|very slow job)\b/i,

@@ -146,6 +146,7 @@ def main(argv):
 
     shared = [n for n in data["nodes"] if n["data"].get("type") in ("MCPTools", "MCP") and "browserbase" in mcp_url(n)]
     existing = by_type("StudioBrowser")
+    browser_id = None
     if not strip and (shared or existing):
         if existing:
             template = existing["data"]["node"]["template"]
@@ -256,6 +257,8 @@ def main(argv):
     tweaks = {context_id: {"workspace_context": "{{system_context}}"}, chat_input["data"]["id"]: {"files": "{{files}}"}}
     if member_apps_id:
         tweaks[member_apps_id] = {"member_id": "{{composio_user_id}}", "toolkits": "{{composio_toolkits}}"}
+    if browser_id:
+        tweaks[browser_id] = {"context_id": "{{browser_context}}"}
     print("\nSet in the app's environment:\nLANGFLOW_TWEAKS=" + json.dumps(tweaks, separators=(",", ":")))
 
 

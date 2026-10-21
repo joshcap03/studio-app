@@ -10,7 +10,7 @@ import type { ChatMessage, MessageStatus, RunReport } from "@/lib/types";
 export type Move = "working" | "your_call" | "done" | "stuck" | "idle";
 
 /** What a reply still asks of the member. Anything else it carries (an offer to talk) asks nothing. */
-export type Ask = "approval" | "form" | "proposal" | "merge" | "question";
+export type Ask = "approval" | "form" | "proposal" | "merge" | "browser" | "question";
 export type MoveReason = Ask | "report" | "failed";
 
 export interface WhoseMove {
@@ -38,7 +38,8 @@ export const MOVE_LABEL: Record<Exclude<Move, "idle">, string> = {
 
 /**
  * What a message still asks of the member, first: a pending approval, then the first card they
- * haven't answered or applied (a form, a proposed setup, a proposed merge), then its questions.
+ * haven't answered or applied (a form, a proposed setup, a proposed merge, the browser handed
+ * over), then its questions.
  */
 export function askOf(message: Pick<ChatMessage, "approvals" | "ui" | "uiResponse" | "questions">): Ask | null {
   if (message.approvals?.some((a) => a.status === "pending")) return "approval";
@@ -48,6 +49,7 @@ export function askOf(message: Pick<ChatMessage, "approvals" | "ui" | "uiRespons
     if (block.kind === "form" || block.kind === "secret") return "form";
     if (block.kind === "proposal") return "proposal";
     if (block.kind === "memory-merge") return "merge";
+    if (block.kind === "browser") return "browser";
   }
   return message.questions?.length ? "question" : null;
 }

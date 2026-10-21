@@ -23,6 +23,7 @@ import {
   type UiBlock,
   type UiField,
   type UiForm,
+  type UiHandoff,
   type UiListPart,
   type UiOffer,
   type UiOption,
@@ -31,11 +32,12 @@ import {
   MAX_UI_BLOCKS,
 } from "@/lib/types";
 
-// Cards the agent asked to show through its show_form, propose_agent, and offer_call tools. None
-// changes anything: a form's answers go out as the member's next message, a proposal is applied
-// only when the member clicks Apply (src/app/api/conversations/[id]/ui/[blockId]), and an offer
-// to call starts one only when they tap Call. Agent output is loose, so anything unusable is
-// dropped rather than failing the whole card.
+// Cards the agent asked to show through its show_form, propose_agent, offer_call, and hand_browser
+// tools. None changes anything: a form's answers go out as the member's next message, a proposal
+// is applied only when the member clicks Apply (src/app/api/conversations/[id]/ui/[blockId]), an
+// offer to call starts one only when they tap Call, and the agent's browser is the member's only
+// once they tap Take over. Agent output is loose, so anything unusable is dropped rather than
+// failing the whole card.
 
 const line = (s: unknown, max: number) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const para = (s: unknown, max: number) =>
@@ -518,6 +520,14 @@ export function buildOffer(raw: Record<string, unknown>, id: string = crypto.ran
   return { kind: "offer", id, reason, ...(topic ? { topic } : {}) };
 }
 
+/** The agent's browser, handed to the member: what they need to do there (required), and where. */
+export function buildHandoff(raw: Record<string, unknown>, id: string = crypto.randomUUID()): UiHandoff | null {
+  const reason = line(raw.reason, 200);
+  if (!reason) return null;
+  const site = line(raw.site, 40);
+  return { kind: "browser", id, reason, ...(site ? { site } : {}) };
+}
+
 /** The agent asking for a login or card at its browser: which, and why. It never carries a secret. */
 export function buildSecretRequest(raw: Record<string, unknown>, id: string = crypto.randomUUID()): UiSecret | null {
   const secret = raw.kind === "login" || raw.kind === "card" ? raw.kind : null;
@@ -527,13 +537,14 @@ export function buildSecretRequest(raw: Record<string, unknown>, id: string = cr
   return { kind: "secret", id, secret, reason, ...(usernameHint ? { usernameHint } : {}) };
 }
 
-/** Validates one card the agent asked for (`{form}`, `{proposal}`, `{offer_call}`, or `{secret_request}`). Null when nothing is usable. */
+/** Validates one card the agent asked for (`{form}`, `{proposal}`, `{offer_call}`, `{secret_request}`, or `{hand_browser}`). Null when nothing is usable. */
 export function buildUiBlock(raw: unknown, id: string = crypto.randomUUID()): UiBlock | null {
   if (!isRecord(raw)) return null;
   if (isRecord(raw.form)) return buildForm(raw.form, id);
   if (isRecord(raw.proposal)) return buildProposal(raw.proposal, id);
   if (isRecord(raw.offer_call)) return buildOffer(raw.offer_call, id);
   if (isRecord(raw.secret_request)) return buildSecretRequest(raw.secret_request, id);
+  if (isRecord(raw.hand_browser)) return buildHandoff(raw.hand_browser, id);
   return null;
 }
 
@@ -547,12 +558,16 @@ export function capUi(blocks: UiBlock[]): UiBlock[] {
   return [...blocks.filter((b) => b.kind !== "offer").slice(-MAX_UI_BLOCKS), ...(offer ? [offer] : [])];
 }
 
-/** Cards newer than some open pages: offers to call, and requests for a login or card. */
-export type NewerCard = Extract<UiBlock["kind"], "offer" | "secret">;
+/** Cards newer than some open pages: offers to call, requests for a login or card, and the browser handed over. */
+export type NewerCard = Extract<UiBlock["kind"], "offer" | "secret" | "browser">;
 
 /** The newer cards a page can't show, from what it says it knows (an open tab keeps its old code across a deploy). */
-export function unknownCards(knows: { offers?: boolean; secrets?: boolean }): NewerCard[] {
-  return [...(knows.offers ? [] : (["offer"] as const)), ...(knows.secrets ? [] : (["secret"] as const))];
+export function unknownCards(knows: { offers?: boolean; secrets?: boolean; handoffs?: boolean }): NewerCard[] {
+  return [
+    ...(knows.offers ? [] : (["offer"] as const)),
+    ...(knows.secrets ? [] : (["secret"] as const)),
+    ...(knows.handoffs ? [] : (["browser"] as const)),
+  ];
 }
 
 /**
@@ -572,9 +587,9 @@ export function withoutCards(messages: ChatMessage[], kinds: readonly NewerCard[
   });
 }
 
-/** Messages as a page from before offers to call (and requests for a login or card) reads them. */
+/** Messages as a page from before offers to call (and the cards after them) reads them. */
 export function withoutOffers(messages: ChatMessage[]): ChatMessage[] {
-  return withoutCards(messages, ["offer", "secret"]);
+  return withoutCards(messages, ["offer", "secret", "browser"]);
 }
 
 export const proposalPicksSchema = z.strictObject({

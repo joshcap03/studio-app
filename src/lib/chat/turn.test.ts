@@ -1135,6 +1135,27 @@ describe("edits, files, and memory suggestions", () => {
     expect((await run(undefined)).map((b) => b.kind)).toEqual(["form", "proposal"]);
   });
 
+  it("hands the member the browser only where they could take it over, and only to pages that know it", async () => {
+    const handoff = { hand_browser: { reason: "Sign in to your USPS account.", site: "USPS" } };
+    const run = async (deps: { handoffs?: boolean; handoffsShown?: boolean }) => {
+      const store = createMemoryStore(scopeA);
+      const id = crypto.randomUUID();
+      const adapter = scripted([{ type: "message", text: "Your turn." }, { type: "ui", block: handoff }]);
+      const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, ...deps }, { conversationId: id, kind: "send", text: "x" }));
+      return { saved: (await store.listMessages(id))[1].ui ?? [], streamed: JSON.stringify(events) };
+    };
+    const shown = await run({ handoffs: true, handoffsShown: true });
+    expect(shown.saved).toMatchObject([{ kind: "browser", reason: "Sign in to your USPS account.", site: "USPS" }]);
+    expect(shown.streamed).toContain('"browser"');
+    // No hosted browser the app can reach: no card.
+    expect((await run({})).saved).toEqual([]);
+    expect((await run({ handoffs: false, handoffsShown: true })).saved).toEqual([]);
+    // A page from before hand-offs isn't sent it, but it's kept for the next load.
+    const old = await run({ handoffs: true, handoffsShown: false });
+    expect(old.streamed).not.toContain('"browser"');
+    expect(old.saved).toHaveLength(1);
+  });
+
   it("shows a proposed merge of facts only as checked against the member's memory", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

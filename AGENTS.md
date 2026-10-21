@@ -138,6 +138,15 @@ raw/technical text.
   Saved ones (`credentials`, the person's, shared by their agents) are sealed with `CREDENTIALS_KEY`
   and kept in Supabase Vault; a card's security code is never saved. Settings → Saved logins & cards
   lists and removes them.
+- Handing over the agent's browser, for a CAPTCHA or a page only the member can use (a Google
+  sign-in button, a passkey): the agent calls `hand_browser` and the member gets a "Take over" card
+  (`src/components/chat/browser-handoff.tsx`). Their tap fetches a short-lived Browserbase live view
+  of that conversation's browser (`browserControl` in `src/lib/browser-view.ts`, `POST
+  /api/conversations/<id>/browser/control`), shown only to them; Done hands it back as their next
+  message. Sign-in and payment forms go through `request_secret`, and a one-time code is found or
+  asked for and typed by the agent. `src/lib/browser-signins.ts` keeps one Browserbase context per
+  person (sealed on `accounts.browser_context`, shared by all their agents), sent to Studio Browser
+  each run as `{{browser_context}}`, so sites they signed in to stay signed in; Settings forgets them.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
@@ -184,7 +193,7 @@ raw/technical text.
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
   the member's behalf. Provider resume state stays server-side.
 - Agent-rendered UI is built as reusable gateway tools any skill can call (`ask_user`,
-  `show_form`, `propose_agent`, `merge_memories`, `offer_call`; cards in `src/components/chat/ui-cards.tsx` and
+  `show_form`, `propose_agent`, `merge_memories`, `offer_call`, `hand_browser`; cards in `src/components/chat/ui-cards.tsx` and
   `requests.tsx`), never as UI for one flow or template. They change nothing: a form's
   answers go out as the member's next message, a proposed setup applies only when the
   member clicks Apply, and the card shows only what took effect; an offer to call only
@@ -192,13 +201,15 @@ raw/technical text.
 - Render only what the backend reports: no invented activity, statuses, or artifacts, and no
   artifact parsing from free text. Mock output stays clearly labeled.
 - Secrets stay server-side in `src/lib/config.ts`; only `NEXT_PUBLIC_SUPABASE_*` reach the browser.
-  The only provider credential the browser gets is a short-lived voice session token.
+  The only provider credentials the browser gets are a short-lived voice session token and, on the
+  member's own tap on a `hand_browser` card, a short-lived live view of their conversation's agent
+  browser (never stored, never sent to the agent).
 - A member's password or card never reaches the agent: never in chat, a form, `messages`, cards'
   responses, approvals, step details, Langflow, memory, or the voice front, and never logged. It goes
   from the secure card to the server to the browser's CDP connection (or sealed into the store), and the
   agent hears only what was filled. Card numbers are masked in tool output on both sides as a backstop.
-  The agent's browser is driven by the member only through server-relayed input; no connection or
-  debugger link reaches the page.
+  The agent's browser is driven by the member through server-relayed input; no connection or
+  debugger link reaches the page, except that one live view, on that one card, after their tap.
 - The voice front talks and is never a second agent. It may only reflect the member's words back,
   say what the worker reported (relay lines, the reply, card contents), ask them to clarify, and
   say a holding line. Anything else goes to the worker in the member's exact words (the

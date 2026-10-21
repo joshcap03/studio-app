@@ -47,10 +47,10 @@ export async function GET(request: NextRequest, { params }: Context) {
     // too, and so do the calls its messages were said on (for their recaps).
     const [messages, journey] = await Promise.all([store.listMessages(conversation.id), journeyOrNone(auth.value, conversation.id)]);
     const calls = await callsOrNone(auth.value, messages);
-    // Offers to call (?offers=1) and requests for a login or card (?secrets=1) only go to pages
-    // that know them: a tab still on older code breaks on one.
+    // Offers to call (?offers=1), requests for a login or card (?secrets=1), and the browser
+    // handed over (?handoffs=1) only go to pages that know them: a tab still on older code breaks on one.
     const params = request.nextUrl.searchParams;
-    const shown = withoutCards(messages, unknownCards({ offers: params.get("offers") === "1", secrets: params.get("secrets") === "1" }));
+    const shown = withoutCards(messages, unknownCards({ offers: params.get("offers") === "1", secrets: params.get("secrets") === "1", handoffs: params.get("handoffs") === "1" }));
     return NextResponse.json({ conversation: summaryOf(conversation), messages: shown, journey, calls }, noStore);
   } catch (error) {
     return errorResponse(error);

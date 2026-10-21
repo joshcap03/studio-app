@@ -70,6 +70,9 @@ const body = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("accept"), sessionId: z.uuid() }),
   // The member said Not now to the offer: the agent doesn't offer again in this conversation.
   z.strictObject({ action: z.literal("decline") }),
+  // The member handed the agent's browser back after taking it over (their "done" goes out as
+  // their next message).
+  z.strictObject({ action: z.literal("handback") }),
 ]);
 
 /**
@@ -124,6 +127,10 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (block.kind !== "memory-merge" || previous?.status !== "merged") return jsonError(409, "There's nothing to undo here.");
       if (!memoryEnabled()) return jsonError(503, "Memory isn't set up for this app yet.");
       response = { status: "undone", at: Date.now(), ...(await undoMerges(auth.value, previous)) };
+    } else if (input.action === "handback") {
+      if (block.kind !== "browser") return jsonError(400, "Only the browser can be handed back.");
+      if (previous) return jsonError(409, "You already handed it back.");
+      response = { status: "handed-back", at: Date.now() };
     } else if (input.action === "accept" || input.action === "decline") {
       if (block.kind !== "offer") return jsonError(400, "Only an offer to call can be taken.");
       if (previous) return jsonError(409, "You already answered this.");

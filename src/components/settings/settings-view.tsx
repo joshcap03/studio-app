@@ -38,6 +38,7 @@ export function SettingsView({ email, guardrail, account }: Props) {
       <Section title="Saved logins & cards" description="Your agents use these in their browser only when you pick one. They never see them.">
         <SavedCredentials />
       </Section>
+      <SignInsSection />
       <NotificationsSection />
       <Section title="Account">
         <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3 text-[14px]">
@@ -52,6 +53,52 @@ export function SettingsView({ email, guardrail, account }: Props) {
         </div>
       </Section>
     </div>
+  );
+}
+
+/**
+ * Sites the person signed in to when an agent handed them its browser, kept for all their agents.
+ * Hidden where the app has no browser.
+ */
+function SignInsSection() {
+  const [saved, setSaved] = useState<boolean | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void api.browserSignIns().then(
+      (r) => setSaved(r.saved),
+      () => setSaved(null),
+    );
+  }, []);
+
+  async function forget() {
+    setBusy(true);
+    setError(null);
+    try {
+      setSaved((await api.forgetBrowserSignIns()).saved);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't forget them. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (saved === undefined || saved === null) return null;
+  return (
+    <Section
+      title="Sign-ins in your agents' browser"
+      description="When you sign in to a site in an agent's browser, the sign-in is kept so it can work there for you next time. It still asks before changing anything."
+    >
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
+        <p className="text-[13.5px] text-fg-2">{saved ? "Sites you sign in to there stay signed in until you forget them." : "Nothing saved."}</p>
+        {saved ? (
+          <button type="button" onClick={() => void forget()} disabled={busy} className="shrink-0 text-[13.5px] font-medium text-fg-2 hover:text-fg disabled:opacity-60">
+            {busy ? "Forgetting…" : "Forget all"}
+          </button>
+        ) : null}
+      </div>
+      {error ? <p className="mt-2 text-[12.5px] text-danger">{error}</p> : null}
+    </Section>
   );
 }
 

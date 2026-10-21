@@ -28,6 +28,8 @@ const text = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 const offers = z.boolean().optional();
 // Likewise its requests for a login or card.
 const secrets = z.boolean().optional();
+// Likewise the agent's browser handed over.
+const handoffs = z.boolean().optional();
 const body = z.discriminatedUnion("kind", [
   z
     .object({
@@ -49,10 +51,11 @@ const body = z.discriminatedUnion("kind", [
       voiceSessionId: z.uuid().optional(),
       offers,
       secrets,
+      handoffs,
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
-  z.object({ kind: z.literal("retry"), offers, secrets }),
-  z.object({ kind: z.literal("edit"), messageId: z.uuid(), text, offers, secrets }),
+  z.object({ kind: z.literal("retry"), offers, secrets, handoffs }),
+  z.object({ kind: z.literal("edit"), messageId: z.uuid(), text, offers, secrets, handoffs }),
   z
     .object({
       kind: z.literal("decide"),
@@ -65,6 +68,7 @@ const body = z.discriminatedUnion("kind", [
       voiceSessionId: z.uuid().optional(),
       offers,
       secrets,
+      handoffs,
     })
     .refine((b) => (b.via === "voice") === (b.heard !== undefined && b.voiceSessionId !== undefined), "A spoken decision needs the words heard and the call."),
 ]);

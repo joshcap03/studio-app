@@ -169,6 +169,13 @@ export interface TurnDeps {
   offersShown?: boolean;
   /** False when the page this streams to predates requests for a login or card, likewise. */
   secretsShown?: boolean;
+  /**
+   * Whether the member can take over the agent's browser here (its hand_browser card): the app
+   * can reach the hosted browser. Without it, hand-offs are dropped.
+   */
+  handoffs?: boolean;
+  /** False when the page this streams to predates hand-offs of the browser, likewise. */
+  handoffsShown?: boolean;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -480,7 +487,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
 
   return new ReadableStream<Uint8Array>({
     async start(stream) {
-      const unknown = unknownCards({ offers: deps.offersShown !== false, secrets: deps.secretsShown !== false });
+      const unknown = unknownCards({ offers: deps.offersShown !== false, secrets: deps.secretsShown !== false, handoffs: deps.handoffsShown !== false });
       const send = (event: StreamEvent) => {
         if (!open) return;
         try {
@@ -692,8 +699,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               break;
             }
             case "ui": {
-              // A form, proposed setup, proposed merge of facts, or offer to call; it changes
-              // nothing until the member answers, applies, or takes it.
+              // A form, proposed setup, proposed merge of facts, offer to call, or the browser
+              // handed over; it changes nothing until the member answers, applies, or takes it.
               const built = !isMergeRequest(event.block)
                 ? buildUiBlock(event.block)
                 : deps.resolveMerge
@@ -702,8 +709,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                       return null;
                     })
                   : null;
-              // An offer to call shows only where the member could take it.
-              if (built && (built.kind !== "offer" || deps.offerCalls)) {
+              // An offer to call shows only where the member could take it, and the browser
+              // only where they could take it over.
+              if (built && (built.kind !== "offer" || deps.offerCalls) && (built.kind !== "browser" || deps.handoffs)) {
                 ui = capUi([...(ui ?? []), built]);
                 send({ type: "ui", ui });
               }

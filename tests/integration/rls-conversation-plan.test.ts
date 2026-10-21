@@ -16,6 +16,7 @@ let bobWs: string;
 const chat = crypto.randomUUID();
 const asking = crypto.randomUUID();
 const offering = crypto.randomUUID();
+const handing = crypto.randomUUID();
 const paused = crypto.randomUUID();
 const elsewhere = crypto.randomUUID();
 const bobChat = crypto.randomUUID();
@@ -34,6 +35,7 @@ beforeAll(async () => {
     { id: chat, workspace_id: ws, title: "Caterers" },
     { id: asking, workspace_id: ws, title: "Asking" },
     { id: offering, workspace_id: ws, title: "Offering" },
+    { id: handing, workspace_id: ws, title: "Handing over" },
     { id: paused, workspace_id: ws, title: "Paused" },
     { id: elsewhere, workspace_id: otherWs, title: "Other agent" },
   ]);
@@ -54,6 +56,8 @@ beforeAll(async () => {
       reply(asking, ws, { ui: [{ kind: "memory-merge", id: "m" }, { kind: "form", id: "f" }], ui_response: { m: { status: "merged" } } }),
       // An offer to talk (a later version's card) waits on nobody.
       reply(offering, ws, { ui: [{ kind: "offer", id: "o" }] }),
+      // The browser handed over waits on them, after an offer that asks nothing.
+      reply(handing, ws, { ui: [{ kind: "offer", id: "o" }, { kind: "browser", id: "b" }] }),
       reply(paused, ws, { status: "awaiting" }),
       reply(elsewhere, otherWs, { status: "error" }),
     ])
@@ -125,17 +129,18 @@ describe("a task's goal", () => {
 });
 
 describe("whose move it is", () => {
-  const all = () => [chat, asking, offering, paused, elsewhere, bobChat];
+  const all = () => [chat, asking, offering, handing, paused, elsewhere, bobChat];
 
   it("answers for the caller's own conversations in the agent they ask about", async () => {
     const { data, error } = await alice.client.rpc("conversation_moves", { p_workspace: ws, p_ids: all() });
     expect(error).toBeNull();
     const byId = Object.fromEntries((data as { conversation_id: string; status: string; open_ask: string | null }[]).map((r) => [r.conversation_id, r]));
-    expect(Object.keys(byId).sort()).toEqual([asking, chat, offering, paused].sort());
+    expect(Object.keys(byId).sort()).toEqual([asking, chat, offering, handing, paused].sort());
     expect(byId[chat]).toMatchObject({ status: "complete", open_ask: null });
     // The first card still open, skipping what's answered; an offer asks nothing.
     expect(byId[asking].open_ask).toBe("form");
     expect(byId[offering].open_ask).toBeNull();
+    expect(byId[handing].open_ask).toBe("browser");
     expect(byId[paused]).toMatchObject({ status: "awaiting", open_ask: "approval" });
     expect((await alice.client.rpc("conversation_moves", { p_workspace: otherWs, p_ids: all() })).data).toMatchObject([{ conversation_id: elsewhere, status: "error" }]);
   });
@@ -156,6 +161,7 @@ describe("whose move it is", () => {
       [chat]: { role: "assistant", status: "complete", ask: null },
       [asking]: { role: "assistant", status: "complete", ask: "form" },
       [offering]: { role: "assistant", status: "complete", ask: null },
+      [handing]: { role: "assistant", status: "complete", ask: "browser" },
       [paused]: { role: "assistant", status: "awaiting", ask: "approval" },
     });
   });

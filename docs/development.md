@@ -194,6 +194,11 @@ exchange from the session's stored messages.
      At a sign-in or payment form the agent calls the gateway's `request_secret`, and the app
      fills the member's login or card into the page itself (`src/lib/browser-fill.ts`); the app
      needs `BROWSERBASE_API_KEY` for that, and `CREDENTIALS_KEY` to let members save them.
+     With `context_id` filled per run (`{{browser_context}}`, the member's saved sign-ins: one
+     Browserbase context per person, made by the app), it opens each conversation's browser
+     itself through Browserbase's API with that context, persisted, and hands the session to
+     `start`, so a site the member signed in to there (from `request_secret`'s card, or after
+     taking the browser over) stays signed in. Without it, browsers open signed out as before.
    - **Load Skill** gets its code from `langflow/components/load_skill.py` (no business names).
    - A literal Exa key moves into the global variable `EXA_API_KEY`, and Exa search returns
      at least 10 results (the node's count is fixed per flow; the agent can't raise it per call).
@@ -201,7 +206,7 @@ exchange from the session's stored messages.
      to every tenant's keys. Keep them (`--keep-python`) only with `LANGFLOW_SANDBOX_BACKEND`
      configured on the server. Members' code runs in their own Composio workbench.
    - It prints the `LANGFLOW_TWEAKS` value to set, which fills the workspace context, Chat
-     Input files, and Member Apps on every run.
+     Input files, Member Apps, and Studio Browser's saved sign-ins on every run.
    Use `--copy "Name" --strip-apps` to make a test copy with no app connections.
 3. **Make the flow tenant-aware.** One shared flow serves every workspace, so it must take
    tenant-specific values from each request, never from hard-coded component settings:
@@ -209,7 +214,8 @@ exchange from the session's stored messages.
      `workspace_id`, `workspace_name`, `user_id`, `composio_user_id`, `composio_toolkits`
      (JSON `{slug: auth config id}`), `agent_profile` (alias `business_context`),
      `agent_instructions`, `memories`, `project_name`, `project_instructions`,
-     `personal_guardrail`, `system_context`, and `files` (a value of exactly
+     `personal_guardrail`, `system_context`, `browser_context` (the member's saved sign-ins
+     for Studio Browser's `context_id`; empty when browsing is off), and `files` (a value of exactly
      `"{{files}}"` becomes the uploaded file paths; without it, attachments are off).
      Runs also send `X-LANGFLOW-GLOBAL-VAR-*` headers, but Langflow 1.12 ignores them for
      background jobs, so anything the flow must read goes through tweaks.

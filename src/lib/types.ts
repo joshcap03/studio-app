@@ -605,10 +605,11 @@ export interface Question {
 /**
  * Cards the agent puts under a reply for the member to act on (see src/lib/chat/ui.ts): a form
  * to fill in, whose answers go out as the member's next message, a proposed setup for the
- * agent, which changes nothing until the member applies it, or an offer to talk it through on a
- * call, which asks nothing of them (the call starts only if they tap Call).
+ * agent, which changes nothing until the member applies it, an offer to talk it through on a
+ * call, which asks nothing of them (the call starts only if they tap Call), or the agent's
+ * browser handed to them for a step only they can do (signing in).
  */
-export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer | UiSecret;
+export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer | UiSecret | UiHandoff;
 
 /**
  * The agent asking for a login or card at its browser (its request_secret tool). It carries no
@@ -628,6 +629,21 @@ export interface UiSecret {
 /** The parts of a login or card the app can fill into a page. */
 export const SECRET_FIELDS = ["username", "password", "card_number", "card_name", "card_expiry", "card_code"] as const;
 export type SecretField = (typeof SECRET_FIELDS)[number];
+
+/**
+ * The agent's browser, handed to the member (its hand_browser tool) for a step only they can do:
+ * a CAPTCHA, or a page they have to use themself (a Google sign-in button, a passkey). They take over with a tap and
+ * hand it back with another, which goes out as their next message. The agent never sees what
+ * they type there.
+ */
+export interface UiHandoff {
+  kind: "browser";
+  id: string;
+  /** What they need to do there, in one sentence, as the agent would say it. */
+  reason: string;
+  /** The site, in a few words (e.g. "USPS"). */
+  site?: string;
+}
 
 /** The agent's offer to talk something through on a call (its offer_call tool). It never rings anyone. */
 export interface UiOffer {
@@ -838,7 +854,9 @@ export type UiResponse =
    * A login or card request, done: filled into the page by the app (`fields`, and whether it was
    * `saved` for next time), or by the member themself taking over the browser. Never the values.
    */
-  | { status: "filled"; at: number; site: string; via: "card" | "takeover"; fields: SecretField[]; label?: string; saved?: boolean };
+  | { status: "filled"; at: number; site: string; via: "card" | "takeover"; fields: SecretField[]; label?: string; saved?: boolean }
+  /** The agent's browser, handed back by the member after taking it over. */
+  | { status: "handed-back"; at: number };
 
 /** Cards one reply keeps (the latest ones); an offer to call is kept besides them (src/lib/chat/ui.ts capUi). */
 export const MAX_UI_BLOCKS = 2;
