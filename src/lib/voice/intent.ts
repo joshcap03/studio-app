@@ -42,6 +42,29 @@ export function isBackchannel(text: string): boolean {
   return words === "" || BACKCHANNELS.has(words);
 }
 
+const HELLO_WORD = "(?:hello|hi|hey|hiya|heya|howdy|good (?:morning|afternoon|evening))";
+const HOW = "(?:how are you(?: doing)?(?: today)?|hows it going|how is it going|how you doing|hows your day|whats up|sup)";
+const CHECK =
+  "(?:can you hear me(?: now| okay| ok| alright| all right)?|(?:are )?you there|(?:is )?any ?(?:one|body) there|is (?:this|it) (?:working|on)|are you (?:still )?(?:with me|listening|on))";
+
+/**
+ * The whole of what they said is a hello, asking how it's going, or checking the line ("hello?",
+ * "hey Rowan", "hi, how are you", "can you hear me?"): talk between people, not something to hand
+ * the work. `name`: what the agent goes by, so "hey Rowan" counts. Null when there's anything more.
+ */
+export function greetingKind(text: string, name?: string | null): "hello" | "how" | "check" | null {
+  // Lowercase letters, digits and spaces only, so it's safe in a pattern.
+  const called = name ? spokenWords(name) : "";
+  const word = `(?:${HELLO_WORD}|${HOW}|${CHECK}|there|again|everyone|oh|so|okay|ok${called ? `|${called}` : ""})`;
+  const parts = new RegExp(`^${word}(?: ${word})*$`);
+  const all = spokenClauses(text);
+  if (!all.length || !all.every((c) => parts.test(c))) return null;
+  const words = all.join(" ");
+  if (new RegExp(`\\b${CHECK}\\b`).test(words)) return "check";
+  if (new RegExp(`\\b${HOW}\\b`).test(words)) return "how";
+  return new RegExp(`\\b${HELLO_WORD}\\b`).test(words) ? "hello" : null;
+}
+
 const LEAD_IN = "(?:(?:ok|okay|yes|yeah|yep|great|perfect|good|alright|right|cool|so|now|that s it|thats it|thats all|thats good|looks good|done|please|go ahead and|you can|lets)\\s+)*";
 const SEND = new RegExp(`^${LEAD_IN}(?:send|submit|hit send)(?:\\s+(?:it|that|this|them|those|these|the form|the card|my answers?))?(?:\\s+(?:now|please|over|off|in))*$`);
 

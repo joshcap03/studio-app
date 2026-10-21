@@ -7,17 +7,20 @@
 //
 // Set ELEVENLABS_AGENT_ID to update that agent instead of creating one. --dry-run prints what
 // would be sent (secrets left out) without calling ElevenLabs. Afterwards it checks, read-only,
-// that each of Studio's voices exists on the account.
+// that each of Studio's voices exists on the account. --voice-only updates just how the existing
+// agent speaks, and needs only ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID.
 
 const API = "https://api.elevenlabs.io/v1/convai";
 const VOICES_API = "https://api.elevenlabs.io/v1/voices";
 const dry = process.argv.includes("--dry-run");
+const voiceOnly = process.argv.includes("--voice-only");
 const key = process.env.ELEVENLABS_API_KEY?.trim();
 const llmSecret = process.env.VOICE_LLM_SECRET?.trim();
 const app = process.env.APP_URL?.trim().replace(/\/+$/, "");
 const existing = process.env.ELEVENLABS_AGENT_ID?.trim();
 
-if (!dry && (!key || !llmSecret || !app)) fail("Set ELEVENLABS_API_KEY, VOICE_LLM_SECRET (the same value as in Vercel), and APP_URL.");
+if (voiceOnly && !dry && (!key || !existing)) fail("Set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID.");
+if (!dry && !voiceOnly && (!key || !llmSecret || !app)) fail("Set ELEVENLABS_API_KEY, VOICE_LLM_SECRET (the same value as in Vercel), and APP_URL.");
 if (app && !/^https:\/\//.test(app)) fail("APP_URL must be the app's https address.");
 
 const SECRET_NAME = "studio_voice_llm_key";
@@ -25,6 +28,10 @@ const SECRET_NAME = "studio_voice_llm_key";
 // The speech model, the same one Studio's voice previews use (ELEVENLABS_TTS_MODEL in
 // src/lib/voice/elevenlabs.ts), so a voice sounds the same everywhere. English only, like the agent.
 const TTS_MODEL = "eleven_flash_v2";
+
+// How it speaks: a little slower than ElevenLabs' default, and steadier, so it sounds considered
+// rather than rushed (ELEVENLABS_VOICE_SETTINGS in src/lib/voice/elevenlabs.ts).
+const TTS = { model_id: TTS_MODEL, speed: 0.9, stability: 0.6 };
 
 // Studio's voices (ELEVENLABS_VOICES in src/lib/voice/elevenlabs.ts); each call picks one of
 // them through the voice override below.
@@ -112,7 +119,7 @@ function agentBody(secretId, toolIds) {
         },
       },
       // The voice itself is chosen per call (the override in platform_settings); the model is fixed.
-      tts: { model_id: TTS_MODEL },
+      tts: TTS,
       turn: {
         turn_model: "turn_v3",
         turn_eagerness: "patient",
@@ -155,6 +162,21 @@ function fail(message) {
   process.exit(1);
 }
 
+if (voiceOnly) {
+  if (dry) {
+    console.log(JSON.stringify({ conversation_config: { tts: TTS } }, null, 2));
+    process.exit(0);
+  }
+  // Everything else stays as stored: only the speech settings change.
+  const stored = await call("GET", `/agents/${existing}`);
+  const conversation = { ...stored.conversation_config, tts: { ...stored.conversation_config?.tts, ...TTS } };
+  await call("PATCH", `/agents/${existing}`, { conversation_config: conversation });
+  const after = (await call("GET", `/agents/${existing}`)).conversation_config?.tts ?? {};
+  console.log(`ElevenLabs agent: ${existing}`);
+  console.log(`Speech: ${after.model_id ?? "(missing)"}, speed ${after.speed ?? "(default)"}, stability ${after.stability ?? "(default)"}`);
+  process.exit(0);
+}
+
 if (dry) {
   console.log(JSON.stringify({ secret: { type: "new", name: SECRET_NAME, value: "<VOICE_LLM_SECRET>" }, tools: TOOLS.map(toolConfig), agent: agentBody("<secret_id>", ["<tool ids>"]) }, null, 2));
   process.exit(0);
@@ -189,7 +211,7 @@ console.log(`Custom LLM: ${llm.url ?? "(missing)"}`);
 console.log(`Request headers: ${JSON.stringify(llm.request_headers ?? {})}`);
 console.log(`Tools: ${(stored.conversation_config?.agent?.prompt?.tool_ids ?? []).length} client tools`);
 console.log(`Signed tokens required: ${stored.platform_settings?.auth?.enable_auth === true}`);
-console.log(`Speech model: ${stored.conversation_config?.tts?.model_id ?? "(missing)"}`);
+console.log(`Speech: ${stored.conversation_config?.tts?.model_id ?? "(missing)"}, speed ${stored.conversation_config?.tts?.speed ?? "(default)"}, stability ${stored.conversation_config?.tts?.stability ?? "(default)"}`);
 console.log(`Voice override allowed: ${stored.platform_settings?.overrides?.conversation_config_override?.tts?.voice_id === true}`);
 
 // Read-only: a voice missing from the account would fail on a call or a preview.

@@ -4,7 +4,7 @@ const config = vi.hoisted(() => ({ voice: undefined as unknown }));
 vi.mock("@/lib/config", () => ({ getConfig: () => config }));
 
 const { mockTone, recordingSeconds, speak, speechSeconds, SpeechUnavailable, transcribe, MAX_SPEECH_CHARS } = await import("./speech");
-const { ELEVENLABS_STT_MODEL, ELEVENLABS_TTS_MODEL, ELEVENLABS_VOICES } = await import("./elevenlabs");
+const { ELEVENLABS_STT_MODEL, ELEVENLABS_TTS_MODEL, ELEVENLABS_VOICE_SETTINGS, ELEVENLABS_VOICES } = await import("./elevenlabs");
 
 const ELEVENLABS = { provider: "elevenlabs", elevenlabs: { apiKey: "xi_test", agentId: "agent_test" } };
 
@@ -65,7 +65,7 @@ describe("speech", () => {
     expect(String(url)).toBe(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICES.casual}?output_format=mp3_44100_64`);
     expect(init.method).toBe("POST");
     expect(init.headers).toMatchObject({ "xi-api-key": "xi_test" });
-    expect(JSON.parse(String(init.body))).toEqual({ text: "Hello there.", model_id: ELEVENLABS_TTS_MODEL });
+    expect(JSON.parse(String(init.body))).toEqual({ text: "Hello there.", model_id: ELEVENLABS_TTS_MODEL, voice_settings: ELEVENLABS_VOICE_SETTINGS });
   });
 
   it("says SpeechUnavailable when ElevenLabs refuses, fails, or sends nothing", async () => {

@@ -12,7 +12,7 @@ import { moveOf } from "@/lib/chat/move";
 import type { FormValues } from "@/lib/chat/ui-answer";
 import { api, uploadAttachment, type SpokenDecision } from "@/lib/client/api";
 import { guardStep, HOLD_MS, initialGuard, type GuardEffect, type GuardEvent, type GuardRequest } from "@/lib/voice/approval-guard";
-import { isBackchannel, isDeclineIntent, isHoldOn, isLookIntent, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
+import { greetingKind, isBackchannel, isDeclineIntent, isHoldOn, isLookIntent, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
 import { clock, micProblem } from "@/lib/voice/mic";
 import { CallNarrator } from "@/lib/voice/narrator";
 import { noteCanCome } from "@/lib/voice/notes";
@@ -451,7 +451,8 @@ export function Call({
   // ---------------------------------------------------------------------------------------
   // The client tools: each checks the member's own words before it acts, and says what happened.
 
-  const pending = () => spoken.current.slice(consumed.current).filter((w) => !isBackchannel(w));
+  // A hello the voice answered itself isn't part of what goes to the work.
+  const pending = () => spoken.current.slice(consumed.current).filter((w) => !isBackchannel(w) && !greetingKind(w, grant.persona.name));
   const consume = () => {
     consumed.current = spoken.current.length;
   };
