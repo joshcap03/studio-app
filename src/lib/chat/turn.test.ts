@@ -845,6 +845,23 @@ describe("edits, files, and memory suggestions", () => {
     expect(asked.origin).toEqual({ kind: "task", taskId: "t1", title: "Job hunt", runId: null });
   });
 
+  it("keeps the conversation's browser server-side: recorded, never streamed or stored with the reply", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const recorded: (string | null)[] = [];
+    const session = "33333333-3333-4333-8333-333333333333";
+    const adapter = scripted([{ type: "browser-session", sessionId: session }, { type: "message", text: "Looked." }, { type: "browser-session", sessionId: null }]);
+    const events = await collect(
+      startTurn(
+        { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, saveBrowserSession: async (s) => void recorded.push(s) },
+        { conversationId: id, kind: "send", text: "Look it up" },
+      ),
+    );
+    expect(recorded).toEqual([session, null]);
+    expect(JSON.stringify(events)).not.toContain(session);
+    expect(JSON.stringify(await store.listMessages(id))).not.toContain(session);
+  });
+
   it("saves the agent's plans one at a time, in order, and streams each saved journey as it lands", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

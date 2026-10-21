@@ -720,3 +720,14 @@ describe("sanitizing", () => {
     expect(JSON.stringify(step.preview)).not.toContain("secretsecretsecret");
   });
 });
+
+describe("browser results tagged with their session", () => {
+  it("still read the same, with the tag kept out of what the member sees", () => {
+    const mcp = (payload: unknown) => ({ meta: null, content: [{ type: "text", text: JSON.stringify(payload), annotations: null, meta: null }], structuredContent: null, isError: false });
+    const [step] = interpretCalls([
+      { name: "extract", input: { instruction: "the page title" }, output: mcp({ studioBrowserSession: "33333333-3333-4333-8333-333333333333", success: true, data: { result: { extraction: "Example Domain" } } }), error: null },
+    ]);
+    expect(step).toMatchObject({ status: "done", app: "browser", label: "Read the page", preview: { type: "text", text: "Example Domain" } });
+    expect(JSON.stringify(step)).not.toContain("studioBrowserSession");
+  });
+});

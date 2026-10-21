@@ -63,6 +63,8 @@ const schema = z.object({
   // Web Push (VAPID) keys for notifications on members' devices. `npx web-push
   // generate-vapid-keys` makes a pair. Unset means notifications are off.
   VAPID_PUBLIC_KEY: z.string().optional(),
+  /** The same Browserbase project the flow's Studio Browser uses; turns on watching the agent's browser on a call. */
+  BROWSERBASE_API_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().regex(/^(mailto:|https:)/, "must be a mailto: or https: URL").optional(),
 
@@ -135,6 +137,8 @@ export interface AppConfig {
   langsmith?: { apiKey: string; endpoint: string };
   /** Push notifications. Unset means members can't turn them on. */
   push?: { publicKey: string; privateKey: string; subject: string };
+  /** Watching the agent's browser (view only) on a call. Unset means it's off. */
+  browser?: { apiKey: string };
   limits: {
     runsPerMinute: number;
     runsPerWorkspacePerDay: number;
@@ -217,6 +221,7 @@ export function getConfig(): AppConfig {
     composio,
     supermemory: env.SUPERMEMORY_API_KEY ? { apiKey: env.SUPERMEMORY_API_KEY, baseUrl: env.SUPERMEMORY_BASE_URL } : undefined,
     langsmith: env.LANGSMITH_API_KEY ? { apiKey: env.LANGSMITH_API_KEY, endpoint: env.LANGSMITH_ENDPOINT } : undefined,
+    browser: env.BROWSERBASE_API_KEY?.trim() ? { apiKey: env.BROWSERBASE_API_KEY.trim() } : undefined,
     push:
       env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY
         ? { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT ?? "mailto:notifications@example.com" }

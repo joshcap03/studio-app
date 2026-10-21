@@ -17,6 +17,7 @@ import { getSkill } from "@/lib/skills";
 import { SETUP_SKILL_ID } from "@/lib/skills/setup";
 import { getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
+import { saveBrowserSession } from "@/lib/browser-view";
 import type { Tenant } from "@/lib/tenant-core";
 import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
 import { callEnded, callForWords } from "@/lib/voice/calls";
@@ -185,6 +186,7 @@ export async function buildTurnDeps(
     savePlan: (plan: unknown, goal: unknown) =>
       savePlanFromAgent(tenant, conversationId, plan, goal, { setup: setupRun }),
     saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source),
+    saveBrowserSession: (sessionId: string | null) => saveBrowserSession(tenant, conversationId, sessionId),
     fileArtifact: (artifact, source) => fileArtifact(tenant, artifact, { conversationId, messageId: source.messageId }),
     onFinished: finished,
     shouldStop,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalActions, buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { approvalActions, buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -1306,3 +1306,18 @@ describe("Langflow rewind", () => {
   });
 });
 
+
+describe("toolBrowserSessions", () => {
+  const mcp = (payload: unknown) => ({ meta: null, content: [{ type: "text", text: JSON.stringify(payload), annotations: null, meta: null }], structuredContent: null, isError: false });
+  const use = (name: string, output: unknown, error: unknown = null) => ({ type: "tool_use", name, tool_input: {}, output, error });
+  const S1 = "33333333-3333-4333-8333-333333333333";
+  const S2 = "44444444-4444-4444-8444-444444444444";
+  it("reports the browser Studio Browser tagged its results with, last one wins", () => {
+    const message = bot("", [use("start", mcp({ success: true, data: { sessionId: S1, available: true } })), use("extract", mcp({ studioBrowserSession: S2, success: true, data: {} }))]);
+    expect(toolBrowserSessions(message as never)).toEqual([{ type: "browser-session", sessionId: S2 }]);
+  });
+  it("reports an ended browser, and ignores failures and other tools", () => {
+    expect(toolBrowserSessions(bot("", [use("navigate", mcp({ studioBrowserSession: S1 })), use("end", mcp({ success: true }))]) as never)).toEqual([{ type: "browser-session", sessionId: null }]);
+    expect(toolBrowserSessions(bot("", [use("navigate", null, "boom"), use("search", mcp({ studioBrowserSession: S1 }))]) as never)).toEqual([]);
+  });
+});

@@ -69,6 +69,8 @@ export interface VoiceGrant {
   persona: VoicePersona;
   /** How long this call may run. */
   maxSeconds: number;
+  /** The agent's browser can be watched on this call (view only); absent from servers without it. */
+  browserView?: boolean;
   /**
    * Whether this call may approve a voice-ok request by voice (spoken approvals on, and not
    * turned off by a report), as of when it started. Absent from servers from before: taps.

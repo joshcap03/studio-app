@@ -24,6 +24,7 @@ import { MAX_ATTACHMENTS, type Approval, type Attachment, type ChatMessage, type
 import type { LinkStatus, VoiceLink, VoiceLinkEvents, VoiceTools } from "./link";
 import MockVoiceLink from "./mock-link";
 import { Orb, ORB_LABEL, type OrbState } from "./orb";
+import { BrowserView } from "./browser-view";
 import { useShare } from "./share";
 
 // A call with the agent, from any conversation: the orb (who has the floor, and whose move it is)
@@ -221,6 +222,8 @@ export function Call({
   const filesRef = useRef<Attachment[]>([]);
   const [snapped, setSnapped] = useState(0);
   const [snapping, setSnapping] = useState(false);
+  /** The agent has used its browser in this conversation during the call: watch it (view only). */
+  const [browsing, setBrowsing] = useState(false);
   const [joined, setJoined] = useState(!waitForTap);
   const link = useRef<VoiceLink | null>(null);
   const [status, setStatus] = useState<LinkStatus>("connecting");
@@ -715,6 +718,7 @@ export function Call({
         if (id !== live.current.conversationId || ended.current) return;
         narrator.event(event, Date.now());
         if (event.type === "activity" && !event.step.hidden) setProgressSeen(true);
+        if (event.type === "activity" && event.step.app === "browser") setBrowsing(true);
         // A new job is going: an answer to the question about the last one is talk-over now.
         if (event.type === "start") longJobClosedAt.current = null;
         if (event.type === "end") {
@@ -1108,6 +1112,7 @@ export function Call({
                 move={move.move}
               />
             ) : null}
+            {grant.browserView ? <BrowserView key={conversationId} conversationId={conversationId} active={browsing || messages.some((m) => m.activity?.some((a) => a.app === "browser"))} /> : null}
             {latestReply?.content.trim() ? (
               <div className="mt-4 text-[14.5px]">
                 <Markdown content={latestReply.content} citations={latestReply.citations} />

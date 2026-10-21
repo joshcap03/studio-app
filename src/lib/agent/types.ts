@@ -177,6 +177,11 @@ export type AgentEvent =
   | { type: "citations"; citations: unknown }
   /** Text this run's tools returned for a link. Server-side only: never sent or stored. */
   | { type: "evidence"; items: Evidence[] }
+  /**
+   * The conversation's hosted browser (its session id), or null when the agent ended it, so its
+   * member can watch it on a call. Server-side only: never sent to the page.
+   */
+  | { type: "browser-session"; sessionId: string | null }
   /** A chart, key numbers, or table an investigation reported, unvalidated. */
   | { type: "visual"; visual: unknown }
   /** Multiple-choice questions for the member, unvalidated; the answer comes as their next message. */

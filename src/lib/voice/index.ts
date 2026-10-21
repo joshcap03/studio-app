@@ -89,6 +89,7 @@ export async function startVoiceCall(tenant: Tenant): Promise<{ ok: true; grant:
       context,
       persona: { name: persona.name, voice: persona.voice, voiceId: mock ? null : ELEVENLABS_VOICES[persona.voice] },
       maxSeconds: claim.max_seconds,
+      ...(getConfig().browser ? { browserView: true } : {}),
       spokenApprovals: approvals,
     },
   };
