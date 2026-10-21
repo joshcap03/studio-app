@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatMessage, Timeline } from "@/lib/types";
 import { formatSeconds } from "./activity";
 import { AppGlyph } from "./app-glyph";
-import { chunkFindings, findingsForReply, type Chunk, type Finding, type ResearchChunk } from "./findings";
+import { chunkFindings, findingsForReply, withoutRepeatedPlans, type Chunk, type Finding, type ResearchChunk } from "./findings";
 import { StepPreview } from "./step-preview";
 import { VisualView } from "./visuals";
 
@@ -105,17 +105,16 @@ export function collectFindings(message: ChatMessage): Finding[] {
 }
 
 function groupFindings(messages: ChatMessage[]): Group[] {
-  const groups: Group[] = [];
+  const replies: { message: ChatMessage; question: string }[] = [];
   let question = "";
   for (const m of messages) {
-    if (m.role === "user") {
-      question = m.content.replace(/\s+/g, " ").trim();
-      continue;
-    }
-    const findings = collectFindings(m).map((f) => ({ ...f, id: `${m.id}:${f.id}` }));
-    if (findings.length > 0 || m.timeline) groups.push({ replyId: m.id, question: question || "Earlier", findings, timeline: m.timeline });
+    if (m.role === "user") question = m.content.replace(/\s+/g, " ").trim();
+    else replies.push({ message: m, question: question || "Earlier" });
   }
-  return groups;
+  const found = withoutRepeatedPlans(replies.map(({ message: m }) => collectFindings(m).map((f) => ({ ...f, id: `${m.id}:${f.id}` }))));
+  return replies.flatMap(({ message: m, question }, i): Group[] =>
+    found[i].length > 0 || m.timeline ? [{ replyId: m.id, question, findings: found[i], timeline: m.timeline }] : [],
+  );
 }
 
 /**

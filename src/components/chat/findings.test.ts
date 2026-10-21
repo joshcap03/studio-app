@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep } from "@/lib/types";
-import { chunkFindings, findingFor, findingForArtifact, findingsForReply, summaryFromAgent } from "./findings";
+import { chunkFindings, findingFor, findingForArtifact, findingsForReply, summaryFromAgent, withoutRepeatedPlans, type Finding } from "./findings";
 
 const step = (overrides: Partial<ActivityStep>): ActivityStep => ({
   id: "s",
@@ -121,5 +121,26 @@ describe("findings", () => {
       step({ id: "t", app: "tracker", preview: { type: "text", text: "Tracked “B”" } }),
     ];
     expect(chunkFindings(findingsForReply(steps, [])).map((c) => c.kind === "finding" && c.finding.text)).toEqual(["Tracked “B”", "Read 1 source: a.example"]);
+  });
+});
+
+describe("withoutRepeatedPlans", () => {
+  const plan = (id: string, text: string): Finding => ({ id, app: "tracker", text, tone: "normal" });
+  const same = "Plan: 0 of 3 steps done; next: Understand what they're after";
+
+  it("shows an unchanged plan once, across replies, and every change to it", () => {
+    const found = withoutRepeatedPlans([
+      [plan("a", same)],
+      [plan("b", same)],
+      [plan("c", same), { id: "d", app: "web", text: "Read 3 sources", tone: "normal" }],
+      [plan("e", "Plan: 1 of 3 steps done; next: Agree the bar"), plan("f", "Plan: 1 of 4 steps done; next: Trial run")],
+      [plan("g", same)],
+    ]);
+    expect(found.map((r) => r.map((f) => f.id))).toEqual([["a"], [], ["d"], ["e", "f"], ["g"]]);
+  });
+
+  it("keeps a tracked row that only reads like a plan", () => {
+    const row: Finding = { id: "r", app: "tracker", text: "Saved “Plan launch party”", tone: "normal" };
+    expect(withoutRepeatedPlans([[row], [row]])).toEqual([[row], [row]]);
   });
 });

@@ -60,7 +60,10 @@ function replyToSteps(leaves: Leaf[]): (ActivityStep & { returned?: number })[] 
   });
 }
 
-const TECHNICAL = /[{}<>\[\]`]|\b(null|undefined|true|false|nonetype)\b|traceback|object has no attribute|mcp tool|content below|requested_range|\w+_\w+\(/i;
+const RAW = /[{}<>\[\]`]|\b(null|undefined|true|false|nonetype)\b|traceback|object has no attribute|mcp tool|content below|requested_range|\w+_\w+\(/i;
+/** A tool slug (COMPOSIO_REMOTE_WORKBENCH) is code, never words for a person. */
+const SLUG = /\b[A-Z][A-Z0-9]*(_[A-Z0-9]+)+\b/;
+const TECHNICAL = { test: (text: string) => RAW.test(text) || SLUG.test(text) };
 
 describe.skipIf(!base || !key || !flow)("every real tool call reads well", () => {
   it("gives each finished step a plain finding, and never shows raw or technical text", async () => {

@@ -154,12 +154,14 @@ function toStep(original: ToolCall, index: number): InterpretedStep {
     return { index, label: withoutRepeats(interpretation.labels.running), status: "done", app: interpretation.app, action: interpretation.action, hidden: true };
   }
   const envelope = composioEnvelope(result);
-  const errorText =
-    (errorMessage(call.error) ? humanReason(errorMessage(call.error)!) : undefined) ??
+  // Every failure, whichever way it was reported, reads as a plain reason.
+  const reason =
+    errorMessage(call.error) ??
     (mcpError ? errorMessage(mcpError) : undefined) ??
     gatewayError ??
     (envelope && !envelope.successful ? errorMessage(envelope.error) ?? "The tool reported a failure." : undefined) ??
     interpretation.innerError;
+  const errorText = reason ? humanReason(reason) : undefined;
   const status: ActivityStatus = errorText ? "failed" : call.output == null ? "running" : "done";
 
   // The agent's own plain-language description of this step, when it gave one.
@@ -411,7 +413,8 @@ function code(name: string, input: Record<string, unknown>, result: unknown): In
         }
       : undefined,
     artifacts,
-    innerError: failure ? clip(failure, 400) : stderr && !stdout ? clip(stderr, 400) : undefined,
+    // The agent's own code failed, not an app.
+    innerError: failure || (stderr && !stdout) ? humanReason(failure || stderr!, "The code hit an error.") : undefined,
   };
 }
 
@@ -932,8 +935,11 @@ export function gatewayFailure(text: string): string | undefined {
 /** The gateway turned a change away until it goes through approval; the next call asks. */
 const NEEDS_APPROVAL = /^"?This changes something in the owner's accounts, so it needs their approval\./;
 
-/** Common technical failure reasons in plain words; anything else passes through, trimmed. */
-export function humanReason(raw: string): string {
+/**
+ * Common technical failure reasons in plain words; anything else passes through, trimmed.
+ * Plain reasons pass through unchanged, so a reason already in plain words is safe to pass again.
+ */
+export function humanReason(raw: string, fallback = "Something went wrong on the app's side."): string {
   const reason = raw
     .replace(/^MCP tool '[^']+' failed:\s*/i, "")
     .replace(/\s*[{[][\s\S]*$/, "")
@@ -951,9 +957,13 @@ export function humanReason(raw: string): string {
   if (/no active session|session (closed|expired)/i.test(reason)) return "The browser session had closed.";
   if (/\d+ out of \d+ tools failed/i.test(reason)) return "The app couldn't complete those requests.";
   if (/is required|missing (required )?(field|argument|parameter)/i.test(reason)) return "The tool was missing some details it needed.";
-  // Anything that still reads like code or a stack trace gets a plain fallback.
-  if (!reason || /['"`{}()<>\[\]]|_[a-z]|[a-z]_|object has no attribute|traceback|undefined|null\b|nonetype|\.py\b/i.test(reason)) {
-    return "Something went wrong on the app's side.";
+  // Composio's helper tools (the workbench, search) run only on their own, never inside a batch.
+  if (/cannot be executed inside|helper tool|non-meta tools/i.test(reason)) return "Called its tool runner the wrong way.";
+  // Anything that still reads like code or a stack trace gets a plain fallback. An apostrophe
+  // inside a word ("wasn't") is plain English, not a quote.
+  const unquoted = reason.replace(/(\p{L})['’](\p{L})/gu, "$1$2");
+  if (!reason || /['"`{}()<>\[\]]|_[a-z]|[a-z]_|object has no attribute|traceback|undefined|null\b|nonetype|\.py\b/i.test(unquoted)) {
+    return fallback;
   }
   return clip(reason, 200);
 }

@@ -505,6 +505,34 @@ describe("interpretCalls", () => {
     expect(step.detail).toBe("The app isn't connected or needs to be re-authorized.");
   });
 
+  it("words every failure plainly, however the tool reported it", () => {
+    const routerError =
+      "COMPOSIO_REMOTE_WORKBENCH is a Tool Router helper tool and cannot be executed inside COMPOSIO_MULTI_EXECUTE_TOOL. Run non-meta tools directly instead.";
+    const steps = interpretCalls([
+      // A whole-batch failure, and one tool's failure inside the batch's results.
+      { name: "composio_multi_execute_tool", input: { tools: [{ tool_slug: "COMPOSIO_REMOTE_WORKBENCH", arguments: { code_to_execute: "x" } }] }, output: toolMessage({ successful: false, error: routerError, data: {} }), error: null },
+      {
+        name: "composio_multi_execute_tool",
+        input: { tools: [{ tool_slug: "COMPOSIO_REMOTE_WORKBENCH", arguments: { code_to_execute: "x" } }] },
+        output: null,
+        error: `MCP tool 'COMPOSIO_MULTI_EXECUTE_TOOL' failed: ${JSON.stringify({ successful: false, data: { results: [{ tool_slug: "COMPOSIO_REMOTE_WORKBENCH", error: routerError, index: 0 }] }, error: "1 out of 1 tools failed" })}`,
+      },
+      { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: { content: [{ type: "text", text: "KeyError: 'video_id'" }], isError: true }, error: null },
+      { name: "run_python", input: { code: "x" }, output: toolMessage({ successful: true, data: { stdout: "", stderr: "Traceback (most recent call last):\n  NameError: name 'segs' is not defined" } }), error: null },
+    ]);
+    expect(steps.map((s) => [s.status, s.detail])).toEqual([
+      ["failed", "Called its tool runner the wrong way."],
+      ["failed", "Called its tool runner the wrong way."],
+      ["failed", "Something went wrong on the app's side."],
+      ["failed", "The code hit an error."],
+    ]);
+  });
+
+  it("keeps a plain reason as written, contractions and all", () => {
+    const [step] = interpretCalls([{ name: "start", input: {}, output: toolMessage({ success: false, error: "The browser wasn't available." }), error: null }]);
+    expect(step).toMatchObject({ status: "failed", detail: "The browser wasn't available." });
+  });
+
   it("treats an MCP isError result as a failure", () => {
     const [step] = interpretCalls([
       { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: { content: [{ type: "text", text: "Sandbox crashed" }], isError: true }, error: null },
@@ -517,7 +545,7 @@ describe("interpretCalls", () => {
       { name: "composio_remote_workbench", input: { code_to_execute: "x" }, output: toolMessage({ successful: false, error: "Sandbox timed out", data: {} }), error: null },
       { name: "navigate", input: { url: "https://airline.example/book" }, output: null, error: "Session not authenticated" },
     ]);
-    expect(workbench).toMatchObject({ status: "failed", detail: "Sandbox timed out" });
+    expect(workbench).toMatchObject({ status: "failed", detail: "The app took too long to respond." });
     expect(nav).toMatchObject({ status: "failed", app: "browser", label: "Couldn't open airline.example", detail: "The app isn't connected or needs to be re-authorized." });
   });
 

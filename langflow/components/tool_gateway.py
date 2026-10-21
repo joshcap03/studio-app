@@ -495,6 +495,27 @@ def compact_result(result, limit):
 
 COMPOSIO_SLUG = re.compile(r"^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$")
 
+
+def own_tool(name, arguments, registry):
+    """Composio's own tools (the workbench, search, connections) run only by their own name;
+    its executor refuses them. An agent that names one as a slug (COMPOSIO_REMOTE_WORKBENCH)
+    or puts it alone in a batch gets it called directly."""
+    if isinstance(name, str) and name not in registry and name.lower().startswith("composio_") and name.lower() in registry:
+        return name.lower(), arguments
+    if name == "composio_multi_execute_tool":
+        batch = arguments
+        if isinstance(batch, str):
+            try:
+                batch = json.loads(batch) if batch.strip() else {}
+            except json.JSONDecodeError:
+                return name, arguments
+        calls = batch.get("tools") if isinstance(batch, dict) else None
+        if isinstance(calls, list) and len(calls) == 1 and isinstance(calls[0], dict):
+            slug = str(calls[0].get("tool_slug") or "").lower()
+            if slug.startswith("composio_") and slug != name and slug in registry:
+                return slug, calls[0].get("arguments") or {}
+    return name, arguments
+
 # Read-only tools: safe to retry, and they should answer within seconds.
 LOOKUP_TOOLS = {
     "composio_search_tools", "composio_get_tool_schemas", "composio_wait_for_connections",
@@ -637,6 +658,7 @@ class ToolGatewayComponent(Component):
                 if not isinstance(inner, dict) or not isinstance(inner.get("tool_name"), str):
                     break
                 name, arguments = inner["tool_name"], inner.get("arguments") or {}
+            name, arguments = own_tool(name, arguments, registry)
             # Agents sometimes call a Composio tool slug (e.g. GRANOLA_MCP_QUERY_GRANOLA_MEETINGS)
             # directly. Send it through Composio's executor instead of failing.
             if name not in registry and COMPOSIO_SLUG.match(name or "") and "composio_multi_execute_tool" in registry:

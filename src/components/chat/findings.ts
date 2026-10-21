@@ -99,6 +99,25 @@ export function findingFor(step: ActivityStep, agentSaid?: string): Finding | nu
   }
 }
 
+/** The receipt of a plan update ("Plan: 1 of 3 steps done; next: …"). */
+const PLAN_LINE = /^Plan: \d+ of \d+ steps? done/;
+
+/**
+ * Each reply's findings, in order, without a plan line that only repeats the last one shown:
+ * the agent saves its plan on most turns, and an unchanged plan isn't news.
+ */
+export function withoutRepeatedPlans(replies: Finding[][]): Finding[][] {
+  let last: string | undefined;
+  return replies.map((findings) =>
+    findings.filter((f) => {
+      if (f.app !== "tracker" || !PLAN_LINE.test(f.text)) return true;
+      if (f.text === last) return false;
+      last = f.text;
+      return true;
+    }),
+  );
+}
+
 export function findingForArtifact(artifact: Artifact): Finding {
   return {
     id: `artifact:${artifact.id}`,
