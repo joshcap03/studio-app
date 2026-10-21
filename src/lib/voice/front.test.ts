@@ -577,3 +577,36 @@ describe("looking at what they share", () => {
     expect(speechForResults(["Handed off: looking at what they're showing."])).toBe("Let me look.");
   });
 });
+
+describe("a hello on a call", () => {
+  const hello = mark({ cue: "hello", stage: { working: false, purpose: "chat" } });
+  const greeted: FrontMessage = { role: "assistant", content: "Hey Josh, it's Rowan." };
+
+  it("says hello back and hands them the floor, without sending it to the work", () => {
+    expect(planReply(context, [hello, greeted, user("Hello?")])).toEqual({ kind: "say", text: "Hey! What's on your mind?" });
+    expect(planReply(context, [hello, greeted, user("hey, how are you")])).toEqual({ kind: "say", text: "Good, thanks. What's on your mind?" });
+    expect(planReply(context, [hello, greeted, user("can you hear me?")])).toEqual({ kind: "say", text: "Yes, I can hear you. What's on your mind?" });
+  });
+
+  it("is the greeting when it hasn't been said yet", () => {
+    expect(planReply({ ...context, member: "Josh" }, [hello, user("hello")])).toEqual({ kind: "say", text: "Hey Josh, it's Rowan. What's on your mind?" });
+  });
+
+  it("says where things stand when something's under way or waiting on them", () => {
+    const working = mark({ stage: { working: true, purpose: "chat" } });
+    expect(planReply(context, [hello, greeted, working, user("hello? you there?")])).toEqual({ kind: "say", text: "Yes, I can hear you. I'm still working on it." });
+    expect(planReply(context, [hello, greeted, mark({ stage }), user("hi")])).toEqual({ kind: "say", text: "Hey! The card's on screen whenever you're ready." });
+    const waiting = mark({ stage: { working: false, approval: "Email Jo", approvalVoice: true } });
+    expect(planReply(context, [hello, greeted, waiting, user("hi")])).toEqual({ kind: "say", text: "Hey! The request on screen is waiting on your OK." });
+  });
+
+  it("leaves a request said with a hello to the work", () => {
+    expect(planReply(context, [hello, greeted, user("hi, find me jobs in Austin")])).toEqual({ kind: "model" });
+    expect(quickRoute([hello, greeted, user("hi, find me jobs in Austin")])?.tools?.[0]?.name).toBe("send_message");
+  });
+
+  it("doesn't answer a hello said during the hold before a spoken approval", () => {
+    const approving = mark({ stage: { working: false, approval: "Email Jo", approvalVoice: true, approving: true } });
+    expect(planReply(context, [hello, greeted, approving, user("hi")])).toEqual({ kind: "model" });
+  });
+});

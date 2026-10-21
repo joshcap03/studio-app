@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ELEVENLABS_TTS_MODEL, ELEVENLABS_VOICES } from "./elevenlabs";
+import { ELEVENLABS_TTS_MODEL, ELEVENLABS_VOICE_SETTINGS, ELEVENLABS_VOICES } from "./elevenlabs";
 import { VOICES, VOICE_KEYS, isVoiceKey, voiceByKey } from "./voices";
 
 const SCRIPT = readFileSync(join(__dirname, "..", "..", "..", "scripts", "voice-agent.mjs"), "utf8");
@@ -35,7 +35,9 @@ describe("voices", () => {
   it("match what scripts/voice-agent.mjs sets up and checks, speech model included", () => {
     for (const [key, id] of Object.entries(ELEVENLABS_VOICES)) expect(SCRIPT).toContain(`${key}: "${id}"`);
     expect(SCRIPT).toContain(`const TTS_MODEL = "${ELEVENLABS_TTS_MODEL}";`);
-    expect(SCRIPT).toContain("tts: { model_id: TTS_MODEL }");
+    // And speaks the same way: the same speed and steadiness as previews and voice notes.
+    expect(SCRIPT).toContain(`const TTS = { model_id: TTS_MODEL, speed: ${ELEVENLABS_VOICE_SETTINGS.speed}, stability: ${ELEVENLABS_VOICE_SETTINGS.stability} };`);
+    expect(SCRIPT).toContain("tts: TTS,");
     // Each call still picks its voice.
     expect(SCRIPT).toContain("conversation_config_override: { tts: { voice_id: true } }");
   });

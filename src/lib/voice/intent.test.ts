@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  greetingKind,
   isLookIntent,
   isAffirmation,
   isApproveIntent,
@@ -278,6 +279,20 @@ describe("isLookIntent", () => {
   it("ignores other talk and being told not to look", () => {
     for (const said of ["I'll look into it later", "find roles that look good", "don't look at that", "send it", "okay"]) {
       expect(isLookIntent(said), said).toBe(false);
+    }
+  });
+});
+
+describe("greetingKind", () => {
+  it("knows a hello, a how-are-you, and a check of the line", () => {
+    for (const said of ["hello", "Hello?", "hi there", "Hey Rowan!", "hello hello", "Good morning.", "oh, hi"]) expect(greetingKind(said, "Rowan")).toBe("hello");
+    for (const said of ["Hey, how are you?", "how's it going", "hi Rowan, how are you doing today?"]) expect(greetingKind(said, "Rowan")).toBe("how");
+    for (const said of ["Can you hear me?", "hello? are you there?", "Rowan, are you there?", "is this working", "hello, anyone there?"]) expect(greetingKind(said, "Rowan")).toBe("check");
+  });
+
+  it("is never a request said with a hello", () => {
+    for (const said of ["hi, find me jobs in Austin", "hey stop", "hello, send it", "okay", "so", "Austin", "hey June", "there", "what's up with my application?"]) {
+      expect(greetingKind(said, "Rowan")).toBeNull();
     }
   });
 });

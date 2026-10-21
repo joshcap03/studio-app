@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { TAP_ONLY_REASONS } from "@/lib/types";
-import { isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isLookIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
+import { greetingKind, isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isLookIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
 import { plain, SAY_SEND_IT, TAP_REASON_LINE } from "./relay";
-import { cueLine, greeting, JUST_BACK, VOICE_TOOLS, voiceNoteLine, voicePrompt } from "./persona";
+import { cueLine, greeting, greetingBack, JUST_BACK, VOICE_TOOLS, voiceNoteLine, voicePrompt } from "./persona";
 import { CALL_PURPOSES, VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
 // The voice front: an OpenAI-compatible chat-completions endpoint the voice provider calls for
@@ -344,6 +344,10 @@ export function planReply(context: VoiceContext, messages: FrontMessage[]): Fron
   }
   if (last.role === "assistant") return { kind: "skip" };
   if (last.role === "user" && !textOf(last.content).trim()) return { kind: "skip" };
+  // A hello, or "can you hear me?", gets a word back rather than going to the work as a request.
+  // Not during the hold before a spoken approval, which anything said stops (quickRoute says so).
+  const hello = last.role === "user" && !stageNow?.approving ? greetingKind(textOf(last.content), context.name) : null;
+  if (hello) return { kind: "say", text: greetingBack(hello, context, stageNow, spoken) };
   if (last.role === "tool") {
     const results = trailingResults(messages);
     // The line already went out with the call (quickRoute), and the result is what it said.

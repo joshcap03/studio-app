@@ -184,6 +184,28 @@ export function greeting(context: VoiceContext, stage: VoiceStage | null): strin
   return `${hello} I'll walk you through getting me set up, one step at a time.${step ? ` First, ${step}.` : ""}`;
 }
 
+/**
+ * What the voice says back when the member just says hello, asks how it's going, or checks the
+ * line: a word back, then where things stand, handing them the floor. Fixed words, said without
+ * a model and never sent to the work (a hello isn't a request). `greeted`: the voice has already
+ * said its opening line on this call; if not, this is it.
+ */
+export function greetingBack(kind: "hello" | "how" | "check", context: VoiceContext, stage: VoiceStage | null, greeted: boolean): string {
+  const heard = kind === "check" ? "Yes, I can hear you. " : "";
+  const now = stage?.working
+    ? "I'm still working on it."
+    : stage?.approval
+      ? "The request on screen is waiting on your OK."
+      : stage?.form || stage?.questions?.length
+        ? "The card's on screen whenever you're ready."
+        : stage?.proposal
+          ? "The setup I proposed is on screen."
+          : "What's on your mind?";
+  if (!greeted) return `${heard}${greeting(context, stage)} ${now}`;
+  const back = kind === "how" ? "Good, thanks." : kind === "hello" ? "Hey!" : "";
+  return `${heard}${back ? `${back} ` : ""}${now}`;
+}
+
 /** The fixed lines the browser can cue. */
 export function cueLine(cue: VoiceCue, context: VoiceContext, stage: VoiceStage | null): string {
   switch (cue) {

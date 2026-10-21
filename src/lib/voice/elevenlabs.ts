@@ -34,6 +34,11 @@ export const ELEVENLABS_VOICES: Record<VoiceKey, string> = {
  * (scripts/voice-agent.mjs sets it), so a preview sounds like the call. English only, like the agent.
  */
 export const ELEVENLABS_TTS_MODEL = "eleven_flash_v2";
+/**
+ * How every Studio voice speaks: a little slower than the provider's default, and steadier, so it
+ * sounds considered rather than rushed. The call agent uses the same (scripts/voice-agent.mjs).
+ */
+export const ELEVENLABS_VOICE_SETTINGS = { speed: 0.9, stability: 0.6 } as const;
 export const ELEVENLABS_STT_MODEL = "scribe_v2";
 
 export class VoiceUnavailable extends Error {}
@@ -63,7 +68,7 @@ export async function elevenLabsSpeak(apiKey: string, voice: VoiceKey, text: str
   const res = await fetch(url, {
     method: "POST",
     headers: { "xi-api-key": apiKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
-    body: JSON.stringify({ text, model_id: ELEVENLABS_TTS_MODEL }),
+    body: JSON.stringify({ text, model_id: ELEVENLABS_TTS_MODEL, voice_settings: ELEVENLABS_VOICE_SETTINGS }),
     cache: "no-store",
     signal: AbortSignal.timeout(20_000),
   });

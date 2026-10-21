@@ -20,6 +20,11 @@ mic), from the setup banner ("Talk it through"), or from the agent's own offer u
   it against the conversation id header, ignores ElevenLabs' own prompt, and builds its own.
   Studio's lines (progress, the reply's gist, card contents, cues) arrive as marked user messages
   and are said word for word without a model; only the member's speech goes to the model.
+- A hello, "how are you?", or "can you hear me?" on its own (`greetingKind`) is talk between
+  people, not a request: the voice says a fixed word back and where things stand ("Hey! What's on
+  your mind?", "Yes, I can hear you. I'm still working on it."), or its greeting if it hasn't said
+  it yet (`greetingBack`). It never goes to the agent or into the chat, nor along with what they
+  say next. Said with anything more ("hi, find me jobs in Austin"), it goes to the agent as usual.
 - The model's tools are client tools the browser runs: `fill_card`, `answer_question`,
   `send_card`, `send_message`, `stop_work`. Each checks the member's own speech-to-text
   transcript first: a card is sent only on a clear "send", the work stops only on a clear "stop",
@@ -29,6 +34,11 @@ mic), from the setup banner ("Talk it through"), or from the agent's own offer u
   arrived: an opening line, the reply read as soon as it was written, or the same words again in
   the finished reply. The heads-up and time's-up cues each go once.
 - `POST /api/voice/session/<id>/end` records the call's length.
+
+Every Studio voice speaks a little slower than ElevenLabs' default, and steadier (speed 0.9,
+stability 0.6: `ELEVENLABS_VOICE_SETTINGS`), on calls, previews and voice notes alike. The call
+agent's copy is set by `scripts/voice-agent.mjs`; after changing it, update the live agent alone
+with `ELEVENLABS_API_KEY=… ELEVENLABS_AGENT_ID=… node scripts/voice-agent.mjs --voice-only`.
 
 Studio stores no audio. The member's words become their messages, labeled "On a call", each with
 the call's `voice_sessions` id in its origin once the server has checked the call is the member's
