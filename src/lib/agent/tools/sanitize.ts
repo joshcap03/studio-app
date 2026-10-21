@@ -1,3 +1,4 @@
+import { maskCardNumbers } from "@/lib/secrets/card";
 // Helpers for turning raw tool input/output into safe, bounded preview data. Anything shown
 // to the user passes through here: secrets are masked, links must be https, sizes are capped.
 
@@ -7,9 +8,9 @@ const SECRET_ASSIGNMENT =
 const BEARER = /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g;
 const LONG_KEY = /\b(sk|pk|rk|xox[abp]|ghp|gho|ya29|AIza)[-_A-Za-z0-9]{16,}\b/g;
 
-/** Masks credential-looking values inside free text (code, logs, tool output). */
+/** Masks credential-looking values inside free text (code, logs, tool output), and card numbers to their last four. */
 export function maskSecrets(text: string): string {
-  return text.replace(BEARER, "$1••••").replace(LONG_KEY, "••••").replace(SECRET_ASSIGNMENT, "$1••••");
+  return maskCardNumbers(text.replace(BEARER, "$1••••").replace(LONG_KEY, "••••").replace(SECRET_ASSIGNMENT, "$1••••"));
 }
 
 export function clip(value: unknown, max: number): string {

@@ -4,7 +4,7 @@ import { getAgentAdapter } from "@/lib/agent";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { removeAttachmentFiles } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
-import { withoutHandoffs, withoutOffers } from "@/lib/chat/ui";
+import { unknownCards, withoutCards } from "@/lib/chat/ui";
 import type { Conversation } from "@/lib/db/store";
 import { journeyOrNone } from "@/lib/journey";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
@@ -47,11 +47,10 @@ export async function GET(request: NextRequest, { params }: Context) {
     // too, and so do the calls its messages were said on (for their recaps).
     const [messages, journey] = await Promise.all([store.listMessages(conversation.id), journeyOrNone(auth.value, conversation.id)]);
     const calls = await callsOrNone(auth.value, messages);
-    // Offers to call only go to pages that know them (?offers=1): a tab still on older code breaks
-    // on one. So does the browser handed over (?handoffs=1).
+    // Offers to call (?offers=1), requests for a login or card (?secrets=1), and the browser
+    // handed over (?handoffs=1) only go to pages that know them: a tab still on older code breaks on one.
     const params = request.nextUrl.searchParams;
-    const offered = params.get("offers") === "1" ? messages : withoutOffers(messages);
-    const shown = params.get("handoffs") === "1" ? offered : withoutHandoffs(offered);
+    const shown = withoutCards(messages, unknownCards({ offers: params.get("offers") === "1", secrets: params.get("secrets") === "1", handoffs: params.get("handoffs") === "1" }));
     return NextResponse.json({ conversation: summaryOf(conversation), messages: shown, journey, calls }, noStore);
   } catch (error) {
     return errorResponse(error);

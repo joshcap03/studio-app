@@ -15,7 +15,9 @@ const {
   parseMemoryId,
   recall,
   recallQuery,
+  recentMemories,
   remember,
+  rememberReplacing,
   replaceMemory,
   resetMoves,
   unmergeMemories,
@@ -206,6 +208,85 @@ describe("mergeMemories", () => {
       [`https://sm.example/ns/u_${USER}/document`, { ids: ["p1"] }],
       [`https://sm.example/ns/ws_${WS}_u_${USER}/document`, { ids: ["w1"] }],
     ]);
+  });
+});
+
+describe("rememberReplacing", () => {
+  const docs: Record<string, Record<string, unknown>> = {
+    w1: { text: "Auto-print goes through a watched folder.", createdBy: USER, category: "policies", savedAt: 1000, pinned: true },
+    w2: { text: "Labels print automatically.", createdBy: USER, category: "policies", savedAt: 2000 },
+    x1: { text: "Someone else's fact.", createdBy: "someone-else", category: "team", savedAt: 500 },
+  };
+  beforeEach(() => {
+    reply = (call) => {
+      if (call.method === "GET") {
+        const id = call.url.split("/").at(-1)!;
+        return docs[id] ? Response.json({ id, metadata: docs[id] }) : new Response("", { status: 404 });
+      }
+      if (call.method === "POST") return Response.json({ id: "new1" });
+      return Response.json({ count: (call.body as { ids: string[] }).ids.length });
+    };
+  });
+
+  it("saves the new version in place of the facts it updates, keeping any pin, and returns them for Undo", async () => {
+    const source = { conversationId: "c9", messageId: "m9" };
+    const { memory, replaced } = await rememberReplacing(tenant(), "Auto-print is cut for now; she prints labels herself.", "workspace", {
+      source,
+      replaces: ["workspace:w1", "w2"],
+    });
+    expect(calls.map((c) => c.method)).toEqual(["GET", "GET", "POST", "DELETE"]);
+    expect(calls[2].body).toMatchObject({
+      content: "Auto-print is cut for now; she prints labels herself.",
+      metadata: { category: "policies", pinned: true, sourceConversation: "c9", sourceMessage: "m9" },
+    });
+    expect(calls[3]).toMatchObject({ url: `https://sm.example/ns/ws_${WS}/document`, body: { ids: ["w1", "w2"] } });
+    expect(memory.id).toBe("workspace:new1");
+    expect(replaced.map((o) => [o.id, o.content, o.pinned, o.savedAt])).toEqual([
+      ["workspace:w1", "Auto-print goes through a watched folder.", true, 1000],
+      ["workspace:w2", "Labels print automatically.", false, 2000],
+    ]);
+  });
+
+  it("leaves alone what it may not replace: another scope, someone else's shared fact, or one that's gone", async () => {
+    const { replaced } = await rememberReplacing(tenant(), "New.", "workspace", {
+      category: "team",
+      replaces: ["personal:w1", "workspace:x1", "workspace:gone", "../bad"],
+    });
+    expect(replaced).toEqual([]);
+    expect(calls.map((c) => c.method)).toEqual(["GET", "GET", "POST"]);
+    expect(calls[2].body).toMatchObject({ metadata: { category: "team" } });
+  });
+
+  it("is a plain save without replaces", async () => {
+    const { replaced } = await rememberReplacing(tenant(), "New.", "personal");
+    expect(replaced).toEqual([]);
+    expect(calls.map((c) => [c.method, where(c)])).toEqual([["POST", "personal"]]);
+  });
+});
+
+describe("recentMemories", () => {
+  it("lists the newest facts the caller may change, with ids, across both scopes", async () => {
+    reply = (call) =>
+      Response.json({
+        documents:
+          where(call) === "workspace"
+            ? [
+                { id: "w1", metadata: { text: "Shared, mine.", createdBy: USER, savedAt: 3000 } },
+                { id: "x1", metadata: { text: "Shared, someone else's.", createdBy: "someone-else", savedAt: 4000 } },
+              ]
+            : [{ id: "p1", metadata: { text: "Personal.", createdBy: USER, savedAt: 5000 } }],
+      });
+    expect(await recentMemories(tenant())).toEqual([
+      { id: "personal:p1", content: "Personal." },
+      { id: "workspace:w1", content: "Shared, mine." },
+    ]);
+    expect((await recentMemories(tenant("owner"))).map((f) => f.id)).toEqual(["personal:p1", "workspace:x1", "workspace:w1"]);
+  });
+
+  it("is empty when memory fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    reply = () => new Response("down", { status: 500 });
+    expect(await recentMemories(tenant())).toEqual([]);
   });
 });
 

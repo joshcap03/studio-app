@@ -104,4 +104,36 @@ describe.skipIf(!enabled)("Tidy up against a live flow", () => {
     expect(merged.has("workspace:evalPartner"), "merged a fact that stands alone").toBe(false);
     expect(merged.has("personal:evalCity"), "merged a fact that stands alone").toBe(false);
   });
+
+  it("folds a fact a newer one cancels into one that says what's true now", { timeout: 300_000 }, async () => {
+    // Newest first, as the Brain lists them.
+    const facts = [
+      fact("workspace:evalCut1", "Auto-print is cut for now: approved label PDFs go to a Google Drive folder and the employee prints them herself.", { category: "policies" }),
+      fact("workspace:evalCut2", "Josh cut auto-print from scope for now; getting the label PDF into a synced folder is enough.", { category: "policies" }),
+      fact("workspace:evalOld1", "Labels print automatically from a watched folder on the shop Mac, with no one clicking print.", { category: "policies" }),
+      fact("workspace:evalBox", "Orders always ship in the same 6x4x1 box at 1 lb, USPS ground.", { category: "policies" }),
+    ];
+    const message = renderSkillMessage(tidySkill("policies", facts, { owner: true }), tidyRequest("policies"));
+    const events: AgentEvent[] = [];
+    for await (const e of createLangflowAdapter(config).run({
+      conversationId: crypto.randomUUID(),
+      threadId: null,
+      message,
+      history: [],
+      tenant: tenant(),
+      attachments: [],
+      signal: AbortSignal.timeout(280_000),
+    })) {
+      events.push(e);
+    }
+    const raw = events.find((e): e is Extract<AgentEvent, { type: "ui" }> => e.type === "ui")?.block;
+    const request = parseMergeRequest(raw);
+    expect(request, "no usable merge").not.toBeNull();
+    const merge = request!.merges.find((m) => m.replaces.includes("workspace:evalOld1"));
+    expect(merge, "the cancelled plan wasn't folded in").toBeDefined();
+    expect(merge!.replaces).toEqual(expect.arrayContaining(["workspace:evalCut1"]));
+    expect(merge!.text.toLowerCase(), merge!.text).toMatch(/drive|synced folder/);
+    expect(merge!.text.toLowerCase(), merge!.text).not.toMatch(/watched folder|no one clicking/);
+    expect(request!.merges.some((m) => m.replaces.includes("workspace:evalBox")), "merged a fact that stands alone").toBe(false);
+  });
 });

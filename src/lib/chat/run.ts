@@ -9,7 +9,7 @@ import { getCompanion, refreshCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
 import { fileArtifact } from "@/lib/library";
-import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
+import { memoryEnabled, recallQuery, rememberReplacing } from "@/lib/memory";
 import { resolveMergeProposal } from "@/lib/memory-merge";
 import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
@@ -35,7 +35,8 @@ import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
  * What the member asked for. Skills and projects are named by id and loaded from their workspace.
  * `voiceSessionId`: the call words said on a call were said on, which counts only once it's
  * checked to be the member's own. `offers`: the page the reply streams to can show the agent's
- * offer to call (one from before offers can't); `handoffs`, likewise, its browser handed over. A decision `via` voice carries what the member was
+ * offer to call (one from before offers can't); `secrets`, its requests for a login or card; `handoffs`,
+ * its browser handed over. A decision `via` voice carries what the member was
  * heard to say and their call, and stands only once checked (src/lib/voice/approvals.ts).
  */
 export type RunInput = (
@@ -43,7 +44,7 @@ export type RunInput = (
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; via?: "tap" | "voice"; heard?: string; voiceSessionId?: string }
-) & { offers?: boolean; handoffs?: boolean }
+) & { offers?: boolean; secrets?: boolean; handoffs?: boolean }
   /** Run one of the member's tasks: its brief (and skill) is sent as a message no one typed. */
   | { kind: "task"; taskId: string; runId: string | null };
 
@@ -172,7 +173,12 @@ export async function buildTurnDeps(
       ...(browserContext ? { browserContext } : {}),
     },
     projectFiles: files,
-    remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
+    remember: memoryEnabled()
+      ? async (content, scope, options) => {
+          const { memory, replaced } = await rememberReplacing(tenant, content, scope, options);
+          return { id: memory.id, replaced };
+        }
+      : undefined,
     resolveMerge: memoryEnabled() ? (raw) => resolveMergeProposal(tenant, raw) : undefined,
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
@@ -185,6 +191,7 @@ export async function buildTurnDeps(
     callEnded: (callId) => callEnded(tenant, callId),
     offerCalls,
     offersShown: shown,
+    secretsShown: asked.kind === "task" || asked.secrets === true,
     // The member can take over the agent's browser wherever the app can reach it.
     handoffs: Boolean(getConfig().browser),
     handoffsShown: asked.kind === "task" || asked.handoffs === true,

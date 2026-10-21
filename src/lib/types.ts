@@ -147,6 +147,11 @@ export interface MemoryProposal {
   status: "pending" | "saved" | "dismissed";
   memoryId?: string;
   category?: MemoryCategory;
+  /**
+   * The facts this one updated or restated, removed when it was saved (the agent's `replaces`),
+   * so an Undo brings them back.
+   */
+  replaced?: MergedOriginal[];
 }
 
 /** How the Brain groups facts. The agent picks one when it saves; members can change it. */
@@ -604,11 +609,30 @@ export interface Question {
  * call, which asks nothing of them (the call starts only if they tap Call), or the agent's
  * browser handed to them for a step only they can do (signing in).
  */
-export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer | UiHandoff;
+export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer | UiSecret | UiHandoff;
+
+/**
+ * The agent asking for a login or card at its browser (its request_secret tool). It carries no
+ * secret: the member picks a saved one or types one on the card, and the app types it into the
+ * conversation's browser itself (src/lib/browser-fill.ts). The agent hears only what was filled.
+ */
+export interface UiSecret {
+  kind: "secret";
+  id: string;
+  secret: "login" | "card";
+  /** Why the agent needs it, in one sentence. */
+  reason: string;
+  /** The username or email the site seems to expect, as the agent read it. */
+  usernameHint?: string;
+}
+
+/** The parts of a login or card the app can fill into a page. */
+export const SECRET_FIELDS = ["username", "password", "card_number", "card_name", "card_expiry", "card_code"] as const;
+export type SecretField = (typeof SECRET_FIELDS)[number];
 
 /**
  * The agent's browser, handed to the member (its hand_browser tool) for a step only they can do:
- * signing in, a code sent to them, a check that wants a person. They take over with a tap and
+ * a CAPTCHA, or a page they have to use themself (a Google sign-in button, a passkey). They take over with a tap and
  * hand it back with another, which goes out as their next message. The agent never sees what
  * they type there.
  */
@@ -826,6 +850,11 @@ export type UiResponse =
   | { status: "accepted"; at: number; sessionId: string }
   /** An offer to call, turned down ("Not now"): no more offers in that conversation. */
   | { status: "declined"; at: number }
+  /**
+   * A login or card request, done: filled into the page by the app (`fields`, and whether it was
+   * `saved` for next time), or by the member themself taking over the browser. Never the values.
+   */
+  | { status: "filled"; at: number; site: string; via: "card" | "takeover"; fields: SecretField[]; label?: string; saved?: boolean }
   /** The agent's browser, handed back by the member after taking it over. */
   | { status: "handed-back"; at: number };
 

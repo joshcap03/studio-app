@@ -5,6 +5,7 @@ import { api } from "@/lib/client/api";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
 import type { AccountProfile } from "@/lib/tenant-core";
 import { ConnectionsList } from "./connections-list";
+import { SavedCredentials } from "./saved-credentials";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "./section";
 
 interface Props {
@@ -33,6 +34,9 @@ export function SettingsView({ email, guardrail, account }: Props) {
         description="Apps your agents can use for you. Every one of your agents shares these. It asks before changing anything, and only you can use your connections."
       >
         <ConnectionsList returnTo="/settings" />
+      </Section>
+      <Section title="Saved logins & cards" description="Your agents use these in their browser only when you pick one. They never see them.">
+        <SavedCredentials />
       </Section>
       <SignInsSection />
       <NotificationsSection />
@@ -83,7 +87,7 @@ function SignInsSection() {
   return (
     <Section
       title="Sign-ins in your agents' browser"
-      description="When an agent hands you its browser to sign in to a site, the sign-in is kept so it can work there for you next time. It still asks before changing anything."
+      description="When you sign in to a site in an agent's browser, the sign-in is kept so it can work there for you next time. It still asks before changing anything."
     >
       <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
         <p className="text-[13.5px] text-fg-2">{saved ? "Sites you sign in to there stay signed in until you forget them." : "Nothing saved."}</p>

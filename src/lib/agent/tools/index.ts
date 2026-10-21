@@ -315,6 +315,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "offer_call":
       // The offer is shown under the reply as a card; a call starts only if the member taps Call.
       return { labels: { running: "Offering a call", done: "Offered a call", failed: "Couldn't offer a call" }, app: "agent", action: "note", hidden: true };
+    case "request_secret":
+      // A card under the reply where the member fills a login or card into the browser; the agent never sees it.
+      return { labels: { running: "Asking you to sign in", done: "Asked you to fill in a sign-in or card" }, app: "browser", action: "note", hidden: true };
     case "hand_browser":
       // The browser is handed over as a card under the reply; it's theirs only once they tap Take over.
       return { labels: { running: "Handing you the browser", done: "Handed you the browser", failed: "Couldn't hand you the browser" }, app: "agent", action: "note", hidden: true };
@@ -879,7 +882,7 @@ export function talksMachinery(text: string): boolean {
 }
 
 /** Tools that report on the answer (its sources, charts, questions, what to remember) rather than do the work. */
-const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "hand_browser", "remember", "propose_memory"]);
+const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "request_secret", "hand_browser", "remember", "propose_memory"]);
 
 /**
  * Whether a call only reports on the answer. Text the agent writes before such a call is

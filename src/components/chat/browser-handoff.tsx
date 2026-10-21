@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
 import type { Attachment, UiHandoff, UiResponse } from "@/lib/types";
 
-// The agent's browser, handed to the member (its hand_browser tool) for a step only they can do:
-// signing in, a code sent to them. Nothing happens until they tap Take over, which asks the server
+// The agent's browser, handed to the member (its hand_browser tool) for a step only they can do: a
+// CAPTCHA, or a page they have to use themself (a Google sign-in button, a passkey). Sign-in and
+// payment forms are filled through request_secret instead (secret-card.tsx). Nothing happens until they tap Take over, which asks the server
 // for a live view of the page the agent is on (src/lib/browser-view.ts) and opens it here for them
 // to click and type in. Done hands it back: the card is marked and their "done" goes out as their
 // next message, so the agent picks up from the page as they left it. The link is held only while

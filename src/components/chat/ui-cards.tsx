@@ -14,9 +14,10 @@ import { ATTACHMENT_TYPES, MEMORY_CATEGORY_LABELS } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
 import { HandoffCard } from "./browser-handoff";
 import { useCardDrafts, type FormDraft } from "./card-drafts";
+import { SecretCard } from "./secret-card";
 
 // Reusable cards for what the agent asks through its show_form, propose_agent, merge_memories,
-// offer_call, and hand_browser tools. They know nothing about any one flow (setup, a template): every field
+// offer_call, request_secret, and hand_browser tools. They know nothing about any one flow (setup, a template): every field
 // kind and proposal item is generic, and any skill can use them. Rendered only from what the
 // backend reported; nothing here acts until the member clicks.
 
@@ -63,6 +64,16 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             conversationId={conversationId}
             messageId={messageId}
             onAnswer={onAnswer}
+            onResponse={onResponse}
+          />
+        ) : block.kind === "secret" ? (
+          <SecretCard
+            key={block.id}
+            request={block}
+            response={responses?.[block.id]}
+            conversationId={conversationId}
+            messageId={messageId}
+            onAnswer={onAnswer && settled ? (text) => onAnswer(text, { attachments: [] }) : undefined}
             onResponse={onResponse}
           />
         ) : block.kind === "form" ? (

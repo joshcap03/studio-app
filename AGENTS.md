@@ -57,7 +57,9 @@ raw/technical text.
 - `src/lib/memory.ts`: long-term memory in Supermemory, namespaced from the session: `ws_<workspace>`
   for an agent's shared facts, `u_<user>` for the person's own (shared by all their agents). Old
   per-workspace personal namespaces move into `u_<user>` on first use. The flow must not have its
-  own memory connection. `memory-merge.ts` tidies it: "Tidy up" on a Brain topic attaches that
+  own memory connection. Each run lists the newest facts the member may change by id (`recentMemories`),
+  and `remember` takes `replaces`, so a fact that changes or restates one takes its place
+  (`rememberReplacing`; the reply's Undo brings the old ones back) instead of piling up copies. `memory-merge.ts` tidies it: "Tidy up" on a Brain topic attaches that
   topic's tidy skill (`src/lib/skills/tidy.ts`, facts listed by id), the agent proposes merges with
   `merge_memories`, and the member merges what they pick (keeping pins and sources) or undoes it.
 - `src/lib/companion.ts`: who each agent is to one member (the "companion" preview). It starts as a
@@ -128,14 +130,23 @@ raw/technical text.
   On a call the member can watch the agent's browser, view only: `src/lib/browser-view.ts` keeps the
   conversation's sealed session id and takes screenshots server-side (the connection never leaves
   the server).
-- Taking over the agent's browser: when a page needs the member in person (signing in, a code),
-  the agent calls `hand_browser` and the member gets a "Take over" card
-  (`src/components/chat/browser-handoff.tsx`). Their tap fetches a short-lived Browserbase live
-  view of that conversation's browser (`browserControl` in `src/lib/browser-view.ts`, `POST
+- `src/lib/browser-fill.ts` + `src/lib/secrets/`: logins and cards for the agent's browser. The agent's
+  `request_secret` shows the secure card (`src/components/chat/secret-card.tsx`); the member picks a
+  saved one or types one, and the server types it into the conversation's browser over CDP
+  (`/api/conversations/<id>/secrets/<block>`): an https page only, a saved login only on its own site.
+  "Do it myself" takes the browser over (clicks, keys, and typing relayed by `…/browser/input`).
+  Saved ones (`credentials`, the person's, shared by their agents) are sealed with `CREDENTIALS_KEY`
+  and kept in Supabase Vault; a card's security code is never saved. Settings → Saved logins & cards
+  lists and removes them.
+- Handing over the agent's browser, for a CAPTCHA or a page only the member can use (a Google
+  sign-in button, a passkey): the agent calls `hand_browser` and the member gets a "Take over" card
+  (`src/components/chat/browser-handoff.tsx`). Their tap fetches a short-lived Browserbase live view
+  of that conversation's browser (`browserControl` in `src/lib/browser-view.ts`, `POST
   /api/conversations/<id>/browser/control`), shown only to them; Done hands it back as their next
-  message. `src/lib/browser-signins.ts` keeps one Browserbase context per person (sealed on
-  `accounts.browser_context`, shared by all their agents), sent to Studio Browser each run as
-  `{{browser_context}}`, so sites they signed in to stay signed in; Settings → You forgets them.
+  message. Sign-in and payment forms go through `request_secret`, and a one-time code is found or
+  asked for and typed by the agent. `src/lib/browser-signins.ts` keeps one Browserbase context per
+  person (sealed on `accounts.browser_context`, shared by all their agents), sent to Studio Browser
+  each run as `{{browser_context}}`, so sites they signed in to stay signed in; Settings forgets them.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
@@ -191,8 +202,14 @@ raw/technical text.
   artifact parsing from free text. Mock output stays clearly labeled.
 - Secrets stay server-side in `src/lib/config.ts`; only `NEXT_PUBLIC_SUPABASE_*` reach the browser.
   The only provider credentials the browser gets are a short-lived voice session token and, on the
-  member's own tap on a hand-off card, a short-lived live view of their conversation's agent
-  browser. The agent never gets either, and never sees what the member types there.
+  member's own tap on a `hand_browser` card, a short-lived live view of their conversation's agent
+  browser (never stored, never sent to the agent).
+- A member's password or card never reaches the agent: never in chat, a form, `messages`, cards'
+  responses, approvals, step details, Langflow, memory, or the voice front, and never logged. It goes
+  from the secure card to the server to the browser's CDP connection (or sealed into the store), and the
+  agent hears only what was filled. Card numbers are masked in tool output on both sides as a backstop.
+  The agent's browser is driven by the member through server-relayed input; no connection or
+  debugger link reaches the page, except that one live view, on that one card, after their tap.
 - The voice front talks and is never a second agent. It may only reflect the member's words back,
   say what the worker reported (relay lines, the reply, card contents), ask them to clarify, and
   say a holding line. Anything else goes to the worker in the member's exact words (the

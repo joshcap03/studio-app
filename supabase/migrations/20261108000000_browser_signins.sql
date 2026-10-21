@@ -1,8 +1,7 @@
 -- The person's saved sign-ins for the agent's browser, and the browser handed to them as a card.
 --
 -- accounts.browser_context: one Browserbase context per person (shared by all their agents, like
--- their connected apps), so a site they signed in to after the agent handed them its browser
--- stays signed in. Sealed with a MAC the app makes with its own Browserbase key
+-- their connected apps), so a site they signed in to in the agent's browser stays signed in. Sealed with a MAC the app makes with its own Browserbase key
 -- (src/lib/browser-signins.ts), because the person can write this column: an id they wrote
 -- themselves fails the check. Only the id is stored; the sign-ins live at Browserbase.
 -- Additive: the running code never reads it.

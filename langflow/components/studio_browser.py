@@ -19,10 +19,10 @@ again; nothing else ends a browser early (Browserbase ends each after its sessio
 Saved sign-ins: the app fills `context_id` per run with the member's own Browserbase context (one
 per person). The hosted server's `start` can't take a context, so this node opens the
 conversation's browser itself through Browserbase's API with that context (persisted, so a site
-the member signed in to after the agent handed them the browser stays signed in once that browser
-closes) and passes the new session to `start`. Tweaks are dropped when a paused run resumes, so
-the member's context is also kept in the process cache under their id from the session id. If the
-browser can't be opened that way it opens without sign-ins, as before.
+the member signed in to there stays signed in once that browser closes) and passes the new session
+to `start`. Tweaks are dropped when a paused run resumes, so the member's context is also kept in
+the process cache under their id from the session id. If the browser can't be opened that way it
+opens without sign-ins, as before.
 
 Tool names stay Browserbase's (start, end, navigate, act, observe, extract): the Tool Gateway
 routes `act` through take_action, so it still needs the owner's approval. Wire the output to
@@ -91,8 +91,30 @@ def scrub_value(value):
     return value
 
 
+CARD_LIKE = re.compile(r"\b[0-9](?:[ -]?[0-9]){12,18}\b")
+
+
+def luhn(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def mask_cards(text: str) -> str:
+    """Card numbers (13-19 digits that pass Luhn) cut to their last four. Studio fills cards into
+    the page itself so the agent never sees them; this keeps one off the page from reaching it."""
+    def mask(m):
+        digits = re.sub(r"[ -]", "", m.group(0))
+        return f"•••• {digits[-4:]}" if luhn(digits) else m.group(0)
+    return CARD_LIKE.sub(mask, text)
+
+
 def scrub_text(text: str) -> str:
-    return SIGNING_KEY.sub("signingKey=[removed]", SIGNED_URL.sub("[removed]", text))
+    return mask_cards(SIGNING_KEY.sub("signingKey=[removed]", SIGNED_URL.sub("[removed]", text)))
 
 
 def clean_text(text: str) -> str:

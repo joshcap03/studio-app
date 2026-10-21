@@ -27,6 +27,7 @@ import {
   type UiListPart,
   type UiOffer,
   type UiOption,
+  type UiSecret,
   type UiVerdictItem,
   MAX_UI_BLOCKS,
 } from "@/lib/types";
@@ -527,15 +528,22 @@ export function buildHandoff(raw: Record<string, unknown>, id: string = crypto.r
   return { kind: "browser", id, reason, ...(site ? { site } : {}) };
 }
 
-/**
- * Validates one card the agent asked for (`{form}`, `{proposal}`, `{offer_call}`, or
- * `{hand_browser}`). Null when nothing is usable.
- */
+/** The agent asking for a login or card at its browser: which, and why. It never carries a secret. */
+export function buildSecretRequest(raw: Record<string, unknown>, id: string = crypto.randomUUID()): UiSecret | null {
+  const secret = raw.kind === "login" || raw.kind === "card" ? raw.kind : null;
+  const reason = line(raw.reason, 200);
+  if (!secret || !reason) return null;
+  const usernameHint = secret === "login" ? line(raw.username_hint ?? raw.usernameHint, 200) : "";
+  return { kind: "secret", id, secret, reason, ...(usernameHint ? { usernameHint } : {}) };
+}
+
+/** Validates one card the agent asked for (`{form}`, `{proposal}`, `{offer_call}`, `{secret_request}`, or `{hand_browser}`). Null when nothing is usable. */
 export function buildUiBlock(raw: unknown, id: string = crypto.randomUUID()): UiBlock | null {
   if (!isRecord(raw)) return null;
   if (isRecord(raw.form)) return buildForm(raw.form, id);
   if (isRecord(raw.proposal)) return buildProposal(raw.proposal, id);
   if (isRecord(raw.offer_call)) return buildOffer(raw.offer_call, id);
+  if (isRecord(raw.secret_request)) return buildSecretRequest(raw.secret_request, id);
   if (isRecord(raw.hand_browser)) return buildHandoff(raw.hand_browser, id);
   return null;
 }
@@ -550,32 +558,38 @@ export function capUi(blocks: UiBlock[]): UiBlock[] {
   return [...blocks.filter((b) => b.kind !== "offer").slice(-MAX_UI_BLOCKS), ...(offer ? [offer] : [])];
 }
 
-/**
- * Messages as a page from before offers to call reads them: without the offers, or what the
- * member did with one. Such a page draws any card it doesn't know as a proposed setup and
- * breaks on an offer, so only pages that say they know offers get them (an open tab keeps its
- * old code across a deploy).
- */
-export function withoutOffers(messages: ChatMessage[]): ChatMessage[] {
-  return withoutKinds(messages, ["offer"]);
+/** Cards newer than some open pages: offers to call, requests for a login or card, and the browser handed over. */
+export type NewerCard = Extract<UiBlock["kind"], "offer" | "secret" | "browser">;
+
+/** The newer cards a page can't show, from what it says it knows (an open tab keeps its old code across a deploy). */
+export function unknownCards(knows: { offers?: boolean; secrets?: boolean; handoffs?: boolean }): NewerCard[] {
+  return [
+    ...(knows.offers ? [] : (["offer"] as const)),
+    ...(knows.secrets ? [] : (["secret"] as const)),
+    ...(knows.handoffs ? [] : (["browser"] as const)),
+  ];
 }
 
 /**
- * Messages as a page from before the agent could hand over its browser reads them: without
- * those cards, or what the member did with one (the same reason as withoutOffers).
+ * Messages as a page from before some cards reads them: without those cards, or what the member
+ * did with one. Such a page draws any card it doesn't know as a proposed setup and breaks on it,
+ * so only pages that say they know a kind get it.
  */
-export function withoutHandoffs(messages: ChatMessage[]): ChatMessage[] {
-  return withoutKinds(messages, ["browser"]);
-}
-
-function withoutKinds(messages: ChatMessage[], kinds: UiBlock["kind"][]): ChatMessage[] {
+export function withoutCards(messages: ChatMessage[], kinds: readonly NewerCard[]): ChatMessage[] {
+  if (!kinds.length) return messages;
+  const hidden = (b: UiBlock) => (kinds as readonly string[]).includes(b.kind);
   return messages.map((m) => {
-    const dropped = (m.ui ?? []).filter((b) => kinds.includes(b.kind)).map((b) => b.id);
-    if (!dropped.length) return m;
-    const ui = m.ui!.filter((b) => !kinds.includes(b.kind));
-    const uiResponse = m.uiResponse ? Object.fromEntries(Object.entries(m.uiResponse).filter(([id]) => !dropped.includes(id))) : undefined;
+    const gone = (m.ui ?? []).filter(hidden).map((b) => b.id);
+    if (!gone.length) return m;
+    const ui = m.ui!.filter((b) => !hidden(b));
+    const uiResponse = m.uiResponse ? Object.fromEntries(Object.entries(m.uiResponse).filter(([id]) => !gone.includes(id))) : undefined;
     return { ...m, ui, ...(uiResponse ? { uiResponse } : {}) };
   });
+}
+
+/** Messages as a page from before offers to call (and the cards after them) reads them. */
+export function withoutOffers(messages: ChatMessage[]): ChatMessage[] {
+  return withoutCards(messages, ["offer", "secret", "browser"]);
 }
 
 export const proposalPicksSchema = z.strictObject({

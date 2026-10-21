@@ -18,7 +18,7 @@ vi.mock("@/lib/companion", () => ({ getCompanion: vi.fn(), refreshCompanion: vi.
 vi.mock("@/lib/config", () => ({ getConfig: () => ({ agent: { idleTimeoutMs: 1000 } }) }));
 vi.mock("@/lib/flags", () => ({ previewEnabled: () => false }));
 vi.mock("@/lib/library", () => ({ fileArtifact: vi.fn() }));
-vi.mock("@/lib/memory", () => ({ memoryEnabled: () => false, recallQuery: () => "", remember: vi.fn() }));
+vi.mock("@/lib/memory", () => ({ memoryEnabled: () => false, recallQuery: () => "", rememberReplacing: vi.fn() }));
 vi.mock("@/lib/memory-merge", () => ({ resolveMergeProposal: vi.fn() }));
 vi.mock("@/lib/projects", () => ({ projectForRun: vi.fn() }));
 vi.mock("@/lib/push", () => ({ notificationFor: vi.fn(), notify: vi.fn(), pushEnabled: () => false }));

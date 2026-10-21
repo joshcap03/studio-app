@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, hand_browser.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -43,6 +43,7 @@ class MemoryArgs(BaseModel):
     content: str = Field(description="The fact to remember, as one short self-contained sentence.")
     scope: str = Field(default="workspace", description="'workspace' for facts about what this workspace is for (its work, people, and goals); 'personal' for this user's own preferences.")
     category: str = Field(default="other", description="What the fact is about: customers (people and contacts), suppliers (companies and organizations), products (work, offerings, and pricing), policies (rules and standing preferences), voice (tone and style), team, or other.")
+    replaces: list[str] = Field(default_factory=list, description="Ids of facts you saved (listed in your context as [id]) that this one updates, corrects, or restates; this fact takes their place. Leave empty for a new fact.")
 
 
 PLAN_STEP_SCHEMA = {
@@ -325,9 +326,14 @@ class OfferCallArgs(BaseModel):
     topic: str = Field(default="", description="Optional: what the call would be about, 2-6 words, e.g. 'Which offer to take'.")
 
 
+class SecretArgs(BaseModel):
+    kind: str = Field(description="'login' for a sign-in (username and password), 'card' for a payment card.")
+    reason: str = Field(description=("Why, in one short sentence as you'd say it, e.g. 'To sign in to your Acme account and "
+                                     "download the March invoice.'"))
+    username_hint: str = Field(default="", description="Optional: the username or email the site seems to expect, if you know it.")
 class HandBrowserArgs(BaseModel):
     reason: str = Field(description=("What the owner needs to do in the browser, in one sentence as you'd say it, e.g. "
-                                     "'Sign in to your USPS account, then tap Done and I'll make the label.'"))
+                                     "'Solve the robot check on the USPS page, then tap Done and I'll make the label.'"))
     site: str = Field(default="", description="Optional: the site, 1-3 words, e.g. 'USPS'.")
 
 
@@ -344,6 +350,7 @@ FormArgs.model_rebuild()
 ProposeArgs.model_rebuild()
 MergeArgs.model_rebuild()
 OfferCallArgs.model_rebuild()
+SecretArgs.model_rebuild()
 HandBrowserArgs.model_rebuild()
 
 
@@ -746,24 +753,29 @@ class ToolGatewayComponent(Component):
         async def discover_async(query: str) -> str:
             return discover(query)
 
-        def remember(content: str, scope: str = "workspace", category: str = "other") -> str:
+        def remember(content: str, scope: str = "workspace", category: str = "other", replaces: list[str] | None = None) -> str:
             # The app saves this to the caller's own memory (it knows whose; this flow doesn't)
             # and shows it with an Undo. Nothing is stored here; the structured result is what
             # the app reads.
+            # `replaces` names facts this one takes the place of; the app checks which it may replace.
             text = " ".join(str(content or "").split())[:500]
             if not text:
                 return "Nothing to remember: content is empty."
+            proposal = {
+                "content": text,
+                "scope": "personal" if scope == "personal" else "workspace",
+                "category": category if category in MEMORY_CATEGORIES else "other",
+            }
+            ids = [str(i).strip().strip("[]") for i in (replaces or []) if str(i).strip()] if isinstance(replaces, list) else []
+            if ids:
+                proposal["replaces"] = list(dict.fromkeys(ids))[:6]
             return json.dumps({
-                "memory_proposal": {
-                    "content": text,
-                    "scope": "personal" if scope == "personal" else "workspace",
-                    "category": category if category in MEMORY_CATEGORIES else "other",
-                },
-                "note": "Remembered. The owner sees it and can undo it; no need to mention it.",
+                "memory_proposal": proposal,
+                "note": "Updated what you remembered." if ids else "Remembered. The owner sees it and can undo it; no need to mention it.",
             })
 
-        async def remember_async(content: str, scope: str = "workspace", category: str = "other") -> str:
-            return remember(content, scope, category)
+        async def remember_async(content: str, scope: str = "workspace", category: str = "other", replaces: list[str] | None = None) -> str:
+            return remember(content, scope, category, replaces)
 
         def update_plan(steps: list, goal: str = "") -> str:
             # Like remember, this changes nothing here: the app checks the plan and saves it where
@@ -1066,10 +1078,31 @@ class ToolGatewayComponent(Component):
         async def offer_call_async(reason: str, topic: str = "") -> str:
             return offer_call(reason, topic)
 
+        def request_secret(kind: str, reason: str, username_hint: str = "") -> str:
+            # Changes nothing and carries no secret: the app shows a card where the member picks a
+            # saved login or card (or types one), and the app types it into this conversation's
+            # browser itself. The agent hears only that it was filled, never the values.
+            kind = str(kind or "").strip().lower()
+            if kind not in ("login", "card"):
+                return "Not shown: kind must be 'login' or 'card'."
+            reason = " ".join(str(reason or "").split())[:200]
+            if not reason:
+                return "Not shown: say in one sentence why you need it."
+            return json.dumps({
+                "secret_request": {"kind": kind, "reason": reason, "username_hint": " ".join(str(username_hint or "").split())[:200]},
+                "note": ("The owner now sees a secure card that fills this into your browser's current page; you will "
+                         "never see the values. End your reply here with one short sentence, without asking for them. "
+                         "A message saying what was filled arrives next; then carry on (e.g. press Sign in). Never ask "
+                         "for a password, card number, or card security code in chat or a form."),
+            })
+
+        async def request_secret_async(kind: str, reason: str, username_hint: str = "") -> str:
+            return request_secret(kind, reason, username_hint)
+
         def hand_browser(reason: str, site: str = "") -> str:
             # Changes nothing: the app shows a "Your turn in the browser" card under the reply, and
-            # the owner gets the browser only when they tap Take over. They sign in themselves; you
-            # never see what they type, and their Done arrives as their next message.
+            # the owner gets the browser only when they tap Take over (for a CAPTCHA, or a page only
+            # they can use). You never see what they do there; their Done arrives as their next message.
             reason = " ".join(str(reason or "").split())[:200]
             if not reason:
                 return "Not shown: say in one sentence what they need to do in the browser."
@@ -1086,7 +1119,7 @@ class ToolGatewayComponent(Component):
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, hand_browser"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1117,7 +1150,9 @@ class ToolGatewayComponent(Component):
                 description=("Remember a lasting fact for future conversations: how the owner works, their goals, the people and "
                              "organizations they deal with, standing preferences, or a correction to something you remembered. Call it on "
                              "your own whenever you learn one, without asking; the owner can undo it. Never one-off "
-                             "results, links, or numbers that go stale, and nothing already in what you remember."),
+                             "results, links, or numbers that go stale, and nothing already in what you remember. When it "
+                             "changes or restates a fact you saved, pass that fact's id in replaces so the new one takes its "
+                             "place rather than adding a copy."),
             ),
             StructuredTool.from_function(
                 func=update_plan, coroutine=update_plan_async, name="update_plan",
@@ -1217,7 +1252,7 @@ class ToolGatewayComponent(Component):
                 args_schema=MergeArgs,
                 description=("Propose combining facts you remember that overlap or repeat into fewer, clearer ones, "
                              "naming each fact by an id you were given (as when tidying up memory). Each merged fact "
-                             "keeps every detail of the ones it replaces. The owner reviews the merges and makes the "
+                             "keeps every detail of the ones it replaces that's still true (a newer fact wins over an older one). The owner reviews the merges and makes the "
                              "ones they want, and can undo them; nothing changes until they do. Call it once, as the "
                              "last thing in your reply."),
             ),
@@ -1232,15 +1267,26 @@ class ToolGatewayComponent(Component):
                              "show_form or ask_user, if any). Changes nothing."),
             ),
             StructuredTool.from_function(
+                func=request_secret, coroutine=request_secret_async, name="request_secret",
+                args_schema=SecretArgs,
+                description=("When your browser reaches a sign-in form or a payment form, ask the owner to fill it in "
+                             "securely: they pick a saved login or card (or type one) and Studio types it into the "
+                             "page you have open. You never see it. Open the page with the fields first. Never ask "
+                             "for passwords, card numbers, or card security codes any other way. Call it as the last "
+                             "thing in your reply. Changes nothing."),
+            ),
+            StructuredTool.from_function(
                 func=hand_browser, coroutine=hand_browser_async, name="hand_browser",
                 args_schema=HandBrowserArgs,
-                description=("Hand your browser to the owner when a page needs them in person: signing in to their "
-                             "own account, a code sent to their phone or email, a CAPTCHA, or a check that wants a "
-                             "person. They take over where you left off, do it themselves, and hand it back; you "
-                             "never see what they type. Use it instead of asking for a password or code, and instead "
-                             "of asking them in text to sign in somewhere (they can't reach your browser any other "
-                             "way). Open the page first, then call it as the last thing in your reply. Their Done "
-                             "arrives as the next message. Never for something you can do yourself, and never to "
-                             "get around their approval of a change. Changes nothing."),
+                description=("Hand your browser to the owner only for a CAPTCHA (an 'I'm not a robot' check or picture "
+                             "puzzle), or when they have to use the page themself and nothing else will do: signing "
+                             "in with Google or another account button, a passkey, or choosing something only they "
+                             "can. They take over where you left off and hand it back; you never see what they do. "
+                             "Not for a sign-in or payment form (use request_secret), and not for a code sent to "
+                             "their phone or email: find the code in their connected email if you can, otherwise "
+                             "ask them for it, then type it in yourself. Open the page first, then call it as the "
+                             "last thing in your reply; their Done arrives as the next message. Never for something "
+                             "you can do yourself, and never to get around their approval of a change. Changes "
+                             "nothing."),
             ),
         ]

@@ -5,7 +5,7 @@ import type { Session } from "@/lib/tenant-core";
 // The person's saved sign-ins for the agent's browser: one Browserbase context per person, shared
 // by all their agents (like their connected apps). Studio Browser opens each conversation's
 // browser with it and Browserbase saves it when that browser closes, so a site they signed in to
-// after the agent handed them its browser stays signed in next time. The agent never sees what
+// there (filled from the secure card, or after taking the browser over) stays signed in next time. The agent never sees what
 // they typed; it only browses as them afterwards, and changing anything in their accounts there
 // still needs their approval.
 //

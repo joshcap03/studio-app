@@ -2,20 +2,20 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { getConfig } from "@/lib/config";
 import type { Tenant } from "@/lib/tenant-core";
 
-// Watching the agent's browser, and taking it over. Studio Browser
-// (langflow/components/studio_browser.py) opens one hosted browser per conversation and tags each
-// browser result with its session id; the turn keeps that id on the conversation, sealed with a
-// MAC made with the app's own Browserbase key, since the member can write that column.
+// Watching the agent's browser, view only. Studio Browser (langflow/components/studio_browser.py)
+// opens one hosted browser per conversation and tags each browser result with its session id;
+// the turn keeps that id on the conversation, sealed with a MAC made with the app's own
+// Browserbase key, since the member can write that column. When the member watches, the server
+// asks Browserbase for the session (only this conversation's, only while it runs), connects to it
+// over CDP itself, takes one JPEG of the page, and disconnects. The page gets pictures only: no
+// connection URL ever reaches it. The CDP helpers here are shared with filling a login or card and
+// taking the browser over from that card (src/lib/browser-fill.ts), which reach it the same way.
 //
-// Watching (on a call) is view only: the server asks Browserbase for the session (only this
-// conversation's, only while it runs), connects to it over CDP itself, takes one JPEG of the page,
-// and disconnects. The page gets pictures only.
-//
-// Taking over is the one way a link that drives the browser reaches the page: when the agent has
-// handed its browser to the member (hand_browser) and they tap Take over, the server asks
-// Browserbase for a live view of the page the agent is on, good for CONTROL_S, and returns it to
-// that member alone, uncached. It's never stored, never sent to the agent, and the connection
-// URL itself still never leaves the server. Free of next/* (the turn records the session).
+// The one exception is the agent's hand_browser card, for a CAPTCHA or a page the member has to
+// use themself: on their tap, the server asks Browserbase for a live view of the page the agent
+// is on, good for CONTROL_S, and returns it to that member alone, uncached (browserControl). It's
+// never stored or sent to the agent, and the connection URL still never leaves the server. Free of
+// next/* (the turn records the session).
 
 const API = "https://api.browserbase.com/v1";
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -72,6 +72,18 @@ export interface Socket {
 }
 export type SocketFactory = (url: string) => Socket;
 
+/**
+ * Where to reach the conversation's browser over CDP, server-side only, or why it can't be: off
+ * (no Browserbase key), none recorded for this conversation and member, ended, or failed.
+ */
+export async function browserConnection(tenant: Tenant, conversationId: string): Promise<{ ok: true; url: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" }> {
+  const running = await runningSession(tenant, conversationId);
+  if (!running.ok) return running;
+  const { connectUrl } = running;
+  if (typeof connectUrl !== "string" || !/^wss:\/\//.test(connectUrl)) return { ok: false, reason: "failed" };
+  return { ok: true, url: connectUrl };
+}
+
 type Running = { ok: true; apiKey: string; sessionId: string; connectUrl: unknown } | { ok: false; reason: "off" | "none" | "ended" | "failed" };
 
 /** The conversation's browser, if it's this member's and still running. */
@@ -102,19 +114,6 @@ async function runningSession(tenant: Tenant, conversationId: string): Promise<R
   return { ok: true, apiKey: browser.apiKey, sessionId, connectUrl: session.connectUrl };
 }
 
-/** One picture of what the conversation's browser shows now, or why there isn't one. */
-export async function browserFrame(tenant: Tenant, conversationId: string, connect: SocketFactory = (url) => new WebSocket(url) as unknown as Socket): Promise<Frame> {
-  const running = await runningSession(tenant, conversationId);
-  if (!running.ok) return running;
-  const { connectUrl } = running;
-  if (typeof connectUrl !== "string" || !/^wss:\/\//.test(connectUrl)) return { ok: false, reason: "failed" };
-  try {
-    return { ok: true, jpeg: await screenshot(connectUrl, connect) };
-  } catch {
-    return { ok: false, reason: "failed" };
-  }
-}
-
 export type Control = { ok: true; url: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" };
 
 /**
@@ -143,11 +142,27 @@ export async function browserControl(tenant: Tenant, conversationId: string): Pr
   return typeof url === "string" && LIVE_VIEW.test(url) ? { ok: true, url } : { ok: false, reason: "failed" };
 }
 
+/** One picture of what the conversation's browser shows now, or why there isn't one. */
+export async function browserFrame(tenant: Tenant, conversationId: string, connect: SocketFactory = defaultConnect): Promise<Frame> {
+  const connection = await browserConnection(tenant, conversationId);
+  if (!connection.ok) return connection;
+  try {
+    return { ok: true, jpeg: await screenshot(connection.url, connect) };
+  } catch {
+    return { ok: false, reason: "failed" };
+  }
+}
+
+export const defaultConnect: SocketFactory = (url) => new WebSocket(url) as unknown as Socket;
+
+/** Sends one CDP command (to a page or frame when `sessionId` is given) and resolves with its result. */
+export type CdpCall = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<Record<string, unknown>>;
+
 /**
- * One JPEG of the browser's current page over CDP: find the page (the last one open, where the
- * agent is), attach to it, capture, and close. Only read-only commands are sent.
+ * Opens a CDP connection, runs `work` with it, and closes it, all within `timeoutMs`. A command
+ * the browser refuses fails the whole exchange.
  */
-export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAME_MS): Promise<Uint8Array> {
+export function withCdp<T>(url: string, connect: SocketFactory, timeoutMs: number, work: (call: CdpCall) => Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     const socket = connect(url);
     let next = 0;
@@ -165,7 +180,7 @@ export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAM
       fn();
     };
     const timer = setTimeout(() => finish(() => reject(new Error("timed out"))), timeoutMs);
-    const call = (method: string, params: Record<string, unknown> = {}, sessionId?: string) =>
+    const call: CdpCall = (method, params = {}, sessionId) =>
       new Promise<Record<string, unknown>>((ok) => {
         next += 1;
         waiting.set(next, ok);
@@ -188,17 +203,34 @@ export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAM
     socket.addEventListener("error", () => finish(() => reject(new Error("connection failed"))));
     socket.addEventListener("close", () => finish(() => reject(new Error("connection closed"))));
     socket.addEventListener("open", () => {
-      void (async () => {
-        const { targetInfos } = (await call("Target.getTargets")) as { targetInfos?: { targetId: string; type: string; url?: string }[] };
-        const pages = (targetInfos ?? []).filter((t) => t.type === "page" && !t.url?.startsWith("devtools://"));
-        const page = pages.at(-1);
-        if (!page) return finish(() => reject(new Error("no page")));
-        const { sessionId } = (await call("Target.attachToTarget", { targetId: page.targetId, flatten: true })) as { sessionId?: string };
-        if (!sessionId) return finish(() => reject(new Error("couldn't attach")));
-        const { data } = (await call("Page.captureScreenshot", { format: "jpeg", quality: 60 }, sessionId)) as { data?: string };
-        if (!data) return finish(() => reject(new Error("no picture")));
-        finish(() => resolve(new Uint8Array(Buffer.from(data, "base64"))));
-      })().catch((e: unknown) => finish(() => reject(e instanceof Error ? e : new Error(String(e)))));
+      work(call).then(
+        (value) => finish(() => resolve(value)),
+        (e: unknown) => finish(() => reject(e instanceof Error ? e : new Error(String(e)))),
+      );
     });
+  });
+}
+
+/** The page the agent is on: the last one open. Attached (flattened) so commands can go to it. */
+export async function attachToPage(call: CdpCall): Promise<{ targetId: string; sessionId: string }> {
+  const { targetInfos } = (await call("Target.getTargets")) as { targetInfos?: { targetId: string; type: string; url?: string }[] };
+  const pages = (targetInfos ?? []).filter((t) => t.type === "page" && !t.url?.startsWith("devtools://"));
+  const page = pages.at(-1);
+  if (!page) throw new Error("no page");
+  const { sessionId } = (await call("Target.attachToTarget", { targetId: page.targetId, flatten: true })) as { sessionId?: string };
+  if (!sessionId) throw new Error("couldn't attach");
+  return { targetId: page.targetId, sessionId };
+}
+
+/**
+ * One JPEG of the browser's current page over CDP: find the page (the last one open, where the
+ * agent is), attach to it, capture, and close. Only read-only commands are sent.
+ */
+export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAME_MS): Promise<Uint8Array> {
+  return withCdp(url, connect, timeoutMs, async (call) => {
+    const { sessionId } = await attachToPage(call);
+    const { data } = (await call("Page.captureScreenshot", { format: "jpeg", quality: 60 }, sessionId)) as { data?: string };
+    if (!data) throw new Error("no picture");
+    return new Uint8Array(Buffer.from(data, "base64"));
   });
 }
