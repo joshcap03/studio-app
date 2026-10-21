@@ -25,6 +25,11 @@ class DiscoverArgs(BaseModel):
     query: str = Field(description="Describe the action needed, e.g. 'read Gmail'.")
 
 
+class ReadResultArgs(BaseModel):
+    result_id: str = Field(description="The id a partial result gave, e.g. 'r1'.")
+    offset: int = Field(default=0, description="Where to start reading, in characters; the partial result says where.")
+
+
 class ExecuteArgs(BaseModel):
     tool_name: str = Field(description="Exact name from discover_tools.")
     arguments: dict | str | None = Field(default=None, description="Tool arguments, following the discovered schema.")
@@ -463,8 +468,17 @@ def compact_web_results(sources, limit):
     return f"{len(sources)} results\n\n" + "\n\n".join(blocks)
 
 
-def compact_result(result, limit):
-    """Prefer structured MCP payloads; avoid duplicating text/structured representations."""
+# How much of a kept result one read_result call returns, how many results a run keeps, and
+# the most it keeps of one.
+RESULT_PAGE = 20000
+KEPT_RESULTS = 8
+KEPT_CHARS = 1000000
+
+
+def compact_result(result, limit, keep=None):
+    """Prefer structured MCP payloads; avoid duplicating text/structured representations.
+    A result cut to the limit is handed to keep(), when given, so the rest can be read with
+    read_result instead of being lost."""
     structured = getattr(result, "structuredContent", None)
     if structured is None and isinstance(result, dict):
         structured = result.get("structuredContent") or result.get("structured_content")
@@ -489,8 +503,28 @@ def compact_result(result, limit):
     out = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
     if len(out) > limit:
         # Explicit warning so the agent doesn't mistake the excerpt for complete data.
+        rid = keep(out) if keep else None
+        if rid:
+            return out[:limit] + (f"\n[PARTIAL RESULT: {len(out)} chars total, {len(out)-limit} omitted. Read the rest with "
+                                  f"read_result(result_id=\"{rid}\", offset={limit}), {RESULT_PAGE} chars at a time; it needs no "
+                                  "approval. Do not treat this part as complete.]")
         return out[:limit] + f"\n[PARTIAL RESULT: {len(out)} chars total, {len(out)-limit} omitted. Do not treat as complete; narrow the query or use an execution/data-processing tool for the full dataset.]"
     return out
+
+
+def read_page(kept, result_id, offset):
+    """One page of a result this run kept, with where the next page starts."""
+    full = kept.get(str(result_id or "").strip())
+    if full is None:
+        return ("That result isn't kept anymore: results are kept only while this run lasts. Run the step again, and "
+                "process the data in that call so it prints only what you need.")
+    start = max(0, int(offset or 0))
+    if start >= len(full):
+        return f"[End of result: it is {len(full)} chars long.]"
+    end = min(len(full), start + RESULT_PAGE)
+    footer = (f"[chars {start}-{end} of {len(full)}. Next: read_result(result_id=\"{result_id}\", offset={end}).]"
+              if end < len(full) else f"[chars {start}-{end} of {len(full)}. End of result.]")
+    return full[start:end] + "\n" + footer
 
 
 COMPOSIO_SLUG = re.compile(r"^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$")
@@ -607,6 +641,32 @@ class ToolGatewayComponent(Component):
         max_hits = max(1, min(5, int(self.max_results or 3)))
         max_chars = max(500, int(self.max_result_chars or 4000))
         cache = {}
+        # Results cut to max_chars, kept whole while this build lives, so the agent can read a long
+        # one (a transcript) in pages. Each run's results are kept apart under its own thread
+        # (one conversation's), so one conversation can never read another's, even if a build
+        # were reused.
+        kept = {}
+        kept_count = [0]
+
+        def thread_of(config):
+            return str(((config or {}).get("configurable") or {}).get("thread_id") or "")
+
+        def keeper(config):
+            def keep(full):
+                kept_count[0] += 1
+                rid = f"r{kept_count[0]}"
+                mine = kept.setdefault(thread_of(config), {})
+                mine[rid] = full[:KEPT_CHARS]
+                while len(mine) > KEPT_RESULTS:
+                    mine.pop(next(iter(mine)))
+                return rid
+            return keep
+
+        def read_result(result_id: str, offset: int = 0, config: RunnableConfig = None) -> str:
+            return read_page(kept.get(thread_of(config), {}), result_id, offset)
+
+        async def read_result_async(result_id: str, offset: int = 0, config: RunnableConfig = None) -> str:
+            return read_result(result_id, offset, config)
 
         def discover(query: str) -> str:
             key = query.strip().lower()
@@ -712,8 +772,9 @@ class ToolGatewayComponent(Component):
             if name in CODE_TOOLS:
                 return ("Running code needs the owner's approval every time, even just to read. Call take_action now "
                         "with the same tool_name and arguments plus a one-sentence summary; don't reply first. Make "
-                        "that one call do the whole job: fetch, process, and print everything you need from it, so "
-                        "they approve once.")
+                        "that one call do the whole job: fetch and process the data there, and print what you need. "
+                        "A long output comes back in part; read the rest with read_result, which needs no approval, "
+                        "rather than running code again.")
             return ("This changes something in the owner's accounts, so it needs their approval. Call take_action "
                     "now with the same tool_name and arguments plus a one-sentence summary; don't reply first.")
 
@@ -749,7 +810,7 @@ class ToolGatewayComponent(Component):
                         result = await asyncio.wait_for(tool.ainvoke(params, config=config), timeout=limit)
                     except NotImplementedError:
                         result = await asyncio.wait_for(asyncio.to_thread(tool.invoke, params, config), timeout=limit)
-                    return compact_result(result, max_chars)
+                    return compact_result(result, max_chars, keeper(config))
                 except asyncio.TimeoutError:
                     if attempt + 1 < attempts:
                         continue
@@ -768,7 +829,7 @@ class ToolGatewayComponent(Component):
             if not approved and needs_approval(tool_name, params):
                 return approval_hint(tool_name)
             try:
-                return compact_result(tool.invoke(params, config=config), max_chars)
+                return compact_result(tool.invoke(params, config=config), max_chars, keeper(config))
             except Exception as exc:
                 return f"Tool {tool_name} failed: {type(exc).__name__}: {exc}. Do not blindly retry writes."
 
@@ -1149,7 +1210,7 @@ class ToolGatewayComponent(Component):
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, read_result, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1173,6 +1234,13 @@ class ToolGatewayComponent(Component):
                              "browser actions). The owner sees your summary and approves or declines before it runs; "
                              "if declined, don't retry it, say what you would have done instead."),
                 metadata={"approval_actions": ["approve", "reject"]},
+            ),
+            StructuredTool.from_function(
+                func=read_result, coroutine=read_result_async, name="read_result",
+                args_schema=ReadResultArgs,
+                description=("Read more of a long result that came back in part (it ends with [PARTIAL RESULT ...] and "
+                             "gives a result_id and offset), a page at a time. Needs no approval and changes nothing. "
+                             "Use it to read a whole transcript or document instead of running the step again."),
             ),
             StructuredTool.from_function(
                 func=remember, coroutine=remember_async, name="remember",

@@ -268,10 +268,13 @@ own tools (composio_remote_workbench, composio_search_tools,
 composio_manage_connections) are the opposite: call them by their own
 name, never inside composio_multi_execute_tool.
 
-Every code run needs the owner's approval, even one that only reads. Do
-the whole job in one code call: fetch, process, and print what you need
-(a transcript, a table) in that same run. Never save something to read
-back in a second call.
+Every code run needs the owner's approval, even one that only reads, so
+do the whole job in one code call: fetch and process the data there.
+Tool results come back cut to a few thousand characters. When one ends
+with [PARTIAL RESULT ...], read the rest with read_result, which needs no
+approval, instead of running code again. To read a long text whole (a
+transcript, a document), print all of it in that one call and page
+through it with read_result.
 
 You act only through apps this user has connected. If a task needs the
 owner's data in, or a change to, an app that isn't connected, use
