@@ -600,6 +600,30 @@ export function toolVisuals(message: LangflowMessage): AgentEvent[] {
   return events;
 }
 
+/** Studio Browser's tools (the hosted browser), whose results carry the conversation's browser. */
+const BROWSER_TOOLS = new Set(["start", "navigate", "act", "observe", "extract", "end"]);
+
+/**
+ * The conversation's browser as its tools last reported it: Studio Browser puts the session id
+ * first in each result (start's own result has it too), and end means it's gone. Only the id is
+ * read; nothing else about the browser leaves its result.
+ */
+export function toolBrowserSessions(message: LangflowMessage): AgentEvent[] {
+  let found: { sessionId: string | null } | null = null;
+  for (const call of toCalls(message)) {
+    if (!BROWSER_TOOLS.has(call.name) || call.error || call.output == null) continue;
+    if (call.name === "end") {
+      found = { sessionId: null };
+      continue;
+    }
+    const result = unwrapResult(call.output);
+    if (!isRecord(result)) continue;
+    const id = typeof result.studioBrowserSession === "string" ? result.studioBrowserSession : call.name === "start" && isRecord(result.data) && typeof result.data.sessionId === "string" ? result.data.sessionId : null;
+    if (id) found = { sessionId: id };
+  }
+  return found ? [{ type: "browser-session", ...found }] : [];
+}
+
 /** What the message's tool calls returned for each link, for checking citations. */
 export function toolEvidence(message: LangflowMessage): AgentEvent[] {
   const items = evidenceFor(toCalls(message));
@@ -1137,6 +1161,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
             ...toolQuestions(message),
             ...toolUi(message),
             ...toolTaskUpdates(message),
+            ...toolBrowserSessions(message),
           ].filter((t) => {
             const key = JSON.stringify(t);
             if (seenReports.has(key)) return false;

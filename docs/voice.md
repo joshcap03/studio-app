@@ -294,9 +294,22 @@ leaving the tab doesn't mute the call, since showing another window is the point
 under the share says a snapshot catches whatever's in view, including other people. The mock voice
 shares a labeled drawing instead, so QA needs no picker or camera.
 
-The live view of the agent's own browser isn't built: Browserbase has no view-only link (its live
-view is interactive and the link grants control), so it waits on a choice between a read-only
-iframe, server-side screenshots, or a replay after the run.
+### Watching the agent's browser
+
+When the agent uses its browser in a call's conversation, the stage shows what that browser
+shows, as a picture refreshed every two seconds while the page is visible: "My browser · view
+only". It's view only by construction. Studio Browser tags each browser result with the
+conversation's session id. The turn keeps it on the conversation, sealed with a MAC made with the
+app's own Browserbase key, since the member can write that column. `GET
+/api/conversations/<id>/browser` then asks Browserbase for that session (only while it's running),
+connects to it over CDP server-side, takes one JPEG of the page the agent is on, and disconnects.
+The page only ever gets pictures: no connection URL or debugger link leaves the server, and
+nothing is stored.
+
+To turn it on, set `BROWSERBASE_API_KEY` in Vercel to the raw API key of the same Browserbase
+project the flow's Studio Browser uses, and reinstall the flow (Studio Browser's tagging). It
+needs Browserbase minutes. Check on the first real use that taking a picture doesn't disturb the
+agent's own connection to the browser.
 
 ## Turning it on
 

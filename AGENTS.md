@@ -125,6 +125,9 @@ raw/technical text.
   message, tap to dictate; `/api/voice/transcribe`), and voice notes (`notes.ts` picks which replies
   get one and its words, saved as `messages.voice_note`; `clips.ts` says one on play through
   `…/messages/<id>/speech`). One clip plays at a time (`src/components/voice/player.tsx`).
+  On a call the member can watch the agent's browser, view only: `src/lib/browser-view.ts` keeps the
+  conversation's sealed session id and takes screenshots server-side (the connection never leaves
+  the server).
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the

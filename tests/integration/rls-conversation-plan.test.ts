@@ -160,3 +160,16 @@ describe("whose move it is", () => {
     });
   });
 });
+
+describe("a conversation's browser", () => {
+  it("is its member's alone to read or write, and holds only a short sealed id", async () => {
+    const sealed = "33333333-3333-4333-8333-333333333333.mac";
+    expect((await alice.client.from("conversations").update({ browser_session: sealed }).eq("id", chat).select("browser_session").single()).data?.browser_session).toBe(sealed);
+    for (const other of [teammate, bob]) {
+      expect((await other.client.from("conversations").select("browser_session").eq("id", chat)).data).toEqual([]);
+      expect((await other.client.from("conversations").update({ browser_session: "x.y" }).eq("id", chat).select("id")).data ?? []).toEqual([]);
+    }
+    expect((await alice.client.from("conversations").update({ browser_session: "x".repeat(301) }).eq("id", chat)).error).not.toBeNull();
+    expect((await alice.client.from("conversations").update({ browser_session: null }).eq("id", chat)).error).toBeNull();
+  });
+});

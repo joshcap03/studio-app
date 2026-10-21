@@ -101,6 +101,28 @@ def clean_result(result):
     return result.model_copy(update={"content": cleaned})
 
 
+def with_session(result, session: str | None):
+    """The result with this conversation's browser session id put first in its JSON text, so the
+    app can show its member that browser (view only). The id isn't a secret (start returns it too);
+    its connection URL is, and stays stripped."""
+    content = getattr(result, "content", None)
+    if not session or not isinstance(content, list):
+        return result
+    tagged, out = False, []
+    for item in content:
+        text = getattr(item, "text", None)
+        if not tagged and isinstance(text, str):
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                item = item.model_copy(update={"text": json.dumps({"studioBrowserSession": session, **parsed})})
+                tagged = True
+        out.append(item)
+    return result.model_copy(update={"content": out})
+
+
 def started_session(result) -> str | None:
     """The browser session id a successful `start` returned."""
     if getattr(result, "isError", False):
@@ -285,7 +307,7 @@ class StudioBrowserComponent(ComponentWithCache):
                 if name == "start":
                     result = await start(tool, kwargs)
                     bind(started_session(result))
-                    return clean_result(result)
+                    return with_session(clean_result(result), bound())
                 current = bound()
                 if current is None and name != "end" and "start" in tools:
                     # A new connection has no browser yet; open this conversation's own first.
@@ -303,7 +325,7 @@ class StudioBrowserComponent(ComponentWithCache):
                     raise
                 if name == "end" or bound() == current:
                     bind(None if name == "end" else current)
-                return clean_result(result)
+                return with_session(clean_result(result), None if name == "end" else current)
 
             return StructuredTool(
                 name=name,
