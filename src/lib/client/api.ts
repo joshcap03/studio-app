@@ -148,6 +148,7 @@ export const api = {
       | { action: "submit"; keepFiles?: string[]; verdicts?: VerdictCall[] }
       | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string }
       | { action: "merge"; picks: number[]; edits?: Record<string, string> }
+      | { action: "first-run"; choice: "started" | "later" }
       | { action: "handback" }
       | { action: "undo" }
       | { action: "accept"; sessionId: string }

@@ -934,9 +934,11 @@ function WorkspaceShell({
     (conversationId: string, messageId: string, blockId: string, response: UiResponse) => {
       patchMessage(conversationId, messageId, (m) => ({ ...m, uiResponse: { ...(m.uiResponse ?? {}), [blockId]: response } }));
       // Applying the proposed setup can finish the setup interview, keeping a name is how the
-      // agent arrives, and a name or sound kept changes how it talks with them.
-      if (response.status === "applied") api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
-      if (response.status === "applied" && (response.applied.name || response.applied.manner !== undefined)) {
+      // agent arrives, and a name or sound kept changes how it talks with them. (Choosing whether
+      // to run the first task now, after, changes neither.)
+      if (response.status !== "applied" || response.firstRun) return;
+      api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
+      if (response.applied.name || response.applied.manner !== undefined) {
         api.getCompanion().then(({ companion: next }) => next && onCompanion(next), () => undefined);
       }
     },
