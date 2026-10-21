@@ -5,7 +5,7 @@ import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
 import { buildQuestions } from "./questions";
-import { buildUiBlock, capUi, isMergeRequest, withoutOffers } from "./ui";
+import { buildUiBlock, capUi, isMergeRequest, withoutHandoffs, withoutOffers } from "./ui";
 import { callOf } from "./modality";
 import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
@@ -166,6 +166,13 @@ export interface TurnDeps {
    * events it's sent leave out any offer already on the reply (one continued after an approval).
    */
   offersShown?: boolean;
+  /**
+   * Whether the member can take over the agent's browser here (its hand_browser card): the app
+   * can reach the hosted browser. Without it, hand-offs are dropped.
+   */
+  handoffs?: boolean;
+  /** False when the page this streams to predates hand-offs of the browser (as offersShown). */
+  handoffsShown?: boolean;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -480,7 +487,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const send = (event: StreamEvent) => {
         if (!open) return;
         try {
-          stream.enqueue(encoder.encode(`${JSON.stringify(deps.offersShown === false ? withoutOffersIn(event) : event)}\n`));
+          stream.enqueue(encoder.encode(`${JSON.stringify(forPage(event, deps))}\n`));
         } catch {
           open = false;
         }
@@ -688,8 +695,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               break;
             }
             case "ui": {
-              // A form, proposed setup, proposed merge of facts, or offer to call; it changes
-              // nothing until the member answers, applies, or takes it.
+              // A form, proposed setup, proposed merge of facts, offer to call, or the browser
+              // handed over; it changes nothing until the member answers, applies, or takes it.
               const built = !isMergeRequest(event.block)
                 ? buildUiBlock(event.block)
                 : deps.resolveMerge
@@ -698,8 +705,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                       return null;
                     })
                   : null;
-              // An offer to call shows only where the member could take it.
-              if (built && (built.kind !== "offer" || deps.offerCalls)) {
+              // An offer to call shows only where the member could take it, and the browser
+              // only where they could take it over.
+              if (built && (built.kind !== "offer" || deps.offerCalls) && (built.kind !== "browser" || deps.handoffs)) {
                 ui = capUi([...(ui ?? []), built]);
                 send({ type: "ui", ui });
               }
@@ -905,11 +913,16 @@ export function renderSteerMessage(interrupted: ChatMessage, declined: string | 
   return `${lines.join("\n")}\n\n${message}`;
 }
 
-/** An event as a page that predates offers to call is sent it: without them. */
-function withoutOffersIn(event: StreamEvent): StreamEvent {
-  if (event.type === "ui") return { ...event, ui: event.ui.filter((b) => b.kind !== "offer") };
-  if (event.type === "start") return { ...event, assistantMessage: withoutOffers([event.assistantMessage])[0] };
-  if (event.type === "end") return { ...event, message: withoutOffers([event.message])[0] };
+/** An event as the page it streams to can read it: without cards from after its code. */
+function forPage(event: StreamEvent, deps: Pick<TurnDeps, "offersShown" | "handoffsShown">): StreamEvent {
+  if (deps.offersShown !== false && deps.handoffsShown !== false) return event;
+  const drop = (m: ChatMessage) => {
+    const once = deps.offersShown === false ? withoutOffers([m])[0] : m;
+    return deps.handoffsShown === false ? withoutHandoffs([once])[0] : once;
+  };
+  if (event.type === "ui") return { ...event, ui: event.ui.filter((b) => !(b.kind === "offer" && deps.offersShown === false) && !(b.kind === "browser" && deps.handoffsShown === false)) };
+  if (event.type === "start") return { ...event, assistantMessage: drop(event.assistantMessage) };
+  if (event.type === "end") return { ...event, message: drop(event.message) };
   return event;
 }
 

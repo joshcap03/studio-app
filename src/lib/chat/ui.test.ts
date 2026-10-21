@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UiBlock, UiForm } from "@/lib/types";
-import { buildUiBlock, capUi, proposalPicksSchema, scheduleFrom, withoutOffers } from "./ui";
+import { buildUiBlock, capUi, proposalPicksSchema, scheduleFrom, withoutHandoffs, withoutOffers } from "./ui";
 import { answerText, formAnswerText, isQuestionAnswer, missingAnswer } from "./ui-answer";
 
 describe("buildUiBlock", () => {
@@ -176,6 +176,32 @@ describe("an offer to call", () => {
     // One offer is enough: the latest.
     expect(capUi([offer("o1"), form("f1"), offer("o2")]).map((b) => b.id)).toEqual(["f1", "o2"]);
     expect(capUi([form("f1"), form("f2"), form("f3")]).map((b) => b.id)).toEqual(["f2", "f3"]);
+  });
+});
+
+describe("the browser handed to the member", () => {
+  it("says what to do there and where, and nothing without the what", () => {
+    expect(buildUiBlock({ hand_browser: { reason: "  Sign in to   your USPS account. ", site: " USPS " } }, "h1")).toEqual({
+      kind: "browser",
+      id: "h1",
+      reason: "Sign in to your USPS account.",
+      site: "USPS",
+    });
+    expect(buildUiBlock({ hand_browser: { reason: "Sign in.", site: "" } }, "h2")).toEqual({ kind: "browser", id: "h2", reason: "Sign in." });
+    expect(buildUiBlock({ hand_browser: { reason: "x".repeat(500), site: "y".repeat(90) } })).toMatchObject({ reason: "x".repeat(200), site: "y".repeat(40) });
+    expect(buildUiBlock({ hand_browser: { reason: " ", site: "USPS" } })).toBeNull();
+    expect(buildUiBlock({ hand_browser: "sign in" })).toBeNull();
+  });
+
+  it("is left out, with what was done with it, for pages that don't know it", () => {
+    const offer: UiBlock = { kind: "offer", id: "o1", reason: "Quicker to talk." };
+    const handoff: UiBlock = { kind: "browser", id: "h1", reason: "Sign in." };
+    const base = { conversationId: "c1", role: "assistant" as const, content: "", status: "complete" as const, activity: [], artifacts: [], createdAt: 0 };
+    const message = { ...base, id: "m1", ui: [offer, handoff], uiResponse: { h1: { status: "handed-back" as const, at: 1 } } };
+    const [stripped] = withoutHandoffs([message]);
+    expect(stripped.ui).toEqual([offer]);
+    expect(stripped.uiResponse).toEqual({});
+    expect(withoutOffers([message])[0].ui).toEqual([handoff]);
   });
 });
 

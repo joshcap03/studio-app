@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, hand_browser.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -325,6 +325,12 @@ class OfferCallArgs(BaseModel):
     topic: str = Field(default="", description="Optional: what the call would be about, 2-6 words, e.g. 'Which offer to take'.")
 
 
+class HandBrowserArgs(BaseModel):
+    reason: str = Field(description=("What the owner needs to do in the browser, in one sentence as you'd say it, e.g. "
+                                     "'Sign in to your USPS account, then tap Done and I'll make the label.'"))
+    site: str = Field(default="", description="Optional: the site, 1-3 words, e.g. 'USPS'.")
+
+
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
 DiscoverArgs.model_rebuild()
 ExecuteArgs.model_rebuild()
@@ -338,6 +344,7 @@ FormArgs.model_rebuild()
 ProposeArgs.model_rebuild()
 MergeArgs.model_rebuild()
 OfferCallArgs.model_rebuild()
+HandBrowserArgs.model_rebuild()
 
 
 def words(s):
@@ -1059,9 +1066,27 @@ class ToolGatewayComponent(Component):
         async def offer_call_async(reason: str, topic: str = "") -> str:
             return offer_call(reason, topic)
 
+        def hand_browser(reason: str, site: str = "") -> str:
+            # Changes nothing: the app shows a "Your turn in the browser" card under the reply, and
+            # the owner gets the browser only when they tap Take over. They sign in themselves; you
+            # never see what they type, and their Done arrives as their next message.
+            reason = " ".join(str(reason or "").split())[:200]
+            if not reason:
+                return "Not shown: say in one sentence what they need to do in the browser."
+            return json.dumps({
+                "hand_browser": {"reason": reason, "site": " ".join(str(site or "").split())[:40]},
+                "note": ("The owner now sees a card to take over your browser where you left it, and Done to hand it "
+                         "back. End your reply here with one short sentence; don't explain how to take over. When "
+                         "their Done arrives, look at the page again before going on: they may have gone elsewhere, "
+                         "or not finished."),
+            })
+
+        async def hand_browser_async(reason: str, site: str = "") -> str:
+            return hand_browser(reason, site)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, hand_browser"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1205,5 +1230,17 @@ class ToolGatewayComponent(Component):
                              "offers; it never starts a call, and they may say Not now. Never on a call, and not "
                              "again in a conversation where they said Not now. Call it after your reply (and after "
                              "show_form or ask_user, if any). Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=hand_browser, coroutine=hand_browser_async, name="hand_browser",
+                args_schema=HandBrowserArgs,
+                description=("Hand your browser to the owner when a page needs them in person: signing in to their "
+                             "own account, a code sent to their phone or email, a CAPTCHA, or a check that wants a "
+                             "person. They take over where you left off, do it themselves, and hand it back; you "
+                             "never see what they type. Use it instead of asking for a password or code, and instead "
+                             "of asking them in text to sign in somewhere (they can't reach your browser any other "
+                             "way). Open the page first, then call it as the last thing in your reply. Their Done "
+                             "arrives as the next message. Never for something you can do yourself, and never to "
+                             "get around their approval of a change. Changes nothing."),
             ),
         ]

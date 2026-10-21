@@ -86,6 +86,11 @@ export interface AgentTenantContext {
    */
   calls?: boolean;
   /**
+   * The person's saved sign-ins for the agent's browser (a Browserbase context id, one per
+   * person), so a site they signed in to there stays signed in. Absent when browsing is off.
+   */
+  browserContext?: string;
+  /**
    * Who the agent is to this member (src/lib/companion.ts): the name they kept (else null) and
    * how it talks with them once one is chosen. `callName` is the starting name calls introduce
    * it by while it has none of its own (voice on); `naming: false` where it can't be given one

@@ -71,6 +71,8 @@ export const TEMPLATE_VARIABLES = [
   "project_instructions",
   "personal_guardrail",
   "system_context",
+  // The person's saved sign-ins for the agent's browser, for Studio Browser's context_id.
+  "browser_context",
 ] as const;
 
 /**
@@ -141,6 +143,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     project_instructions: project?.instructions ?? "",
     personal_guardrail: guardrail,
     system_context: system,
+    browser_context: tenant.browserContext ?? "",
   };
 }
 
@@ -632,8 +635,9 @@ export function toolEvidence(message: LangflowMessage): AgentEvent[] {
 
 /**
  * Forms (show_form), proposed agent setups (propose_agent), proposed merges of remembered facts
- * (merge_memories), and offers to talk on a call (offer_call) for the member (validated, and
- * offers kept only where the member could take one, by the turn).
+ * (merge_memories), offers to talk on a call (offer_call), and the browser handed to the member
+ * (hand_browser, read from that tool alone) for the member (validated, and offers and hand-offs
+ * kept only where the member could take them, by the turn).
  */
 export function toolUi(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -645,6 +649,7 @@ export function toolUi(message: LangflowMessage): AgentEvent[] {
     else if (isRecord(result.proposal)) events.push({ type: "ui", block: { proposal: result.proposal } });
     else if (isRecord(result.memory_merge)) events.push({ type: "ui", block: { memory_merge: result.memory_merge } });
     else if (isRecord(result.offer_call)) events.push({ type: "ui", block: { offer_call: result.offer_call } });
+    else if (tool.name === "hand_browser" && isRecord(result.hand_browser)) events.push({ type: "ui", block: { hand_browser: result.hand_browser } });
   }
   return events;
 }

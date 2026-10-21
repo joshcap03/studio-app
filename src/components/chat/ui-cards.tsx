@@ -12,10 +12,11 @@ import { describeSchedule } from "@/lib/tasks/schedule";
 import type { AgentProposal, Attachment, ConnectionsState, MemoryMergeProposal, ProposalPicks, UiBlock, UiField, UiForm, UiOffer, UiResponse } from "@/lib/types";
 import { ATTACHMENT_TYPES, MEMORY_CATEGORY_LABELS } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
+import { HandoffCard } from "./browser-handoff";
 import { useCardDrafts, type FormDraft } from "./card-drafts";
 
 // Reusable cards for what the agent asks through its show_form, propose_agent, merge_memories,
-// and offer_call tools. They know nothing about any one flow (setup, a template): every field
+// offer_call, and hand_browser tools. They know nothing about any one flow (setup, a template): every field
 // kind and proposal item is generic, and any skill can use them. Rendered only from what the
 // backend reported; nothing here acts until the member clicks.
 
@@ -53,6 +54,16 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
               const { response } = await api.answerUi(conversationId, block.id, body);
               onResponse?.(messageId, block.id, response);
             }}
+          />
+        ) : block.kind === "browser" ? (
+          <HandoffCard
+            key={block.id}
+            handoff={block}
+            response={responses?.[block.id]}
+            conversationId={conversationId}
+            messageId={messageId}
+            onAnswer={onAnswer}
+            onResponse={onResponse}
           />
         ) : block.kind === "form" ? (
           <FormCard

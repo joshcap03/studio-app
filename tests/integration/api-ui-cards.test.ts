@@ -105,6 +105,8 @@ const keepForm = {
   fields: [{ kind: "file", id: "resume", label: "Résumé", required: true, accept: ["txt"], max: 1, keep: true }],
   submitLabel: "Send",
 };
+const handoffId = crypto.randomUUID();
+const handoff = { kind: "browser", id: handoffId, reason: "Sign in to your account.", site: "USPS" };
 const proposal = {
   kind: "proposal",
   id: proposalId,
@@ -132,7 +134,7 @@ beforeAll(async () => {
     role: "assistant",
     content: "",
     status: "complete",
-    ui: [form, proposal, keepForm, verdictForm],
+    ui: [form, proposal, keepForm, verdictForm, handoff],
   });
   expect(inserted.error).toBeNull();
 }, 60_000);
@@ -178,6 +180,26 @@ describe("ui card answers", () => {
     const sent = await alice.api.json(url(formId), "POST", { action: "submit" });
     expect(sent.status, await sent.clone().text()).toBe(200);
     expect((await alice.api.json(url(formId), "POST", { action: "submit" })).status).toBe(409);
+  });
+
+  it("hand the browser back, once, only on the card that handed it over", async () => {
+    expect((await bob.api.json(url(handoffId), "POST", { action: "handback" })).status).toBe(404);
+    expect((await alice.api.json(url(formId), "POST", { action: "handback" })).status).toBe(400);
+    const back = await alice.api.json(url(handoffId), "POST", { action: "handback" });
+    expect(back.status, await back.clone().text()).toBe(200);
+    expect(((await back.json()) as { response: { status: string } }).response.status).toBe("handed-back");
+    expect((await alice.api.json(url(handoffId), "POST", { action: "handback" })).status).toBe(409);
+  });
+
+  it("never give the browser to anyone else, and only on a tap from this site", async () => {
+    // No browser here (or none the QA server can reach): nothing to take over, for anyone.
+    for (const who of [alice, bob]) {
+      const res = await who.api.json(`/api/conversations/${conversation}/browser/control`, "POST");
+      expect(res.status).toBe(404);
+      expect(await res.text()).not.toMatch(/browserbase\.com/);
+    }
+    const crossSite = await fetch(`${APP}/api/conversations/${conversation}/browser/control`, { method: "POST", headers: { Origin: "https://evil.example" } });
+    expect([401, 403]).toContain(crossSite.status);
   });
 
   it("apply only the picked items of the stored proposal, with the member's edits, once", async () => {

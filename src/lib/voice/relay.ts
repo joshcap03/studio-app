@@ -169,6 +169,7 @@ export function cardLine(block: UiBlock): string {
   if (block.kind === "offer") return "";
   if (block.kind === "proposal") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Apply when it looks right.`;
   if (block.kind === "memory-merge") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Merge when it looks right.`;
+  if (block.kind === "browser") return `${sentence(plain(block.reason))} Tap Take over on screen, and Done when you're through.`;
   const intro = block.intro ? ` ${sentence(plain(block.intro))}` : "";
   const taps = block.fields.some((f) => f.kind === "file" || f.kind === "connect");
   return `${sentence(plain(block.title))}${intro} Tell me your answers${taps ? " (files and apps are taps)" : ""}, and say “send” when it's right.`;

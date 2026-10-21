@@ -181,6 +181,12 @@ describe("calls from anywhere", () => {
     expect(cardLine(offer)).toBe("");
   });
 
+  it("says the browser is theirs to take over with a tap", () => {
+    expect(cardLine({ kind: "browser", id: "h", reason: "Sign in to your USPS account", site: "USPS" })).toBe(
+      "Sign in to your USPS account. Tap Take over on screen, and Done when you're through.",
+    );
+  });
+
   it("reads a reply a call joins only when it waits on the member", () => {
     const pending = { id: "a", summary: "Send it", details: [] as [string, string][], status: "pending" as const, createdAt: 0 };
     expect(waitsOnMember(reply({ content: "Found two roles. Which first, Acme or Globex?" }))).toBe(true);

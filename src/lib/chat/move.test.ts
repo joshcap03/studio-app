@@ -22,6 +22,8 @@ describe("askOf", () => {
     expect(askOf(reply({ ui: [form] }))).toBe("form");
     expect(askOf(reply({ ui: [proposal] }))).toBe("proposal");
     expect(askOf(reply({ ui: [merge] }))).toBe("merge");
+    expect(askOf(reply({ ui: [{ kind: "browser", id: "h", reason: "Sign in." }] }))).toBe("browser");
+    expect(askOf(reply({ ui: [{ kind: "browser", id: "h", reason: "Sign in." }], uiResponse: { h: { status: "handed-back", at: 1 } } }))).toBeNull();
     expect(askOf(reply({ questions: [question] }))).toBe("question");
     // In the order shown, skipping what's answered and what asks nothing.
     expect(askOf(reply({ ui: [offer, merge, proposal], uiResponse: { g: { status: "merged", at: 1, merges: [], skipped: 0 } } }))).toBe("proposal");

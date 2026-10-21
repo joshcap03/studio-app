@@ -115,6 +115,15 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // A page that needs the member to sign in: the browser handed to them as a card (shown only
+    // where the app can reach a hosted browser; the turn drops it otherwise).
+    match: /\b(sign me in|take over the browser)\b/i,
+    steps: [
+      { kind: "text", text: "The label page needs you signed in, so it's your turn (mock)." },
+      { kind: "ui", block: { hand_browser: { reason: "Sign in to your account, then tap Done and I'll finish the label (mock).", site: "USPS" } } },
+    ],
+  },
+  {
     // A job that runs for over a minute with nothing new after it starts, so a call following it
     // asks whether to hang on or leave a voice note when it's done.
     match: /\b(takes a few minutes|very slow job)\b/i,

@@ -23,6 +23,7 @@ import {
   type UiBlock,
   type UiField,
   type UiForm,
+  type UiHandoff,
   type UiListPart,
   type UiOffer,
   type UiOption,
@@ -30,11 +31,12 @@ import {
   MAX_UI_BLOCKS,
 } from "@/lib/types";
 
-// Cards the agent asked to show through its show_form, propose_agent, and offer_call tools. None
-// changes anything: a form's answers go out as the member's next message, a proposal is applied
-// only when the member clicks Apply (src/app/api/conversations/[id]/ui/[blockId]), and an offer
-// to call starts one only when they tap Call. Agent output is loose, so anything unusable is
-// dropped rather than failing the whole card.
+// Cards the agent asked to show through its show_form, propose_agent, offer_call, and hand_browser
+// tools. None changes anything: a form's answers go out as the member's next message, a proposal
+// is applied only when the member clicks Apply (src/app/api/conversations/[id]/ui/[blockId]), an
+// offer to call starts one only when they tap Call, and the agent's browser is the member's only
+// once they tap Take over. Agent output is loose, so anything unusable is dropped rather than
+// failing the whole card.
 
 const line = (s: unknown, max: number) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const para = (s: unknown, max: number) =>
@@ -517,12 +519,24 @@ export function buildOffer(raw: Record<string, unknown>, id: string = crypto.ran
   return { kind: "offer", id, reason, ...(topic ? { topic } : {}) };
 }
 
-/** Validates one card the agent asked for (`{form}`, `{proposal}`, or `{offer_call}`). Null when nothing is usable. */
+/** The agent's browser, handed to the member: what they need to do there (required), and where. */
+export function buildHandoff(raw: Record<string, unknown>, id: string = crypto.randomUUID()): UiHandoff | null {
+  const reason = line(raw.reason, 200);
+  if (!reason) return null;
+  const site = line(raw.site, 40);
+  return { kind: "browser", id, reason, ...(site ? { site } : {}) };
+}
+
+/**
+ * Validates one card the agent asked for (`{form}`, `{proposal}`, `{offer_call}`, or
+ * `{hand_browser}`). Null when nothing is usable.
+ */
 export function buildUiBlock(raw: unknown, id: string = crypto.randomUUID()): UiBlock | null {
   if (!isRecord(raw)) return null;
   if (isRecord(raw.form)) return buildForm(raw.form, id);
   if (isRecord(raw.proposal)) return buildProposal(raw.proposal, id);
   if (isRecord(raw.offer_call)) return buildOffer(raw.offer_call, id);
+  if (isRecord(raw.hand_browser)) return buildHandoff(raw.hand_browser, id);
   return null;
 }
 
@@ -543,11 +557,23 @@ export function capUi(blocks: UiBlock[]): UiBlock[] {
  * old code across a deploy).
  */
 export function withoutOffers(messages: ChatMessage[]): ChatMessage[] {
+  return withoutKinds(messages, ["offer"]);
+}
+
+/**
+ * Messages as a page from before the agent could hand over its browser reads them: without
+ * those cards, or what the member did with one (the same reason as withoutOffers).
+ */
+export function withoutHandoffs(messages: ChatMessage[]): ChatMessage[] {
+  return withoutKinds(messages, ["browser"]);
+}
+
+function withoutKinds(messages: ChatMessage[], kinds: UiBlock["kind"][]): ChatMessage[] {
   return messages.map((m) => {
-    const offers = (m.ui ?? []).filter((b) => b.kind === "offer").map((b) => b.id);
-    if (!offers.length) return m;
-    const ui = m.ui!.filter((b) => b.kind !== "offer");
-    const uiResponse = m.uiResponse ? Object.fromEntries(Object.entries(m.uiResponse).filter(([id]) => !offers.includes(id))) : undefined;
+    const dropped = (m.ui ?? []).filter((b) => kinds.includes(b.kind)).map((b) => b.id);
+    if (!dropped.length) return m;
+    const ui = m.ui!.filter((b) => !kinds.includes(b.kind));
+    const uiResponse = m.uiResponse ? Object.fromEntries(Object.entries(m.uiResponse).filter(([id]) => !dropped.includes(id))) : undefined;
     return { ...m, ui, ...(uiResponse ? { uiResponse } : {}) };
   });
 }

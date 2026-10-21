@@ -600,10 +600,26 @@ export interface Question {
 /**
  * Cards the agent puts under a reply for the member to act on (see src/lib/chat/ui.ts): a form
  * to fill in, whose answers go out as the member's next message, a proposed setup for the
- * agent, which changes nothing until the member applies it, or an offer to talk it through on a
- * call, which asks nothing of them (the call starts only if they tap Call).
+ * agent, which changes nothing until the member applies it, an offer to talk it through on a
+ * call, which asks nothing of them (the call starts only if they tap Call), or the agent's
+ * browser handed to them for a step only they can do (signing in).
  */
-export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer;
+export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer | UiHandoff;
+
+/**
+ * The agent's browser, handed to the member (its hand_browser tool) for a step only they can do:
+ * signing in, a code sent to them, a check that wants a person. They take over with a tap and
+ * hand it back with another, which goes out as their next message. The agent never sees what
+ * they type there.
+ */
+export interface UiHandoff {
+  kind: "browser";
+  id: string;
+  /** What they need to do there, in one sentence, as the agent would say it. */
+  reason: string;
+  /** The site, in a few words (e.g. "USPS"). */
+  site?: string;
+}
 
 /** The agent's offer to talk something through on a call (its offer_call tool). It never rings anyone. */
 export interface UiOffer {
@@ -809,7 +825,9 @@ export type UiResponse =
   /** An offer to call, taken: the call that started from it (the member's own voice_sessions row). */
   | { status: "accepted"; at: number; sessionId: string }
   /** An offer to call, turned down ("Not now"): no more offers in that conversation. */
-  | { status: "declined"; at: number };
+  | { status: "declined"; at: number }
+  /** The agent's browser, handed back by the member after taking it over. */
+  | { status: "handed-back"; at: number };
 
 /** Cards one reply keeps (the latest ones); an offer to call is kept besides them (src/lib/chat/ui.ts capUi). */
 export const MAX_UI_BLOCKS = 2;
