@@ -57,7 +57,9 @@ raw/technical text.
 - `src/lib/memory.ts`: long-term memory in Supermemory, namespaced from the session: `ws_<workspace>`
   for an agent's shared facts, `u_<user>` for the person's own (shared by all their agents). Old
   per-workspace personal namespaces move into `u_<user>` on first use. The flow must not have its
-  own memory connection. `memory-merge.ts` tidies it: "Tidy up" on a Brain topic attaches that
+  own memory connection. Each run lists the newest facts the member may change by id (`recentMemories`),
+  and `remember` takes `replaces`, so a fact that changes or restates one takes its place
+  (`rememberReplacing`; the reply's Undo brings the old ones back) instead of piling up copies. `memory-merge.ts` tidies it: "Tidy up" on a Brain topic attaches that
   topic's tidy skill (`src/lib/skills/tidy.ts`, facts listed by id), the agent proposes merges with
   `merge_memories`, and the member merges what they pick (keeping pins and sources) or undoes it.
 - `src/lib/companion.ts`: who each agent is to one member (the "companion" preview). It starts as a

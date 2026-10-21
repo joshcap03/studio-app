@@ -178,8 +178,9 @@ interface ProposalProps {
 const quiet = "inline-flex h-6 items-center rounded-md px-1.5 text-[12.5px] font-medium text-fg-3 transition-colors hover:bg-hover hover:text-fg";
 
 /**
- * Something the agent remembered. Saved ones are a quiet line with Undo; one that couldn't be
- * saved asks the member instead.
+ * Something the agent remembered. Saved ones are a quiet line with Undo ("Updated" when it took
+ * the place of facts it restated, which Undo brings back); one that couldn't be saved asks the
+ * member instead.
  */
 export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
   const where = proposal.scope === "personal" ? " for you" : "";
@@ -193,7 +194,7 @@ export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
           <BookmarkPlus size={14} className="mt-[3px] shrink-0 text-fg-4" />
         )}
         <p className="min-w-0 flex-1 leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">
-          <span className="font-medium text-fg-2">{saved ? `Remembered${where}` : "Not remembered"}</span>
+          <span className="font-medium text-fg-2">{saved ? `${proposal.replaced?.length ? "Updated" : "Remembered"}${where}` : "Not remembered"}</span>
           <span className="mx-1.5 text-fg-4">·</span>
           <span className={saved ? undefined : "line-through"}>{proposal.content}</span>
         </p>
