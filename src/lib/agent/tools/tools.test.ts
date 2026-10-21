@@ -533,8 +533,10 @@ describe("interpretCalls", () => {
     const steps = interpretCalls([
       held("This changes something in the owner's accounts, so it needs their approval. Call take_action now with the same tool_name and arguments plus a one-sentence summary; don't reply first."),
       held("Running code needs the owner's approval every time, even just to read. Call take_action now with the same tool_name and arguments plus a one-sentence summary; don't reply first."),
+      held("Running code needs the owner's approval when it could change their accounts: it calls a changing app tool, uses proxy_execute or the environment, or hides what it runs (exec, eval, getattr, a slug built at runtime)."),
     ]);
     expect(steps.map((s) => [s.hidden, s.status, s.detail])).toEqual([
+      [true, "done", undefined],
       [true, "done", undefined],
       [true, "done", undefined],
     ]);
