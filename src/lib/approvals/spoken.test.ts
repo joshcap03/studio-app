@@ -69,8 +69,10 @@ describe("spokenApprovalFor: what may be approved by voice", () => {
   it("fails closed on anything it can't read back plainly", () => {
     expect(reason(undefined)).toBe("unsupported");
     expect(reason([])).toBe("unsupported");
-    // The browser can do anything; connecting apps and code stay taps.
-    expect(reason(one("act", { action: "click Buy" }))).toBe("unsupported");
+    // The browser can do anything: a step that pays is money, the rest stay taps, as do connecting apps and code.
+    expect(reason(one("act", { action: "click Buy" }))).toBe("money");
+    expect(reason(one("act", { action: "click the Place order button" }))).toBe("money");
+    expect(reason(one("act", { action: "click the Sign in button" }))).toBe("unsupported");
     expect(reason(one("composio_manage_connections", { toolkits: ["gmail"] }))).toBe("unsupported");
     expect(reason(one("composio_remote_workbench", { code: "send()" }))).toBe("unsupported");
     expect(reason(one("", null))).toBe("unsupported");

@@ -72,7 +72,15 @@ function shapeOf(slug: string): Shape | null {
 
 const tokens = (slug: string) => slug.split("_");
 
+// Words in a browser step's instruction that pay ("click Place order", "press Pay now").
+const BROWSER_MONEY_WORDS = new Set([...MONEY_WORDS, "SUBSCRIBE", "DONATE", "TIP", "CART", "BOOK", "RESERVE", "UPGRADE", "RENEW", "PAID", "PLACE"]);
+
 function moves(action: ApprovalAction): boolean {
+  if (action.tool === "act") {
+    // A step in the agent's browser pays when its instruction says so, whatever page it's on.
+    const words = JSON.stringify(action.arguments ?? "").toUpperCase().match(/[A-Z]+/g) ?? [];
+    return words.some((w) => BROWSER_MONEY_WORDS.has(w));
+  }
   return COMPOSIO_SLUG.test(action.tool) && (MONEY_TOOLKITS.test(action.tool) || tokens(action.tool).some((t) => MONEY_WORDS.has(t)));
 }
 

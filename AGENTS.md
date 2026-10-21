@@ -130,6 +130,14 @@ raw/technical text.
   On a call the member can watch the agent's browser, view only: `src/lib/browser-view.ts` keeps the
   conversation's sealed session id and takes screenshots server-side (the connection never leaves
   the server).
+- `src/lib/browser-fill.ts` + `src/lib/secrets/`: logins and cards for the agent's browser. The agent's
+  `request_secret` shows the secure card (`src/components/chat/secret-card.tsx`); the member picks a
+  saved one or types one, and the server types it into the conversation's browser over CDP
+  (`/api/conversations/<id>/secrets/<block>`): an https page only, a saved login only on its own site.
+  "Do it myself" takes the browser over (clicks, keys, and typing relayed by `…/browser/input`).
+  Saved ones (`credentials`, the person's, shared by their agents) are sealed with `CREDENTIALS_KEY`
+  and kept in Supabase Vault; a card's security code is never saved. Settings → Saved logins & cards
+  lists and removes them.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
@@ -185,6 +193,12 @@ raw/technical text.
   artifact parsing from free text. Mock output stays clearly labeled.
 - Secrets stay server-side in `src/lib/config.ts`; only `NEXT_PUBLIC_SUPABASE_*` reach the browser.
   The only provider credential the browser gets is a short-lived voice session token.
+- A member's password or card never reaches the agent: never in chat, a form, `messages`, cards'
+  responses, approvals, step details, Langflow, memory, or the voice front, and never logged. It goes
+  from the secure card to the server to the browser's CDP connection (or sealed into the store), and the
+  agent hears only what was filled. Card numbers are masked in tool output on both sides as a backstop.
+  The agent's browser is driven by the member only through server-relayed input; no connection or
+  debugger link reaches the page.
 - The voice front talks and is never a second agent. It may only reflect the member's words back,
   say what the worker reported (relay lines, the reply, card contents), ask them to clarify, and
   say a holding line. Anything else goes to the worker in the member's exact words (the

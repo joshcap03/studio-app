@@ -34,7 +34,7 @@ import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
  * What the member asked for. Skills and projects are named by id and loaded from their workspace.
  * `voiceSessionId`: the call words said on a call were said on, which counts only once it's
  * checked to be the member's own. `offers`: the page the reply streams to can show the agent's
- * offer to call (one from before offers can't). A decision `via` voice carries what the member was
+ * offer to call (one from before offers can't); `secrets`, its requests for a login or card. A decision `via` voice carries what the member was
  * heard to say and their call, and stands only once checked (src/lib/voice/approvals.ts).
  */
 export type RunInput = (
@@ -42,7 +42,7 @@ export type RunInput = (
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; via?: "tap" | "voice"; heard?: string; voiceSessionId?: string }
-) & { offers?: boolean }
+) & { offers?: boolean; secrets?: boolean }
   /** Run one of the member's tasks: its brief (and skill) is sent as a message no one typed. */
   | { kind: "task"; taskId: string; runId: string | null };
 
@@ -183,6 +183,7 @@ export async function buildTurnDeps(
     callEnded: (callId) => callEnded(tenant, callId),
     offerCalls,
     offersShown: shown,
+    secretsShown: asked.kind === "task" || asked.secrets === true,
     loadAttachment: (attachment) => readAttachment(tenant, attachment),
     loadSkill,
     // A plan saves where the work here keeps it: the conversation's task, the owner's setup

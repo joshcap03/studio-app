@@ -608,7 +608,26 @@ export interface Question {
  * agent, which changes nothing until the member applies it, or an offer to talk it through on a
  * call, which asks nothing of them (the call starts only if they tap Call).
  */
-export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer;
+export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer | UiSecret;
+
+/**
+ * The agent asking for a login or card at its browser (its request_secret tool). It carries no
+ * secret: the member picks a saved one or types one on the card, and the app types it into the
+ * conversation's browser itself (src/lib/browser-fill.ts). The agent hears only what was filled.
+ */
+export interface UiSecret {
+  kind: "secret";
+  id: string;
+  secret: "login" | "card";
+  /** Why the agent needs it, in one sentence. */
+  reason: string;
+  /** The username or email the site seems to expect, as the agent read it. */
+  usernameHint?: string;
+}
+
+/** The parts of a login or card the app can fill into a page. */
+export const SECRET_FIELDS = ["username", "password", "card_number", "card_name", "card_expiry", "card_code"] as const;
+export type SecretField = (typeof SECRET_FIELDS)[number];
 
 /** The agent's offer to talk something through on a call (its offer_call tool). It never rings anyone. */
 export interface UiOffer {
@@ -814,7 +833,12 @@ export type UiResponse =
   /** An offer to call, taken: the call that started from it (the member's own voice_sessions row). */
   | { status: "accepted"; at: number; sessionId: string }
   /** An offer to call, turned down ("Not now"): no more offers in that conversation. */
-  | { status: "declined"; at: number };
+  | { status: "declined"; at: number }
+  /**
+   * A login or card request, done: filled into the page by the app (`fields`, and whether it was
+   * `saved` for next time), or by the member themself taking over the browser. Never the values.
+   */
+  | { status: "filled"; at: number; site: string; via: "card" | "takeover"; fields: SecretField[]; label?: string; saved?: boolean };
 
 /** Cards one reply keeps (the latest ones); an offer to call is kept besides them (src/lib/chat/ui.ts capUi). */
 export const MAX_UI_BLOCKS = 2;

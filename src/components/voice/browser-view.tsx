@@ -9,11 +9,11 @@ import { useEffect, useRef, useState } from "react";
 
 const EVERY_MS = 2000;
 
-type State = { kind: "waiting" } | { kind: "showing"; url: string; at: number } | { kind: "gone" };
+export type BrowserFrames = { kind: "waiting" } | { kind: "showing"; url: string; at: number } | { kind: "gone" };
 
-/** Pictures of the conversation's browser while `active`; nothing at all until there's one to show. */
-export function BrowserView({ conversationId, active }: { conversationId: string; active: boolean }) {
-  const [state, setState] = useState<State>({ kind: "waiting" });
+/** Pictures of the conversation's browser, every `everyMs` while `active` and the page is visible. */
+export function useBrowserFrames(conversationId: string, active: boolean, everyMs = EVERY_MS): BrowserFrames {
+  const [state, setState] = useState<BrowserFrames>({ kind: "waiting" });
   const url = useRef<string | null>(null);
 
   useEffect(() => {
@@ -39,14 +39,14 @@ export function BrowserView({ conversationId, active }: { conversationId: string
           // a missed picture; the next one may come
         }
       }
-      timer = setTimeout(() => void look(), EVERY_MS);
+      timer = setTimeout(() => void look(), everyMs);
     };
     void look();
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [active, conversationId]);
+  }, [active, conversationId, everyMs]);
 
   useEffect(
     () => () => {
@@ -54,6 +54,12 @@ export function BrowserView({ conversationId, active }: { conversationId: string
     },
     [],
   );
+  return state;
+}
+
+/** Pictures of the conversation's browser while `active`; nothing at all until there's one to show. */
+export function BrowserView({ conversationId, active }: { conversationId: string; active: boolean }) {
+  const state = useBrowserFrames(conversationId, active);
 
   if (state.kind === "waiting") return null;
   return (

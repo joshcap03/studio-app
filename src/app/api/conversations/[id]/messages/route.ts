@@ -26,6 +26,8 @@ const text = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 // The page asking can show the agent's offer to call. One from before offers says nothing, and
 // gets none: it would break on the card.
 const offers = z.boolean().optional();
+// Likewise its requests for a login or card.
+const secrets = z.boolean().optional();
 const body = z.discriminatedUnion("kind", [
   z
     .object({
@@ -46,10 +48,11 @@ const body = z.discriminatedUnion("kind", [
       // the caller's own call in this agent (src/lib/chat/run.ts).
       voiceSessionId: z.uuid().optional(),
       offers,
+      secrets,
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
-  z.object({ kind: z.literal("retry"), offers }),
-  z.object({ kind: z.literal("edit"), messageId: z.uuid(), text, offers }),
+  z.object({ kind: z.literal("retry"), offers, secrets }),
+  z.object({ kind: z.literal("edit"), messageId: z.uuid(), text, offers, secrets }),
   z
     .object({
       kind: z.literal("decide"),
@@ -61,6 +64,7 @@ const body = z.discriminatedUnion("kind", [
       heard: z.string().trim().min(1).max(500).optional(),
       voiceSessionId: z.uuid().optional(),
       offers,
+      secrets,
     })
     .refine((b) => (b.via === "voice") === (b.heard !== undefined && b.voiceSessionId !== undefined), "A spoken decision needs the words heard and the call."),
 ]);

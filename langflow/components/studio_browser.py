@@ -77,8 +77,30 @@ def scrub_value(value):
     return value
 
 
+CARD_LIKE = re.compile(r"\b[0-9](?:[ -]?[0-9]){12,18}\b")
+
+
+def luhn(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def mask_cards(text: str) -> str:
+    """Card numbers (13-19 digits that pass Luhn) cut to their last four. Studio fills cards into
+    the page itself so the agent never sees them; this keeps one off the page from reaching it."""
+    def mask(m):
+        digits = re.sub(r"[ -]", "", m.group(0))
+        return f"•••• {digits[-4:]}" if luhn(digits) else m.group(0)
+    return CARD_LIKE.sub(mask, text)
+
+
 def scrub_text(text: str) -> str:
-    return SIGNING_KEY.sub("signingKey=[removed]", SIGNED_URL.sub("[removed]", text))
+    return mask_cards(SIGNING_KEY.sub("signingKey=[removed]", SIGNED_URL.sub("[removed]", text)))
 
 
 def clean_text(text: str) -> str:

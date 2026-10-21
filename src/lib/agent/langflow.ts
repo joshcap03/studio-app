@@ -645,7 +645,8 @@ export function toolEvidence(message: LangflowMessage): AgentEvent[] {
 
 /**
  * Forms (show_form), proposed agent setups (propose_agent), proposed merges of remembered facts
- * (merge_memories), and offers to talk on a call (offer_call) for the member (validated, and
+ * (merge_memories), offers to talk on a call (offer_call), and requests for a login or card
+ * (request_secret) for the member (validated, and
  * offers kept only where the member could take one, by the turn).
  */
 export function toolUi(message: LangflowMessage): AgentEvent[] {
@@ -658,6 +659,7 @@ export function toolUi(message: LangflowMessage): AgentEvent[] {
     else if (isRecord(result.proposal)) events.push({ type: "ui", block: { proposal: result.proposal } });
     else if (isRecord(result.memory_merge)) events.push({ type: "ui", block: { memory_merge: result.memory_merge } });
     else if (isRecord(result.offer_call)) events.push({ type: "ui", block: { offer_call: result.offer_call } });
+    else if (isRecord(result.secret_request)) events.push({ type: "ui", block: { secret_request: result.secret_request } });
   }
   return events;
 }

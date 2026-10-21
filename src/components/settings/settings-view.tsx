@@ -5,6 +5,7 @@ import { api } from "@/lib/client/api";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
 import type { AccountProfile } from "@/lib/tenant-core";
 import { ConnectionsList } from "./connections-list";
+import { SavedCredentials } from "./saved-credentials";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "./section";
 
 interface Props {
@@ -33,6 +34,9 @@ export function SettingsView({ email, guardrail, account }: Props) {
         description="Apps your agents can use for you. Every one of your agents shares these. It asks before changing anything, and only you can use your connections."
       >
         <ConnectionsList returnTo="/settings" />
+      </Section>
+      <Section title="Saved logins & cards" description="Your agents use these in their browser only when you pick one. They never see them.">
+        <SavedCredentials />
       </Section>
       <NotificationsSection />
       <Section title="Account">

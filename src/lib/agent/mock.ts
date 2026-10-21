@@ -106,6 +106,25 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // The agent at a sign-in or payment form in its browser, asking for the login or card on the
+    // secure card (the app fills it in; the agent never sees it).
+    match: /\bsign me in\b/i,
+    steps: [
+      { kind: "text", text: "I'm on the page with the form open (mock)." },
+      {
+        kind: "ui",
+        block: { secret_request: { kind: "login", reason: "To sign in and pull your latest invoice (mock).", username_hint: "" } },
+      },
+    ],
+  },
+  {
+    match: /\bpay with my card\b/i,
+    steps: [
+      { kind: "text", text: "I'm at checkout (mock)." },
+      { kind: "ui", block: { secret_request: { kind: "card", reason: "To pay for the order in your cart (mock)." } } },
+    ],
+  },
+  {
     // A reply with an offer to talk it through on a call; the card shows only to members who
     // could take one (the turn drops it otherwise).
     match: /\b(hop on a call|offer (me )?a call)\b/i,
