@@ -4,7 +4,7 @@ import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import type { MemoryProposal } from "@/lib/types";
-import { forget, memoryEnabled, remember } from "@/lib/memory";
+import { forget, memoryEnabled, remember, unmergeMemories } from "@/lib/memory";
 
 type Context = { params: Promise<{ id: string; proposalId: string }> };
 
@@ -14,8 +14,8 @@ const body = z.object({
 });
 
 /**
- * Answers a memory the agent picked up in one of the caller's replies: undo one it saved,
- * or save (again) or dismiss one that isn't saved. What gets saved is the stored text, not
+ * Answers a memory the agent picked up in one of the caller's replies: undo one it saved (and
+ * bring back any facts it replaced), or save (again) or dismiss one that isn't saved. What gets saved is the stored text, not
  * text from the request.
  */
 export async function POST(request: NextRequest, { params }: Context) {
@@ -36,8 +36,10 @@ export async function POST(request: NextRequest, { params }: Context) {
     let updated: MemoryProposal;
     if (input.decision === "undo") {
       if (proposal.status !== "saved") return jsonError(409, "This isn't saved.");
-      if (proposal.memoryId) await forget(auth.value, proposal.memoryId);
-      updated = { ...proposal, status: "dismissed", memoryId: undefined };
+      // A fact that replaced others brings them back as it goes.
+      if (proposal.memoryId && proposal.replaced?.length) await unmergeMemories(auth.value, proposal.memoryId, proposal.replaced);
+      else if (proposal.memoryId) await forget(auth.value, proposal.memoryId);
+      updated = { ...proposal, status: "dismissed", memoryId: undefined, replaced: undefined };
     } else {
       if (proposal.status === "saved") return jsonError(409, "This is already saved.");
       if (input.decision === "save") {

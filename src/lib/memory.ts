@@ -408,6 +408,101 @@ function fail(status: number, message: string): never {
  * in one scope and each one the caller may change (documentToModify). Returns null, changing
  * nothing, when any of them is gone.
  */
+/**
+ * What these facts were, for saving them again on Undo, after checking each is still there and
+ * the caller may change it (documentToModify). Null when any is gone.
+ */
+async function originalsOf(tenant: Tenant, parsed: { id: string; scope: Scope; where: Where; documentId: string }[]): Promise<MergedOriginal[] | null> {
+  const docs = await Promise.all(parsed.map((p) => documentToModify(tenant, p.where, p.documentId)));
+  if (docs.some((d) => !d)) return null;
+  return docs.map((doc, i) => {
+    const m = toMemory(tenant, parsed[i].where, doc!);
+    const createdBy = typeof doc!.metadata?.createdBy === "string" ? doc!.metadata.createdBy : tenant.userId;
+    return { id: parsed[i].id, content: m.content, scope: parsed[i].scope, category: m.category, pinned: m.pinned, source: m.source, createdBy, savedAt: m.createdAt };
+  });
+}
+
+async function deleteParsed(tenant: Tenant, parsed: { where: Where; documentId: string }[]): Promise<void> {
+  const byWhere = new Map<Where, string[]>();
+  for (const p of parsed) byWhere.set(p.where, [...(byWhere.get(p.where) ?? []), p.documentId]);
+  for (const [where, documentIds] of byWhere) await call(tenant, where, "document", { method: "DELETE", body: { ids: documentIds } });
+}
+
+/** The most facts one save may replace. */
+export const MAX_REPLACED = 6;
+
+/**
+ * Saves a fact the agent learned, in place of the facts it says this one updates or restates
+ * (`replaces`), so memory keeps one current version instead of growing a copy each time. Only
+ * facts in the same scope that the caller may change are replaced; the rest are left alone, and
+ * a fact that's gone is skipped. The new fact is saved first (pinned if a replaced one was), then
+ * the replaced ones are removed, and they're returned so an Undo can bring them back.
+ */
+export async function rememberReplacing(
+  tenant: Tenant,
+  content: string,
+  scope: Scope,
+  options: RememberOptions & { replaces?: string[] } = {},
+): Promise<{ memory: Memory; replaced: MergedOriginal[] }> {
+  const candidates = [...new Set(options.replaces ?? [])]
+    .slice(0, MAX_REPLACED)
+    .flatMap((raw) => {
+      // An id without its scope (the agent sometimes drops it) is read as one in this fact's scope.
+      const id = parseMemoryId(raw) ? raw : `${scope}:${raw}`;
+      const p = parseMemoryId(id);
+      return p && p.scope === scope ? [{ id, ...p }] : [];
+    });
+  const found = await Promise.all(
+    candidates.map((p) =>
+      originalsOf(tenant, [p]).then(
+        (o) => o?.[0] ?? null,
+        (error: { status?: number }) => {
+          if (error?.status === 403) return null;
+          throw error;
+        },
+      ),
+    ),
+  );
+  const replaced = found.filter((o): o is MergedOriginal => Boolean(o));
+  const memory = await remember(tenant, content, scope, {
+    ...options,
+    category: options.category ?? (replaced.length ? mostCommonCategory(replaced.map((o) => o.category)) : undefined),
+    pinned: options.pinned || replaced.some((o) => o.pinned),
+  });
+  if (replaced.length) await deleteParsed(tenant, candidates.filter((p) => replaced.some((o) => o.id === p.id)));
+  return { memory, replaced };
+}
+
+/** How many recently saved facts each run lists with their ids, within this much text. */
+const RECENT_FACTS = 25;
+const RECENT_BUDGET = 4_000;
+
+/**
+ * The newest facts the caller may change (their own, or any shared one for an owner), with ids,
+ * so the agent can update one with remember's `replaces` instead of saving it again. Never
+ * blocks a run: if memory is slow or down, it's empty.
+ */
+export async function recentMemories(tenant: Tenant): Promise<{ id: string; content: string }[]> {
+  if (!memoryEnabled()) return [];
+  const wheres: Scope[] = ["workspace", "personal"];
+  const lists = await Promise.all(
+    wheres.map((where) =>
+      listScope(tenant, where, RECENT_FACTS, RECALL_TIMEOUT_MS).catch((error) => {
+        console.error("[memory] couldn't list recent facts", error);
+        return [] as Memory[];
+      }),
+    ),
+  );
+  let used = 0;
+  return lists
+    .flat()
+    .filter((m) => m.mine || tenant.workspace.role === "owner")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, RECENT_FACTS)
+    .filter((m) => (used += m.content.length) <= RECENT_BUDGET)
+    .map((m) => ({ id: m.id, content: m.content }));
+}
+
 export async function mergeMemories(
   tenant: Tenant,
   ids: string[],
@@ -418,13 +513,9 @@ export async function mergeMemories(
   if (parsed.length < 2 || parsed.some((p) => !p.where)) fail(400, "Pick at least two facts to merge.");
   const scope = parsed[0].scope!;
   if (parsed.some((p) => p.scope !== scope)) fail(400, "Facts only you see merge only with each other.");
-  const docs = await Promise.all(parsed.map((p) => documentToModify(tenant, p.where!, p.documentId!)));
-  if (docs.some((d) => !d)) return null;
-  const originals: MergedOriginal[] = docs.map((doc, i) => {
-    const m = toMemory(tenant, parsed[i].where!, doc!);
-    const createdBy = typeof doc!.metadata?.createdBy === "string" ? doc!.metadata.createdBy : tenant.userId;
-    return { id: parsed[i].id, content: m.content, scope, category: m.category, pinned: m.pinned, source: m.source, createdBy, savedAt: m.createdAt };
-  });
+  const valid = parsed as { id: string; scope: Scope; where: Where; documentId: string }[];
+  const originals = await originalsOf(tenant, valid);
+  if (!originals) return null;
   const newest = [...originals].sort((a, b) => b.savedAt - a.savedAt);
   const authors = new Set(originals.map((o) => o.createdBy));
   const createdBy = authors.size === 1 ? originals[0].createdBy : tenant.userId;
@@ -435,9 +526,7 @@ export async function mergeMemories(
     createdBy,
     savedAt: newest[0].savedAt || undefined,
   });
-  const byWhere = new Map<Where, string[]>();
-  for (const p of parsed) byWhere.set(p.where!, [...(byWhere.get(p.where!) ?? []), p.documentId!]);
-  for (const [where, documentIds] of byWhere) await call(tenant, where, "document", { method: "DELETE", body: { ids: documentIds } });
+  await deleteParsed(tenant, valid);
   return { memory: { ...memory, mine: scope === "personal" || createdBy === tenant.userId }, originals };
 }
 

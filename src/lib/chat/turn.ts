@@ -24,6 +24,7 @@ import {
   type ConversationSummary,
   type Journey,
   type MemoryCategory,
+  type MergedOriginal,
   type MemoryProposal,
   type MessageOrigin,
   RUN_OUTCOMES,
@@ -108,8 +109,8 @@ export interface TurnDeps {
   remember?: (
     content: string,
     scope: MemoryProposal["scope"],
-    options: { category?: MemoryCategory; source: { conversationId: string; messageId: string } },
-  ) => Promise<string>;
+    options: { category?: MemoryCategory; source: { conversationId: string; messageId: string }; replaces?: string[] },
+  ) => Promise<{ id: string; replaced?: MergedOriginal[] }>;
   /**
    * Claims one run against the member's limits, once the turn is known to be valid, for the
    * reply it will write. Returns why it was refused, or null to go ahead.
@@ -761,10 +762,16 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               }
               // Saved straight away (the member can undo it); the reply keeps streaming meanwhile.
               // If saving fails, it stays a suggestion the member can save themselves.
+              // A fact that updates ones it was shown replaces them (Undo brings them back).
+              const options = {
+                category: event.category,
+                source: { conversationId, messageId: assistant.id },
+                ...(event.replaces?.length ? { replaces: event.replaces } : {}),
+              };
               remembering.push(
-                deps.remember(text, event.scope, { category: event.category, source: { conversationId, messageId: assistant.id } }).then(
-                  (memoryId) => {
-                    const saved: MemoryProposal = { ...proposal, status: "saved", memoryId };
+                deps.remember(text, event.scope, options).then(
+                  ({ id: memoryId, replaced }) => {
+                    const saved: MemoryProposal = { ...proposal, status: "saved", memoryId, ...(replaced?.length ? { replaced } : {}) };
                     proposals[proposals.findIndex((p) => p.id === proposal.id)] = saved;
                     send({ type: "memory-proposal", proposal: saved });
                   },

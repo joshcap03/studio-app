@@ -4,7 +4,7 @@ import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
 import { libraryContextFor } from "@/lib/library";
-import { recall } from "@/lib/memory";
+import { recall, recentMemories } from "@/lib/memory";
 import { taskContextFor } from "@/lib/tasks/agent";
 import { listRecords } from "@/lib/tasks/records";
 import { templateById } from "@/lib/templates";
@@ -164,9 +164,10 @@ export async function buildAgentContext(
   { setupRun = false }: { setupRun?: boolean } = {},
 ): Promise<AgentTenantContext> {
   const loading = getSettings(tenant);
-  const [settings, memories, guardrail, tasks, bar, self, library] = await Promise.all([
+  const [settings, memories, recent, guardrail, tasks, bar, self, library] = await Promise.all([
     loading,
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
+    recentMemories(tenant),
     guardrailForRun(tenant, conversationId),
     // A run goes ahead without its task context rather than failing over it.
     taskContextFor(tenant, conversationId).catch((e) => {
@@ -193,6 +194,7 @@ export async function buildAgentContext(
     profile: settings.profile,
     agentInstructions: settings.agentInstructions,
     memories,
+    ...(recent.length ? { recentMemories: recent } : {}),
     guardrail,
     ...tasks,
     ...(setup ? { plan: null } : {}),

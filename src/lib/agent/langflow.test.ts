@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalActions, buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { approvalActions, buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -1111,6 +1111,31 @@ describe("Langflow approvals", () => {
     expect(events.filter((e) => e.type === "memory-proposal")).toEqual([{ type: "memory-proposal", content: "Main supplier is Acme Textiles.", scope: "workspace", category: "suppliers" }]);
     const step = events.find((e) => e.type === "activity" && e.id === "msg-1:0");
     expect(step).toMatchObject({ hidden: true, app: "memory" });
+  });
+
+  it("passes on the facts a remembered one replaces, by id", () => {
+    const tool = (proposal: unknown) => ({
+      type: "tool_use",
+      name: "remember",
+      tool_input: {},
+      output: { type: "tool", tool_call_id: "c1", content: JSON.stringify({ memory_proposal: proposal }) },
+      error: null,
+    });
+    const message = bot("", [
+      tool({ content: "Auto-print is cut for now.", scope: "workspace", category: "policies", replaces: ["[workspace:a1]", "workspace:a1", " workspace:b2 ", 7, ""] }),
+      tool({ content: "Prefers short replies.", scope: "personal", replaces: "workspace:a1" }),
+    ]) as never;
+    expect(toolMemoryProposals(message)).toEqual([
+      { type: "memory-proposal", content: "Auto-print is cut for now.", scope: "workspace", category: "policies", replaces: ["workspace:a1", "workspace:b2"] },
+      { type: "memory-proposal", content: "Prefers short replies.", scope: "personal", category: "other" },
+    ]);
+  });
+
+  it("lists the facts it saved most recently by id, so it updates one rather than saving a copy", () => {
+    const system = templateValues({ ...tenantA, recentMemories: [{ id: "workspace:a1", content: "Labels print automatically." }] }).system_context;
+    expect(system).toContain("- [workspace:a1] Labels print automatically.");
+    expect(system).toContain("its id in replaces");
+    expect(templateValues({ ...tenantA, recentMemories: [] }).system_context).not.toContain("Facts you saved most recently");
   });
 
   it("passes on a timeline only from structured report_timeline output", async () => {

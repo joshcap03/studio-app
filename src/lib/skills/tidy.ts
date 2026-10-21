@@ -30,7 +30,8 @@ export function tidyRequest(category: MemoryCategory): string {
 
 const RULES = `Tidy up what this agent remembers in one topic: combine facts that overlap or repeat into fewer, clearer ones, and propose that with merge_memories. Change nothing else.
 - Merge facts that say the same thing, or that are about the same specific subject and read better as one (for example, three facts each naming a few organizations that count as top tier become one fact naming them all). Leave a fact that stands on its own alone; never merge just to make the list shorter.
-- A merged fact keeps every detail of the facts it replaces: names, numbers, conditions, exceptions, and who or what it's about. Never drop, soften, or add a detail. If two facts disagree, keep the newer one's version (facts are listed newest first) and say so in your reply.
+- Merge a fact with the newer ones that change, cancel, or restate it (a plan revised, something cut or decided since, the same point said again in other words), so one fact says what's true now.
+- A merged fact keeps every detail of the facts it replaces that's still true: names, numbers, conditions, exceptions, and who or what it's about. Never soften or add a detail. Where facts disagree, the newer one's version wins (facts are listed newest first); drop only what a newer fact overrides, and name what you dropped in your reply.
 - Write each merged fact as one or two plain, self-contained sentences, at most 500 characters. Split a subject into two merges rather than writing a long one.
 - Shared facts merge only with shared facts, and facts only the member sees only with each other.
 - Name facts only by their ids below, exactly as written, without the brackets. Each fact goes in one merge at most.

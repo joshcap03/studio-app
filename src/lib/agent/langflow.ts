@@ -97,6 +97,14 @@ const TRACKER_CHARS = 5000;
  * no tool: a flow from before offer_call has none, and the instructions that come with the tool
  * say when to use it.
  */
+/** The facts the agent saved most recently, by id, so a change updates one instead of adding another. */
+function recentMemoriesContext(facts: { id: string; content: string }[]): string {
+  return [
+    "Facts you saved most recently, newest first. When something you'd remember changes, corrects, or restates one of these, call remember with the whole current version and its id in replaces (several ids when it sums up several), so there's one fact, not another copy. If one already says it, don't remember it again.",
+    ...facts.map((f) => `- [${f.id}] ${f.content}`),
+  ].join("\n");
+}
+
 const CALLS_CONTEXT = "The member can also talk this through with you on a call; it's theirs to start.";
 
 export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPLATE_VARIABLES)[number], string> {
@@ -123,6 +131,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.library?.length && libraryContext(tenant.library),
     tenant.bar && barContext(tenant.bar),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
+    tenant.recentMemories?.length && recentMemoriesContext(tenant.recentMemories),
     (tenant.profile.trim() || tenant.account?.about.trim() || memories) && BACKGROUND_ONLY,
   ]
     .filter(Boolean)
@@ -547,7 +556,7 @@ export function toolArtifacts(message: LangflowMessage): AgentEvent[] {
 
 /**
  * Memory suggestions come only from tool output that declares
- * `{ "memory_proposal": { "content", "scope" } }` (the Studio gateway's remember tool).
+ * `{ "memory_proposal": { "content", "scope", "replaces"? } }` (the Studio gateway's remember tool).
  */
 export function toolMemoryProposals(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
@@ -557,11 +566,15 @@ export function toolMemoryProposals(message: LangflowMessage): AgentEvent[] {
     const proposal = isRecord(result) && isRecord(result.memory_proposal) ? result.memory_proposal : undefined;
     const content = typeof proposal?.content === "string" ? proposal.content.replace(/\s+/g, " ").trim() : "";
     if (!content || events.some((e) => e.type === "memory-proposal" && e.content === content)) continue;
+    const replaces = Array.isArray(proposal?.replaces)
+      ? [...new Set(proposal.replaces.flatMap((id) => (typeof id === "string" && id.trim() ? [id.trim().replace(/^\[|\]$/g, "")] : [])))].slice(0, 6)
+      : [];
     events.push({
       type: "memory-proposal",
       content,
       scope: proposal?.scope === "personal" ? "personal" : "workspace",
       category: toMemoryCategory(proposal?.category),
+      ...(replaces.length ? { replaces } : {}),
     });
   }
   return events;

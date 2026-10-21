@@ -4,12 +4,22 @@ import { MAX_QUESTION_OPTIONS, MAX_QUESTIONS, type Question } from "@/lib/types"
 // Multiple-choice questions the agent asked through its ask_user tool. They change nothing:
 // the member's pick is sent as their next message, like anything they'd type.
 
-const text = (max: number) => z.string().transform((s) => s.replace(/\s+/g, " ").trim().slice(0, max));
+// Over the cap, cut at a word and mark it, never mid-word: the card is the only place the
+// question is shown (the reply doesn't repeat it).
+export function clip(s: string, max: number): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, "") + "…";
+}
+
+const text = (max: number) => z.string().transform((s) => clip(s, max));
 
 const rawSchema = z
   .array(
     z.object({
-      question: text(300),
+      question: text(1000),
       header: text(30).optional().catch(undefined),
       options: z
         .array(

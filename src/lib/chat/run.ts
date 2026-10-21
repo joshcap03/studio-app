@@ -9,7 +9,7 @@ import { getCompanion, refreshCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
 import { fileArtifact } from "@/lib/library";
-import { memoryEnabled, recallQuery, remember } from "@/lib/memory";
+import { memoryEnabled, recallQuery, rememberReplacing } from "@/lib/memory";
 import { resolveMergeProposal } from "@/lib/memory-merge";
 import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
@@ -165,7 +165,12 @@ export async function buildTurnDeps(
       ...(offerCalls ? { calls: true } : {}),
     },
     projectFiles: files,
-    remember: memoryEnabled() ? async (content, scope, options) => (await remember(tenant, content, scope, options)).id : undefined,
+    remember: memoryEnabled()
+      ? async (content, scope, options) => {
+          const { memory, replaced } = await rememberReplacing(tenant, content, scope, options);
+          return { id: memory.id, replaced };
+        }
+      : undefined,
     resolveMerge: memoryEnabled() ? (raw) => resolveMergeProposal(tenant, raw) : undefined,
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
