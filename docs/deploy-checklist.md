@@ -66,6 +66,8 @@ Do these in order (step 7, the background worker, can come later). `APP_URL` is 
   | `SUPERMEMORY_API_KEY` | Supermemory key |
   | `LANGSMITH_API_KEY` | optional; the key of the LangSmith workspace Langflow traces to. Reply ratings then show on each run's trace as `user_rating` feedback |
   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional; push notifications when a task finishes or needs approval while the member is away. Make the pair once with `npx web-push generate-vapid-keys` (changing it later drops every device's subscription); subject is `mailto:you@yourdomain` |
+  | `BROWSERBASE_API_KEY` | optional; the Browserbase project the flow's Studio Browser uses. Lets members watch the agent's browser on a call, fill a login or card into it, and take it over |
+  | `CREDENTIALS_KEY` | optional; 32 random bytes, base64 (`openssl rand -base64 32`). Seals the logins and cards members save. Set it once: changing or losing it loses every saved one |
   | `AGENT_LIVE_WORKSPACES` | `*` |
   | `LIMIT_RUNS_SERVICE_PER_DAY` | daily cap across all workspaces, e.g. `500` |
   | `LIMIT_RUNS_PER_MINUTE`, `LIMIT_RUNS_PER_WORKSPACE_PER_DAY`, `LIMIT_CONCURRENT_RUNS`, `LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY` | optional; defaults are in `.env.example` |

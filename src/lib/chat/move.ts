@@ -44,7 +44,8 @@ export function askOf(message: Pick<ChatMessage, "approvals" | "ui" | "uiRespons
   if (message.approvals?.some((a) => a.status === "pending")) return "approval";
   for (const block of message.ui ?? []) {
     if (message.uiResponse?.[block.id]) continue;
-    if (block.kind === "form") return "form";
+    // A login or card to fill in is a card they fill in, like a form.
+    if (block.kind === "form" || block.kind === "secret") return "form";
     if (block.kind === "proposal") return "proposal";
     if (block.kind === "memory-merge") return "merge";
   }

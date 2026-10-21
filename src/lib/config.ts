@@ -65,6 +65,11 @@ const schema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   /** The same Browserbase project the flow's Studio Browser uses; turns on watching the agent's browser on a call. */
   BROWSERBASE_API_KEY: z.string().optional(),
+  /** Seals saved logins and cards (src/lib/secrets): 32 random bytes, base64. Unset means nothing can be saved. */
+  CREDENTIALS_KEY: z
+    .string()
+    .optional()
+    .refine((v) => !v?.trim() || Buffer.from(v.trim(), "base64").length === 32, "must be 32 bytes, base64"),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().regex(/^(mailto:|https:)/, "must be a mailto: or https: URL").optional(),
 
@@ -137,8 +142,10 @@ export interface AppConfig {
   langsmith?: { apiKey: string; endpoint: string };
   /** Push notifications. Unset means members can't turn them on. */
   push?: { publicKey: string; privateKey: string; subject: string };
-  /** Watching the agent's browser (view only) on a call. Unset means it's off. */
+  /** The agent's browser: watching it, filling a login or card into it, taking it over. Unset means it's off. */
   browser?: { apiKey: string };
+  /** The key saved logins and cards are sealed with. Unset means members can fill but not save. */
+  credentials?: { key: Buffer };
   limits: {
     runsPerMinute: number;
     runsPerWorkspacePerDay: number;
@@ -222,6 +229,7 @@ export function getConfig(): AppConfig {
     supermemory: env.SUPERMEMORY_API_KEY ? { apiKey: env.SUPERMEMORY_API_KEY, baseUrl: env.SUPERMEMORY_BASE_URL } : undefined,
     langsmith: env.LANGSMITH_API_KEY ? { apiKey: env.LANGSMITH_API_KEY, endpoint: env.LANGSMITH_ENDPOINT } : undefined,
     browser: env.BROWSERBASE_API_KEY?.trim() ? { apiKey: env.BROWSERBASE_API_KEY.trim() } : undefined,
+    credentials: env.CREDENTIALS_KEY?.trim() ? { key: Buffer.from(env.CREDENTIALS_KEY.trim(), "base64") } : undefined,
     push:
       env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY
         ? { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT ?? "mailto:notifications@example.com" }

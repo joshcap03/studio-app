@@ -177,6 +177,11 @@ if (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
   warn("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY", "not set; members can't turn on notifications (npx web-push generate-vapid-keys)");
 }
 
+// Saved logins and cards for the agent's browser (src/lib/secrets).
+if (!env.CREDENTIALS_KEY) warn("CREDENTIALS_KEY", "not set; members can fill a login or card into the agent's browser but not save it (openssl rand -base64 32)");
+else if (Buffer.from(env.CREDENTIALS_KEY.trim(), "base64").length === 32) pass("CREDENTIALS_KEY");
+else fail("CREDENTIALS_KEY", "must be 32 random bytes, base64 (openssl rand -base64 32)");
+
 // --- Access and limits ---
 if (!env.AGENT_LIVE_WORKSPACES) fail("AGENT_LIVE_WORKSPACES", 'not set; no workspace can use the live agent (use "*" once the flow is installed)');
 else if (env.AGENT_LIVE_WORKSPACES === "*") pass("AGENT_LIVE_WORKSPACES", "all workspaces");

@@ -190,6 +190,10 @@ exchange from the session's stored messages.
      drops the signed `cdpUrl` from results. It sends the same credential header and Langflow
      global variable the shared node used. If the plan's concurrent browsers are all in use,
      `start` ends this process's longest-idle browser (a minute or more) and tries once more.
+     Card numbers (13–19 digits that pass Luhn) in its results are cut to their last four.
+     At a sign-in or payment form the agent calls the gateway's `request_secret`, and the app
+     fills the member's login or card into the page itself (`src/lib/browser-fill.ts`); the app
+     needs `BROWSERBASE_API_KEY` for that, and `CREDENTIALS_KEY` to let members save them.
    - **Load Skill** gets its code from `langflow/components/load_skill.py` (no business names).
    - A literal Exa key moves into the global variable `EXA_API_KEY`, and Exa search returns
      at least 10 results (the node's count is fixed per flow; the agent can't raise it per call).

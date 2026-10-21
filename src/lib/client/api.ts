@@ -5,6 +5,8 @@ import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
 import type { AgentRecord, AgentTask, PlanStep, TaskRun, TrackerSummary } from "@/lib/tasks/types";
 import type { VerdictCall } from "@/lib/verdicts";
+import type { DriveInput } from "@/lib/browser-fill";
+import type { CredentialSummary } from "@/lib/secrets";
 import { disablePush } from "./push";
 
 /** What a member sets on a task; the server fills in the rest. */
@@ -60,7 +62,7 @@ export const api = {
     request<{ conversations: ConversationSummary[] }>(`/api/conversations?q=${encodeURIComponent(query)}`, { signal }),
   // This page knows the agent's offers to call, so it asks for them (pages from before them don't get any).
   getConversation: (id: string, signal?: AbortSignal) =>
-    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null; calls: CallSummary[] }>(`/api/conversations/${id}?offers=1`, { signal }),
+    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null; calls: CallSummary[] }>(`/api/conversations/${id}?offers=1&secrets=1`, { signal }),
   /** Whose move it is in these conversations: only those working, waiting on the member, or stuck. */
   conversationMoves: (ids: string[], signal?: AbortSignal) =>
     request<{ moves: Record<string, MarkedMove> }>(`/api/conversations/moves?ids=${ids.map(encodeURIComponent).join(",")}`, { signal }),
@@ -110,6 +112,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ decision }),
     }),
+  /** The site the agent's browser is on now, and the saved logins (for that site) or cards that fit a request. */
+  secretRequest: (conversationId: string, blockId: string) =>
+    request<{ site: string | null; browser: "open" | "off" | "none" | "ended" | "failed"; saved: CredentialSummary[]; canSave: boolean }>(
+      `/api/conversations/${conversationId}/secrets/${blockId}`,
+    ),
+  /**
+   * Fills a login or card into the agent's browser (or records the member did it themself).
+   * Resolves with the card's response and the words to send the agent next, never a value.
+   */
+  fillSecret: (
+    conversationId: string,
+    blockId: string,
+    body:
+      | { use: "saved"; credentialId: string; cvv?: string }
+      | { use: "login"; username: string; password: string; save: boolean }
+      | { use: "card"; number: string; name: string; expiry: string; cvv: string; save: boolean }
+      | { use: "self" },
+  ) => request<{ response: UiResponse; message: string }>(`/api/conversations/${conversationId}/secrets/${blockId}`, { method: "POST", body: JSON.stringify(body) }),
+  /** One click, key, scroll, or bit of typing in the agent's browser, while taking it over. */
+  driveBrowser: (conversationId: string, input: DriveInput) =>
+    request<{ ok: true }>(`/api/conversations/${conversationId}/browser/input`, { method: "POST", body: JSON.stringify(input) }),
+  listCredentials: () => request<{ credentials: CredentialSummary[]; enabled: boolean }>("/api/account/credentials"),
+  deleteCredential: (id: string) => request<{ ok: true }>(`/api/account/credentials/${id}`, { method: "DELETE" }),
   answerUi: (
     conversationId: string,
     blockId: string,
@@ -220,8 +245,9 @@ export async function streamTurn(
   const res = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    // This page can show the agent's offer to call; the server makes none for a page that can't.
-    body: JSON.stringify({ ...body, offers: true }),
+    // This page can show the agent's offer to call and its requests for a login or card; the
+    // server leaves them out for a page that can't.
+    body: JSON.stringify({ ...body, offers: true, secrets: true }),
     signal,
   });
   if (res.status === 401) {

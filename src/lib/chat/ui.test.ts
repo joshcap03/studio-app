@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UiBlock, UiForm } from "@/lib/types";
-import { buildUiBlock, capUi, proposalPicksSchema, scheduleFrom, withoutOffers } from "./ui";
+import { buildUiBlock, capUi, proposalPicksSchema, scheduleFrom, unknownCards, withoutCards, withoutOffers } from "./ui";
 import { answerText, formAnswerText, isQuestionAnswer, missingAnswer } from "./ui-answer";
 
 describe("buildUiBlock", () => {
@@ -191,6 +191,31 @@ describe("pages that don't know offers", () => {
     expect(stripped.ui).toEqual([form]);
     expect(stripped.uiResponse).toEqual({ f1: { status: "submitted", at: 1 } });
     expect(withoutOffers([{ ...base, id: "m2", ui: [offer] }])[0]).toMatchObject({ ui: [] });
+  });
+});
+
+describe("requests for a login or card", () => {
+  it("say which and why, and never carry anything else", () => {
+    expect(buildUiBlock({ secret_request: { kind: "login", reason: " To sign in to  Acme. ", username_hint: "ada@example.test", password: "x" } }, "s1")).toEqual({
+      kind: "secret",
+      id: "s1",
+      secret: "login",
+      reason: "To sign in to Acme.",
+      usernameHint: "ada@example.test",
+    });
+    expect(buildUiBlock({ secret_request: { kind: "card", reason: "To pay.", username_hint: "ada" } }, "s2")).toEqual({ kind: "secret", id: "s2", secret: "card", reason: "To pay." });
+    expect(buildUiBlock({ secret_request: { kind: "ssn", reason: "Because." } })).toBeNull();
+    expect(buildUiBlock({ secret_request: { kind: "card", reason: "" } })).toBeNull();
+  });
+
+  it("go only to pages that know them", () => {
+    const secret: UiBlock = { kind: "secret", id: "s1", secret: "login", reason: "To sign in." };
+    const offer: UiBlock = { kind: "offer", id: "o1", reason: "Quicker to talk." };
+    const message = { id: "m1", conversationId: "c1", role: "assistant" as const, content: "", status: "complete" as const, activity: [], artifacts: [], createdAt: 0, ui: [offer, secret] };
+    expect(unknownCards({ offers: true })).toEqual(["secret"]);
+    expect(unknownCards({ offers: true, secrets: true })).toEqual([]);
+    expect(withoutCards([message], unknownCards({ offers: true }))[0].ui).toEqual([offer]);
+    expect(withoutOffers([message])[0].ui).toEqual([]);
   });
 });
 

@@ -5,7 +5,7 @@ import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
 import { buildQuestions } from "./questions";
-import { buildUiBlock, capUi, isMergeRequest, withoutOffers } from "./ui";
+import { buildUiBlock, capUi, isMergeRequest, unknownCards, withoutCards, type NewerCard } from "./ui";
 import { callOf } from "./modality";
 import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
@@ -166,6 +166,8 @@ export interface TurnDeps {
    * events it's sent leave out any offer already on the reply (one continued after an approval).
    */
   offersShown?: boolean;
+  /** False when the page this streams to predates requests for a login or card, likewise. */
+  secretsShown?: boolean;
   /** How often partial output is saved while streaming. */
   checkpointMs?: number;
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
@@ -477,10 +479,11 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
 
   return new ReadableStream<Uint8Array>({
     async start(stream) {
+      const unknown = unknownCards({ offers: deps.offersShown !== false, secrets: deps.secretsShown !== false });
       const send = (event: StreamEvent) => {
         if (!open) return;
         try {
-          stream.enqueue(encoder.encode(`${JSON.stringify(deps.offersShown === false ? withoutOffersIn(event) : event)}\n`));
+          stream.enqueue(encoder.encode(`${JSON.stringify(unknown.length ? withoutCardsIn(event, unknown) : event)}\n`));
         } catch {
           open = false;
         }
@@ -905,11 +908,11 @@ export function renderSteerMessage(interrupted: ChatMessage, declined: string | 
   return `${lines.join("\n")}\n\n${message}`;
 }
 
-/** An event as a page that predates offers to call is sent it: without them. */
-function withoutOffersIn(event: StreamEvent): StreamEvent {
-  if (event.type === "ui") return { ...event, ui: event.ui.filter((b) => b.kind !== "offer") };
-  if (event.type === "start") return { ...event, assistantMessage: withoutOffers([event.assistantMessage])[0] };
-  if (event.type === "end") return { ...event, message: withoutOffers([event.message])[0] };
+/** An event as a page that predates some cards is sent it: without them. */
+function withoutCardsIn(event: StreamEvent, kinds: readonly NewerCard[]): StreamEvent {
+  if (event.type === "ui") return { ...event, ui: event.ui.filter((b) => !(kinds as readonly string[]).includes(b.kind)) };
+  if (event.type === "start") return { ...event, assistantMessage: withoutCards([event.assistantMessage], kinds)[0] };
+  if (event.type === "end") return { ...event, message: withoutCards([event.message], kinds)[0] };
   return event;
 }
 

@@ -325,6 +325,13 @@ class OfferCallArgs(BaseModel):
     topic: str = Field(default="", description="Optional: what the call would be about, 2-6 words, e.g. 'Which offer to take'.")
 
 
+class SecretArgs(BaseModel):
+    kind: str = Field(description="'login' for a sign-in (username and password), 'card' for a payment card.")
+    reason: str = Field(description=("Why, in one short sentence as you'd say it, e.g. 'To sign in to your Acme account and "
+                                     "download the March invoice.'"))
+    username_hint: str = Field(default="", description="Optional: the username or email the site seems to expect, if you know it.")
+
+
 # Explicit rebuild prevents some custom-component code evaluators from losing namespaces.
 DiscoverArgs.model_rebuild()
 ExecuteArgs.model_rebuild()
@@ -338,6 +345,7 @@ FormArgs.model_rebuild()
 ProposeArgs.model_rebuild()
 MergeArgs.model_rebuild()
 OfferCallArgs.model_rebuild()
+SecretArgs.model_rebuild()
 
 
 def words(s):
@@ -1059,9 +1067,30 @@ class ToolGatewayComponent(Component):
         async def offer_call_async(reason: str, topic: str = "") -> str:
             return offer_call(reason, topic)
 
+        def request_secret(kind: str, reason: str, username_hint: str = "") -> str:
+            # Changes nothing and carries no secret: the app shows a card where the member picks a
+            # saved login or card (or types one), and the app types it into this conversation's
+            # browser itself. The agent hears only that it was filled, never the values.
+            kind = str(kind or "").strip().lower()
+            if kind not in ("login", "card"):
+                return "Not shown: kind must be 'login' or 'card'."
+            reason = " ".join(str(reason or "").split())[:200]
+            if not reason:
+                return "Not shown: say in one sentence why you need it."
+            return json.dumps({
+                "secret_request": {"kind": kind, "reason": reason, "username_hint": " ".join(str(username_hint or "").split())[:200]},
+                "note": ("The owner now sees a secure card that fills this into your browser's current page; you will "
+                         "never see the values. End your reply here with one short sentence, without asking for them. "
+                         "A message saying what was filled arrives next; then carry on (e.g. press Sign in). Never ask "
+                         "for a password, card number, or security code in chat or a form."),
+            })
+
+        async def request_secret_async(kind: str, reason: str, username_hint: str = "") -> str:
+            return request_secret(kind, reason, username_hint)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1205,5 +1234,14 @@ class ToolGatewayComponent(Component):
                              "offers; it never starts a call, and they may say Not now. Never on a call, and not "
                              "again in a conversation where they said Not now. Call it after your reply (and after "
                              "show_form or ask_user, if any). Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=request_secret, coroutine=request_secret_async, name="request_secret",
+                args_schema=SecretArgs,
+                description=("When your browser reaches a sign-in form or a payment form, ask the owner to fill it in "
+                             "securely: they pick a saved login or card (or type one) and Studio types it into the "
+                             "page you have open. You never see it. Open the page with the fields first. Never ask "
+                             "for passwords, card numbers, or security codes any other way. Call it as the last "
+                             "thing in your reply. Changes nothing."),
             ),
         ]

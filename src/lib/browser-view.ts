@@ -8,8 +8,9 @@ import type { Tenant } from "@/lib/tenant-core";
 // Browserbase key, since the member can write that column. When the member watches, the server
 // asks Browserbase for the session (only this conversation's, only while it runs), connects to it
 // over CDP itself, takes one JPEG of the page, and disconnects. The page gets pictures only: no
-// connection URL, debugger link or anything that could drive the browser ever reaches it.
-// Free of next/* (the turn records the session).
+// connection URL, debugger link or anything that could drive the browser ever reaches it. The
+// CDP helpers here are shared with filling a login or card and taking the browser over
+// (src/lib/browser-fill.ts), which reach it the same way. Free of next/* (the turn records the session).
 
 const API = "https://api.browserbase.com/v1";
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -62,8 +63,11 @@ export interface Socket {
 }
 export type SocketFactory = (url: string) => Socket;
 
-/** One picture of what the conversation's browser shows now, or why there isn't one. */
-export async function browserFrame(tenant: Tenant, conversationId: string, connect: SocketFactory = (url) => new WebSocket(url) as unknown as Socket): Promise<Frame> {
+/**
+ * Where to reach the conversation's browser over CDP, server-side only, or why it can't be: off
+ * (no Browserbase key), none recorded for this conversation and member, ended, or failed.
+ */
+export async function browserConnection(tenant: Tenant, conversationId: string): Promise<{ ok: true; url: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" }> {
   const browser = getConfig().browser;
   if (!browser) return { ok: false, reason: "off" };
   const { data, error } = await tenant.db
@@ -88,18 +92,30 @@ export async function browserFrame(tenant: Tenant, conversationId: string, conne
   }
   if (session.status !== "RUNNING") return { ok: false, reason: "ended" };
   if (typeof session.connectUrl !== "string" || !/^wss:\/\//.test(session.connectUrl)) return { ok: false, reason: "failed" };
+  return { ok: true, url: session.connectUrl };
+}
+
+/** One picture of what the conversation's browser shows now, or why there isn't one. */
+export async function browserFrame(tenant: Tenant, conversationId: string, connect: SocketFactory = defaultConnect): Promise<Frame> {
+  const connection = await browserConnection(tenant, conversationId);
+  if (!connection.ok) return connection;
   try {
-    return { ok: true, jpeg: await screenshot(session.connectUrl, connect) };
+    return { ok: true, jpeg: await screenshot(connection.url, connect) };
   } catch {
     return { ok: false, reason: "failed" };
   }
 }
 
+export const defaultConnect: SocketFactory = (url) => new WebSocket(url) as unknown as Socket;
+
+/** Sends one CDP command (to a page or frame when `sessionId` is given) and resolves with its result. */
+export type CdpCall = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<Record<string, unknown>>;
+
 /**
- * One JPEG of the browser's current page over CDP: find the page (the last one open, where the
- * agent is), attach to it, capture, and close. Only read-only commands are sent.
+ * Opens a CDP connection, runs `work` with it, and closes it, all within `timeoutMs`. A command
+ * the browser refuses fails the whole exchange.
  */
-export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAME_MS): Promise<Uint8Array> {
+export function withCdp<T>(url: string, connect: SocketFactory, timeoutMs: number, work: (call: CdpCall) => Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     const socket = connect(url);
     let next = 0;
@@ -117,7 +133,7 @@ export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAM
       fn();
     };
     const timer = setTimeout(() => finish(() => reject(new Error("timed out"))), timeoutMs);
-    const call = (method: string, params: Record<string, unknown> = {}, sessionId?: string) =>
+    const call: CdpCall = (method, params = {}, sessionId) =>
       new Promise<Record<string, unknown>>((ok) => {
         next += 1;
         waiting.set(next, ok);
@@ -140,17 +156,34 @@ export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAM
     socket.addEventListener("error", () => finish(() => reject(new Error("connection failed"))));
     socket.addEventListener("close", () => finish(() => reject(new Error("connection closed"))));
     socket.addEventListener("open", () => {
-      void (async () => {
-        const { targetInfos } = (await call("Target.getTargets")) as { targetInfos?: { targetId: string; type: string; url?: string }[] };
-        const pages = (targetInfos ?? []).filter((t) => t.type === "page" && !t.url?.startsWith("devtools://"));
-        const page = pages.at(-1);
-        if (!page) return finish(() => reject(new Error("no page")));
-        const { sessionId } = (await call("Target.attachToTarget", { targetId: page.targetId, flatten: true })) as { sessionId?: string };
-        if (!sessionId) return finish(() => reject(new Error("couldn't attach")));
-        const { data } = (await call("Page.captureScreenshot", { format: "jpeg", quality: 60 }, sessionId)) as { data?: string };
-        if (!data) return finish(() => reject(new Error("no picture")));
-        finish(() => resolve(new Uint8Array(Buffer.from(data, "base64"))));
-      })().catch((e: unknown) => finish(() => reject(e instanceof Error ? e : new Error(String(e)))));
+      work(call).then(
+        (value) => finish(() => resolve(value)),
+        (e: unknown) => finish(() => reject(e instanceof Error ? e : new Error(String(e)))),
+      );
     });
+  });
+}
+
+/** The page the agent is on: the last one open. Attached (flattened) so commands can go to it. */
+export async function attachToPage(call: CdpCall): Promise<{ targetId: string; sessionId: string }> {
+  const { targetInfos } = (await call("Target.getTargets")) as { targetInfos?: { targetId: string; type: string; url?: string }[] };
+  const pages = (targetInfos ?? []).filter((t) => t.type === "page" && !t.url?.startsWith("devtools://"));
+  const page = pages.at(-1);
+  if (!page) throw new Error("no page");
+  const { sessionId } = (await call("Target.attachToTarget", { targetId: page.targetId, flatten: true })) as { sessionId?: string };
+  if (!sessionId) throw new Error("couldn't attach");
+  return { targetId: page.targetId, sessionId };
+}
+
+/**
+ * One JPEG of the browser's current page over CDP: find the page (the last one open, where the
+ * agent is), attach to it, capture, and close. Only read-only commands are sent.
+ */
+export function screenshot(url: string, connect: SocketFactory, timeoutMs = FRAME_MS): Promise<Uint8Array> {
+  return withCdp(url, connect, timeoutMs, async (call) => {
+    const { sessionId } = await attachToPage(call);
+    const { data } = (await call("Page.captureScreenshot", { format: "jpeg", quality: 60 }, sessionId)) as { data?: string };
+    if (!data) throw new Error("no picture");
+    return new Uint8Array(Buffer.from(data, "base64"));
   });
 }
