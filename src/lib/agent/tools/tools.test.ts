@@ -528,6 +528,18 @@ describe("interpretCalls", () => {
     ]);
   });
 
+  it("hides a call the gateway held for approval, for a change or for code; the approval card shows it", () => {
+    const held = (text: string) => ({ name: "execute_tool", input: { tool_name: "composio_remote_bash_tool", arguments: { command: "ls" } }, output: { content: text, tool_call_id: "t", status: "success" }, error: null });
+    const steps = interpretCalls([
+      held("This changes something in the owner's accounts, so it needs their approval. Call take_action now with the same tool_name and arguments plus a one-sentence summary; don't reply first."),
+      held("Running code needs the owner's approval every time, even just to read. Call take_action now with the same tool_name and arguments plus a one-sentence summary; don't reply first."),
+    ]);
+    expect(steps.map((s) => [s.hidden, s.status, s.detail])).toEqual([
+      [true, "done", undefined],
+      [true, "done", undefined],
+    ]);
+  });
+
   it("keeps a plain reason as written, contractions and all", () => {
     const [step] = interpretCalls([{ name: "start", input: {}, output: toolMessage({ success: false, error: "The browser wasn't available." }), error: null }]);
     expect(step).toMatchObject({ status: "failed", detail: "The browser wasn't available." });

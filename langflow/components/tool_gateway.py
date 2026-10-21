@@ -706,8 +706,16 @@ class ToolGatewayComponent(Component):
         lookup_timeout = int(getattr(self, "lookup_timeout", 45) or 45)
         work_timeout = int(getattr(self, "work_timeout", 200) or 200)
 
-        approval_hint = ("This changes something in the owner's accounts, so it needs their approval. "
-                         "Call take_action with the same tool_name and arguments plus a one-sentence summary.")
+        def approval_hint(name):
+            # Said plainly for code: it needs approval because it could do anything, even when
+            # it only reads, and each run is another approval, so one call should do the job.
+            if name in CODE_TOOLS:
+                return ("Running code needs the owner's approval every time, even just to read. Call take_action now "
+                        "with the same tool_name and arguments plus a one-sentence summary; don't reply first. Make "
+                        "that one call do the whole job: fetch, process, and print everything you need from it, so "
+                        "they approve once.")
+            return ("This changes something in the owner's accounts, so it needs their approval. Call take_action "
+                    "now with the same tool_name and arguments plus a one-sentence summary; don't reply first.")
 
         async def execute_async(tool_name: str, arguments=None, config: RunnableConfig = None) -> str:
             return await run_async(tool_name, arguments, config, approved=False)
@@ -731,7 +739,7 @@ class ToolGatewayComponent(Component):
             if error:
                 return error
             if not approved and needs_approval(tool_name, params):
-                return approval_hint
+                return approval_hint(tool_name)
             lookup = tool_name in LOOKUP_TOOLS
             limit = lookup_timeout if lookup else work_timeout
             attempts = 2 if lookup else 1
@@ -758,7 +766,7 @@ class ToolGatewayComponent(Component):
             if error:
                 return error
             if not approved and needs_approval(tool_name, params):
-                return approval_hint
+                return approval_hint(tool_name)
             try:
                 return compact_result(tool.invoke(params, config=config), max_chars)
             except Exception as exc:

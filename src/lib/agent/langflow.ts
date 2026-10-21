@@ -1,7 +1,7 @@
 import { appForToolkit } from "@/lib/apps";
 import { seamBetween } from "@/lib/chat/seam";
 import { toMemoryCategory } from "@/lib/types";
-import { evidenceFor, interpretCalls, keepsBooks, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
+import { evidenceFor, interpretCalls, keepsBooks, NEEDS_APPROVAL, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
 
@@ -881,6 +881,33 @@ export function openingLineIndexes(entries: { type?: string; text?: unknown; nam
   return out;
 }
 
+/**
+ * The app's word to the agent, sent as a message of its own in the same session, when a run
+ * ended on a call held for approval: the agent meant to go on, and the member has no card yet.
+ * Stored in Langflow's memory like any message, never shown, and never counted as a turn.
+ */
+export const HOLD_NUDGE =
+  "[Studio] Your last call was held for the owner's approval, and you stopped before asking for it. Call take_action now with the same tool_name and arguments plus a one-sentence summary. If you shouldn't, say why in one line.";
+
+/**
+ * Whether a bot message ends right after a call the gateway held for approval, with nothing
+ * after it but an opening line ("Now I'll read it"): the run stopped short, not finished.
+ */
+export function endedOnHold(message: LangflowMessage | undefined): boolean {
+  if (!message) return false;
+  const all = leaves(message);
+  let last = all.length - 1;
+  while (last >= 0 && all[last].type !== "tool_use") last -= 1;
+  if (last < 0) return false;
+  const output = (all[last] as LangflowToolUse).output;
+  const result = output == null ? undefined : unwrapResult(output);
+  if (typeof result !== "string" || !NEEDS_APPROVAL.test(result.trim())) return false;
+  return all
+    .slice(last + 1)
+    .flatMap((l) => (l.type === "text" && typeof l.text === "string" && l.text.trim() ? [l.text.trim()] : []))
+    .every(opensWork);
+}
+
 /** The agent's opening lines in a bot message. */
 export function leadingNotes(message: LangflowMessage): string[] {
   const all = leaves(message);
@@ -1013,8 +1040,8 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
     url.searchParams.set("limit", String(STORED_PAGE));
     const response = await doFetch(url.toString(), { headers: headers(config) });
     if (!response.ok) throw errorFor(response.status);
-    return ((await response.json().catch(() => [])) as { id?: unknown; sender?: unknown }[]).filter(
-      (m): m is { id: string; sender?: unknown } => typeof m?.id === "string",
+    return ((await response.json().catch(() => [])) as { id?: unknown; sender?: unknown; text?: unknown }[]).filter(
+      (m): m is { id: string; sender?: unknown; text?: unknown } => typeof m?.id === "string",
     );
   }
 
@@ -1085,6 +1112,21 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
       const sessionId = langflowSessionId(input.tenant, input.conversationId);
       yield { type: "thread", threadId: sessionId };
 
+      const startJob = async (run: AgentRunInput, files: string[]): Promise<string> => {
+        const { url, init } = buildRequest(config, run, files);
+        let response: Response;
+        try {
+          response = await doFetch(url, init);
+        } catch (error) {
+          if (input.signal.aborted) throw error;
+          throw new AgentError("Couldn't reach the agent service.", { cause: error });
+        }
+        if (!response.ok) throw errorFor(response.status);
+        const job = (await response.json().catch(() => null)) as { job_id?: unknown } | null;
+        if (typeof job?.job_id !== "string") throw new AgentError("The agent service returned an unreadable response.");
+        return job.job_id;
+      };
+
       let jobId: string;
       let lastEventId: string | null = null;
       /** The step the run paused on, still running until the resumed call settles it. */
@@ -1114,19 +1156,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
         if (input.attachments.length > 0 && !acceptsFiles) {
           throw new AgentError("This agent can't read attached files yet.", { retryable: false });
         }
-        const files = await upload(input);
-        const { url, init } = buildRequest(config, input, files);
-        let response: Response;
-        try {
-          response = await doFetch(url, init);
-        } catch (error) {
-          if (input.signal.aborted) throw error;
-          throw new AgentError("Couldn't reach the agent service.", { cause: error });
-        }
-        if (!response.ok) throw errorFor(response.status);
-        const job = (await response.json().catch(() => null)) as { job_id?: unknown } | null;
-        if (typeof job?.job_id !== "string") throw new AgentError("The agent service returned an unreadable response.");
-        jobId = job.job_id;
+        jobId = await startJob(input, await upload(input));
       }
 
       yield { type: "trace", traceId: jobId };
@@ -1210,7 +1240,9 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
           return events.map((e) => (e.type === "activity" && e.id === carriedFrom ? { ...e, id: carried!.id } : e));
         };
 
-        for (let attempt = 0; attempt <= RECONNECTS; attempt++) {
+        // A run that ends on a held call is sent on once (see endedOnHold), in the same reply.
+        let nudged = false;
+        reading: for (let attempt = 0; attempt <= RECONNECTS; attempt++) {
           let response: Response;
           try {
             response = await doFetch(endpoint(config, `api/v2/workflows/${encodeURIComponent(jobId)}/events`), {
@@ -1322,6 +1354,22 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               const detail = (data as { error?: unknown })?.error;
               throw new AgentError(typeof detail === "string" && detail ? friendlyError(detail) : "The agent ran into a problem.");
             } else if (event === "end") {
+              if (!nudged && endedOnHold(lastBot)) {
+                nudged = true;
+                // What it said before stopping opens the work that follows.
+                if (pending.trim()) {
+                  notes.push(pending.trim());
+                  yield { type: "note", text: pending.trim() };
+                }
+                pending = "";
+                releasing = false;
+                jobId = await startJob({ ...input, message: HOLD_NUDGE, attachments: [] }, []);
+                lastEventId = null;
+                toolCount = 0;
+                lastBot = undefined;
+                attempt = -1;
+                continue reading;
+              }
               yield* keepHeld(Boolean(pending));
               if (pending) {
                 yield stream(pending);
@@ -1359,7 +1407,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
     async rewind({ tenant, conversationId }, turns) {
       if (turns < 1) return;
       const messages = await storedMessages(tenant, conversationId);
-      const users = messages.flatMap((m, i) => (m.sender === "User" ? [i] : []));
+      const users = messages.flatMap((m, i) => (m.sender === "User" && m.text !== HOLD_NUDGE ? [i] : []));
       if (users.length === 0) return;
       const from = users[Math.max(0, users.length - turns)];
       await deleteMessages(messages.slice(from).map((m) => m.id));
