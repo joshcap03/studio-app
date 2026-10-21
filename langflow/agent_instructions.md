@@ -274,7 +274,10 @@ Tool results come back cut to a few thousand characters. When one ends
 with [PARTIAL RESULT ...], read the rest with read_result, which needs no
 approval, instead of running code again. To read a long text whole (a
 transcript, a document), print all of it in that one call and page
-through it with read_result.
+through it with read_result. The web reader (get_contents) sends at
+most about 10,000 characters of a page, and its result can be paged
+the same way; for a longer page you need whole, such as a transcript
+site, fetch the page in one code call instead.
 
 You act only through apps this user has connected. If a task needs the
 owner's data in, or a change to, an app that isn't connected, use

@@ -449,23 +449,44 @@ def web_results(payload):
         body = next((v for k in ("highlights", "summary", "text", "snippet", "description", "content") if (v := field(item, k))), "")
         if isinstance(body, list):
             body = " … ".join(str(b) for b in body)
+        body = " ".join(str(body).split())
+        # The page's own text, when the reader sent it: kept so it can be read whole (read_result).
+        text = field(item, "text")
+        text = " ".join(text.split()) if isinstance(text, str) else ""
         sources.append({"title": " ".join(str(field(item, "title") or "").split()), "url": url,
                         "published": str(field(item, "published_date") or field(item, "publishedDate") or "")[:10],
-                        "body": " ".join(str(body).split())})
+                        "body": body, "full": text if len(text) > len(body) else body})
     return sources
 
 
-def compact_web_results(sources, limit):
-    """Every source as Title/URL/Published/text, each trimmed to its share of the budget."""
+def compact_web_results(sources, limit, keep=None):
+    """Every source as Title/URL/Published/text, each trimmed to its share of the budget. When a
+    page's full text is longer than what's shown, all of it is handed to keep(), when given, so
+    it can be read whole with read_result."""
     budget = max(limit, WEB_RESULT_CHARS)
     share = max(300, budget // len(sources))
     blocks = []
+    full_blocks = []
+    cut = False
     for s in sources:
         head = f"Title: {s['title']}\nURL: {s['url']}" + (f"\nPublished: {s['published']}" if s["published"] else "")
         room = max(150, share - len(head))
-        body = s["body"] if len(s["body"]) <= room else s["body"][:room].rsplit(" ", 1)[0] + " …"
+        full = s.get("full") or s["body"]
+        # A page's own text that fits is shown instead of its highlights.
+        shown = full if len(full) <= room else s["body"]
+        body = shown if len(shown) <= room else shown[:room].rsplit(" ", 1)[0] + " …"
         blocks.append(head + (f"\n{body}" if body else ""))
-    return f"{len(sources)} results\n\n" + "\n\n".join(blocks)
+        full_blocks.append(head + (f"\n{full}" if full else ""))
+        # Only a page's own text is worth reading on; trimmed search highlights aren't.
+        cut = cut or (full != s["body"] and len(full) > room)
+    out = f"{len(sources)} results\n\n" + "\n\n".join(blocks)
+    rid = keep(f"{len(sources)} results\n\n" + "\n\n".join(full_blocks)) if cut and keep else None
+    if rid:
+        total = sum(len(b) for b in full_blocks)
+        out += (f"\n[PARTIAL RESULT: these pages' full text ({total} chars) can be read with read_result(result_id=\"{rid}\", "
+                f"offset=0), {RESULT_PAGE} chars at a time; it needs no approval. The web reader sends at most about "
+                "10,000 chars of a page; for a longer page you need whole, fetch it in one code call.]")
+    return out
 
 
 # How much of a kept result one read_result call returns, how many results a run keeps, and
@@ -499,7 +520,7 @@ def compact_result(result, limit, keep=None):
             payload = content if content is not None else result
     sources = web_results(payload)
     if sources:
-        return compact_web_results(sources, limit)
+        return compact_web_results(sources, limit, keep)
     out = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
     if len(out) > limit:
         # Explicit warning so the agent doesn't mistake the excerpt for complete data.
