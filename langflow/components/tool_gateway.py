@@ -180,7 +180,7 @@ class VisualArgs(BaseModel):
 QUESTION_SCHEMA = {
     "type": "object",
     "properties": {
-        "question": {"type": "string", "description": "The question, one sentence ending in a question mark."},
+        "question": {"type": "string", "description": "The question, one short sentence ending in a question mark. Put any plan or details it asks about in your reply text before the call, not here."},
         "header": {"type": "string", "description": "A 1-3 word label for it, e.g. 'Tone' or 'Date range'."},
         "options": {
             "type": "array", "minItems": 2, "maxItems": 4,
