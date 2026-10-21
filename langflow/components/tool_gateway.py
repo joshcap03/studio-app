@@ -596,9 +596,20 @@ READ_WORDS = {
 }
 # Tools that act in the world without a Composio slug to read.
 ACTION_TOOLS = {"act"}
-# Tools that run arbitrary code. Code can build tool slugs at runtime or call any API over
-# the network, so reading it can't prove it only reads: every run needs approval.
+# Tools that run arbitrary code in Composio's sandbox.
 CODE_TOOLS = {"composio_remote_workbench", "composio_remote_bash_tool"}
+# The sandbox reaches the owner's accounts only through Composio: run_composio_tool, proxy_execute,
+# or its key in the environment. Workbench code that calls run_composio_tool only with literal
+# read-only slugs, and touches nothing else that could reach Composio or hide what runs, can't
+# change their accounts, so it runs without approval. Anything else asks (fail closed).
+CALLED_SLUG = re.compile(r"""\brun_composio_tool\s*\(\s*(?:tool_slug\s*=\s*)?(['"])([A-Za-z0-9_]+)\1""")
+HIDDEN_CODE = re.compile(
+    r"proxy_execute|environ|getenv|\bexec\b|\beval\b|\bcompile\s*\(|__import__|importlib|getattr|setattr|"
+    r"\bglobals\b|\blocals\b|\bvars\s*\(|__builtins__|__dict__|sys\.modules|subprocess|\bos\.(system|popen|exec|spawn)|"
+    r"\bpty\b|ctypes|marshal|pickle|base64|codecs",
+    re.IGNORECASE,
+)
+CODE_ARGS = ("code_to_execute", "code")
 
 
 def slug_changes_things(slug):
@@ -606,6 +617,20 @@ def slug_changes_things(slug):
     if any(t in WRITE_WORDS for t in tokens):
         return True
     return not any(t in READ_WORDS for t in tokens)
+
+
+def code_changes_things(name, arguments):
+    """Whether a code run could change something in the owner's accounts."""
+    if name != "composio_remote_workbench" or not isinstance(arguments, dict):
+        return True
+    code = next((arguments[k] for k in CODE_ARGS if isinstance(arguments.get(k), str)), None)
+    if code is None or HIDDEN_CODE.search(code):
+        return True
+    called = [m.group(2) for m in CALLED_SLUG.finditer(code)]
+    # Every other mention of Composio (an aliased helper, a slug built at runtime, its API) asks.
+    if len(re.findall(r"composio", code, re.IGNORECASE)) != len(called):
+        return True
+    return any(slug_changes_things(slug) for slug in called)
 
 
 def needs_approval(name, arguments):
@@ -618,7 +643,7 @@ def needs_approval(name, arguments):
             return True
         return any(not isinstance(c, dict) or slug_changes_things(c.get("tool_slug")) for c in calls)
     if name in CODE_TOOLS:
-        return True
+        return code_changes_things(name, arguments)
     # Composio's own meta tools (connections, skills, feedback) change or send things unless
     # listed as lookups; new ones fail closed.
     if name.startswith("composio_") and name not in LOOKUP_TOOLS:
@@ -788,14 +813,16 @@ class ToolGatewayComponent(Component):
         work_timeout = int(getattr(self, "work_timeout", 200) or 200)
 
         def approval_hint(name):
-            # Said plainly for code: it needs approval because it could do anything, even when
-            # it only reads, and each run is another approval, so one call should do the job.
+            # Said plainly for code: what made this run ask, so the agent can write code that
+            # doesn't when the job only reads, and each approved run should do the whole job.
             if name in CODE_TOOLS:
-                return ("Running code needs the owner's approval every time, even just to read. Call take_action now "
-                        "with the same tool_name and arguments plus a one-sentence summary; don't reply first. Make "
-                        "that one call do the whole job: fetch and process the data there, and print what you need. "
-                        "A long output comes back in part; read the rest with read_result, which needs no approval, "
-                        "rather than running code again.")
+                return ("Running code needs the owner's approval when it could change their accounts: it calls a "
+                        "changing app tool, uses proxy_execute or the environment, or hides what it runs (exec, eval, "
+                        "getattr, a slug built at runtime). Code that only reads, calling run_composio_tool with literal "
+                        "read-only slugs, runs without approval. If this one must change something, call take_action "
+                        "now with the same tool_name and arguments plus a one-sentence summary; don't reply first. "
+                        "Make that one call do the whole job, and read a long output with read_result rather than "
+                        "running code again.")
             return ("This changes something in the owner's accounts, so it needs their approval. Call take_action "
                     "now with the same tool_name and arguments plus a one-sentence summary; don't reply first.")
 

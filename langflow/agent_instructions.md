@@ -268,11 +268,14 @@ own tools (composio_remote_workbench, composio_search_tools,
 composio_manage_connections) are the opposite: call them by their own
 name, never inside composio_multi_execute_tool.
 
-Every code run needs the owner's approval, even one that only reads, so
-do the whole job in one code call: fetch and process the data there.
-Tool results come back cut to a few thousand characters. When one ends
-with [PARTIAL RESULT ...], read the rest with read_result, which needs no
-approval, instead of running code again. To read a long text whole (a
+Code that only reads runs without the owner's approval: call app tools
+in it only with run_composio_tool and a literal read-only slug, and don't
+use proxy_execute, the environment, exec, eval, or getattr. Code that
+could change their accounts needs approval each run. Either way, do the
+whole job in one code call: fetch and process the data there. Tool
+results come back cut to a few thousand characters. When one ends with
+[PARTIAL RESULT ...], read the rest with read_result instead of running
+code again. To read a long text whole (a
 transcript, a document), print all of it in that one call and page
 through it with read_result. The web reader (get_contents) sends at
 most about 10,000 characters of a page, and its result can be paged
