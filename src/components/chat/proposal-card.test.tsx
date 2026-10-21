@@ -20,11 +20,15 @@ function applied(picks: Partial<Extract<UiResponse, { status: "applied" }>["pick
   return { status: "applied", at: 1, picks: { ...none, ...picks }, applied: { settings: false, skills: 0, tasks: 0, memories: 0, skipped: 0, ...extra } };
 }
 
-function render(proposal: AgentProposal, { response, mine = companion, canApply = !response }: { response?: UiResponse; mine?: Companion; canApply?: boolean } = {}) {
+function render(
+  proposal: AgentProposal,
+  { response, mine = companion, canApply = !response, runs = false }: { response?: UiResponse; mine?: Companion; canApply?: boolean; runs?: boolean } = {},
+) {
+  const run = runs ? { onRunTask: async () => undefined, onFirstRun: async () => undefined } : {};
   return renderToStaticMarkup(
     <CompanionContext.Provider value={mine}>
       <VoicePreviews voice={MOCK_VOICE}>
-        <ProposalCard proposal={proposal} response={response} canApply={canApply} onApply={async () => undefined} />
+        <ProposalCard proposal={proposal} response={response} canApply={canApply} onApply={async () => undefined} {...run} />
       </VoicePreviews>
     </CompanionContext.Provider>,
   );
@@ -57,5 +61,19 @@ describe("ProposalCard", () => {
     expect(render(both)).toContain(label);
     expect(render(both, { response: applied({ sound: 0 }, { voice: "warm", manner: "I take it slowly." }) })).toContain(label);
     expect(render(both, { canApply: false })).toContain(label);
+  });
+
+  it("offers the first task now or later, and shows what the member chose", () => {
+    const tasked = { ...base, tasks: [{ title: "Summarize a video", instructions: "Do it.", schedule: null }] };
+    const ran = (firstRun?: "started" | "later") => ({ ...applied({ tasks: [0] }, { tasks: 1 }), taskIds: ["t1"], ...(firstRun ? { firstRun } : {}) }) as UiResponse;
+    const open = render(tasked, { response: ran(), runs: true });
+    expect(open).toContain("Do the first one now");
+    expect(open).toContain("Not now");
+    const later = render(tasked, { response: ran("later"), runs: true });
+    expect(later).toContain("All set.");
+    expect(later).not.toContain("Do the first one now");
+    const started = render(tasked, { response: ran("started"), runs: true });
+    expect(started).toContain("Started. It&#x27;s running in its own chat.");
+    expect(started).not.toContain("Not now");
   });
 });

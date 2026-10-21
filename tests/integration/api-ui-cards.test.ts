@@ -220,8 +220,15 @@ describe("ui card answers", () => {
     expect(response.taskIds).toEqual([tasks[0].id]);
 
     expect((await alice.api.json(url(proposalId), "POST", { action: "apply", picks })).status).toBe(409);
+    // Setup ends without running the first task: Not now is kept on the card, once, and only by its member.
+    expect((await bob.api.json(url(proposalId), "POST", { action: "first-run", choice: "later" })).status).toBe(404);
+    const later = await alice.api.json(url(proposalId), "POST", { action: "first-run", choice: "later" });
+    expect(later.status, await later.clone().text()).toBe(200);
+    expect(((await later.json()) as { response: unknown }).response).toMatchObject({ status: "applied", taskIds: [tasks[0].id], firstRun: "later" });
+    expect((await alice.api.json(url(proposalId), "POST", { action: "first-run", choice: "started" })).status).toBe(409);
+    expect((await alice.api.json(url(formId), "POST", { action: "first-run", choice: "later" })).status).toBe(409);
     const stored = await alice.db.from("messages").select("ui_response").eq("conversation_id", conversation).single();
-    expect(stored.data?.ui_response).toMatchObject({ [formId]: { status: "submitted" }, [proposalId]: { status: "applied" } });
+    expect(stored.data?.ui_response).toMatchObject({ [formId]: { status: "submitted" }, [proposalId]: { status: "applied", firstRun: "later" } });
   });
 
   it("move a keep field's uploads onto the agent's files, and only the member's own", async () => {

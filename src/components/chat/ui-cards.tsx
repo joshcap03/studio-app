@@ -104,6 +104,10 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             response={responses?.[block.id]}
             canApply={settled && Boolean(onResponse)}
             onRunTask={onRunTask}
+            onFirstRun={async (choice) => {
+              const { response } = await api.answerUi(conversationId, block.id, { action: "first-run", choice });
+              onResponse?.(messageId, block.id, response);
+            }}
             onApply={async (picks, edits) => {
               const { response } = await api.answerUi(conversationId, block.id, {
                 action: "apply",
@@ -886,12 +890,14 @@ interface ProposalProps {
   canApply: boolean;
   onApply: (picks: ProposalPicks, edits: { profile?: string; instructions?: string; name?: string }) => Promise<void>;
   onRunTask?: UiCardsProps["onRunTask"];
+  /** Records whether the member ran the first task now or left it for later. */
+  onFirstRun?: (choice: "started" | "later") => Promise<void>;
 }
 
 const every = (n: number) => Array.from({ length: n }, (_, i) => i);
 
 /** The agent's suggested setup for itself. Nothing changes until the member applies it. */
-export function ProposalCard({ proposal, response, canApply, onApply, onRunTask }: ProposalProps) {
+export function ProposalCard({ proposal, response, canApply, onApply, onRunTask, onFirstRun }: ProposalProps) {
   const [picks, setPicks] = useState<ProposalPicks>(() => ({
     profile: proposal.profile !== undefined,
     instructions: proposal.instructions !== undefined,
@@ -1125,7 +1131,13 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask 
             {appliedText(applied.applied)}
           </p>
           {applied.taskIds?.length && onRunTask ? (
-            <FirstRun taskId={applied.taskIds[0]} title={proposal.tasks[applied.picks.tasks[0]]?.title} onRun={onRunTask} />
+            <FirstRun
+              taskId={applied.taskIds[0]}
+              title={proposal.tasks[applied.picks.tasks[0]]?.title}
+              chosen={applied.firstRun}
+              onRun={onRunTask}
+              onChoose={onFirstRun}
+            />
           ) : null}
         </div>
       ) : live ? (
@@ -1222,29 +1234,80 @@ export function OfferCard({
   );
 }
 
-/** The first win: the agent does its first task now, while the member is still here to see it. */
-function FirstRun({ taskId, title, onRun }: { taskId: string; title?: string; onRun: (taskId: string) => Promise<void> }) {
-  const [state, setState] = useState<"idle" | "starting" | "started">("idle");
+/**
+ * The first win: the agent does its first task now, while the member is still here to see it.
+ * Or Not now: setup is done either way, and the task waits for them (or its schedule).
+ */
+function FirstRun({
+  taskId,
+  title,
+  chosen,
+  onRun,
+  onChoose,
+}: {
+  taskId: string;
+  title?: string;
+  chosen?: "started" | "later";
+  onRun: (taskId: string) => Promise<void>;
+  onChoose?: (choice: "started" | "later") => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<"run" | "later" | null>(null);
+  const [made, setMade] = useState<"started" | "later" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const outcome = chosen ?? made;
   async function run() {
-    setState("starting");
+    setBusy("run");
     setError(null);
     try {
       await onRun(taskId);
-      setState("started");
+      setMade("started");
+      // The run is what counts; a choice that isn't saved only offers the button again later.
+      await onChoose?.("started").catch(() => undefined);
     } catch (e) {
-      setState("idle");
       setError(e instanceof ApiError ? e.message : "Couldn't start it. Try again.");
+    } finally {
+      setBusy(null);
     }
   }
+  async function later() {
+    setBusy("later");
+    setError(null);
+    try {
+      await onChoose?.("later");
+      setMade("later");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't do that. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  if (outcome === "later") {
+    return (
+      <p className="flex items-center gap-1.5 border-t border-line px-4 py-2.5 text-[12.5px] text-fg-3 animate-fade-in">
+        <Check size={13} className="settle-check shrink-0 text-success" />
+        <span className="min-w-0 truncate">All set. {title ? `${title} is in Tasks whenever you want it.` : "It's in Tasks whenever you want it."}</span>
+      </p>
+    );
+  }
+  const started = outcome === "started";
   return (
     <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5 animate-fade-in">
       <span className={`mr-auto min-w-0 truncate pl-1 text-[12.5px] ${error ? "text-danger" : "text-fg-3"}`}>
-        {error ?? (state === "started" ? "Started. It's running in its own chat." : title ? `First up: ${title}` : "See it work on the real thing.")}
+        {error ?? (started ? "Started. It's running in its own chat." : title ? `First up: ${title}` : "See it work on the real thing.")}
       </span>
-      <button type="button" onClick={() => void run()} disabled={state !== "idle"} className={primary}>
-        {state === "starting" ? <span className="spinner size-3.5" aria-hidden="true" /> : state === "started" ? <Check size={14} /> : <Sparkles size={14} />}
-        {state === "started" ? "Started" : "Do the first one now"}
+      {started || !onChoose ? null : (
+        <button
+          type="button"
+          onClick={() => void later()}
+          disabled={busy !== null}
+          className="inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg disabled:opacity-60"
+        >
+          {busy === "later" ? <span className="spinner size-3.5" aria-hidden="true" /> : "Not now"}
+        </button>
+      )}
+      <button type="button" onClick={() => void run()} disabled={busy !== null || started} className={`${primary} shrink-0`}>
+        {busy === "run" ? <span className="spinner size-3.5" aria-hidden="true" /> : started ? <Check size={14} /> : <Sparkles size={14} />}
+        {started ? "Started" : "Do the first one now"}
       </button>
     </div>
   );

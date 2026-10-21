@@ -838,6 +838,8 @@ export type UiResponse =
       applied: { settings: boolean; skills: number; tasks: number; memories: number; skipped: number; name?: string; voice?: VoiceKey; manner?: string | null };
       /** The tasks it switched on or created, in the proposal's order, so the first can run right away. */
       taskIds?: string[];
+      /** What the member did about running the first task now: started it, or left it for later. */
+      firstRun?: "started" | "later";
     }
   /** `skipped`: picked merges that couldn't be made (a fact gone or changed since, or not the member's to change). */
   | { status: "merged"; at: number; merges: AppliedMerge[]; skipped: number }
