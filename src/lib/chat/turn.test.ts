@@ -799,7 +799,7 @@ describe("edits, files, and memory suggestions", () => {
     const remember = async (content: string, scope: string, options: unknown) => {
       if (scope === "personal") throw new Error("memory down");
       saved.push([content, scope, options]);
-      return "workspace:doc1";
+      return { id: "workspace:doc1" };
     };
     const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, remember }, { conversationId: id, kind: "send", text: "x" }));
     const reply = (await store.listMessages(id))[1];
@@ -813,6 +813,21 @@ describe("edits, files, and memory suggestions", () => {
     expect(events.filter((e) => e.type === "memory-proposal").map((e) => e.type === "memory-proposal" && e.proposal.status)).toEqual(["saved", "pending"]);
     const end = events.find((e) => e.type === "end");
     expect(end?.type === "end" && end.message.memoryProposals?.map((p) => p.status)).toEqual(["saved", "pending"]);
+  });
+
+  it("passes on the facts a remembered one replaces, and keeps what it replaced for Undo", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const asked: unknown[] = [];
+    const adapter = scripted([
+      { type: "memory-proposal", content: "Auto-print is cut for now.", scope: "workspace", replaces: ["workspace:a1"] },
+      { type: "message", text: "Got it." },
+    ]);
+    const replaced = [{ id: "workspace:a1", content: "Labels print automatically.", scope: "workspace" as const, category: "other" as const, pinned: false, createdBy: "u", savedAt: 1 }];
+    const remember = async (_content: string, _scope: string, options: unknown) => (asked.push(options), { id: "workspace:new", replaced });
+    await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, remember }, { conversationId: id, kind: "send", text: "x" }));
+    expect(asked).toEqual([expect.objectContaining({ replaces: ["workspace:a1"] })]);
+    expect((await store.listMessages(id))[1].memoryProposals).toEqual([expect.objectContaining({ status: "saved", memoryId: "workspace:new", replaced })]);
   });
 
   it("hands the agent's plan and tracker rows to the task savers, capped per run, and labels a task's message", async () => {

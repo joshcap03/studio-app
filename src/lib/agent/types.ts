@@ -23,6 +23,8 @@ export interface AgentTenantContext {
   agentInstructions: string;
   /** What memory recalls for this run: workspace and personal facts, most relevant first, size-capped. */
   memories: string[];
+  /** The newest facts the member may change, with ids, so the agent updates one rather than saving it again. */
+  recentMemories?: { id: string; content: string }[];
   /** The member's task this conversation works on, if any: its brief, what done looks like, and current plan. */
   task?: { title: string; instructions: string; goal?: string | null; plan: { text: string; status: string; note: string | null }[] } | null;
   /**
@@ -169,8 +171,11 @@ export type AgentEvent =
    * keeps it a tap.
    */
   | { type: "approval"; summary: string; app?: string; details: [string, string][]; actions?: ApprovalAction[]; state: unknown }
-  /** The agent suggested a fact to remember. Nothing is saved unless the member confirms. */
-  | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory }
+  /**
+   * The agent chose a fact to remember. `replaces`: ids of facts it said this one updates or
+   * restates (unchecked; the app decides which it may replace).
+   */
+  | { type: "memory-proposal"; content: string; scope: "workspace" | "personal"; category?: MemoryCategory; replaces?: string[] }
   /** An investigation's timeline, unvalidated; the turn checks it against this run's results. */
   | { type: "timeline"; timeline: unknown }
   /** Sources the agent will cite as [n], unvalidated; the turn checks them against `evidence`. */

@@ -147,6 +147,11 @@ export interface MemoryProposal {
   status: "pending" | "saved" | "dismissed";
   memoryId?: string;
   category?: MemoryCategory;
+  /**
+   * The facts this one updated or restated, removed when it was saved (the agent's `replaces`),
+   * so an Undo brings them back.
+   */
+  replaced?: MergedOriginal[];
 }
 
 /** How the Brain groups facts. The agent picks one when it saves; members can change it. */
