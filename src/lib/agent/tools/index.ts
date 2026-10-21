@@ -293,6 +293,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
       };
     case "load_skill":
       return { labels: { running: "Checking a playbook", done: "Checked a playbook" }, app: "agent", action: "read", hidden: true };
+    case "read_result":
+      // More of a long result the step before it returned (a transcript): that step shows what it was.
+      return { labels: { running: "Reading the rest of the result", done: "Read the rest of the result" }, app: "agent", action: "read", hidden: true };
     case "report_timeline":
       // Shown as the Timeline in Results, not as a step.
       return { labels: { running: "Putting the timeline together", done: "Put the timeline together" }, app: "agent", action: "note", hidden: true };

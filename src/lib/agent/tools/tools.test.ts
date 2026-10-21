@@ -540,6 +540,19 @@ describe("interpretCalls", () => {
     ]);
   });
 
+  it("shows reading the rest of a long result only while it runs", () => {
+    const page = "A lot of companies claim to be the fastest-growing… ".repeat(400) + "\n[chars 4000-24000 of 123570. Next: read_result(result_id=\"r1\", offset=24000).]";
+    const [running, done, missing] = interpretCalls([
+      { name: "read_result", input: { result_id: "r1", offset: 4000 }, output: null, error: null },
+      { name: "read_result", input: { result_id: "r1", offset: 4000 }, output: { content: page, tool_call_id: "t", status: "success" }, error: null },
+      { name: "read_result", input: { result_id: "r9" }, output: { content: "That result isn't kept anymore: results are kept only while this run lasts.", tool_call_id: "t", status: "success" }, error: null },
+    ]);
+    expect(running).toMatchObject({ status: "running", label: "Reading the rest of the result", hidden: true });
+    expect(done).toMatchObject({ status: "done", label: "Read the rest of the result", hidden: true });
+    expect(done.preview).toBeUndefined();
+    expect(missing).toMatchObject({ status: "done", hidden: true });
+  });
+
   it("keeps a plain reason as written, contractions and all", () => {
     const [step] = interpretCalls([{ name: "start", input: {}, output: toolMessage({ success: false, error: "The browser wasn't available." }), error: null }]);
     expect(step).toMatchObject({ status: "failed", detail: "The browser wasn't available." });
