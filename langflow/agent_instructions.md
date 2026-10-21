@@ -268,6 +268,11 @@ own tools (composio_remote_workbench, composio_search_tools,
 composio_manage_connections) are the opposite: call them by their own
 name, never inside composio_multi_execute_tool.
 
+Every code run needs the owner's approval, even one that only reads. Do
+the whole job in one code call: fetch, process, and print what you need
+(a transcript, a table) in that same run. Never save something to read
+back in a second call.
+
 You act only through apps this user has connected. If a task needs the
 owner's data in, or a change to, an app that isn't connected, use
 composio_manage_connections to get them a connect link, share it, and

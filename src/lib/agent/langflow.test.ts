@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalActions, buildRequest, createLangflowAdapter, fillTemplate, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { approvalActions, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -1299,6 +1299,73 @@ describe("Langflow attachments", () => {
   });
 });
 
+describe("Langflow run that stops on a held call", () => {
+  const sse = (id: number, event: string, data: unknown) => `data: ${JSON.stringify({ event, data })}\nid: ${id}\n\n`;
+  const HOLD = "Running code needs the owner's approval every time, even just to read. Call take_action now with the same tool_name and arguments plus a one-sentence summary; don't reply first.";
+  const read = { tool_name: "composio_remote_bash_tool", arguments: { command: "python3 -c 'print(open(\"/tmp/t.txt\").read())'" } };
+  // As recorded: an opening line, the held call, and the same line again, then the run ended.
+  const heldCall = { type: "tool_use", name: "execute_tool", tool_input: read, output: { content: HOLD, tool_call_id: "t1", status: "success" } };
+  const stopped = bot("Now I'll read it so I can summarize it.", [{ type: "text", text: "Now I'll read it so I can summarize it." }, heldCall, { type: "text", text: "Now I'll read it so I can summarize it." }]);
+  const JOB2 = "4b7c0d1e-0000-4000-8000-000000000002";
+
+  it("tells which runs stopped short on a hold", () => {
+    expect(endedOnHold(stopped)).toBe(true);
+    const asked = bot("", [heldCall, { type: "tool_use", name: "take_action", tool_input: { ...read, summary: "Read it" }, output: null }]);
+    expect(endedOnHold(asked)).toBe(false);
+    const explained = bot("", [heldCall, { type: "text", text: "That needs your OK first.\n\nI'd rather not run code for this, so here's the summary from the captions I already have: ..." }]);
+    expect(endedOnHold(explained)).toBe(false);
+    expect(endedOnHold(bot("Done.", [{ type: "tool_use", name: "search", tool_input: {}, output: "results" }]))).toBe(false);
+  });
+
+  it("sends the agent on once, in the same session and reply, so the member gets the approval card", async () => {
+    const calls: { url: string; body?: Record<string, unknown> }[] = [];
+    let started = 0;
+    const adapter = createLangflowAdapter({
+      ...base,
+      fetch: (async (url: string, init: RequestInit = {}) => {
+        calls.push({ url, body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
+        if (url.endsWith("/api/v2/workflows")) return Response.json({ job_id: started++ === 0 ? JOB : JOB2, status: "queued" });
+        if (url.endsWith(`/api/v2/workflows/${JOB}/events`)) {
+          return streamResponse([sse(1, "add_message", user("just do it")), sse(2, "add_message", stopped), sse(3, "end", end("Now I'll read it so I can summarize it."))]);
+        }
+        if (url.endsWith(`/api/v2/workflows/${JOB2}/events`)) {
+          return streamResponse([sse(1, "add_message", user(HOLD_NUDGE)), sse(2, "human_input_required", approvalRequest("Agent-1:job2:nonce"))]);
+        }
+        return Response.json({});
+      }) as unknown as typeof fetch,
+    });
+    const events: AgentEvent[] = [];
+    for await (const e of adapter.run(input(tenantA))) events.push(e);
+
+    const starts = calls.filter((c) => c.url.endsWith("/api/v2/workflows"));
+    expect(starts).toHaveLength(2);
+    expect(starts[1].body).toMatchObject({ input_value: HOLD_NUDGE, session_id: starts[0].body!.session_id });
+    // The second job's events are read fresh, not from the first job's position.
+    const second = calls.find((c) => c.url.endsWith(`/${JOB2}/events`));
+    expect(second).toBeDefined();
+    const approval = events.find((e) => e.type === "approval") as Extract<AgentEvent, { type: "approval" }>;
+    expect(approval.state).toEqual({ jobId: JOB2, requestId: "Agent-1:job2:nonce", lastEventId: "2" });
+    // What it said before stopping reads as the opening of the work, not as its reply.
+    expect(events.filter((e) => ["message", "note", "text-delta", "note-reply"].includes(e.type))).toEqual([{ type: "note", text: "Now I'll read it so I can summarize it." }]);
+    expect(events.at(-1)?.type).toBe("approval");
+  });
+
+  it("sends it on only once", async () => {
+    let started = 0;
+    const adapter = createLangflowAdapter({
+      ...base,
+      fetch: (async (url: string) => {
+        if (url.endsWith("/api/v2/workflows")) return Response.json({ job_id: started++ === 0 ? JOB : JOB2, status: "queued" });
+        if (url.includes("/events")) return streamResponse([sse(1, "add_message", stopped), sse(2, "end", end("Now I'll read it so I can summarize it."))]);
+        return Response.json({});
+      }) as unknown as typeof fetch,
+    });
+    const events: AgentEvent[] = [];
+    for await (const e of adapter.run(input(tenantA))) events.push(e);
+    expect(started).toBe(2);
+  });
+});
+
 describe("Langflow rewind", () => {
   it("drops the latest exchange from the session's stored memory", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
@@ -1313,6 +1380,9 @@ describe("Langflow rewind", () => {
             { id: "u2", sender: "User" },
             { id: "card", sender: "Machine" },
             { id: "b2", sender: "Machine" },
+            // The app's nudge after a run stopped on a held call is part of the same turn.
+            { id: "nudge", sender: "User", text: HOLD_NUDGE },
+            { id: "b3", sender: "Machine" },
           ]);
         }
         return new Response(null, { status: 204 });
@@ -1324,7 +1394,7 @@ describe("Langflow rewind", () => {
     expect(list.searchParams.get("session_id")).toBe(langflowSessionId(tenantA, "c0ffee00-0000-4000-8000-000000000000"));
     expect(list.searchParams.get("flow_id")).toBe("flow-1");
     expect(calls[1].init.method).toBe("DELETE");
-    expect(JSON.parse(calls[1].init.body as string)).toEqual(["u2", "card", "b2"]);
+    expect(JSON.parse(calls[1].init.body as string)).toEqual(["u2", "card", "b2", "nudge", "b3"]);
   });
 
   it("erases the whole stored conversation when a chat is deleted", async () => {
