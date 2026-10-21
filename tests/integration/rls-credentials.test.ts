@@ -83,10 +83,10 @@ describe("saved credentials", () => {
     const id = (await save(gone, { p_kind: "login", p_label: "Gone", p_sealed: "v1.gone", p_origin: "https://gone.example" })).data as string;
     const admin = await serviceClient();
     const secretId = ((await admin.from("credentials").select("secret_id").eq("id", id).single()).data as { secret_id: string }).secret_id;
-    expect((await admin.auth.admin.deleteUser(gone.userId)).error).toBeNull();
     const { execSync } = await import("node:child_process");
-    const left = execSync(`docker exec supabase_db_studio-app psql -U postgres -tAc "select count(*) from vault.secrets where id = '${secretId}'"`).toString().trim();
-    expect(left).toBe("0");
+    const sql = (q: string) => execSync(`docker exec supabase_db_studio-app psql -U postgres -tAc "${q}"`).toString().trim();
+    sql(`delete from auth.users where id = '${gone.userId}'`);
+    expect(sql(`select count(*) from vault.secrets where id = '${secretId}'`)).toBe("0");
   });
 
   it("aren't readable by anyone signed out", async () => {
