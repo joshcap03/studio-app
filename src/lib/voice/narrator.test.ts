@@ -262,3 +262,15 @@ describe("a request's read-back", () => {
     expect(narrator.take(0, { running: false, quietMs: 0 }).at(-1)).toBe("It needs your OK on screen: Email Jo. Approvals are taps for now.");
   });
 });
+
+describe("what a call leaves out", () => {
+  it("never says the rest is on screen: they're looking at it", () => {
+    const narrator = new CallNarrator();
+    narrator.event(start);
+    const long = "Three roles cleared your bar. The best is remote at $195k. Two more are hybrid in Brooklyn, both senior, both in fintech, and both posted this week by teams you've already met.";
+    narrator.reply(message({ content: long }));
+    const said = narrator.take(Date.now(), { running: false, quietMs: 10_000 }).join(" ");
+    expect(said).toContain("Three roles cleared your bar.");
+    expect(said).not.toContain("rest is on screen");
+  });
+});

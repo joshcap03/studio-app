@@ -32,7 +32,10 @@ mic), from the setup banner ("Talk it through"), or from the agent's own offer u
 - The call screen decides what Studio says and when (`src/lib/voice/narrator.ts`). Lines wait
   while the voice or the member has the floor. A sentence is said once per turn, whichever way it
   arrived: an opening line, the reply read as soon as it was written, or the same words again in
-  the finished reply. The heads-up and time's-up cues each go once.
+  the finished reply. A reply that ends on a card is handed over as a person would: its
+  opening line, then the paragraph right above the card (`leadIn` in `relay.ts`), and a name the
+  agent offers is "Keep it on screen, or tell me the name you'd like." A call never says "The rest
+  is on screen": the member is looking at it. The heads-up and time's-up cues each go once.
 - `POST /api/voice/session/<id>/end` records the call's length.
 
 Every Studio voice speaks a little slower than ElevenLabs' default, and steadier (speed 0.9,
