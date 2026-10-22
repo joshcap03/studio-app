@@ -167,10 +167,8 @@ if (voiceOnly) {
     console.log(JSON.stringify({ conversation_config: { tts: TTS } }, null, 2));
     process.exit(0);
   }
-  // Everything else stays as stored: only the speech settings change.
-  const stored = await call("GET", `/agents/${existing}`);
-  const conversation = { ...stored.conversation_config, tts: { ...stored.conversation_config?.tts, ...TTS } };
-  await call("PATCH", `/agents/${existing}`, { conversation_config: conversation });
+  // ElevenLabs merges a patch into what's stored, so only the speech settings change.
+  await call("PATCH", `/agents/${existing}`, { conversation_config: { tts: TTS } });
   const after = (await call("GET", `/agents/${existing}`)).conversation_config?.tts ?? {};
   console.log(`ElevenLabs agent: ${existing}`);
   console.log(`Speech: ${after.model_id ?? "(missing)"}, speed ${after.speed ?? "(default)"}, stability ${after.stability ?? "(default)"}`);
