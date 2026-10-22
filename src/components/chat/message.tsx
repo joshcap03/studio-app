@@ -4,9 +4,10 @@ import { AlertCircle, AudioLines, CalendarClock, Check, Copy, Mic, Pencil, Rotat
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Companion, companionHint, useCompanion, type CompanionMood } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
+import { useCallApproval } from "@/components/voice/call-approvals";
 import { useCopy } from "@/components/ui/use-copy";
 import { moveOf } from "@/lib/chat/move";
-import { MAX_MESSAGE_LENGTH, type Attachment, type ChatMessage, type MessageFeedback, type UiResponse } from "@/lib/types";
+import { MAX_MESSAGE_LENGTH, type Approval, type Attachment, type ChatMessage, type MessageFeedback, type UiResponse } from "@/lib/types";
 import { ActivityLog } from "./activity";
 import { ArtifactCard } from "./artifact-card";
 import { AttachmentList } from "./attachments";
@@ -213,7 +214,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
       {/* Requests come before the text: the agent writes its answer after the member decides. */}
       {(message.approvals ?? []).map((approval) => (
-        <ApprovalCard
+        <ThreadApproval
           key={approval.id}
           approval={approval}
           conversationId={message.conversationId}
@@ -396,5 +397,36 @@ function RetryButton({ onClick }: { onClick: () => void }) {
       <RotateCcw size={13} />
       Retry
     </button>
+  );
+}
+
+/**
+ * A request in the thread. While a call docked over the app is in this conversation, it's the
+ * call's to read back and hold too (src/components/voice/call-approvals.ts), and a tap stops the hold.
+ */
+function ThreadApproval({
+  approval,
+  conversationId,
+  onDecide,
+}: {
+  approval: Approval;
+  conversationId: string;
+  onDecide?: (decision: "approve" | "reject") => void;
+}) {
+  const onCall = useCallApproval(conversationId, approval.id);
+  return (
+    <ApprovalCard
+      approval={approval}
+      conversationId={conversationId}
+      onDecide={
+        onDecide
+          ? (decision) => {
+              onCall?.onTap();
+              onDecide(decision);
+            }
+          : undefined
+      }
+      call={approval.status === "pending" ? onCall?.call : undefined}
+    />
   );
 }

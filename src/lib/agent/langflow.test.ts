@@ -144,6 +144,14 @@ describe("Langflow request", () => {
     expect(off).not.toContain("name of your own");
   });
 
+  it("names the page the member is looking at as they talk, so \"this\" means something", () => {
+    expect(templateValues({ ...tenantA, modality: "call", screen: { kind: "task", title: "Weekly job digest", status: "active" } }).system_context).toContain(
+      'On the member\'s screen as they said this: their task "Weekly job digest" (active).',
+    );
+    expect(templateValues({ ...tenantA, screen: { kind: "tracker", name: "Applications" } }).system_context).toContain('their "Applications" tracker');
+    expect(templateValues(tenantA).system_context).not.toContain("On the member's screen");
+  });
+
   it("says it's introduced on calls by its starting name, not one they chose, and keeps a chosen manner before a name", () => {
     const calls = selfContext({ name: null, manner: "I keep it short.", callName: "Rowan" });
     expect(calls).toContain("on calls you're introduced as Rowan, this agent's starting name, not one they chose for you.");

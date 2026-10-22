@@ -98,6 +98,46 @@ else's call, or one ended more than two minutes before, leaves the words plain "
   by the run's sidebar mark, whether it's still out. Where a call went is known only to the tab
   it was on, so those parts aren't there after a reload.
 
+## Talking while you use Studio
+
+A call docks over the app as a bar under the page's header (`CallBar` in
+`src/components/voice/call.tsx`), so the member keeps using Studio while they talk: the orb, the
+latest caption, mute, Type instead, Expand, and End. The thread shows the replies and the cards; a
+request waiting on their OK is held and read back there as on the stage
+(`src/components/voice/call-approvals.ts`). Expand brings back the full call screen with its stage
+(screen sharing and the agent's browser live there), and "Keep using Studio" docks it again. The
+setup interview, and a call arriving from onboarding, open full screen.
+
+- **It follows the screen.** Opening a chat moves the call into it, and a new chat starts one;
+  on Tasks, the Library, or a project it stays with the chat it was in, and the bar offers "Back
+  to …". Settings, the agent's page, and Skills open in their own tab during a call, since a page
+  load would end it.
+- **Going somewhere: `open`.** "Open my tasks", "show me the job tracker", "go back to the Ramp
+  chat", "new chat", "go back". Only the member's own words count (`isOpenIntent`: the whole of
+  what they said, so "open my tasks and run the first one" goes to the worker). The voice front
+  asks its model for the place and name (the mock reads them with `parseOpen`); the browser
+  matches the name against their chats, tasks, trackers, projects, and Library docs
+  (`src/lib/voice/places.ts`), and goes there. Two that fit: "Did you mean A or B?", and a bare
+  answer picks one. Nothing by that name: it was a request after all, and their words go to the
+  worker. Settings and the agent's page are a tap on the bar (a new tab needs one). It changes
+  nothing.
+- **Pressing a button: `press`.** The page on screen registers the buttons a call may press
+  (`useScreenButtons` in `src/components/voice/screen.tsx`, the same handlers its buttons call):
+  a task's Run now, Pause or Resume, and Open conversation; a chat's Results. The stage tells the
+  voice where they are and which buttons are there (`screen`). Which one is pressed is decided by
+  fixed rules on their words (`pressIntent`), never by the model, and only if it's on that page.
+  Run now, Pause and Resume change Studio state, so they wait out a visible three-second hold on
+  the bar that anything they say, typing, or Cancel stops. Apply, files, connecting apps, setup's
+  "Do the first one now", and approvals keep their own rules.
+- **What the agent is looking at.** Words said on a call carry the page they were on by id
+  (`screen` on the send: a task or a tracker); the server loads it under their session and tells
+  the agent ("On the member's screen as they said this: their task …"), so "this one" means
+  something. An id that isn't theirs is ignored.
+- **Showing what the agent made.** When the agent saves a tracker row (the `saved` stream event,
+  sent only once it's saved) or files a doc (`artifact`) while the member watches the call's chat,
+  the app shows where it landed, once a reply, unless they've moved around since the reply began.
+  If the reply then waits on them, the chat comes back.
+
 ## Voices
 
 Each agent speaks with a voice its member chose, from Studio's own catalog

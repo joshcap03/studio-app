@@ -20,7 +20,8 @@ import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import { browserContextFor } from "@/lib/browser-signins";
 import { saveBrowserSession } from "@/lib/browser-view";
 import type { Tenant } from "@/lib/tenant-core";
-import type { ChatMessage, ConversationSummary, MessageOrigin, Modality } from "@/lib/types";
+import type { AgentTenantContext } from "@/lib/agent/types";
+import type { ChatMessage, ConversationSummary, MessageOrigin, Modality, ScreenRef } from "@/lib/types";
 import { callEnded, callForWords } from "@/lib/voice/calls";
 import { resolvePersona } from "@/lib/voice/persona";
 import { checkSpokenDecision } from "@/lib/voice/approvals";
@@ -38,9 +39,10 @@ import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
  * offer to call (one from before offers can't); `secrets`, its requests for a login or card; `handoffs`,
  * its browser handed over. A decision `via` voice carries what the member was
  * heard to say and their call, and stands only once checked (src/lib/voice/approvals.ts).
+ * `screen`: the page they were looking at as they spoke on a call, by id.
  */
 export type RunInput = (
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; via?: "tap" | "voice"; heard?: string; voiceSessionId?: string }
@@ -117,7 +119,7 @@ export async function buildTurnDeps(
     const projectId = conversation ? conversation.projectId : input.kind === "send" ? input.projectId : undefined;
     return projectId ? projectForRun(tenant, projectId, adapter.capabilities.attachments) : undefined;
   };
-  const [skill, project, agentFiles, browserContext] = await Promise.all([
+  const [skill, project, agentFiles, browserContext, screen] = await Promise.all([
     input.kind === "send" && input.skillId ? loadSkill(input.skillId) : Promise.resolve(undefined),
     loadProject(),
     agentFilesForRun(tenant, adapter.capabilities.attachments),
@@ -126,6 +128,7 @@ export async function buildTurnDeps(
       console.error("[browser] couldn't load saved sign-ins:", error instanceof Error ? error.message : error);
       return null;
     }),
+    input.kind === "send" && input.screen ? onScreen(tenant, input.screen).catch(() => null) : Promise.resolve(null),
   ]);
   if (skill === null) throw new TurnError(404, "Skill not found.");
   if (project === null) throw new TurnError(404, "Project not found.");
@@ -171,6 +174,7 @@ export async function buildTurnDeps(
       project: project ? { ...project.context, files: named(project.files) } : null,
       ...(offerCalls ? { calls: true } : {}),
       ...(browserContext ? { browserContext } : {}),
+      ...(screen ? { screen } : {}),
     },
     projectFiles: files,
     remember: memoryEnabled()
@@ -236,4 +240,17 @@ export async function buildTurnDeps(
 /** Whether the member said Not now to an offer to call under this message. */
 function declinedOffer(message: ChatMessage): boolean {
   return Object.values(message.uiResponse ?? {}).some((r) => r.status === "declined");
+}
+
+/**
+ * What the member was looking at, loaded by id under their session: a task that isn't theirs is
+ * nothing. A tracker is named from its collection, the way the Library shows it.
+ */
+async function onScreen(tenant: Tenant, screen: ScreenRef): Promise<AgentTenantContext["screen"] | null> {
+  if (screen.kind === "tracker") {
+    const words = screen.collection.replace(/[-_]+/g, " ").trim();
+    return { kind: "tracker", name: words.charAt(0).toUpperCase() + words.slice(1) };
+  }
+  const task = await getTask(tenant, screen.id);
+  return task ? { kind: "task", title: task.title, status: task.status } : null;
 }

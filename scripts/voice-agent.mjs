@@ -68,6 +68,20 @@ const TOOLS = [
   },
   { name: "send_card", description: "Send the card on screen, only after the member said send.", properties: {} },
   { name: "stop_work", description: "Stop the agent's current work, only when the member asked to stop.", properties: {} },
+  {
+    name: "open",
+    description: "Go somewhere in Studio, only when the member asked to. Nothing changes.",
+    properties: {
+      place: { type: "string", description: "The kind of place: tasks, library, new_chat, settings, agent, back, chat, task, tracker, or project." },
+      name: { type: "string", description: "The name they said; empty for a page." },
+    },
+    required: ["place"],
+  },
+  {
+    name: "press",
+    description: "Press a button on the page the member is on, only when they named it.",
+    properties: { action: { type: "string", description: "run_now, pause, resume, open_chat, or open_results." } },
+  },
 ];
 
 function toolConfig(t) {

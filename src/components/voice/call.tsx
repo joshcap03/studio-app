@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowUp, AudioLines, Camera, Mic, MicOff, MonitorUp, PhoneOff, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, ArrowUp, AudioLines, Camera, ExternalLink, Keyboard, Maximize2, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useCardDrafts, type FillResult } from "@/components/chat/card-drafts";
 import { Markdown } from "@/components/chat/markdown";
 import { ApprovalCard, QuestionCard } from "@/components/chat/requests";
@@ -12,19 +13,21 @@ import { moveOf } from "@/lib/chat/move";
 import type { FormValues } from "@/lib/chat/ui-answer";
 import { api, uploadAttachment, type SpokenDecision } from "@/lib/client/api";
 import { guardStep, HOLD_MS, initialGuard, type GuardEffect, type GuardEvent, type GuardRequest } from "@/lib/voice/approval-guard";
-import { greetingKind, isBackchannel, isDeclineIntent, isHoldOn, isLookIntent, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer } from "@/lib/voice/intent";
+import { greetingKind, isBackchannel, isDeclineIntent, isHoldOn, isLookIntent, isOpenIntent, isRedirect, isRetryIntent, isSendIntent, isStopIntent, longJobAnswer, pressIntent } from "@/lib/voice/intent";
 import { clock, micProblem } from "@/lib/voice/mic";
 import { CallNarrator } from "@/lib/voice/narrator";
 import { noteCanCome } from "@/lib/voice/notes";
 import { JUST_BACK } from "@/lib/voice/persona";
 import { withHeldWords } from "@/lib/voice/recap";
-import { approvalLine, tapReason, waitsOnMember } from "@/lib/voice/relay";
-import { SETUP_JOURNEY_TITLE, type CallPurpose, type StageField, type VoiceGrant, type VoiceStage } from "@/lib/voice/types";
+import { nameScore } from "@/lib/voice/places";
+import { approvalLine, PRESS_FAILED, PRESS_HELD, PRESSED_LINE, tapReason, waitsOnMember } from "@/lib/voice/relay";
+import { HELD_ACTIONS, SETUP_JOURNEY_TITLE, type CallPurpose, type CallScreen, type ScreenAction, type StageField, type VoiceGrant, type VoiceStage } from "@/lib/voice/types";
 import { MAX_ATTACHMENTS, type Approval, type Attachment, type ChatMessage, type Journey as JourneyInfo, type StreamEvent, type UiField, type UiForm, type UiResponse } from "@/lib/types";
 import type { LinkStatus, VoiceLink, VoiceLinkEvents, VoiceTools } from "./link";
 import MockVoiceLink from "./mock-link";
 import { Orb, ORB_LABEL, type OrbState } from "./orb";
 import { BrowserView } from "./browser-view";
+import { publishCallApprovals } from "./call-approvals";
 import { useShare } from "./share";
 
 // A call with the agent, from any conversation: the orb (who has the floor, and whose move it is)
@@ -38,6 +41,12 @@ import { useShare } from "./share";
 // a visible hold, and only then does it go (approval-guard.ts); a clear "don't send it" declines
 // any request. The call can move to another conversation ("Do the first one now" follows the
 // task's run), and a long job can end it with a voice note to come.
+//
+// It docks over the app as a bar by default, so the member keeps using Studio while they talk:
+// the thread shows the replies and cards, and the call follows whichever chat they open. They can
+// ask it to go somewhere ("open my tasks"), or press a button on the page they're on ("pause
+// it"); a button that changes something waits out a visible hold first. Expanded, it's the full
+// screen with the stage, as before (screen sharing and the agent's browser live there).
 
 const ElevenLabsLink = dynamic(() => import("./elevenlabs-link"), { ssr: false });
 
@@ -73,7 +82,33 @@ export interface CallProps {
    * sound until the member taps, so it waits for "Start call".
    */
   waitForTap?: boolean;
+  /** Docked over the app (the member keeps using it), or the full call screen. */
+  layout?: CallLayout;
+  onLayout?: (layout: CallLayout) => void;
+  /** Where the docked bar goes, in the app's layout; until it's there, the call shows full. */
+  dock?: HTMLElement | null;
+  /** The page of Studio the member is on, and the buttons on it the call can press. */
+  screen?: CallScreen | null;
+  /** Goes where they asked to (their words, and the voice's reading of them); says where, or why not. */
+  onOpen?: (request: { place?: unknown; name?: unknown; said: string }) => Promise<OpenResult>;
+  /** Presses a button on the page they're on; true when it took effect. */
+  onPress?: (action: ScreenAction) => Promise<boolean>;
+  /** The call's chat isn't the page on screen: its name, for "Back to …" on the bar. */
+  elsewhere?: string | null;
+  onBack?: () => void;
 }
+
+export type CallLayout = "bar" | "full";
+
+/** Where "open …" went: a page here, one that opens in its own tab (a tap), a choice, or nowhere it knows. */
+export type OpenResult =
+  | { status: "opened"; title: string }
+  | { status: "page"; path: string; title: string }
+  | { status: "which"; options: string[] }
+  | { status: "none" };
+
+/** How long a choice of two places ("the Ramp chat or the Ramp task?") stays open to a bare answer. */
+const WHICH_MS = 30_000;
 
 interface Caption {
   id: number;
@@ -212,6 +247,14 @@ export function Call({
   subscribe,
   onEnd,
   waitForTap = false,
+  layout = "full",
+  onLayout,
+  dock = null,
+  screen = null,
+  onOpen,
+  onPress,
+  elsewhere = null,
+  onBack,
 }: CallProps) {
   const drafts = useCardDrafts();
   // What they show the call (their screen or camera), kept on their device until they ask it to look.
@@ -344,6 +387,54 @@ export function Call({
     return () => clearInterval(timer);
   }, [approving, step]);
 
+  // Docked, the thread shows the request: it reads what the call knows about it from here.
+  const cancelHold = useCallback(() => step({ type: "cancel", reason: "tap", at: Date.now() }), [step]);
+  useEffect(() => {
+    publishCallApprovals({ conversationId, spoken: spokenOn, spent, approving, now: holdNow, cancel: cancelHold });
+  }, [approving, cancelHold, conversationId, holdNow, spent, spokenOn]);
+  useEffect(() => () => publishCallApprovals(null), []);
+
+  // ---------------------------------------------------------------------------------------
+  // The app around the call: a button they named that changes something (run, pause, resume)
+  // waits out a visible hold, which anything they say or a tap on Cancel stops.
+
+  const [pressing, setPressing] = useState<{ action: ScreenAction; until: number } | null>(null);
+  const pressingRef = useRef(pressing);
+  pressingRef.current = pressing;
+  const pressRef = useRef(onPress);
+  pressRef.current = onPress;
+  const [pressNow, setPressNow] = useState(0);
+  const stopPressing = useCallback(
+    (say: boolean) => {
+      if (!pressingRef.current) return;
+      pressingRef.current = null;
+      setPressing(null);
+      if (say) narrator.aside(PRESS_HELD);
+    },
+    [narrator],
+  );
+  useEffect(() => {
+    if (!pressing) return;
+    const tick = setInterval(() => setPressNow(Date.now()), 100);
+    const go = setTimeout(() => {
+      if (pressingRef.current !== pressing) return;
+      pressingRef.current = null;
+      setPressing(null);
+      void (pressRef.current?.(pressing.action) ?? Promise.resolve(false)).then(
+        (done) => narrator.aside(done ? (PRESSED_LINE[pressing.action] ?? "Okay.") : PRESS_FAILED),
+        () => narrator.aside(PRESS_FAILED),
+      );
+    }, Math.max(0, pressing.until - Date.now()));
+    return () => {
+      clearInterval(tick);
+      clearTimeout(go);
+    };
+  }, [narrator, pressing]);
+  /** A choice between places they were asked about, so a bare answer ("the task") picks one. */
+  const which = useRef<{ options: string[]; at: number } | null>(null);
+  /** Settings or the agent's page, asked for on the call: their own tab, so it's a tap on the bar. */
+  const [pageLink, setPageLink] = useState<{ path: string; title: string } | null>(null);
+
   const ask = openAsk(messages, running);
   const questionsKey = ask.reply ? `${ask.reply.id}:questions` : "";
   const latestReply = messages.findLast((m) => m.role === "assistant");
@@ -383,8 +474,9 @@ export function Call({
         : {}),
       ...(longJob && running ? { longJob: true } : {}),
       ...(share.kind ? { sharing: share.kind } : {}),
+      ...(screen ? { screen } : {}),
     };
-  }, [approving, ask.form, ask.questions, ask.reply, drafts, journey, longJob, pendingApproval, purpose, questionsKey, running, share.kind, spent, spokenOn]);
+  }, [approving, ask.form, ask.questions, ask.reply, drafts, journey, longJob, pendingApproval, purpose, questionsKey, running, screen, share.kind, spent, spokenOn]);
   const stageRef = useRef(stage);
   stageRef.current = stage;
   /** The stage the voice last heard, with a line or as an update. */
@@ -535,10 +627,23 @@ export function Call({
     setSnapped(filesRef.current.length);
   }, [snapshot]);
 
-  const handOff = useCallback((): string => {
+  const handOff = useCallback(async (): Promise<string> => {
     const said = pending();
     const words = said.join(" ").trim();
     if (!words) return "Refused: they haven't said anything new to pass on.";
+    // Their answer to "did you mean A or B?": the place that fits it, rather than a request.
+    const choice = which.current;
+    which.current = null;
+    if (choice && Date.now() - choice.at < WHICH_MS && onOpen) {
+      const picked = choice.options.filter((o) => nameScore(words, o) > 0);
+      if (picked.length === 1) {
+        const result = await onOpen({ name: picked[0], said: words });
+        if (result.status === "opened") {
+          consume();
+          return `Opened: ${result.title}`;
+        }
+      }
+    }
     consume();
     const { running: busy, messages: now } = live.current;
     const last = now.at(-1);
@@ -592,7 +697,7 @@ export function Call({
     }
     send(withHeld(words), { steer: false });
     return "Handed off: sent to the worker.";
-  }, [closeLongJob, hold, onRetry, send, snapshot, withHeld]);
+  }, [closeLongJob, hold, onOpen, onRetry, send, snapshot, withHeld]);
 
   const tools: VoiceTools = {
     send_message: () => handOff(),
@@ -660,6 +765,39 @@ export function Call({
       if (reply.ui?.some((b) => b.kind === "browser")) return "Refused: taking over the browser is a tap on screen.";
       return "Refused: there's no card open on screen.";
     },
+    open: async (params) => {
+      const said = lastWords();
+      if (!onOpen || !isOpenIntent(said)) return "Refused: they didn't ask to go anywhere.";
+      const result = await onOpen({ place: params.place, name: params.name, said });
+      // Nothing of theirs by that name: it's a request after all ("open a ticket with support").
+      if (result.status === "none") return handOff();
+      consume();
+      if (result.status === "which") {
+        which.current = { options: result.options, at: Date.now() };
+        return `Which: ${result.options.join(" | ")}`;
+      }
+      if (result.status === "page") {
+        setPageLink({ path: result.path, title: result.title });
+        return `Page: ${result.title}`;
+      }
+      return `Opened: ${result.title}`;
+    },
+    press: async (params) => {
+      const said = lastWords();
+      // Their own words name the button; the voice's choice of it doesn't count.
+      const action = pressIntent(said);
+      if (!onPress || !action || !screen?.actions?.includes(action)) return "Refused: that isn't a button on the page they're on.";
+      if (params.action !== undefined && params.action !== action) return "Refused: that isn't the button they named.";
+      consume();
+      if (HELD_ACTIONS.includes(action)) {
+        const until = Date.now() + HOLD_MS;
+        pressingRef.current = { action, until };
+        setPressing(pressingRef.current);
+        setPressNow(Date.now());
+        return `Pressing: ${action}`;
+      }
+      return (await onPress(action)) ? `Pressed: ${action}` : "Refused: it didn't work; it's on screen to tap.";
+    },
   };
   const toolsRef = useRef(tools);
   toolsRef.current = tools;
@@ -698,6 +836,8 @@ export function Call({
       step({ type: "sound", at: memberSoundAt.current });
     },
     onMemberText: (text, { typed }) => {
+      // Anything they say stops a button's hold, as it does a spoken approval's.
+      stopPressing(false);
       if (typed) typedAt.current.add(spoken.current.length);
       spoken.current.push(text);
       caption("you", text);
@@ -927,14 +1067,83 @@ export function Call({
   const control =
     "inline-flex size-10 items-center justify-center rounded-full border border-line text-fg-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.96]";
 
-  return (
-    <div role="dialog" aria-modal="true" aria-label={`Call with ${grant.persona.name}`} className="fixed inset-0 z-50 flex flex-col bg-bg animate-fade-in">
-      {!joined ? null : grant.join.kind === "elevenlabs" ? (
-        <ElevenLabsLink grant={grant} events={events} tools={toolsRef.current} onReady={(l) => (link.current = l)} />
-      ) : (
-        <MockVoiceLink grant={grant} events={events} tools={toolsRef.current} onReady={(l) => (link.current = l)} />
-      )}
+  // The voice's connection stays put while the call docks and expands: it's always the first child.
+  const voice = !joined ? null : grant.join.kind === "elevenlabs" ? (
+    <ElevenLabsLink grant={grant} events={events} tools={toolsRef.current} onReady={(l) => (link.current = l)} />
+  ) : (
+    <MockVoiceLink grant={grant} events={events} tools={toolsRef.current} onReady={(l) => (link.current = l)} />
+  );
+  const muteMic = () => {
+    link.current?.setMuted({ mic: mic });
+    setMic(!mic);
+    setAway(false);
+  };
+  const muteSpeaker = () => {
+    step({ type: "speaker", on: !speaker, at: Date.now() });
+    link.current?.setMuted({ speaker: speaker });
+    setSpeaker(!speaker);
+    setAway(false);
+  };
+  const typing = (value: string) => {
+    // Typing stops a hold before a spoken approval goes, and before a button goes.
+    step({ type: "cancel", reason: "typing", at: Date.now() });
+    stopPressing(false);
+    // Typing on a real call stops the voice talking right away; the captions carry on.
+    if (grant.capabilities.audio && speaker && !typed) {
+      step({ type: "speaker", on: false, at: Date.now() });
+      link.current?.setMuted({ speaker: true });
+      setSpeaker(false);
+    }
+    setTyped(value);
+  };
 
+  if (layout === "bar" && joined && dock) {
+    return (
+      <>
+        {voice}
+        {createPortal(
+          <CallBar
+            name={grant.persona.name}
+            orb={orb}
+            time={status === "connected" ? `${clock(elapsed)}${left <= 120 ? ` · ${clock(left)} left` : ""}` : null}
+            mockLabel={grant.live ? null : grant.label}
+            voiceLine={voiceLine?.text ?? null}
+            memberLine={memberLine?.text ?? null}
+            held={held.length}
+            notice={closing ? "It's still working. You'll find it in the chat." : problem ? `${problem} Everything's in the chat.` : null}
+            away={away}
+            onUnmute={unmute}
+            pressing={pressing ? { action: pressing.action, left: Math.max(0, pressing.until - pressNow) } : null}
+            onCancelPress={() => stopPressing(true)}
+            pageLink={pageLink}
+            onPageOpened={() => setPageLink(null)}
+            elsewhere={onBack ? elsewhere : null}
+            onBack={onBack}
+            sharing={share.kind ?? null}
+            mic={mic}
+            speaker={speaker}
+            onMic={muteMic}
+            onSpeaker={muteSpeaker}
+            typed={typed}
+            onTyping={typing}
+            onType={submitTyped}
+            onSay={grant.join.kind === "mock" ? submitSpoken : undefined}
+            canType={status === "connected"}
+            typeLabel={grant.capabilities.audio ? "Type instead…" : "Type what you'd say…"}
+            onExpand={onLayout ? () => onLayout("full") : undefined}
+            onEnd={closing ? finish : () => hangUp()}
+            ended={Boolean(problem)}
+          />,
+          dock,
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+    {voice}
+    <div role="dialog" aria-modal="true" aria-label={`Call with ${grant.persona.name}`} className="fixed inset-0 z-50 flex flex-col bg-bg animate-fade-in">
       <header className="flex h-14 shrink-0 items-center gap-2 px-4 md:px-6">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14px] font-medium text-fg">{grant.persona.name}</p>
@@ -948,6 +1157,16 @@ export function Call({
             <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />
             {grant.label}
           </span>
+        ) : null}
+        {onLayout && joined && !closing ? (
+          <button
+            type="button"
+            onClick={() => onLayout("bar")}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg"
+          >
+            <Minimize2 size={14} />
+            Keep using Studio
+          </button>
         ) : null}
       </header>
 
@@ -1029,17 +1248,7 @@ export function Call({
                   id="call-type"
                   value={typed}
                   disabled={status !== "connected"}
-                  onChange={(e) => {
-                    // Typing stops a hold before a spoken approval goes.
-                    step({ type: "cancel", reason: "typing", at: Date.now() });
-                    // Typing on a real call stops the voice talking right away; the captions carry on.
-                    if (grant.capabilities.audio && speaker && !typed) {
-                      step({ type: "speaker", on: false, at: Date.now() });
-                      link.current?.setMuted({ speaker: true });
-                      setSpeaker(false);
-                    }
-                    setTyped(e.target.value);
-                  }}
+                  onChange={(e) => typing(e.target.value)}
                   placeholder={grant.capabilities.audio ? "Type instead…" : "Type what you'd say…"}
                   className="min-w-0 flex-1 bg-transparent text-[14px] text-fg placeholder:text-fg-4 focus:outline-none"
                 />
@@ -1067,11 +1276,7 @@ export function Call({
                   type="button"
                   aria-label={mic ? "Mute your mic" : "Unmute your mic"}
                   aria-pressed={!mic}
-                  onClick={() => {
-                    link.current?.setMuted({ mic: mic });
-                    setMic(!mic);
-                    setAway(false);
-                  }}
+                  onClick={muteMic}
                   className={control}
                 >
                   {mic ? <Mic size={17} /> : <MicOff size={17} />}
@@ -1080,12 +1285,7 @@ export function Call({
                   type="button"
                   aria-label={speaker ? "Mute the voice" : "Unmute the voice"}
                   aria-pressed={!speaker}
-                  onClick={() => {
-                    step({ type: "speaker", on: !speaker, at: Date.now() });
-                    link.current?.setMuted({ speaker: speaker });
-                    setSpeaker(!speaker);
-                    setAway(false);
-                  }}
+                  onClick={muteSpeaker}
                   className={control}
                 >
                   {speaker ? <Volume2 size={17} /> : <VolumeX size={17} />}
@@ -1191,6 +1391,7 @@ export function Call({
         </section>
       </div>
     </div>
+    </>
   );
 }
 
@@ -1274,5 +1475,214 @@ function SharePanel({
               : "Nothing is sent until you ask. A snapshot shows whatever's in view, including other people, and is saved with your message."}
       </p>
     </div>
+  );
+}
+
+const PRESSING_WORDS: Record<ScreenAction, string> = {
+  run_now: "Running it",
+  pause: "Pausing it",
+  resume: "Turning it back on",
+  open_chat: "Opening its chat",
+  open_results: "Opening the results",
+};
+
+/**
+ * The call docked over the app: who has the floor, what was just said, and the controls, in one
+ * strip under the page's header, so the member keeps using Studio while they talk. The replies
+ * and cards are in the thread; Expand brings back the full call screen.
+ */
+function CallBar({
+  name,
+  orb,
+  time,
+  mockLabel,
+  voiceLine,
+  memberLine,
+  held,
+  notice,
+  away,
+  onUnmute,
+  pressing,
+  onCancelPress,
+  pageLink,
+  onPageOpened,
+  elsewhere,
+  onBack,
+  sharing,
+  mic,
+  speaker,
+  onMic,
+  onSpeaker,
+  typed,
+  onTyping,
+  onType,
+  onSay,
+  canType,
+  typeLabel,
+  onExpand,
+  onEnd,
+  ended,
+}: {
+  name: string;
+  orb: OrbState;
+  time: string | null;
+  mockLabel: string | null;
+  voiceLine: string | null;
+  memberLine: string | null;
+  held: number;
+  notice: string | null;
+  away: boolean;
+  onUnmute: () => void;
+  pressing: { action: ScreenAction; left: number } | null;
+  onCancelPress: () => void;
+  pageLink: { path: string; title: string } | null;
+  onPageOpened: () => void;
+  elsewhere: string | null;
+  onBack?: () => void;
+  sharing: "screen" | "camera" | null;
+  mic: boolean;
+  speaker: boolean;
+  onMic: () => void;
+  onSpeaker: () => void;
+  typed: string;
+  onTyping: (value: string) => void;
+  onType: () => void;
+  onSay?: () => void;
+  canType: boolean;
+  typeLabel: string;
+  onExpand?: () => void;
+  onEnd: () => void;
+  ended: boolean;
+}) {
+  const [typing, setTyping] = useState(false);
+  const icon =
+    "inline-flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.94]";
+  const chip =
+    "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-line px-2.5 text-[12.5px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg";
+  const line = voiceLine ?? (memberLine ? `You: ${memberLine}` : null);
+  return (
+    <section aria-label={`Call with ${name}`} className="shrink-0 px-3 pb-1 md:px-4 animate-fade-up">
+      <div className="mx-auto w-full max-w-[46rem] rounded-2xl border border-line bg-surface shadow-composer">
+        <div className="flex items-center gap-2 py-1.5 pr-1.5 pl-2">
+          <button type="button" onClick={onExpand} disabled={!onExpand} aria-label="Show the full call" className="shrink-0 rounded-full">
+            <Orb state={orb} size={34} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 text-[12px] text-fg-3">
+              <span className="truncate font-medium text-fg-2">{name}</span>
+              <span aria-live="polite" className="shrink-0">· {ORB_LABEL[orb]}</span>
+              {time ? <span className="shrink-0 max-sm:hidden">· {time}</span> : null}
+              {mockLabel ? <span className="shrink-0 rounded-full border border-line px-1.5 text-[11px] max-sm:hidden">{mockLabel}</span> : null}
+            </p>
+            <p aria-live="polite" className="truncate text-[13.5px] leading-[1.45] text-fg" title={line ?? undefined}>
+              {notice ?? line ?? "Talk any time. I'll follow along as you move around."}
+            </p>
+          </div>
+          {elsewhere && onBack ? (
+            <button type="button" onClick={onBack} className={`${chip} max-w-[12rem] max-sm:hidden`} title={`Back to ${elsewhere}`}>
+              <ArrowLeft size={13} className="shrink-0" />
+              <span className="truncate">Back to {elsewhere}</span>
+            </button>
+          ) : null}
+          <button type="button" aria-label={typing ? "Hide typing" : "Type instead"} aria-pressed={typing} onClick={() => setTyping(!typing)} className={icon}>
+            <Keyboard size={16} />
+          </button>
+          <button type="button" aria-label={mic ? "Mute your mic" : "Unmute your mic"} aria-pressed={!mic} onClick={onMic} className={icon}>
+            {mic ? <Mic size={16} /> : <MicOff size={16} />}
+          </button>
+          <button type="button" aria-label={speaker ? "Mute the voice" : "Unmute the voice"} aria-pressed={!speaker} onClick={onSpeaker} className={`${icon} max-sm:hidden`}>
+            {speaker ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          </button>
+          {onExpand ? (
+            <button type="button" aria-label="Show the full call" onClick={onExpand} className={`${icon} max-sm:hidden`}>
+              <Maximize2 size={15} />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onEnd}
+            aria-label={ended ? "Close the call" : "End call"}
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-danger text-on-inverse transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.94]"
+          >
+            <PhoneOff size={15} />
+          </button>
+        </div>
+
+        {pressing || away || pageLink || held || sharing || (elsewhere && onBack) ? (
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-2.5 py-1.5 text-[12.5px] text-fg-3">
+            {pressing ? (
+              <span role="status" className="inline-flex items-center gap-2 text-fg">
+                {PRESSING_WORDS[pressing.action]} in {Math.ceil(pressing.left / 1000)}…
+                <button type="button" onClick={onCancelPress} className={chip}>
+                  Cancel
+                </button>
+              </span>
+            ) : null}
+            {away ? (
+              <button type="button" onClick={onUnmute} className={chip}>
+                <Mic size={13} />
+                Muted while you were away · Unmute
+              </button>
+            ) : null}
+            {pageLink ? (
+              <a href={pageLink.path} target="_blank" rel="noopener" onClick={onPageOpened} className={chip}>
+                <ExternalLink size={13} />
+                Open {pageLink.title}
+              </a>
+            ) : null}
+            {elsewhere && onBack ? (
+              <button type="button" onClick={onBack} className={`${chip} max-w-full sm:hidden`}>
+                <ArrowLeft size={13} className="shrink-0" />
+                <span className="truncate">Back to {elsewhere}</span>
+              </button>
+            ) : null}
+            {held ? <span>Holding {held === 1 ? "what you said" : `${held} things you said`} until this lands</span> : null}
+            {sharing ? (
+              <button type="button" onClick={onExpand} className={chip}>
+                <MonitorUp size={13} />
+                Sharing your {sharing}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {typing ? (
+          <form
+            className="flex items-center gap-1.5 border-t border-line p-1.5 pl-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              onType();
+            }}
+          >
+            <label htmlFor="call-bar-type" className="sr-only">
+              {typeLabel}
+            </label>
+            <input
+              id="call-bar-type"
+              autoFocus
+              value={typed}
+              disabled={!canType}
+              onChange={(e) => onTyping(e.target.value)}
+              placeholder={typeLabel}
+              className="min-w-0 flex-1 bg-transparent text-[14px] text-fg placeholder:text-fg-4 focus:outline-none"
+            />
+            {onSay ? (
+              // MOCK VOICE: stands in for saying it, as the speech-to-text would hear it.
+              <button
+                type="button"
+                onClick={onSay}
+                disabled={!typed.trim() || !canType}
+                className="inline-flex h-7 shrink-0 items-center rounded-lg border border-line px-2 text-[12px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg disabled:text-fg-4"
+              >
+                Say it (mock)
+              </button>
+            ) : null}
+            <button type="submit" aria-label="Send" disabled={!typed.trim()} className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-inverse text-on-inverse transition-opacity hover:opacity-90 disabled:bg-press disabled:text-fg-4">
+              <ArrowUp size={14} />
+            </button>
+          </form>
+        ) : null}
+      </div>
+    </section>
   );
 }

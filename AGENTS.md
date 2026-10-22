@@ -121,6 +121,8 @@ raw/technical text.
   with one member everywhere it speaks, `relay.ts` what it may say about a run, `intent.ts` what the
   member's own words ask for. The call screen is `src/components/voice/call.tsx`; card drafts it
   shares with the thread are `src/components/chat/card-drafts.tsx`, checked by `src/lib/chat/ui-fill.ts`.
+  It docks as a bar over the app by default and follows the chat on screen; `places.ts` finds where
+  "open …" goes.
   A call can start in any conversation and follows a task's run there; `calls.ts` checks which call
   a message was said on, and `recap.ts` builds the card after a call from the records (nothing stored).
   Outside calls: the message box's mic (`mic.ts`, `src/components/chat/mic.tsx`: hold to send a voice
@@ -216,6 +218,11 @@ raw/technical text.
   speech-to-text transcript, never the voice model's paraphrase). It has no tools that act, no
   knowledge base, and no memory, and its prompt is built per call on the server, with the
   member's guardrail first. Its session context is sealed and bound to the call; it reads no data.
+- A call docks over the app, so the member keeps using Studio while they talk. The voice front may
+  move the view (`open`: it changes nothing) and press a button on the page they're on that they
+  named (`press`), each only on the member's own words, read by fixed rules; a button that changes
+  Studio state (run, pause, resume a task) waits out a visible hold anything they say stops. Pages
+  offer buttons with `useScreenButtons` (`src/components/voice/screen.tsx`), never one flow's UI.
 - A card is sent by voice only on the member's clear "send" in their own transcript, and a
   running job is redirected only on a clear "stop" or "actually…" (redirecting stops it and
   declines a pending approval); other talk-over is held until it lands. Files, connecting apps,

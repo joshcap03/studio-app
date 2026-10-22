@@ -163,6 +163,35 @@ export interface VoiceStage {
   longJob?: boolean;
   /** They're showing their screen or camera to the call (it stays on their device until they ask the agent to look). */
   sharing?: "screen" | "camera";
+  /**
+   * What the member is looking at in Studio while they talk (the call docks over the app): the
+   * page, its title, and the buttons on it the call can press when they name one.
+   */
+  screen?: CallScreen;
+}
+
+/** The pages of Studio a call can open, and the member can be on while they talk. */
+export const SCREEN_VIEWS = ["chat", "new_chat", "tasks", "task", "library", "tracker", "project"] as const;
+export type ScreenView = (typeof SCREEN_VIEWS)[number];
+
+/** Where `open` can go: a page, or one by name (a chat, task, tracker, project), or back. */
+export const OPEN_PLACES = [...SCREEN_VIEWS, "settings", "agent", "back"] as const;
+export type OpenPlace = (typeof OPEN_PLACES)[number];
+
+/**
+ * The on-screen buttons a call can press when the member names one. Running, pausing and
+ * resuming a task change Studio state, so they go after a visible hold; the others only show.
+ */
+export const SCREEN_ACTIONS = ["run_now", "pause", "resume", "open_chat", "open_results"] as const;
+export type ScreenAction = (typeof SCREEN_ACTIONS)[number];
+export const HELD_ACTIONS: readonly ScreenAction[] = ["run_now", "pause", "resume"];
+
+export interface CallScreen {
+  view: ScreenView;
+  /** The chat's, task's, tracker's or project's name. */
+  title?: string;
+  /** The buttons on it the call can press. */
+  actions?: ScreenAction[];
 }
 
 /** The title the setup interview's journey carries on screen. */
@@ -189,5 +218,5 @@ export interface VoiceMarker {
 export const VOICE_MARKER = "⟦studio⟧";
 
 /** The client tools the voice front may call; the browser runs them, never the voice. */
-export const VOICE_TOOL_NAMES = ["fill_card", "send_card", "answer_question", "send_message", "stop_work"] as const;
+export const VOICE_TOOL_NAMES = ["fill_card", "send_card", "answer_question", "send_message", "stop_work", "open", "press"] as const;
 export type VoiceToolName = (typeof VOICE_TOOL_NAMES)[number];

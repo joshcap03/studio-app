@@ -1,6 +1,7 @@
 import { PLAN_STEP_LABEL, talksMachinery } from "@/lib/agent/tools";
 import { moveOf } from "@/lib/chat/move";
 import type { ActivityStep, Approval, ChatMessage, JourneyStep, StreamEvent, TapOnlyReason, UiBlock } from "@/lib/types";
+import type { ScreenAction } from "./types";
 
 // What the voice may say about the worker's progress on a call, built only from what the
 // backend reported: step labels as they start, the agent's own opening lines, journey notes,
@@ -284,3 +285,26 @@ function sentence(text: string): string {
   const t = text.trim();
   return !t ? "" : /[.!?…]$/.test(t) ? t : `${t}.`;
 }
+
+/** Said once an on-screen button the member named was pressed (src/components/voice/call.tsx). */
+export const PRESSED_LINE: Partial<Record<ScreenAction, string>> = {
+  run_now: "Okay, it's running.",
+  pause: "Okay, it's paused.",
+  resume: "Okay, it's back on.",
+  open_chat: "Here's its chat.",
+  open_results: "Here are the results.",
+};
+/** Said when a button that changes something waits out its hold first. */
+export const PRESSING_LINE: Partial<Record<ScreenAction, string>> = {
+  run_now: "Okay, running it in three seconds. Say “wait”, or tap Cancel.",
+  pause: "Okay, pausing it in three seconds. Say “wait”, or tap Cancel.",
+  resume: "Okay, turning it back on in three seconds. Say “wait”, or tap Cancel.",
+};
+
+/** Said when a button named on a call didn't work: the page says why. */
+export const PRESS_FAILED = "That didn't go through. It's on screen.";
+/** Said when the member stops the hold before a button goes. */
+export const PRESS_HELD = "Okay, I've left it.";
+/** Settings and the agent's page open in their own tab, which only a tap can open. */
+export const OPEN_PAGE_LINE = "That one opens in its own tab, so it's a tap: it's on the call bar.";
+

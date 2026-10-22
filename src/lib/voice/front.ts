@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { TAP_ONLY_REASONS } from "@/lib/types";
-import { greetingKind, isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isLookIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent } from "./intent";
+import { greetingKind, isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isLookIntent, isOpenIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent, pressIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
-import { plain, SAY_SEND_IT, TAP_REASON_LINE } from "./relay";
+import { OPEN_PAGE_LINE, plain, PRESSED_LINE, PRESSING_LINE, SAY_SEND_IT, TAP_REASON_LINE } from "./relay";
 import { cueLine, greeting, greetingBack, JUST_BACK, VOICE_TOOLS, voiceNoteLine, voicePrompt } from "./persona";
-import { CALL_PURPOSES, VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
+import { CALL_PURPOSES, SCREEN_ACTIONS, SCREEN_VIEWS, VOICE_CUES, VOICE_MARKER, VOICE_TOOL_NAMES, type ScreenAction, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
 // The voice front: an OpenAI-compatible chat-completions endpoint the voice provider calls for
 // every turn of a call (ElevenLabs' custom-LLM mode). It ignores the provider's own prompt and
@@ -74,6 +74,14 @@ const stage = z
     approving: z.boolean().optional(),
     longJob: z.boolean().optional(),
     sharing: z.enum(["screen", "camera"]).optional(),
+    // Absent from pages loaded before calls docked over the app.
+    screen: z
+      .object({
+        view: z.enum(SCREEN_VIEWS),
+        title: z.string().max(200).optional(),
+        actions: z.array(z.enum(SCREEN_ACTIONS)).max(SCREEN_ACTIONS.length).optional(),
+      })
+      .optional(),
   })
   .strip();
 const marker = z.object({ say: z.array(z.string().max(600)).max(8).optional(), stage: stage.optional(), cue: z.enum(VOICE_CUES).optional() }).strip();
@@ -300,6 +308,23 @@ export function speechForResults(results: string[], messages: FrontMessage[] = [
       case "reading":
         // The browser says the read-back again, as a Studio line of its own.
         break;
+      case "opened":
+        lines.push(detail ? `Here's ${detail}.` : "Okay.");
+        break;
+      case "which": {
+        const options = detail.split("|").map((o) => o.trim()).filter(Boolean);
+        lines.push(options.length > 1 ? `Did you mean ${options.slice(0, -1).join(", ")} or ${options.at(-1)}?` : "Which one?");
+        break;
+      }
+      case "pressed":
+        lines.push(PRESSED_LINE[detail.split(/[\s.]/)[0] as ScreenAction] ?? "Okay.");
+        break;
+      case "pressing":
+        lines.push(PRESSING_LINE[detail.split(/[\s.]/)[0] as ScreenAction] ?? "Okay, in three seconds. Say “wait”, or tap Cancel.");
+        break;
+      case "page":
+        lines.push(OPEN_PAGE_LINE);
+        break;
       default:
         return null;
     }
@@ -391,6 +416,18 @@ export function modelTools(requested: FrontRequest["tools"]): Record<string, unk
   return [...ours, ...(system.length ? system : [SKIP_TURN])];
 }
 
+/**
+ * The reply with only the tools the provider can deliver (when it lists them): a provider agent set
+ * up before a tool existed (say, `press`) can't run it, so the member's words go to the work instead.
+ */
+export function deliverable(reply: BrainReply, requested: FrontRequest["tools"]): BrainReply {
+  if (!requested?.length || !reply.tools?.length) return reply;
+  const offered = new Set(requested.map((t) => t.function.name));
+  const tools = reply.tools.filter((t) => offered.has(t.name) || SYSTEM_TOOLS.has(t.name));
+  if (tools.length === reply.tools.length) return reply;
+  return { ...reply, tools: tools.length ? tools : [{ name: "send_message", args: {} }] };
+}
+
 /** The scripted mock's answer to the latest turn. */
 export function mockReply(messages: FrontMessage[]): BrainReply {
   const turns = callTurns(messages);
@@ -448,11 +485,22 @@ export function routeSpeech(said: string, stage: VoiceStage | null, tools: Brain
   if (answerToLongJob(said, stage)) return { tools: [{ name: "send_message", args: {} }] };
   // "Look at this" while they share: their words go to the work with a snapshot, whatever's on stage.
   if (stage?.sharing && isLookIntent(said)) return { tools: [{ name: "send_message", args: {} }] };
+  // A button on the page they're on, named outright, by fixed rules; going somewhere, on their own words.
+  const press = pressFor(said, stage);
+  if (press) return { tools: [{ name: "press", args: { action: press } }] };
+  const open = (tools ?? []).find((t) => t.name === "open");
+  if (open && isOpenIntent(said)) return { tools: [open] };
   const fills = (tools ?? []).filter((t) => t.name === "fill_card" || t.name === "answer_question");
   // "Send" sends what's on screen; the browser says what's missing if it can't.
   if (isSendIntent(said) && (stage?.form || stage?.questions?.length)) return { tools: [...fills, { name: "send_card", args: {} }] };
-  const chosen = (tools ?? []).filter((t) => t.name !== "skip_turn" && t.name !== "stop_work" && t.name !== "send_card");
+  const chosen = (tools ?? []).filter((t) => !["skip_turn", "stop_work", "send_card", "open", "press"].includes(t.name));
   return chosen.length ? { tools: chosen } : { tools: [{ name: "send_message", args: {} }] };
+}
+
+/** The button on screen the member named, when the page they're on has it. */
+function pressFor(said: string, stage: VoiceStage | null): ScreenAction | null {
+  const action = pressIntent(said);
+  return action && stage?.screen?.actions?.includes(action) ? action : null;
 }
 
 /**
@@ -484,6 +532,8 @@ export function quickRoute(messages: FrontMessage[], { approvals = false }: { ap
   const stage = latestStage(messages);
   if (stage?.form || stage?.questions?.length) return null;
   const said = textOf(last.content);
+  // Where to go needs reading (which chat, which tracker), unless it answers a request waiting on them.
+  if (isOpenIntent(said) && !pressFor(said, stage) && !stage?.approving && !answeringRequest(said, stage, approvals)) return null;
   const reply = routeSpeech(said, stage, [], { approvals });
   // A change of course while a request waits declines it (the browser steers), like any redirect.
   const waiting = Boolean(stage?.approval && !stage.working) && !isRedirect(said);

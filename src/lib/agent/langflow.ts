@@ -116,6 +116,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
   const system = [
     guardrail,
     tenant.modality && modalityContext(tenant.modality),
+    tenant.screen && screenContext(tenant.screen),
     tenant.calls && CALLS_CONTEXT,
     tenant.agentInstructions.trim() && `Instructions:\n${tenant.agentInstructions.trim()}`,
     tenant.account?.name.trim() && `You're assisting: ${tenant.account.name.trim()}`,
@@ -174,6 +175,15 @@ export function selfContext(self: NonNullable<AgentTenantContext["self"]>): stri
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/**
+ * What the member has open in Studio as they talk, so "this one" means something. They can see
+ * it; the agent knows only its name.
+ */
+export function screenContext(screen: NonNullable<AgentTenantContext["screen"]>): string {
+  const what = screen.kind === "task" ? `their task "${screen.title}" (${screen.status})` : `their "${screen.name}" tracker`;
+  return `On the member's screen as they said this: ${what}. When they say "this" or "it", that's likely what they mean.`;
 }
 
 /**
