@@ -254,3 +254,37 @@ describe("a request waiting on the member's OK, on a call", () => {
     expect(line).not.toContain("send it");
   });
 });
+
+describe("a reply that ends on a card", () => {
+  const introduction = [
+    "Hi Joshua, good to be working with you. We've been lining up Senior PM roles in New York and getting you ready for the Ramp procurement and David AI interviews, with prep docs for both. We've also been building a pipeline of fintech and AI roles like Highbeam and Stash.",
+    "I'd like to go by Rowan, which you've heard me called on calls, if that suits you.",
+  ].join("\n\n");
+  const card = {
+    kind: "proposal" as const,
+    id: "p1",
+    summary: "Rowan, your job search colleague, keeping the roles, interview prep and outreach research moving",
+    skills: [],
+    tasks: [],
+    memories: [],
+    identity: { name: "Rowan", manner: "I keep it short and plain." },
+  };
+
+  it("says its opening line and what the card is about, the way a person would hand it over", () => {
+    const lines = relayReply(reply({ content: introduction, ui: [card] })).map((l) => l.text);
+    expect(lines).toEqual([
+      "Hi Joshua, good to be working with you. I'd like to go by Rowan, which you've heard me called on calls, if that suits you.",
+      "Keep it on screen, or tell me the name you'd like.",
+    ]);
+  });
+
+  it("says nothing more once the card's answered", () => {
+    const lines = relayReply(reply({ content: introduction, ui: [card], uiResponse: { p1: { status: "applied" } as never } })).map((l) => l.text);
+    expect(lines.join(" ")).not.toContain("Keep it");
+  });
+
+  it("still sums up a setup proposal, and leaves replies that end on a question to the gist", () => {
+    expect(cardLine({ ...card, identity: undefined, skills: [{ catalogId: "x" }] })).toContain("Tap Apply");
+    expect(relayReply(reply({ content: "Found three.\n\nWhich should I start with?", ui: [card] }))[0].text).toBe("Found three. Which should I start with?");
+  });
+});

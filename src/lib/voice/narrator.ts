@@ -209,7 +209,8 @@ export class CallNarrator {
       said.add(words);
       return true;
     });
-    if (kept.every((s) => FILLER.has(sameWords(s)))) return null;
-    return kept.join(" ");
+    // On a call they're looking at the screen: saying where the rest went is just noise.
+    const words = kept.filter((s) => !FILLER.has(sameWords(s)));
+    return words.length ? words.join(" ") : null;
   }
 }

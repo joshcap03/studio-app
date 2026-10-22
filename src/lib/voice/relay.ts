@@ -1,5 +1,5 @@
 import { PLAN_STEP_LABEL, talksMachinery } from "@/lib/agent/tools";
-import { moveOf } from "@/lib/chat/move";
+import { askOf, moveOf } from "@/lib/chat/move";
 import type { ActivityStep, Approval, ChatMessage, JourneyStep, StreamEvent, TapOnlyReason, UiBlock } from "@/lib/types";
 
 // What the voice may say about the worker's progress on a call, built only from what the
@@ -133,7 +133,8 @@ export function relayReply(
     return [{ kind: "problem", text: "That got cut off before it finished. Say “try again”, or tap Retry.", droppable: false }];
   }
   if (message.status === "stopped") return [{ kind: "problem", text: "Stopped.", droppable: false }];
-  const gist = speakableGist(message.content);
+  const asks = askOf(message);
+  const gist = (asks && asks !== "approval" ? leadIn(message.content) : null) ?? speakableGist(message.content);
   if (gist) lines.push({ kind: "reply", text: gist, droppable: false });
   for (const q of message.questions ?? []) lines.push({ kind: "card", text: questionLine(q.question, q.options.map((o) => o.label), q.multiSelect), droppable: false });
   for (const block of message.ui ?? []) {
@@ -167,6 +168,8 @@ export function waitsOnMember(message: ChatMessage): boolean {
 export function cardLine(block: UiBlock): string {
   // Never said: an offer to call means nothing on one.
   if (block.kind === "offer") return "";
+  // The agent offering its name: the reply above it already says which, as it would in person.
+  if (block.kind === "proposal" && introduces(block)) return "Keep it on screen, or tell me the name you'd like.";
   if (block.kind === "proposal") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Apply when it looks right.`;
   // Never filled by voice: the values aren't said aloud, and the agent never hears them.
   if (block.kind === "secret") return `${block.secret === "card" ? "Your card" : "Your sign-in"} goes in on screen. That one's a tap.`;
@@ -175,6 +178,34 @@ export function cardLine(block: UiBlock): string {
   const intro = block.intro ? ` ${sentence(plain(block.intro))}` : "";
   const taps = block.fields.some((f) => f.kind === "file" || f.kind === "connect");
   return `${sentence(plain(block.title))}${intro} Tell me your answers${taps ? " (files and apps are taps)" : ""}, and say “send” when it's right.`;
+}
+
+/** A proposal that's only the agent's name, which the member keeps rather than applies. */
+function introduces(block: Extract<UiBlock, { kind: "proposal" }>): boolean {
+  return (
+    block.identity !== undefined &&
+    block.profile === undefined &&
+    block.instructions === undefined &&
+    !block.skills.length &&
+    !block.tasks.length &&
+    !block.memories.length &&
+    !block.sound?.length
+  );
+}
+
+/**
+ * What to say of a reply that ends on a card, as someone would hand it over: its opening line,
+ * then the paragraph right above the card, which is what the card is about ("I'd like to go by
+ * Rowan, if that suits you."). Null when the reply ends on a question (the gist says that), is
+ * a single paragraph, or its last one is too long to say.
+ */
+export function leadIn(markdown: string): string | null {
+  if (closing(markdown)) return null;
+  const paragraphs = markdown.split(/\n\s*\n/).map(plain).filter(Boolean);
+  const last = paragraphs.at(-1);
+  if (paragraphs.length < 2 || !last || last.length > MAX_GIST) return null;
+  const opener = sentences(paragraphs[0].replace(/^(hey|hi|hello)( there)?[!,.]\s*/i, "")).find((s) => !GREETING.test(s));
+  return opener && opener.length + last.length < MAX_GIST ? `${opener} ${last}` : last;
 }
 
 const MAX_GIST = 320;
