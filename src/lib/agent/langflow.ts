@@ -847,6 +847,23 @@ function humanizeKey(key: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/**
+ * What went wrong, from an error event: `{ error }` from the job runner, or the error message a
+ * component sent (`text`, with the exception's reason in its content blocks).
+ */
+export function errorDetail(data: unknown): string | undefined {
+  if (!isRecord(data)) return undefined;
+  if (typeof data.error === "string" && data.error.trim()) return data.error.trim();
+  const message = isRecord(data.data) ? data.data : data;
+  if (typeof message.text === "string" && message.text.trim()) return message.text.trim();
+  for (const block of Array.isArray(message.content_blocks) ? message.content_blocks : []) {
+    for (const content of isRecord(block) && Array.isArray(block.contents) ? block.contents : []) {
+      if (isRecord(content) && typeof content.reason === "string" && content.reason.trim()) return content.reason.trim();
+    }
+  }
+  return undefined;
+}
+
 /** Model-provider failures in plain words; anything else keeps a short excerpt. */
 export function friendlyError(detail: string): string {
   if (/\b402\b|credit|in_flight_budget|insufficient_quota|billing/i.test(detail)) {
@@ -1351,8 +1368,8 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
               yield { type: "approval", ...approvalFor(request), state };
               return;
             } else if (event === "error") {
-              const detail = (data as { error?: unknown })?.error;
-              throw new AgentError(typeof detail === "string" && detail ? friendlyError(detail) : "The agent ran into a problem.");
+              const detail = errorDetail(data);
+              throw new AgentError(detail ? friendlyError(detail) : "The agent ran into a problem.");
             } else if (event === "end") {
               if (!nudged && endedOnHold(lastBot)) {
                 nudged = true;
