@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   greetingKind,
   isLookIntent,
+  isOpenIntent,
+  pressIntent,
   isAffirmation,
   isApproveIntent,
   isBackchannel,
@@ -293,6 +295,35 @@ describe("greetingKind", () => {
   it("is never a request said with a hello", () => {
     for (const said of ["hi, find me jobs in Austin", "hey stop", "hello, send it", "okay", "so", "Austin", "hey June", "there", "what's up with my application?"]) {
       expect(greetingKind(said, "Rowan")).toBeNull();
+    }
+  });
+});
+
+describe("isOpenIntent", () => {
+  it("takes asking to go somewhere in Studio, and nothing more", () => {
+    for (const said of ["Open my tasks", "show me the job tracker", "Can you pull up the Ramp chat?", "go back to the Ramp and Stash chat", "new chat", "Go back.", "take me to settings please"]) {
+      expect(isOpenIntent(said), said).toBe(true);
+    }
+  });
+  it("never takes a request that only starts that way", () => {
+    for (const said of ["I'm open to agencies", "open to ideas", "show me how to write a cover letter", "open my tasks and run the first one", "What's open right now?", "go to the gym", "Find me roles"]) {
+      expect(isOpenIntent(said), said).toBe(said === "go to the gym");
+    }
+  });
+});
+
+describe("pressIntent", () => {
+  it("names the button they asked for", () => {
+    expect(pressIntent("Pause it.")).toBe("pause");
+    expect(pressIntent("okay, run it now")).toBe("run_now");
+    expect(pressIntent("Can you resume this task?")).toBe("resume");
+    expect(pressIntent("turn it back on")).toBe("resume");
+    expect(pressIntent("open its chat")).toBe("open_chat");
+    expect(pressIntent("show me the results")).toBe("open_results");
+  });
+  it("is nothing for anything more, or anything else", () => {
+    for (const said of ["pause it and email Sam", "run the numbers for me", "should I pause it?", "stop", "send it", "the results look good"]) {
+      expect(pressIntent(said), said).toBeNull();
     }
   });
 });

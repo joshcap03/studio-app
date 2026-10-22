@@ -7,6 +7,7 @@ import { ApiError, api } from "@/lib/client/api";
 import { MAX_PLAN_STEPS, MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
 import { useInlineEdit } from "@/components/ui/inline-edit";
 import { JourneyBar } from "@/components/ui/journey";
+import { useScreenButtons } from "@/components/voice/screen";
 import type { AgentRecord, AgentTask, PlanStep, StepStatus, TaskRun } from "@/lib/tasks/types";
 import { MAX_GOAL_LENGTH, type WorkspaceSkill } from "@/lib/types";
 import {
@@ -104,24 +105,38 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
     }
   }
 
-  async function runNow() {
+  async function runNow(): Promise<boolean> {
     setBusy("run");
     setNotice(null);
     try {
       const { conversationId } = await api.runTask(taskId);
       onOpenConversation(conversationId);
+      return true;
     } catch (error) {
       setNotice(error instanceof ApiError && error.status === 404 ? "Run now isn't available yet." : errorText(error));
       setBusy(null);
+      return false;
     }
   }
 
-  async function toggleStatus() {
-    if (!task) return;
+  async function toggleStatus(): Promise<boolean> {
+    if (!task) return false;
     setBusy("status");
-    await patch({ status: task.status === "paused" ? "active" : "paused" });
+    const saved = await patch({ status: task.status === "paused" ? "active" : "paused" });
     setBusy(null);
+    return saved !== null;
   }
+
+  // On a call, naming a button here presses it ("pause it"): the same handlers as the buttons below.
+  useScreenButtons(
+    task && task.status !== "archived" && busy === null
+      ? {
+          run_now: runNow,
+          ...(task.status === "active" ? { pause: toggleStatus } : task.status === "paused" ? { resume: toggleStatus } : {}),
+          ...(task.conversationId ? { open_chat: () => (onOpenConversation(task.conversationId!), true) } : {}),
+        }
+      : {},
+  );
 
   async function remove() {
     setNotice(null);

@@ -840,7 +840,7 @@ describe("edits, files, and memory suggestions", () => {
       ...Array.from({ length: 30 }, (_, i) => ({ type: "record" as const, record: { collection: "applications", key: `k${i}` } })),
       { type: "message", text: "Found some." },
     ]);
-    await collect(
+    const events = await collect(
       startTurn(
         {
           store,
@@ -848,7 +848,8 @@ describe("edits, files, and memory suggestions", () => {
           context: context(scopeA),
           idleTimeoutMs: 1000,
           savePlan: async (plan) => (plans.push(plan), null),
-          saveRecord: async (record, source) => (records.push([record, source]), true),
+          // One row that doesn't validate: nothing is said about it.
+          saveRecord: async (record, source) => (records.push([record, source]), records.length === 1 ? null : "leads"),
         },
         { conversationId: id, kind: "send", text: "Find roles", origin: { kind: "task", taskId: "t1", title: "Job hunt", runId: null } },
       ),
@@ -857,6 +858,9 @@ describe("edits, files, and memory suggestions", () => {
     expect(plans).toEqual([[{ text: "Find roles", status: "doing" }]]);
     expect(records).toHaveLength(25);
     expect(records[0][1]).toEqual({ messageId: reply.id });
+    // Each saved row is said once it's saved, so the page can show where it landed.
+    expect(events.filter((e) => e.type === "saved")).toHaveLength(24);
+    expect(events.find((e) => e.type === "saved")).toEqual({ type: "saved", target: { kind: "record", collection: "leads" } });
     expect(asked.origin).toEqual({ kind: "task", taskId: "t1", title: "Job hunt", runId: null });
   });
 

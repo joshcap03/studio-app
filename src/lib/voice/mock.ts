@@ -1,4 +1,5 @@
-import { isBackchannel, isSendIntent, isStopIntent, normalizeSpeech } from "./intent";
+import { isBackchannel, isOpenIntent, isSendIntent, isStopIntent, normalizeSpeech } from "./intent";
+import { parseOpen } from "./places";
 import type { StageField, VoiceStage } from "./types";
 
 // MOCK VOICE: for QA without a voice provider. The browser takes typed "speech" and shows the
@@ -6,7 +7,8 @@ import type { StageField, VoiceStage } from "./types";
 // real (sealed context, prompt, markers, client tools); only its model is replaced by these
 // scripted replies, which understand a small, predictable grammar:
 //   "keep 1 and 2, pass on 3 it's an agency" · "Remote and hybrid" · "four" (a scale) ·
-//   "pay first" (a ranking) · "target roles are product designer" · "send" · "stop".
+//   "pay first" (a ranking) · "target roles are product designer" · "send" · "stop" ·
+//   "open my tasks" · "show me the job tracker" · "go back".
 // Anything else goes to the worker as the member's words.
 
 export const MOCK_VOICE_LABEL = "Mock voice";
@@ -30,6 +32,10 @@ export function mockReplyToSpeech(stage: VoiceStage | null, said: string): Brain
   if (card && isSendIntent(said)) return { tools: [...tools, { name: "send_card", args: {} }] };
   if (tools.length) return { tools };
   if (isBackchannel(said)) return { tools: [{ name: "skip_turn", args: {} }] };
+  if (!card && isOpenIntent(said)) {
+    const { place, name } = parseOpen(said);
+    return { tools: [{ name: "open", args: { ...(place ? { place } : {}), name } }] };
+  }
   return { tools: [{ name: "send_message", args: {} }] };
 }
 

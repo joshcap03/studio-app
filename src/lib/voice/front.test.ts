@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, quickRoute, replyStream, routeSpeech, sayable, speechForResults, spokenText, tapLine, type FrontMessage } from "./front";
+import { deliverable, latestStage, mockReply, modelMessages, modelReply, modelTools, planReply, quickRoute, replyStream, routeSpeech, sayable, speechForResults, spokenText, tapLine, type FrontMessage } from "./front";
 import { defaultPersona, describeStage, voicePrompt } from "./persona";
 import { VOICE_MARKER, type VoiceContext, type VoiceMarker, type VoiceStage } from "./types";
 
@@ -158,6 +158,8 @@ describe("the model's view", () => {
       "answer_question",
       "send_message",
       "stop_work",
+      "open",
+      "press",
       "skip_turn",
     ]);
   });
@@ -608,5 +610,62 @@ describe("a hello on a call", () => {
   it("doesn't answer a hello said during the hold before a spoken approval", () => {
     const approving = mark({ stage: { working: false, approval: "Email Jo", approvalVoice: true, approving: true } });
     expect(planReply(context, [hello, greeted, approving, user("hi")])).toEqual({ kind: "model" });
+  });
+});
+
+describe("moving around Studio on a call", () => {
+  const onTask: VoiceStage = { working: false, screen: { view: "task", title: "Weekly job digest", actions: ["run_now", "pause", "open_chat"] } };
+  const open = { name: "open", args: { place: "tasks", name: "" } };
+
+  it("goes where they asked only on their own words", () => {
+    expect(routeSpeech("Open my tasks", null, [open])).toEqual({ tools: [open] });
+    expect(routeSpeech("take me back to the Ramp chat please", null, [{ name: "open", args: { place: "chat", name: "Ramp" } }])).toEqual({
+      tools: [{ name: "open", args: { place: "chat", name: "Ramp" } }],
+    });
+    // The model can't move them about on its own: their words go to the work.
+    expect(routeSpeech("I'm open to agencies now", null, [open])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(routeSpeech("open my tasks and run the first one", null, [open])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+  });
+
+  it("presses a button they named by rule, only when it's on the page they're on", () => {
+    expect(routeSpeech("pause it", onTask, [])).toEqual({ tools: [{ name: "press", args: { action: "pause" } }] });
+    expect(routeSpeech("Okay, run it now.", onTask, [{ name: "send_message", args: {} }])).toEqual({ tools: [{ name: "press", args: { action: "run_now" } }] });
+    // Not on this page: a request like any other.
+    expect(routeSpeech("resume it", onTask, [])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(routeSpeech("pause it", null, [])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    // The model choosing a button doesn't press it.
+    expect(routeSpeech("that's the one", onTask, [{ name: "press", args: { action: "pause" } }])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+  });
+
+  it("asks the model (or the mock) where to go, and presses without one", () => {
+    expect(quickRoute([mark({ stage: { working: false } }), user("show me the job tracker")])).toBeNull();
+    expect(quickRoute([mark({ stage: onTask }), user("pause this")])).toEqual({ tools: [{ name: "press", args: { action: "pause" } }] });
+    expect(mockReply([mark({ stage: { working: false } }), user("show me the job tracker")])).toEqual({ tools: [{ name: "open", args: { place: "tracker", name: "job" } }] });
+    expect(mockReply([mark({ stage: { working: false } }), user("open my tasks")])).toEqual({ tools: [{ name: "open", args: { place: "tasks", name: "" } }] });
+  });
+
+  it("says where they are, which one, and what a button did, in fixed words", () => {
+    expect(speechForResults(["Opened: your tasks"])).toBe("Here's your tasks.");
+    expect(speechForResults(["Which: Ramp prep | Ramp onsite"])).toBe("Did you mean Ramp prep or Ramp onsite?");
+    expect(speechForResults(["Pressed: open_chat"])).toBe("Here's its chat.");
+    expect(speechForResults(["Pressing: pause"])).toBe("Okay, pausing it in three seconds. Say “wait”, or tap Cancel.");
+    expect(speechForResults(["Page: Settings"])).toContain("its own tab");
+  });
+
+  it("tells the voice where they are and which buttons it can press", () => {
+    expect(describeStage(onTask)).toContain('They\'re looking at a task, "Weekly job digest". Buttons there: Run now, Pause, Open its chat.');
+  });
+});
+
+describe("deliverable", () => {
+  const offered = (...names: string[]) => names.map((name) => ({ type: "function", function: { name } }));
+  it("keeps what the provider can run, and hands their words on when it can't run any of it", () => {
+    const press = { tools: [{ name: "press", args: { action: "pause" } }] };
+    expect(deliverable(press, offered("send_message", "press", "skip_turn"))).toEqual(press);
+    // A provider agent set up before `press` existed.
+    expect(deliverable(press, offered("send_message", "skip_turn"))).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(deliverable({ text: "Okay.", tools: [{ name: "skip_turn", args: {} }] }, offered("send_message"))).toEqual({ text: "Okay.", tools: [{ name: "skip_turn", args: {} }] });
+    // The mock lists none: everything goes.
+    expect(deliverable(press, undefined)).toEqual(press);
   });
 });

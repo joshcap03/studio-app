@@ -80,6 +80,8 @@ export interface AgentTenantContext {
   guardrail?: { instructions: string; recentChats: string[] } | null;
   /** How the member is talking on this turn, when it isn't typing (see modalityContext in langflow.ts). */
   modality?: "voice_note" | "call";
+  /** The page in Studio the member is looking at as they talk on a call, loaded under their session. */
+  screen?: { kind: "task"; title: string; status: string } | { kind: "tracker"; name: string };
   /** The member hears a task run's news as a voice note (src/lib/voice/notes.ts), so its report is written for the ear. */
   voiceNotes?: boolean;
   /**

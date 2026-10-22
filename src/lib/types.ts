@@ -447,6 +447,12 @@ export interface UsageSummary {
   runsPerMinuteLimit: number;
 }
 
+/**
+ * The page in Studio the member was looking at when they said something on a call (the call docks
+ * over the app), by id: the server loads what it names under their session.
+ */
+export type ScreenRef = { kind: "task"; id: string } | { kind: "tracker"; collection: string };
+
 /** Events the application server streams to the browser (NDJSON, one per line). */
 export type StreamEvent =
   | {
@@ -467,6 +473,8 @@ export type StreamEvent =
   | { type: "ui"; ui: UiBlock[] }
   /** The conversation's plan, each time the agent saved a change to it. */
   | { type: "journey"; journey: Journey }
+  /** Something the agent saved in the member's Studio, once it's saved: a tracker row, by its collection. */
+  | { type: "saved"; target: { kind: "record"; collection: string } }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
 export const MAX_MESSAGE_LENGTH = 32_000;

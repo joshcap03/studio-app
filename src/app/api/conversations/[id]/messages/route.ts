@@ -49,6 +49,13 @@ const body = z.discriminatedUnion("kind", [
       // The call these words were said on, for its recap. It counts only once it's checked to be
       // the caller's own call in this agent (src/lib/chat/run.ts).
       voiceSessionId: z.uuid().optional(),
+      // The page they were looking at as they said it, by id; loaded under their session, or ignored.
+      screen: z
+        .discriminatedUnion("kind", [
+          z.object({ kind: z.literal("task"), id: z.uuid() }),
+          z.object({ kind: z.literal("tracker"), collection: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,39}$/) }),
+        ])
+        .optional(),
       offers,
       secrets,
       handoffs,

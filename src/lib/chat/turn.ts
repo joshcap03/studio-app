@@ -132,7 +132,7 @@ export interface TurnDeps {
   savePlan?: (plan: unknown, goal: unknown) => Promise<Journey | null>;
   /** Records the conversation's hosted browser (null: it ended), so its member can watch it. Server-side only. */
   saveBrowserSession?: (sessionId: string | null) => Promise<void>;
-  saveRecord?: (record: unknown, source: { messageId: string }) => Promise<boolean>;
+  saveRecord?: (record: unknown, source: { messageId: string }) => Promise<string | null>;
   /**
    * Files an artifact this reply produced (already sanitized, with a link) in the member's
    * Library, under the caller's session. Without it, artifacts stay on the reply only.
@@ -749,7 +749,11 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               if (!deps.saveRecord || records >= MAX_RECORDS_PER_RUN) break;
               records += 1;
               remembering.push(
-                deps.saveRecord(event.record, { messageId: assistant.id }).then(noop, (e) => console.error("[turn] couldn't save a record", e)),
+                deps.saveRecord(event.record, { messageId: assistant.id }).then(
+                  // Said once it's saved, so the page can show where it landed.
+                  (collection) => void (collection && send({ type: "saved", target: { kind: "record", collection } })),
+                  (e) => console.error("[turn] couldn't save a record", e),
+                ),
               );
               break;
             }

@@ -20,8 +20,9 @@ import { CompanionContext } from "@/components/ui/companion";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
-import { Call } from "@/components/voice/call";
+import { Call, type CallLayout, type OpenResult } from "@/components/voice/call";
 import { VoicePlayer } from "@/components/voice/player";
+import { ScreenButtonsContext, type ScreenButtons } from "@/components/voice/screen";
 import { followEvents, joinedEvents } from "@/lib/chat/follow";
 import { callOf, originFor } from "@/lib/chat/modality";
 import { markOf, moveOf, type MarkedMove, type WhoseMove } from "@/lib/chat/move";
@@ -45,6 +46,7 @@ import type {
   Modality,
   Project,
   ProjectSummary,
+  ScreenRef,
   SetupSummary,
   StreamEvent,
   UiResponse,
@@ -52,8 +54,10 @@ import type {
   WorkspaceSummary,
 } from "@/lib/types";
 import { MEMORY_CATEGORIES } from "@/lib/types";
+import { resolvePlace } from "@/lib/voice/places";
 import type { RecapCall } from "@/lib/voice/recap";
-import { SETUP_JOURNEY_TITLE, type CallPurpose, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
+import { waitsOnMember } from "@/lib/voice/relay";
+import { SETUP_JOURNEY_TITLE, type CallPurpose, type CallScreen, type ScreenAction, type ScreenView, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
 
 /** What the composer says while the reply above waits on the member (src/lib/chat/move.ts). */
 function composerHint(move: WhoseMove | null): string | undefined {
@@ -97,7 +101,7 @@ function setupAsJourney(setup: SetupSummary): JourneyInfo {
  * What a message is sent with besides its text, and how (on a call or held to the mic, the member
  * spoke it); on a call, which call (for its recap, once the server has checked it's theirs).
  */
-type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality; voiceSessionId?: string };
+type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef };
 const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
 interface ThreadState {
@@ -126,8 +130,9 @@ const loaded = ({ messages, journey, calls }: { messages: ChatMessage[]; journey
 });
 
 /**
- * A voice call in progress: the conversation it's in now (it moves when it follows a task's run),
- * when it started here, and whether it's the setup interview's.
+ * A voice call in progress: the conversation it's in now (it moves when it follows a task's run,
+ * and to whichever chat the member opens while it's docked), when it started here, whether it's
+ * the setup interview's, and whether it's docked over the app or full screen.
  */
 interface CallState {
   grant: VoiceGrant;
@@ -135,7 +140,9 @@ interface CallState {
   waitForTap: boolean;
   startedAt: number;
   setup: boolean;
+  layout: CallLayout;
 }
+
 
 /**
  * Where a call followed a task's run ("Do the first one now"): the run's conversation, the one
@@ -368,6 +375,12 @@ function WorkspaceShell({
   );
   const callLive = Boolean(call);
   useEffect(() => onCallChange(callLive), [callLive, onCallChange]);
+  /** Where a docked call goes in the layout, under the header. */
+  const [dock, setDock] = useState<HTMLElement | null>(null);
+  /** The buttons the page on screen offers a call ("pause it"), as that page registered them. */
+  const [buttons, setButtons] = useState<ScreenButtons | null>(null);
+  const buttonsRef = useRef(buttons);
+  buttonsRef.current = buttons;
   const [calling, setCalling] = useState(false);
   const [callNotice, setCallNotice] = useState<string | null>(null);
   // Streams this tab let go of while the run kept going on the server (the app was hidden).
@@ -827,6 +840,7 @@ function WorkspaceShell({
           ...(steer ? { steer } : {}),
           ...(extras.modality ? { modality: extras.modality } : {}),
           ...(extras.voiceSessionId ? { voiceSessionId: extras.voiceSessionId } : {}),
+          ...(extras.screen ? { screen: extras.screen } : {}),
           // Only creates it there; the server ignores it for a conversation that already exists.
           ...(projectId ? { projectId } : {}),
         },
@@ -1135,7 +1149,9 @@ function WorkspaceShell({
         }
         const startedAt = Date.now();
         setLocalCalls((all) => ({ ...all, [grant.sessionId]: { id: grant.sessionId, startedAt, endedAt: null } }));
-        setCall({ grant, conversationId: id, waitForTap, startedAt, setup: forSetup });
+        // Docked over the app, so they keep using it; the setup interview (and a call arriving from
+        // onboarding, which waits for a tap) opens on the full screen.
+        setCall({ grant, conversationId: id, waitForTap, startedAt, setup: forSetup, layout: forSetup || waitForTap ? "full" : "bar" });
         return grant;
       } finally {
         startingCall.current = false;
@@ -1529,6 +1545,140 @@ function WorkspaceShell({
   }, []);
 
   // ---------------------------------------------------------------------------------------
+  // A call docked over the app: it follows the chat the member opens, goes where they ask, presses
+  // the buttons they name, and shows what the agent saves as it lands.
+
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const setupRef = useRef(setup);
+  setupRef.current = setup;
+
+  // Opening a chat moves the call into it, and a new chat starts one; elsewhere (tasks, the
+  // Library, a project) it stays with the chat it was in.
+  const followedPath = useRef(pathname);
+  const movedAt = useRef(0);
+  useEffect(() => {
+    if (followedPath.current === pathname) return;
+    followedPath.current = pathname;
+    // The call's own chat coming up (its first words start it) isn't them moving around.
+    if (conversationIdFrom(pathname) !== callRef.current?.conversationId) movedAt.current = Date.now();
+    const into = conversationIdFrom(pathname) ?? (pathname === "/" ? "new" : null);
+    if (!into) return;
+    setCall((current) => {
+      if (!current) return current;
+      // A call already in a new chat that hasn't started stays there.
+      const id = into === "new" ? (threadsRef.current[current.conversationId] ? crypto.randomUUID() : current.conversationId) : into;
+      if (id === current.conversationId) return current;
+      return { ...current, conversationId: id, setup: current.setup && setupRef.current?.conversationId === id };
+    });
+  }, [pathname]);
+
+  const latestOnScreen = activeThread?.status === "ready" ? activeThread.messages.findLast((m) => m.role === "assistant" && m.activity.length > 0) : undefined;
+  const latestOnScreenId = latestOnScreen?.id ?? null;
+  const callScreen = useMemo<CallScreen>(() => {
+    const view: ScreenView = activeId
+      ? "chat"
+      : activeProjectId
+        ? "project"
+        : activeTask === "list"
+          ? "tasks"
+          : activeTask
+            ? "task"
+            : libraryPath === "home"
+              ? "library"
+              : libraryPath
+                ? "tracker"
+                : "new_chat";
+    const title =
+      view === "chat" ? activeTitle : view === "project" ? activeProjectName : view === "task" ? taskTitle : view === "tracker" && libraryPath ? collectionName(libraryPath) : null;
+    const actions = [...(Object.keys(buttons ?? {}) as ScreenAction[]), ...(activeId && latestOnScreenId ? (["open_results"] as const) : [])];
+    return { view, ...(title ? { title } : {}), ...(actions.length ? { actions } : {}) };
+  }, [activeId, activeProjectId, activeProjectName, activeTask, activeTitle, buttons, latestOnScreenId, libraryPath, taskTitle]);
+  /** What the member is looking at as they speak, by id, so the agent knows what "this" is. */
+  const screenRef: ScreenRef | undefined =
+    activeTask && activeTask !== "list" ? { kind: "task", id: activeTask } : libraryPath && libraryPath !== "home" ? { kind: "tracker", collection: libraryPath } : undefined;
+
+  /** "Open …" on a call: matched by name against what's theirs here, then gone to. */
+  const openPlace = useCallback(
+    async (request: { place?: unknown; name?: unknown; said: string }): Promise<OpenResult> => {
+      const [tasks, library] = await Promise.all([api.listTasks().catch(() => null), api.listLibrary().catch(() => null)]);
+      const match = resolvePlace(request, {
+        chats: conversationsRef.current.map((c) => ({ id: c.id, title: c.title })),
+        projects: projectsRef.current.map((p) => ({ id: p.id, name: p.name })),
+        tasks: (tasks?.tasks ?? []).filter((t) => t.status !== "archived").map((t) => ({ id: t.id, title: t.title })),
+        trackers: (library?.trackers ?? []).map((t) => ({ collection: t.collection, name: collectionName(t.collection) })),
+        docs: (library?.items ?? []).map((i) => ({ title: i.title, conversationId: i.conversationId })),
+      });
+      switch (match.kind) {
+        case "back":
+          window.history.back();
+          return { status: "opened", title: "" };
+        case "go":
+          if (match.page) return { status: "page", path: match.path, title: match.title };
+          navigate(match.path);
+          return { status: "opened", title: match.title };
+        case "which":
+          return { status: "which", options: match.options };
+        default:
+          return { status: "none" };
+      }
+    },
+    [navigate],
+  );
+
+  /** A button the member named on a call: the page's own handler, or the Results panel. */
+  const latestOnScreenRef = useRef(latestOnScreenId);
+  latestOnScreenRef.current = latestOnScreenId;
+  const pressOnScreen = useCallback(
+    async (action: ScreenAction): Promise<boolean> => {
+      if (action === "open_results") {
+        if (!latestOnScreenRef.current) return false;
+        openPanel(latestOnScreenRef.current);
+        return true;
+      }
+      const press = buttonsRef.current?.[action];
+      return press ? Boolean(await press()) : false;
+    },
+    [openPanel],
+  );
+
+  // What the agent saves while they watch the call's chat (a tracker row, a doc in the Library) is
+  // shown where it landed, once a reply, unless they've moved around since it started; when the
+  // reply then waits on them, the chat comes back.
+  const shownFrom = useRef<{ path: string; conversationId: string } | null>(null);
+  const shownThisReply = useRef(false);
+  const replyStartedAt = useRef(0);
+  useEffect(
+    () =>
+      subscribe((id, event) => {
+        const live = callRef.current;
+        if (!live || live.layout !== "bar" || id !== live.conversationId) return;
+        if (event.type === "start") {
+          shownThisReply.current = false;
+          replyStartedAt.current = Date.now();
+        }
+        const landed = event.type === "saved" ? `/library/${event.target.collection}` : event.type === "artifact" ? "/library" : null;
+        if (landed && !shownThisReply.current && conversationIdFrom(window.location.pathname) === id && movedAt.current < replyStartedAt.current) {
+          shownThisReply.current = true;
+          shownFrom.current = { path: landed, conversationId: id };
+          navigate(landed);
+          return;
+        }
+        if (event.type === "end" && shownFrom.current?.conversationId === id) {
+          const shown = shownFrom.current;
+          shownFrom.current = null;
+          // Only if they're still where it took them: anywhere else, they've moved on themselves.
+          if (window.location.pathname === shown.path && waitsOnMember(event.message)) navigate(`/c/${id}`);
+        }
+      }),
+    [navigate, subscribe],
+  );
+
+  /** The call's chat, by name, when it isn't the page on screen (for "Back to …" on the bar). */
+  const callElsewhereTitle =
+    call && call.conversationId !== activeId && threads[call.conversationId] ? (conversations.find((c) => c.id === call.conversationId)?.title ?? "the chat") : null;
+
+  // ---------------------------------------------------------------------------------------
   // Keyboard shortcuts
 
   useEffect(() => {
@@ -1636,7 +1786,8 @@ function WorkspaceShell({
 
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={200}>
-      <div inert={call ? true : undefined} className="flex h-dvh overflow-hidden bg-bg" style={keyboardHeight ? { height: keyboardHeight } : undefined}>
+      <ScreenButtonsContext.Provider value={setButtons}>
+      <div inert={call?.layout === "full" ? true : undefined} className="flex h-dvh overflow-hidden bg-bg" style={keyboardHeight ? { height: keyboardHeight } : undefined}>
         {/* Mobile drawer backdrop */}
         <div
           aria-hidden="true"
@@ -1768,6 +1919,8 @@ function WorkspaceShell({
               <SquarePen size={17} strokeWidth={1.75} />
             </IconButton>
           </header>
+          {/* A call docks here, under the header, while the member keeps using the app. */}
+          <div ref={setDock} className="contents" />
 
           {libraryPath === "home" ? (
             <LibraryView onOpenConversation={(id) => navigate(`/c/${id}`)} onOpenTracker={(collection) => navigate(`/library/${collection}`)} />
@@ -1939,7 +2092,7 @@ function WorkspaceShell({
             const id = call.conversationId;
             // A call from the new-chat screen starts its conversation with the first words.
             const isNew = !threadsRef.current[id];
-            sendTo(id, text, isNew, { skill: null, attachments: attachments ?? [], modality: "call", voiceSessionId: call.grant.sessionId }, steer);
+            sendTo(id, text, isNew, { skill: null, attachments: attachments ?? [], modality: "call", voiceSessionId: call.grant.sessionId, ...(screenRef ? { screen: screenRef } : {}) }, steer);
           }}
           onStop={() => stop(call.conversationId)}
           onRetry={(messageId) => retry(call.conversationId, messageId)}
@@ -1949,8 +2102,17 @@ function WorkspaceShell({
           subscribe={subscribe}
           onEnd={endCall}
           waitForTap={call.waitForTap}
+          layout={call.layout}
+          onLayout={(layout) => setCall((c) => (c ? { ...c, layout } : c))}
+          dock={dock}
+          screen={callScreen}
+          onOpen={openPlace}
+          onPress={pressOnScreen}
+          elsewhere={callElsewhereTitle}
+          onBack={() => navigate(`/c/${call.conversationId}`)}
         />
       ) : null}
+      </ScreenButtonsContext.Provider>
     </Tooltip.Provider>
   );
 }

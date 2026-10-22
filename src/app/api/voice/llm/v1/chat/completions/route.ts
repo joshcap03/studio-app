@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getConfig } from "@/lib/config";
 import { authorizeSession, jsonError } from "@/lib/tenant";
-import { frontRequest, mockReply, modelReply, planReply, quickRoute, replyStream } from "@/lib/voice/front";
+import { deliverable, frontRequest, mockReply, modelReply, planReply, quickRoute, replyStream } from "@/lib/voice/front";
 import type { BrainReply } from "@/lib/voice/mock";
 import { openContext } from "@/lib/voice/seal";
 
@@ -41,7 +41,8 @@ export async function POST(request: NextRequest) {
 
   // Silence is the provider's skip_turn when it offers one, else an empty reply.
   const canSkip = !parsed.data.tools?.length || parsed.data.tools.some((t) => t.function.name === "skip_turn");
-  const deliver = (reply: BrainReply) => {
+  const deliver = (chosen: BrainReply) => {
+    const reply = deliverable(chosen, parsed.data.tools);
     const silent = !reply.text && reply.tools?.every((t) => t.name === "skip_turn");
     return new Response(replyStream(silent && !canSkip ? {} : reply), { headers: SSE });
   };

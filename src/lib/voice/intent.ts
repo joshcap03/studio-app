@@ -6,6 +6,8 @@
 // for one, and a request waiting on their OK is approved only on a clear "send it" (and
 // declined on a clear "don't send it"). Pure.
 
+import { SCREEN_ACTIONS, type ScreenAction } from "./types";
+
 /** Lowercase words only: punctuation becomes spaces, apostrophes vanish ("that's" → "thats"). */
 export function normalizeSpeech(text: string): string {
   return text
@@ -255,4 +257,54 @@ export function longJobAnswer(said: string[], question: LongJobQuestion): { answ
   if (question.open && question.running) return { answer, late: false, earlier };
   const late = !question.open && question.closedAt !== null && question.now - question.closedAt < LATE_ANSWER_MS;
   return late ? { answer, late: true, earlier } : null;
+}
+
+// ------------------------------------------------------------------------------------------
+// Moving around Studio while they talk: going somewhere ("open my tasks"), and pressing a button
+// on the page they're on ("pause it"). Each is the whole of what they said, so a request that
+// only starts that way ("open a ticket with support and email them") goes to the worker.
+
+const ASK = "(?:(?:ok|okay|yes|yeah|so|now|please|hey|can you|could you|would you|will you|lets|just|go ahead and|i want to|id like to)\\s+)*";
+
+const OPEN = new RegExp(
+  `^${ASK}(?:(?:open(?: up)?|pull up|bring up|switch to|jump to|navigate to|head to|get me to|show me|show|go(?: back)? to|take me(?: back)? to|back to)\\s+(?!(?:me )?(?:to|how|what|why|where|when|which|who|if|whether|you|that)\\b)\\S.*|go back|take me back|(?:start |open )?(?:a )?new (?:chat|conversation))(?:\\s+(?:please|now|for me))*$`,
+);
+
+/**
+ * The member asked to go somewhere in Studio, and nothing more: "open my tasks", "show me the job
+ * tracker", "go back to the Ramp chat", "new chat", "go back". Never "open to ideas", "show me how
+ * to…", or anything joined to more ("open my tasks and run the first one").
+ */
+export function isOpenIntent(text: string): boolean {
+  if (/\?\s*$/.test(text.trim()) && !/^(?:can|could|would|will) you\b/.test(normalizeSpeech(text))) return false;
+  // "And" splits only where more is asked, so a name with one in it ("the sales and marketing tracker") still opens.
+  const all = text
+    .split(/[.!?;\n]+|,\s*(?:and\s+)?then\b|\band then\b/i)
+    .map((c) => normalizeSpeech(c).replace(FILLERS, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return all.length === 1 && all[0].split(" ").length <= 12 && !MORE.test(all[0]) && OPEN.test(all[0]);
+}
+
+/** Something more asked after where to go: "…and run the first one", "…and tell me what's new". */
+const MORE = /\band (?:also |then )?(?:run|send|email|tell|add|ask|make|create|do|book|write|draft|find|search|look|check|pause|start|stop|reply|update|delete|remove|text|call|schedule|apply|show|read|summarize|give)\b/;
+
+const THIS = "(?:\\s+(?:it|this|that|this one|that one|this task|that task|the task))?";
+const DONE = "(?:\\s+(?:now|please|for now|for me|right now|then|thanks|thank you))*$";
+const PRESS: Record<ScreenAction, RegExp> = {
+  run_now: new RegExp(`^${ASK}(?:run${THIS}(?: again)?|kick (?:it|this|that) off|start (?:it|this|this task|that) (?:now|right now))${DONE}`),
+  pause: new RegExp(`^${ASK}(?:pause${THIS}|turn (?:it|this|that) off|switch (?:it|this|that) off)${DONE}`),
+  resume: new RegExp(`^${ASK}(?:(?:resume|unpause)${THIS}|turn (?:it|this|that) (?:back )?on|start (?:it|this|that) (?:again|back up))${DONE}`),
+  open_chat: new RegExp(`^${ASK}(?:open|show(?: me)?|go to|take me to|pull up)(?: its| the| this tasks| the tasks)? (?:chat|conversation)${DONE}`),
+  open_results: new RegExp(`^${ASK}(?:open|show(?: me)?|pull up|see)(?: the| its| your)? (?:results|findings|sources|work)(?: panel)?${DONE}`),
+};
+
+/**
+ * Which on-screen button the member named, when that's all they said: "run it now", "pause
+ * this", "resume it", "open its chat", "show me the results". Null for anything else.
+ */
+export function pressIntent(text: string): ScreenAction | null {
+  if (/\?/.test(text) && !/^(?:can|could|would|will) you\b/.test(normalizeSpeech(text))) return null;
+  const all = spokenClauses(text);
+  if (all.length !== 1) return null;
+  return SCREEN_ACTIONS.find((action) => PRESS[action].test(all[0])) ?? null;
 }

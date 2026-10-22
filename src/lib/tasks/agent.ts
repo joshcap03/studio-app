@@ -147,15 +147,15 @@ export async function savePlanFromAgent(
 
 /**
  * Upserts a tracker row the agent reported, linked to the conversation's task (if any) and
- * the reply that reported it. False when the row doesn't validate.
+ * the reply that reported it. Resolves with the row's collection, or null when it doesn't validate.
  */
 export async function saveRecordFromAgent(
   tenant: Tenant,
   conversationId: string,
   value: unknown,
   source: { messageId: string },
-): Promise<boolean> {
-  if (!value || typeof value !== "object") return false;
+): Promise<string | null> {
+  if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
   const task = await getTaskForConversation(tenant, conversationId);
   const parsed = upsertRecordInput.safeParse({
@@ -168,7 +168,7 @@ export async function saveRecordFromAgent(
     taskId: task?.id ?? null,
     sourceMessageId: source.messageId,
   });
-  if (!parsed.success) return false;
+  if (!parsed.success) return null;
   await upsertRecord(tenant, parsed.data);
-  return true;
+  return parsed.data.collection;
 }

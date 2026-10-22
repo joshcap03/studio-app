@@ -28,6 +28,7 @@ import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Companion, companionHint } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
+import { useCallLive } from "@/components/voice/player";
 import { MOVE_LABEL, type MarkedMove } from "@/lib/chat/move";
 import { api } from "@/lib/client/api";
 import {
@@ -102,6 +103,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   searchRef,
 ) {
   const [query, setQuery] = useState("");
+  const onCall = useCallLive();
   const [results, setResults] = useState<ConversationSummary[] | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConversationSummary | null>(null);
   const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectSummary | null>(null);
@@ -319,13 +321,13 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">
           {agent.mode === "mock" ? "Mock agent · not connected" : agent.mode === "live" ? null : agent.label}
         </span>
-        <IconButton label="Skills" side="top" onClick={() => window.location.assign("/skills")}>
+        <IconButton label="Skills" side="top" onClick={() => openPage("/skills", onCall)}>
           <LibraryBig size={15} strokeWidth={1.75} />
         </IconButton>
-        <IconButton label="Agent setup" side="top" onClick={() => window.location.assign("/agent")}>
+        <IconButton label="Agent setup" side="top" onClick={() => openPage("/agent", onCall)}>
           <SlidersHorizontal size={15} strokeWidth={1.75} />
         </IconButton>
-        <IconButton label="Settings" side="top" onClick={() => window.location.assign("/settings")}>
+        <IconButton label="Settings" side="top" onClick={() => openPage("/settings", onCall)}>
           <Settings size={15} strokeWidth={1.75} />
         </IconButton>
       </div>
@@ -753,6 +755,12 @@ function AgentLabel({ workspace, companion, bold }: { workspace: WorkspaceSummar
   );
 }
 
+/** A page outside the chat (Settings, the agent's page): while a call is on, its own tab, so the call carries on. */
+function openPage(path: string, onCall: boolean) {
+  if (onCall) window.open(path, "_blank", "noopener");
+  else window.location.assign(path);
+}
+
 // One login, several agents. Each agent is stored as a workspace.
 function AgentMenu({
   workspace,
@@ -769,6 +777,7 @@ function AgentMenu({
   email: string | null;
 }) {
   const companion = companions?.[workspace.id];
+  const onCall = useCallLive();
   async function switchTo(id: string) {
     if (id === workspace.id) return;
     const res = await fetch("/api/workspaces/active", {
@@ -816,11 +825,11 @@ function AgentMenu({
             New agent
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-line" />
-          <DropdownMenu.Item onSelect={() => window.location.assign("/agent")} className={menuItem}>
+          <DropdownMenu.Item onSelect={() => openPage("/agent", onCall)} className={menuItem}>
             <SlidersHorizontal size={14} className="text-fg-3" />
             <span className="min-w-0 truncate">Set up {companion?.name ?? workspace.name}</span>
           </DropdownMenu.Item>
-          <DropdownMenu.Item onSelect={() => window.location.assign("/settings")} className={menuItem}>
+          <DropdownMenu.Item onSelect={() => openPage("/settings", onCall)} className={menuItem}>
             <Settings size={14} className="text-fg-3" />
             Settings
           </DropdownMenu.Item>

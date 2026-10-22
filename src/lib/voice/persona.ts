@@ -5,7 +5,7 @@ import { DEFAULT_TEMPLATE_ID, templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
 import type { Companion } from "@/lib/types";
 import { voiceStatus } from "./status";
-import type { CallPurpose, StageField, VoiceContext, VoiceCue, VoiceStage, VoiceToolName } from "./types";
+import { OPEN_PLACES, SCREEN_ACTIONS, type CallPurpose, type CallScreen, type ScreenAction, type StageField, type VoiceContext, type VoiceCue, type VoiceStage, type VoiceToolName } from "./types";
 import type { VoiceKey } from "./voices";
 
 // Who the voice is on a call and what it may say, built per call from the member's session.
@@ -77,10 +77,11 @@ const FOUR_ACTS = `You may say only four kinds of things:
 Nothing else. No advice, opinions, facts, plans, promises, or answers made up on the spot, even when asked: those need your work, so send them. No sympathy, small talk, or commentary ("That sounds exhausting"). Never say anything is sent, saved, found, or done unless a tool result or a Studio update says so.`;
 
 const HOW_TO_ACT = `How to act:
-- Everything they say that isn't an answer to the card on screen, "send", or "stop" goes to send_message (Studio passes along their exact words; you pass nothing): answers to the questions you relayed, new requests, and anything you didn't follow. The work asks its own questions and keeps the chat in step with the call, so never ask a question of your own.
+- Everything they say that isn't an answer to the card on screen, "send", "stop", or going somewhere in Studio goes to send_message (Studio passes along their exact words; you pass nothing): answers to the questions you relayed, new requests, and anything you didn't follow. The work asks its own questions and keeps the chat in step with the call, so never ask a question of your own.
 - When they answer the card on screen, call fill_card once for each field they answered, using the field's id (the word in quotes after "field"), or answer_question for questions. Set sure to false when you're guessing what they meant. Then say nothing more than their answer back in a few words. If a fill is refused, say why in a few words.
 - Only when they clearly say to send it ("send", "send it"), call send_card. Never send on your own or on "yes" alone.
 - Only when they clearly ask to stop, call stop_work.
+- They have Studio open while you talk. When they ask to go somewhere in it ("open my tasks", "show me the job tracker", "go back to the Ramp chat"), call open with the kind of place and the name they said; Studio finds it and says where you are. When they name a button on the page they're on ("run it now", "pause this", "show me the results"), Studio presses it by its own rules.
 - Files, connecting apps, and Apply are taps: say it's on screen.
 - A request waiting on their OK is answered by Studio's own rules, never by you: Studio reads it back, and only their clear "send it" after that counts, which Studio checks before a visible countdown; anything else they say about it goes to send_message. Never say it's approved, sent, or done until Studio says so.
 - If they talk while you're working, still call send_message: Studio holds their words until the work lands, unless they're changing course. That includes their answer when Studio has asked whether they'd rather hang on or get a voice note, and "try again" after something failed.
@@ -142,6 +143,7 @@ export function describeStage(stage: VoiceStage | null): string {
     lines.push(`Question ${i + 1}${q.multi ? " (pick any)" : ""}: ${q.question} Options: ${q.options.join(" | ")}`);
   }
   if (stage.proposal) lines.push(`Proposed setup (a tap to apply): ${stage.proposal}`);
+  if (stage.screen) lines.push(screenLine(stage.screen));
   if (stage.approval) {
     if (stage.approving) lines.push(`Studio is counting down before it goes ahead with the request below, on their "send it"; anything they say stops it.`);
     lines.push(
@@ -151,6 +153,30 @@ export function describeStage(stage: VoiceStage | null): string {
     );
   }
   return lines.join("\n");
+}
+
+const VIEW_WORDS: Record<CallScreen["view"], string> = {
+  chat: "a chat",
+  new_chat: "a new chat",
+  tasks: "their tasks",
+  task: "a task",
+  library: "their Library",
+  tracker: "a tracker",
+  project: "a project",
+};
+const ACTION_WORDS: Record<ScreenAction, string> = {
+  run_now: "Run now",
+  pause: "Pause",
+  resume: "Resume",
+  open_chat: "Open its chat",
+  open_results: "Results",
+};
+
+/** Where they are in Studio, for the voice's bearings: the page, its name, and its buttons. */
+function screenLine(screen: CallScreen): string {
+  const named = screen.title ? `${VIEW_WORDS[screen.view]}, "${screen.title}"` : VIEW_WORDS[screen.view];
+  const buttons = screen.actions?.length ? ` Buttons there: ${screen.actions.map((a) => ACTION_WORDS[a]).join(", ")}.` : "";
+  return `They're looking at ${named}.${buttons}`;
 }
 
 function fieldLine(f: StageField): string {
@@ -277,5 +303,21 @@ export const VOICE_TOOLS: Record<VoiceToolName, { description: string; parameter
   stop_work: {
     description: "Stop the work under way, only when the member clearly asked to stop. Studio checks their words.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  open: {
+    description:
+      'Go somewhere in Studio, only when the member asked to ("open my tasks", "show me the job tracker", "go back to the Ramp chat"). Nothing changes; Studio finds the place by name and says where they are.',
+    parameters: {
+      type: "object",
+      properties: {
+        place: { type: "string", enum: [...OPEN_PLACES], description: "The kind of place: a page (tasks, library, new_chat, settings, agent, back), or the kind of thing they named (chat, task, tracker, project)." },
+        name: { type: "string", description: "The name they said, in their words; empty for a page." },
+      },
+      required: ["place"],
+    },
+  },
+  press: {
+    description: "Press a button on the page they're on, only when they named it. Studio decides which by their words.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...SCREEN_ACTIONS] } }, additionalProperties: false },
   },
 };
