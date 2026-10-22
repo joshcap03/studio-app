@@ -805,6 +805,22 @@ describe("Langflow streaming", () => {
     expect((error as Error).message).toMatch(/out of credit/);
   });
 
+  it("reads the error message a component sends as the error event", async () => {
+    // Langflow's shape when the Agent's model call fails mid-run (OpenRouter's in-flight budget).
+    const message = {
+      id: "m1",
+      data: {
+        text: "This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.\n",
+        category: "error",
+        content_blocks: [{ title: "Error", contents: [{ type: "error", reason: "**APIStatusError**\n - **This request would exceed your available credits.**" }] }],
+      },
+    };
+    const { error } = await run(base, streamResponse([frame("add_message", user("x")), frame("error", message)]));
+    expect((error as Error).message).toMatch(/out of credit/);
+    const fromReason = await run(base, streamResponse([frame("error", { data: { content_blocks: message.data.content_blocks } })]));
+    expect((fromReason.error as Error).message).toMatch(/out of credit/);
+  });
+
   it("maps HTTP failures to safe, specific errors", async () => {
     for (const [status, pattern, retryable] of [
       [403, /credentials/, false],
