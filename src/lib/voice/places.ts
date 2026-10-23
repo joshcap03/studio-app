@@ -1,4 +1,4 @@
-import { normalizeSpeech } from "./intent";
+import { normalizeSpeech, SEE_IT, spokenWords } from "./intent";
 import { OPEN_PLACES, type OpenPlace } from "./types";
 
 // Where "open …" on a call goes: the member's own words (and the voice's reading of them, when it
@@ -29,7 +29,8 @@ const TAIL = /(?:\s+(?:please|now|for me|again|page|view))+$/;
 
 /** The place and name in "open my job tracker", "go to the Ramp chat", "new chat". */
 export function parseOpen(said: string): { place: OpenPlace | null; name: string } {
-  const words = normalizeSpeech(said);
+  // Fillers out, and "…and show me what's in there" is only more of the same ask.
+  const words = spokenWords(said).replace(SEE_IT, "");
   if (/^(?:(?:ok|okay|so|now|please|just)\s+)*(?:go back|take me back|back)(?:\s+(?:please|now))*$/.test(words)) return { place: "back", name: "" };
   const rest = words.replace(LEAD, "").replace(TAIL, "").replace(ARTICLE, "").trim();
   if (/^(?:a )?new (?:chat|conversation)$/.test(rest)) return { place: "new_chat", name: "" };

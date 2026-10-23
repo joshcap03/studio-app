@@ -532,8 +532,9 @@ export function quickRoute(messages: FrontMessage[], { approvals = false }: { ap
   const stage = latestStage(messages);
   if (stage?.form || stage?.questions?.length) return null;
   const said = textOf(last.content);
-  // Where to go needs reading (which chat, which tracker), unless it answers a request waiting on them.
-  if (isOpenIntent(said) && !pressFor(said, stage) && !stage?.approving && !answeringRequest(said, stage, approvals)) return null;
+  // Going somewhere goes to the browser with their words, which finds the place by name and says
+  // where they are (no holding line: the result is the line). Unless it answers a request waiting on them.
+  if (isOpenIntent(said) && !pressFor(said, stage) && !stage?.approving && !answeringRequest(said, stage, approvals)) return { tools: [{ name: "send_message", args: {} }] };
   const reply = routeSpeech(said, stage, [], { approvals });
   // A change of course while a request waits declines it (the browser steers), like any redirect.
   const waiting = Boolean(stage?.approval && !stage.working) && !isRedirect(said);

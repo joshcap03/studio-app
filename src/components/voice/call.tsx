@@ -627,10 +627,64 @@ export function Call({
     setSnapped(filesRef.current.length);
   }, [snapshot]);
 
+  // Moving around the app: by the voice's own tools (open, press), or from their words as they go
+  // to the work, so it works with a provider agent set up before those tools existed.
+  const openRef = useRef(onOpen);
+  openRef.current = onOpen;
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  /** Where "open …" went, in the word the voice front says it with; null when it's nowhere of theirs. */
+  const goTo = useCallback(async (request: { place?: unknown; name?: unknown; said: string }): Promise<string | null> => {
+    const result = await openRef.current?.(request);
+    if (!result || result.status === "none") return null;
+    if (result.status === "which") {
+      which.current = { options: result.options, at: Date.now() };
+      return `Which: ${result.options.join(" | ")}`;
+    }
+    if (result.status === "page") {
+      setPageLink({ path: result.path, title: result.title });
+      return `Page: ${result.title}`;
+    }
+    return `Opened: ${result.title}`;
+  }, []);
+  /** Presses the button they named: at once, or after the hold when it changes something. */
+  const pressNamed = useCallback(async (action: ScreenAction): Promise<string> => {
+    if (HELD_ACTIONS.includes(action)) {
+      const until = Date.now() + HOLD_MS;
+      pressingRef.current = { action, until };
+      setPressing(pressingRef.current);
+      setPressNow(Date.now());
+      return `Pressing: ${action}`;
+    }
+    return (await pressRef.current?.(action)) ? `Pressed: ${action}` : "Refused: it didn't work; it's on screen to tap.";
+  }, []);
+  /** What their words do to the app, when that's all they asked: a button on this page, or a place; null otherwise. */
+  const moveFor = useCallback(
+    async (words: string): Promise<string | null> => {
+      const action = pressIntent(words);
+      if (action && pressRef.current && screenRef.current?.actions?.includes(action)) return pressNamed(action);
+      return isOpenIntent(words) ? goTo({ said: words }) : null;
+    },
+    [goTo, pressNamed],
+  );
+
   const handOff = useCallback(async (): Promise<string> => {
     const said = pending();
     const words = said.join(" ").trim();
     if (!words) return "Refused: they haven't said anything new to pass on.";
+    // "Pull up my Library", "pause it": the app moves, and nothing goes to the work. Anything
+    // they said before it goes along as usual.
+    const moved = await moveFor(said.at(-1) ?? "");
+    if (moved) {
+      const earlier = said.slice(0, -1).join(" ").trim();
+      consume();
+      if (earlier) {
+        const { running: busy, messages: now } = live.current;
+        if (busy || now.at(-1)?.status === "awaiting") hold(earlier);
+        else send(withHeld(earlier), { steer: false });
+      }
+      return moved;
+    }
     // Their answer to "did you mean A or B?": the place that fits it, rather than a request.
     const choice = which.current;
     which.current = null;
@@ -697,7 +751,7 @@ export function Call({
     }
     send(withHeld(words), { steer: false });
     return "Handed off: sent to the worker.";
-  }, [closeLongJob, hold, onOpen, onRetry, send, snapshot, withHeld]);
+  }, [closeLongJob, hold, moveFor, onOpen, onRetry, send, snapshot, withHeld]);
 
   const tools: VoiceTools = {
     send_message: () => handOff(),
@@ -768,19 +822,11 @@ export function Call({
     open: async (params) => {
       const said = lastWords();
       if (!onOpen || !isOpenIntent(said)) return "Refused: they didn't ask to go anywhere.";
-      const result = await onOpen({ place: params.place, name: params.name, said });
+      const moved = await goTo({ place: params.place, name: params.name, said });
       // Nothing of theirs by that name: it's a request after all ("open a ticket with support").
-      if (result.status === "none") return handOff();
+      if (!moved) return handOff();
       consume();
-      if (result.status === "which") {
-        which.current = { options: result.options, at: Date.now() };
-        return `Which: ${result.options.join(" | ")}`;
-      }
-      if (result.status === "page") {
-        setPageLink({ path: result.path, title: result.title });
-        return `Page: ${result.title}`;
-      }
-      return `Opened: ${result.title}`;
+      return moved;
     },
     press: async (params) => {
       const said = lastWords();
@@ -789,14 +835,7 @@ export function Call({
       if (!onPress || !action || !screen?.actions?.includes(action)) return "Refused: that isn't a button on the page they're on.";
       if (params.action !== undefined && params.action !== action) return "Refused: that isn't the button they named.";
       consume();
-      if (HELD_ACTIONS.includes(action)) {
-        const until = Date.now() + HOLD_MS;
-        pressingRef.current = { action, until };
-        setPressing(pressingRef.current);
-        setPressNow(Date.now());
-        return `Pressing: ${action}`;
-      }
-      return (await onPress(action)) ? `Pressed: ${action}` : "Refused: it didn't work; it's on screen to tap.";
+      return pressNamed(action);
     },
   };
   const toolsRef = useRef(tools);

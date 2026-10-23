@@ -117,9 +117,11 @@ setup interview, and a call arriving from onboarding, open full screen.
   load would end it.
 - **Going somewhere: `open`.** "Open my tasks", "show me the job tracker", "go back to the Ramp
   chat", "new chat", "go back". Only the member's own words count (`isOpenIntent`: the whole of
-  what they said, so "open my tasks and run the first one" goes to the worker). The voice front
-  asks its model for the place and name (the mock reads them with `parseOpen`); the browser
-  matches the name against their chats, tasks, trackers, projects, and Library docs
+  what they said, so "open my tasks and run the first one" goes to the worker, while "…and show
+  me what's in there" is only more of the same ask). The voice front hands those words to the
+  browser by rule, as it would any request, and the browser moves the app before anything goes
+  to the worker, so this needs no tool the provider agent might not have yet (the `open` tool
+  carries the model's reading of the place when a card is on stage). The browser matches the name against their chats, tasks, trackers, projects, and Library docs
   (`src/lib/voice/places.ts`), and goes there. Two that fit: "Did you mean A or B?", and a bare
   answer picks one. Nothing by that name: it was a request after all, and their words go to the
   worker. Settings and the agent's page are a tap on the bar (a new tab needs one). It changes

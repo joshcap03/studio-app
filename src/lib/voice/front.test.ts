@@ -638,7 +638,11 @@ describe("moving around Studio on a call", () => {
   });
 
   it("asks the model (or the mock) where to go, and presses without one", () => {
-    expect(quickRoute([mark({ stage: { working: false } }), user("show me the job tracker")])).toBeNull();
+    // Their words go to the browser, which finds the place; the result is what's said.
+    expect(quickRoute([mark({ stage: { working: false } }), user("show me the job tracker")])).toEqual({ tools: [{ name: "send_message", args: {} }] });
+    expect(quickRoute([mark({ stage: { working: true } }), user("Um, can you pull up my library and show me what I've got in there?")])).toEqual({
+      tools: [{ name: "send_message", args: {} }],
+    });
     expect(quickRoute([mark({ stage: onTask }), user("pause this")])).toEqual({ tools: [{ name: "press", args: { action: "pause" } }] });
     expect(mockReply([mark({ stage: { working: false } }), user("show me the job tracker")])).toEqual({ tools: [{ name: "open", args: { place: "tracker", name: "job" } }] });
     expect(mockReply([mark({ stage: { working: false } }), user("open my tasks")])).toEqual({ tools: [{ name: "open", args: { place: "tasks", name: "" } }] });
