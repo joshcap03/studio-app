@@ -18,6 +18,7 @@ function control(state: MicState, patch: Partial<MicControl> = {}): MicControl {
     typed: none,
     cancel: none,
     dismiss: none,
+    dictate: none,
     button: { onPointerDown: none, onPointerMove: none, onPointerUp: none, onPointerCancel: none, onClick: none, onContextMenu: none },
     ...patch,
   };
