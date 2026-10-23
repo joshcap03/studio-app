@@ -5,6 +5,12 @@ container (`Dockerfile`, official `langflowai/langflow:1.12.4`, API only, no edi
 blueprints for Railway (`railway.json`) and Render (`render.yaml`), and `export_flow.py` to
 copy the flow off your laptop.
 
+The image patches one Langflow file, `patches/job_checkpoint_saver.py`: upstream, an
+approval pause could be lost when the database answered slower than the agent, and the run
+ended with "I finished without writing a reply" and no approval card. The build checks the
+upstream file's hash, so upgrading Langflow fails the build until the patch is rechecked
+(drop it once Langflow fixes the saver).
+
 **Only the app should call this server.** It holds every tenant's run traffic and the
 shared service keys. Sign-up is off, auto-login is off, and there's no editor UI; keep the
 API key in Vercel only.

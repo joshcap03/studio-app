@@ -31,6 +31,17 @@ USER root
 RUN if command -v uv >/dev/null; then uv pip install --python /app/.venv/bin/python exa-py==2.25.0; \
     else /app/.venv/bin/python -m ensurepip && /app/.venv/bin/python -m pip install exa-py==2.25.0; fi \
  && /app/.venv/bin/python -c "import exa_py, fastapi, httpx, langchain, langchain_core, langgraph, orjson, pydantic, requests"
+
+# Langflow's agent checkpoint saver loses an approval pause when the database is slower than
+# the agent (see the patch's docstring): the run ends with no reply and no approval card.
+# The patch replaces 1.12.4's file only if it is still that file, so an upgrade fails the
+# build here and the patch gets rechecked instead of silently overwriting newer code.
+COPY patches/job_checkpoint_saver.py /tmp/job_checkpoint_saver.py
+RUN target="$(/app/.venv/bin/python -c 'import lfx.components.models_and_agents.agent_helpers.job_checkpoint_saver as m; print(m.__file__)')" \
+ && echo "bc45e66e206fdd711b1c5b6bb15015e2df1b106ce6bfe6240512ddc59d5d4855  $target" | sha256sum -c - \
+ && install -m 644 /tmp/job_checkpoint_saver.py "$target" && rm /tmp/job_checkpoint_saver.py \
+ && find "$(dirname "$target")/__pycache__" -name 'job_checkpoint_saver*' -delete 2>/dev/null; \
+    /app/.venv/bin/python -c "import lfx.components.models_and_agents.agent_helpers.job_checkpoint_saver as m; assert 'Studio patch' in m.__doc__"
 USER 1000
 
 # Mount the persistent volume here (Railway volume / Render disk).
