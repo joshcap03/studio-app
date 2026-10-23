@@ -37,6 +37,10 @@ mic), from the setup banner ("Talk it through"), or from the agent's own offer u
   agent offers is "Keep it on screen, or tell me the name you'd like." A call never says "The rest
   is on screen": the member is looking at it. The heads-up and time's-up cues each go once.
 - `POST /api/voice/session/<id>/end` records the call's length.
+- A call ElevenLabs closes with a reason stays on screen and says it (`disconnectProblem` in
+  `src/lib/voice/disconnect.ts`). When the ElevenLabs account is out of credits, every call is
+  refused as it joins: the member reads "Calls are paused: Studio's voice minutes have run out for
+  now." Add credits or change the plan in ElevenLabs (Subscription); nothing in Studio changes.
 
 Every Studio voice speaks a little slower than ElevenLabs' default, and steadier (speed 0.9,
 stability 0.6: `ELEVENLABS_VOICE_SETTINGS`), on calls, previews and voice notes alike. The call
