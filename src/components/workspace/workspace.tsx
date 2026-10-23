@@ -383,6 +383,8 @@ function WorkspaceShell({
   buttonsRef.current = buttons;
   const [calling, setCalling] = useState(false);
   const [callNotice, setCallNotice] = useState<string | null>(null);
+  // The call couldn't start for a reason the mic doesn't share (not today's voice time, which it charges too).
+  const [micInstead, setMicInstead] = useState(false);
   // Streams this tab let go of while the run kept going on the server (the app was hidden).
   const detached = useRef(new WeakSet<AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
@@ -1170,6 +1172,7 @@ function WorkspaceShell({
         await openCall(options);
       } catch (error) {
         const message = error instanceof ApiError ? error.message : "Voice is unavailable right now. Keep going here.";
+        setMicInstead(!(error instanceof ApiError && error.status === 429));
         if (options.conversationId) setNotice(message);
         else setCallNotice(message);
       }
@@ -1984,6 +1987,7 @@ function WorkspaceShell({
               onTalk={voice && setup ? () => void startCall({ setup: true }) : undefined}
               talking={calling}
               talkNotice={callNotice}
+              micInstead={micInstead}
               voice={voice}
               call={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? undefined : callButton(null)}
             />

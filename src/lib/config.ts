@@ -43,6 +43,10 @@ const schema = z.object({
 
   COMPOSIO_API_KEY: z.string().optional(),
   COMPOSIO_TOOLKITS: jsonRecord,
+  // Watches (docs/watches.md): the secret Composio signs trigger webhooks with, and the
+  // Trigger.dev key the webhook route hands each event to the worker with. Both or neither.
+  COMPOSIO_WEBHOOK_SECRET: z.string().optional(),
+  TRIGGER_SECRET_KEY: z.string().optional(),
 
   SUPERMEMORY_API_KEY: z.string().optional(),
   SUPERMEMORY_BASE_URL: z.url().default("https://api.supermemory.ai"),
@@ -136,6 +140,8 @@ export interface AppConfig {
     };
   };
   composio?: { apiKey: string; toolkits: ToolkitConfig[] };
+  /** Events from members' watches. Unset means the webhook refuses them (watches never fire). */
+  watches?: { webhookSecret: string; triggerKey: string };
   /** Long-term memory. Unset means the agent remembers nothing between conversations. */
   supermemory?: { apiKey: string; baseUrl: string };
   /** Where reply ratings go as trace feedback. Unset means they aren't sent anywhere. */
@@ -226,6 +232,10 @@ export function getConfig(): AppConfig {
       langflow,
     },
     composio,
+    watches:
+      composio && env.COMPOSIO_WEBHOOK_SECRET?.trim() && env.TRIGGER_SECRET_KEY?.trim()
+        ? { webhookSecret: env.COMPOSIO_WEBHOOK_SECRET.trim(), triggerKey: env.TRIGGER_SECRET_KEY.trim() }
+        : undefined,
     supermemory: env.SUPERMEMORY_API_KEY ? { apiKey: env.SUPERMEMORY_API_KEY, baseUrl: env.SUPERMEMORY_BASE_URL } : undefined,
     langsmith: env.LANGSMITH_API_KEY ? { apiKey: env.LANGSMITH_API_KEY, endpoint: env.LANGSMITH_ENDPOINT } : undefined,
     browser: env.BROWSERBASE_API_KEY?.trim() ? { apiKey: env.BROWSERBASE_API_KEY.trim() } : undefined,

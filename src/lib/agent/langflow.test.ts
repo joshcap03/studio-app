@@ -152,6 +152,11 @@ describe("Langflow request", () => {
     expect(templateValues(tenantA).system_context).not.toContain("On the member's screen");
   });
 
+  it("tells the gateway when an event in the member's app started the run, and nothing otherwise", () => {
+    expect(templateValues({ ...tenantA, runCause: "watch" }).run_cause).toBe("watch");
+    expect(templateValues(tenantA).run_cause).toBe("");
+  });
+
   it("says it's introduced on calls by its starting name, not one they chose, and keeps a chosen manner before a name", () => {
     const calls = selfContext({ name: null, manner: "I keep it short.", callName: "Rowan" });
     expect(calls).toContain("on calls you're introduced as Rowan, this agent's starting name, not one they chose for you.");

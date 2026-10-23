@@ -12,6 +12,8 @@ export interface RunInApp {
 export interface RunOutcome {
   status: string;
   reason: string | null;
+  /** For a watch's run that isn't starting yet: when to ask again (epoch ms). */
+  retryAt?: number;
 }
 
 /** APP_URL answers with a redirect: the worker must be pointed at where it leads. */

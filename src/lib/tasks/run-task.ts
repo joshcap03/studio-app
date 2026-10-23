@@ -3,7 +3,8 @@ import { buildTurnDeps } from "@/lib/chat/run";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import type { Tenant } from "@/lib/tenant-core";
-import { appendRun, beginRun, getRun, getTask, markTaskRan, runStopRequested, settleRun, updateTask } from "./index";
+import { appendRun, beginRun, deferRun, getRun, getTask, markTaskRan, runStopRequested, settleRun, updateTask } from "./index";
+import { getWatch } from "./watches";
 import type { AgentTask, RunStatus } from "./types";
 
 // Runs one of a member's tasks as that member: its brief goes to the agent in the task's own
@@ -21,7 +22,17 @@ export interface StartedTaskRun {
 export interface RunOutcome {
   status: RunStatus;
   reason: string | null;
+  /** For a watch's run that isn't starting yet: when to ask again (epoch ms). */
+  retryAt?: number;
 }
+
+// A watch's run carries events that would be lost if it were skipped, so while its conversation
+// is busy or waiting on the member it waits, folding in events that arrive meanwhile, and is
+// skipped (its events kept on it, for the member to see) only after this long.
+const WAIT = {
+  busy: { every: 5 * 60_000, giveUpAfter: 30 * 60_000 },
+  waiting_on_you: { every: 10 * 60_000, giveUpAfter: 2 * 3_600_000 },
+} as const;
 
 /**
  * Starts a run of `task`. With `runId` (a run the scheduler recorded and `beginRun` moved to
@@ -80,9 +91,10 @@ export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { r
 }
 
 /**
- * Runs a run the scheduler claimed, as the task's member, and resolves with how it ended.
- * Skips it (recording why) when the task is no longer active, its conversation is waiting
- * on the member or still busy, or the run was already started or stopped.
+ * Runs a run the scheduler (or a watch) claimed, as the task's member, and resolves with how it
+ * ended. Skips it (recording why) when the task is no longer active, its conversation is waiting
+ * on the member or still busy, or the run was already started or stopped. A watch's run waits
+ * instead of being skipped, for a while (WAIT), answering when to ask again.
  */
 export async function runClaimedTask(tenant: Tenant, claimed: { taskId: string; runId: string }): Promise<RunOutcome> {
   const skip = async (reason: string): Promise<RunOutcome> => {
@@ -95,16 +107,29 @@ export async function runClaimedTask(tenant: Tenant, claimed: { taskId: string; 
   if (!run || run.taskId !== claimed.taskId) return { status: "skipped", reason: "gone" };
   if (run.status !== "queued") return { status: run.status, reason: run.reason };
   if (run.cancelRequestedAt) return skip("stopped");
+  const watched = run.events !== null;
+  // Still gathering events (or put back to wait): not yet.
+  if (watched && run.notBefore && run.notBefore > Date.now() + 1000) return { status: "queued", reason: "not_yet", retryAt: run.notBefore };
+  const hold = async (reason: keyof typeof WAIT): Promise<RunOutcome> => {
+    if (!watched || Date.now() - run.scheduledFor > WAIT[reason].giveUpAfter) return skip(reason);
+    const at = new Date(Date.now() + WAIT[reason].every);
+    if (!(await deferRun(tenant, run.id, at))) return { status: "skipped", reason: "already_started" };
+    return { status: "queued", reason, retryAt: at.getTime() };
+  };
 
   const task = await getTask(tenant, claimed.taskId);
   if (!task) return { status: "skipped", reason: "gone" };
   if (task.status !== "active") return skip(task.status);
+  if (watched) {
+    const watch = await getWatch(tenant, task.id);
+    if (watch?.status !== "watching") return skip(watch ? watch.status : "not_watching");
+  }
   if (!agentEnabledFor(tenant.workspace.id)) return skip("agent_unavailable");
 
   if (task.conversationId) {
     const store = storeFor(tenant);
-    if (await store.pendingApproval(task.conversationId)) return skip("waiting_on_you");
-    if ((await store.listMessages(task.conversationId)).at(-1)?.status === "streaming") return skip("busy");
+    if (await store.pendingApproval(task.conversationId)) return hold("waiting_on_you");
+    if ((await store.listMessages(task.conversationId)).at(-1)?.status === "streaming") return hold("busy");
   }
 
   // Only one attempt gets to start it.

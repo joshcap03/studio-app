@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, AudioLines, CalendarDays, Inbox, LibraryBig, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowRight, AudioLines, CalendarDays, Inbox, LibraryBig, Mic, Search, Sheet, Sparkles, type LucideIcon } from "lucide-react";
 import { forwardRef, useEffect, useState } from "react";
 import { Companion, companionHint, useCompanion } from "@/components/ui/companion";
 import { JourneyBar } from "@/components/ui/journey";
@@ -51,6 +51,8 @@ interface Props {
   talking?: boolean;
   /** Why a call couldn't start. */
   talkNotice?: string | null;
+  /** The mic still works though the call couldn't start (it shares today's voice time, so not when that's why). */
+  micInstead?: boolean;
   /** Present once the agent knows the member well enough to introduce itself. */
   onSayHello?: () => void;
   /** Voice for this member, for the message box's mic. */
@@ -70,13 +72,48 @@ export function chipSkills(skills: WorkspaceSkill[]): WorkspaceSkill[] {
 }
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, onSayHello, voice, call },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, micInstead, onSayHello, voice, call },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
   const companion = useCompanion();
   // Until setup is done, the agent greets them and offers to guide them through it.
   const greeting = Boolean(setup && onSetup);
+  // A tap on the companion calls it; when calls are out, it says to talk through the mic instead.
+  const ring = call?.onCall ?? onTalk;
+  // Tapped to call (and, when it couldn't, whether they took the mic instead).
+  const [tapped, setTapped] = useState<"call" | "mic" | null>(null);
+  const [noCall, setNoCall] = useState(false);
+  const canDictate = Boolean(voice?.speech.stt) && (noCall || Boolean(micInstead));
+  const ringing = Boolean(call?.busy ?? talking);
+
+  function tapCompanion() {
+    if (ringing) return;
+    if (ring) {
+      setNoCall(false);
+      setTapped("call");
+      ring();
+    } else if (!voice) {
+      setNoCall(true);
+      composer?.current?.focus();
+    }
+    // Otherwise a call is already on.
+  }
+
+  function dictate() {
+    setTapped("mic");
+    setNoCall(false);
+    if (!composer?.current?.dictate()) composer?.current?.focus();
+  }
+
+  // A call from the box's own buttons says why it couldn't start in its usual place.
+  const fromButton = (start: () => void) => () => {
+    setTapped(null);
+    start();
+  };
+
+  // Why the companion couldn't call, and the way to talk to it anyway.
+  const fallback = tapped === "call" && talkNotice ? (canDictate ? "I can't take a call right now." : talkNotice) : noCall ? "Calls aren't on for you yet." : null;
 
   function attach(skill: WorkspaceSkill) {
     composer?.current?.attachSkill({ id: skill.id, name: skill.name });
@@ -99,9 +136,29 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:justify-center md:px-8 md:pb-[12vh]">
       <div className="flex flex-1 flex-col items-center justify-center gap-4 md:flex-none">
         {companion ? (
-          <span title={companionHint(companion.stage, companion.name)} className="animate-fade-up">
+          <button
+            type="button"
+            onClick={tapCompanion}
+            aria-label={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name)}
+            title={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name)}
+            aria-busy={ringing || undefined}
+            className="animate-fade-up rounded-full transition-transform duration-150 hover:scale-105 active:scale-95"
+          >
             <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} present />
-          </span>
+          </button>
+        ) : null}
+        {fallback ? (
+          <p role="status" className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[13.5px] text-fg-2 animate-fade-up">
+            <span>{fallback}</span>
+            {canDictate ? (
+              <button type="button" onClick={dictate} className="inline-flex items-center gap-1 font-medium text-fg underline-offset-2 hover:underline">
+                <Mic size={14} strokeWidth={1.75} />
+                Talk to me with the mic instead
+              </button>
+            ) : noCall ? (
+              <span>Type to me here instead.</span>
+            ) : null}
+          </p>
         ) : null}
         <h1 className="animate-fade-up text-center font-display text-[30px] leading-tight tracking-[-0.015em] text-fg md:text-[36px]">
           {greeting ? `Hey${member ? ` ${member}` : ""}!` : "What should we work on?"}
@@ -111,7 +168,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
         {onSayHello && companion ? <Hello workspaceId={companion.workspaceId} onSayHello={onSayHello} /> : null}
         {setup && onSetup ? (
-          <SetupGreeting setup={setup} agentName={agentName} greeter={greeter} onSetup={onSetup} onSkip={onSkipSetup} onTalk={onTalk} talking={talking} notice={talkNotice} />
+          <SetupGreeting setup={setup} agentName={agentName} greeter={greeter} onSetup={onSetup} onSkip={onSkipSetup} onTalk={onTalk && fromButton(onTalk)} talking={talking} notice={tapped ? null : talkNotice} />
         ) : null}
         <div className="animate-fade-up [animation-delay:60ms]">
           <Composer
@@ -127,10 +184,10 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
             autoFocus
             allowFiles={allowFiles}
             voice={voice}
-            call={call}
+            call={call && { ...call, onCall: fromButton(call.onCall) }}
           />
           {/* Why a call from the message box couldn't start (the setup's own call says so above). */}
-          {talkNotice && !(setup && onSetup) ? (
+          {talkNotice && !(setup && onSetup) && !tapped ? (
             <p role="status" className="mt-2 px-1 text-center text-[12.5px] text-danger">
               {talkNotice}
             </p>

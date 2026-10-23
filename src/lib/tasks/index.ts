@@ -34,13 +34,16 @@ interface RunRow {
   reason: string | null;
   message_id: string | null;
   cancel_requested_at: string | null;
+  events: TaskRun["events"];
+  more_events: number;
+  not_before: string | null;
   created_at: string;
   updated_at: string;
 }
 
 const COLUMNS =
   "id, title, instructions, skill_id, schedule, timezone, status, plan, goal, conversation_id, next_run_at, last_run_at, template_task_id, created_at, updated_at";
-const RUN_COLUMNS = "id, task_id, scheduled_for, status, reason, message_id, cancel_requested_at, created_at, updated_at";
+const RUN_COLUMNS = "id, task_id, scheduled_for, status, reason, message_id, cancel_requested_at, events, more_events, not_before, created_at, updated_at";
 const MISSING_LINK = "That skill or conversation doesn't exist.";
 
 const toTask = (r: TaskRow): AgentTask => ({
@@ -69,6 +72,9 @@ const toRun = (r: RunRow): TaskRun => ({
   reason: r.reason,
   messageId: r.message_id,
   cancelRequestedAt: time(r.cancel_requested_at),
+  events: r.events ?? null,
+  moreEvents: r.more_events ?? 0,
+  notBefore: time(r.not_before),
   createdAt: Date.parse(r.created_at),
   updatedAt: Date.parse(r.updated_at),
 });
@@ -272,6 +278,20 @@ export async function beginRun(tenant: Tenant, runId: string): Promise<boolean> 
   const rows = check(
     await runs(tenant)
       .update({ status: "running", updated_at: new Date().toISOString() })
+      .eq("id", runId)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .eq("status", "queued")
+      .select("id"),
+  ) as { id: string }[];
+  return rows.length > 0;
+}
+
+/** Moves a queued watch run's start to `at` (its conversation was busy). False once it started. */
+export async function deferRun(tenant: Tenant, runId: string, at: Date): Promise<boolean> {
+  const rows = check(
+    await runs(tenant)
+      .update({ not_before: at.toISOString(), updated_at: new Date().toISOString() })
       .eq("id", runId)
       .eq("workspace_id", tenant.workspace.id)
       .eq("user_id", tenant.userId)

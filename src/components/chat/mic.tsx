@@ -44,6 +44,8 @@ export interface MicControl {
   typed: (words: string) => void;
   cancel: () => void;
   dismiss: () => void;
+  /** Starts dictating, as a tap on the mic would (nothing while it's already on or a call holds it). */
+  dictate: () => void;
   button: {
     onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => void;
     onPointerMove: (e: React.PointerEvent<HTMLButtonElement>) => void;
@@ -239,6 +241,11 @@ export function useMic({ mock, onWords }: { mock: boolean; onWords: (words: stri
     },
     cancel: () => send({ type: "cancel" }),
     dismiss: () => send({ type: "dismiss" }),
+    dictate: () => {
+      if (held.current || listening(current.current)) return;
+      if (mock) setTyping("dictation");
+      else send({ type: "toggle", at: Date.now() });
+    },
     button: {
       onPointerDown: (e) => {
         if (e.button !== 0 || held.current) return;

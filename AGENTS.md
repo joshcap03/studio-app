@@ -84,6 +84,12 @@ raw/technical text.
   their runs (`index.ts`), the agent's tracker of records per collection (`records.ts`), and
   request validation (`schema.ts`). Private to each member; the API is the "tasks" preview.
   `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike.
+  `watches.ts`: a task that runs when something happens in a connected app (the "watches" preview,
+  docs/watches.md). Its Composio trigger is created under the member's own id and follows the task;
+  Composio's events reach `/api/watches/composio`, the worker matches each to its watch and owner
+  (`worker_claim_watch_event`) and folds events close together into one waiting run. A watch's run
+  reads them as other people's words: the gateway asks before code, the browser, or any link
+  (`run_cause`), and what it remembers goes to the agent's shared memory.
 - `src/lib/journey.ts`: where the plan for the work in a conversation lives and how the member sees it
   (the rail above the chat, "Done means …"): the conversation's task's plan, else the owner's setup
   checklist while the interview is under way there, else the conversation's own (`conversations.plan`/
@@ -150,7 +156,8 @@ raw/technical text.
   person (sealed on `accounts.browser_context`, shared by all their agents), sent to Studio Browser
   each run as `{{browser_context}}`, so sites they signed in to stay signed in; Settings forgets them.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
-  tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
+  tasks every two minutes; `watch-event.ts` takes a watch's events as the webhook hands them over;
+  `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
   worker holds only the Supabase keys and `APP_URL`. `lib/elevated.ts` is the only code with
   the Supabase secret key.
@@ -174,8 +181,10 @@ raw/technical text.
   member under RLS. `src/lib/elevated-guard.test.ts` enforces this. That session's access token
   goes only to `POST /api/tasks/<id>/runs/<run>`, the one route that accepts a bearer token
   (verified with Supabase Auth; `src/proxy.ts` lets only that route through without a cookie).
-  The other cookieless route is the voice front (`/api/voice/llm/v1/chat/completions`), which
-  checks the voice provider's key and the call's sealed context and touches no data. Every other
+  The other cookieless routes are the voice front (`/api/voice/llm/v1/chat/completions`), which
+  checks the voice provider's key and the call's sealed context and touches no data, and the
+  watch webhook (`/api/watches/composio`), which checks Composio's signature, reads and writes no
+  member data, and only hands the event to the worker (with `TRIGGER_SECRET_KEY`). Every other
   route takes cookie sessions only. Writes are refused from other sites; a GET that changes
   something anyway (one that charges voice time) passes `authorizeTenant(request, { writes: true })`.
 - Keep provider-specific logic inside its adapter. Declare capabilities honestly; don't

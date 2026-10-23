@@ -212,6 +212,11 @@ export type MessageOrigin =
       /** The task's title when the run started, for a "Scheduled · …" label. */
       title: string;
       runId: string | null;
+      /**
+       * What started a watch's run, for a "Watching · …" label: the first event's summary and how
+       * many events the run carries (docs/watches.md). Absent on scheduled and Run now runs.
+       */
+      cause?: { summary: string; count: number };
     }
   | { kind: "voice"; via?: "note"; sessionId?: string };
 

@@ -25,7 +25,7 @@ export async function proxy(request: NextRequest) {
   const { data } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  if (data.user || PUBLIC_PATHS.some((p) => path.startsWith(p)) || isWorkerRunStart(request) || isVoiceFront(request)) return response;
+  if (data.user || PUBLIC_PATHS.some((p) => path.startsWith(p)) || isWorkerRunStart(request) || isVoiceFront(request) || isWatchEvent(request)) return response;
 
   if (path.startsWith("/api/")) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   const login = new URL("/login", request.url);
@@ -50,6 +50,15 @@ const VOICE_FRONT = "/api/voice/llm/v1/chat/completions";
 
 function isVoiceFront(request: NextRequest): boolean {
   return request.method === "POST" && request.nextUrl.pathname === VOICE_FRONT && /^Bearer\s+\S+$/i.test(request.headers.get("authorization") ?? "");
+}
+
+// Composio delivering a watch's event carries its own signature instead of a cookie. The route
+// verifies it (src/app/api/watches/composio/route.ts), reads no member data, and only hands the
+// event to the background worker.
+const WATCH_EVENTS = "/api/watches/composio";
+
+function isWatchEvent(request: NextRequest): boolean {
+  return request.method === "POST" && request.nextUrl.pathname === WATCH_EVENTS && Boolean(request.headers.get("webhook-signature"));
 }
 
 export const config = {
