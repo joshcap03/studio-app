@@ -19,6 +19,7 @@ import {
 } from "@/lib/types";
 import { draftSpoken, heldGoesTo, insertWords, type MicMode } from "@/lib/voice/mic";
 import type { VoiceStatus } from "@/lib/voice/types";
+import { noteTyping } from "@/components/ui/presence";
 import { PendingFiles, type PendingFile } from "./attachments";
 import { MicButton, MicStatus, useMic } from "./mic";
 
@@ -387,7 +388,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         maxLength={MAX_MESSAGE_LENGTH}
         autoFocus={autoFocus}
         placeholder={skill ? "Add details (optional)" : (hint ?? placeholder)}
-        onChange={(e) => update(e.target.value)}
+        onChange={(e) => {
+          noteTyping(e.currentTarget);
+          update(e.target.value);
+        }}
         onKeyDown={onKeyDown}
         onPaste={(e) => {
           if (allowFiles && e.clipboardData.files.length > 0) {

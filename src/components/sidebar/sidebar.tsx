@@ -795,7 +795,7 @@ function AgentMenu({
         className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg pr-2 pl-2 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover"
       >
         {companion ? (
-          <Companion stage={companion.stage} look={companion.look} mood={working ? "working" : "idle"} size={22} seenKey={workspace.id} />
+          <Companion stage={companion.stage} look={companion.look} mood={working ? "working" : "idle"} size={22} seenKey={workspace.id} present="home" />
         ) : (
           <span className={`flex shrink-0 ${working ? "breathe-soft" : ""}`}>
             <BrandMark size={22} />

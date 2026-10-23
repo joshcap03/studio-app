@@ -100,7 +100,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
       <div className="flex flex-1 flex-col items-center justify-center gap-4 md:flex-none">
         {companion ? (
           <span title={companionHint(companion.stage, companion.name)} className="animate-fade-up">
-            <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} />
+            <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} present />
           </span>
         ) : null}
         <h1 className="animate-fade-up text-center font-display text-[30px] leading-tight tracking-[-0.015em] text-fg md:text-[36px]">

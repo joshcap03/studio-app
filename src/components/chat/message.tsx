@@ -198,7 +198,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   const presence =
     companion && isLast && !streaming ? (
       <span title={companionHint(companion.stage, companion.name)} className="inline-flex size-7 shrink-0 items-center justify-center animate-fade-in">
-        <Companion stage={companion.stage} look={companion.look} mood={replyMood(message, justFinished)} size={18} />
+        <Companion stage={companion.stage} look={companion.look} mood={replyMood(message, justFinished)} size={18} present />
       </span>
     ) : null;
 
@@ -279,6 +279,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         <MemoryProposalCard
           key={proposal.id}
           proposal={proposal}
+          live={streaming}
           onDecide={onProposal && !streaming ? (decision) => onProposal(message.id, proposal.id, decision) : undefined}
         />
       ))}

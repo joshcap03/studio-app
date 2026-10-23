@@ -1,7 +1,9 @@
 "use client";
 
 import { ArrowUp, Ban, BookmarkCheck, BookmarkPlus, Check, Clock, MessageCircleQuestion, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { HoldButton } from "@/components/ui/hold-button";
+import { sendSpark, useWaitsOnMember } from "@/components/ui/presence";
 import { appName } from "@/lib/apps";
 import { api } from "@/lib/client/api";
 import type { Approval, MemoryProposal, Question } from "@/lib/types";
@@ -36,6 +38,8 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
   const [choice, setChoice] = useState<"approve" | "reject" | null>(null);
   const spent = call?.spent ? [approval.id] : [];
   const readBack = call && !tapReason(approval, call.spoken, spent) && approval.spoken?.ok ? approval.spoken.readBack : null;
+  const card = useRef<HTMLElement>(null);
+  useWaitsOnMember(card, pending && Boolean(onDecide));
 
   function decide(decision: "approve" | "reject") {
     if (!onDecide || choice) return;
@@ -48,6 +52,7 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
 
   return (
     <section
+      ref={card}
       aria-label="Action waiting for approval"
       className={`mt-4 overflow-hidden rounded-xl border animate-fade-up ${pending ? "border-line-strong bg-surface shadow-composer" : "border-line bg-transparent"}`}
     >
@@ -102,15 +107,14 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
             <X size={14} />
             Decline
           </button>
-          <button
-            type="button"
-            onClick={() => decide("approve")}
+          <HoldButton
+            onHold={() => decide("approve")}
             disabled={choice !== null}
+            label="Approve"
+            nudge="Hold to approve"
+            icon={choice === "approve" ? <span className="spinner size-3.5" aria-hidden="true" /> : <Check size={14} />}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {choice === "approve" ? <span className="spinner size-3.5" aria-hidden="true" /> : <Check size={14} />}
-            Approve
-          </button>
+          />
         </div>
       ) : (
         <ApprovalOutcome approval={approval} conversationId={conversationId} />
@@ -172,6 +176,8 @@ function ApprovalOutcome({ approval, conversationId }: { approval: Approval; con
 
 interface ProposalProps {
   proposal: MemoryProposal;
+  /** It arrived in a reply that's still streaming, while the member watches (not on load). */
+  live?: boolean;
   onDecide?: (decision: "save" | "dismiss" | "undo") => void;
 }
 
@@ -182,12 +188,22 @@ const quiet = "inline-flex h-6 items-center rounded-md px-1.5 text-[12.5px] font
  * the place of facts it restated, which Undo brings back); one that couldn't be saved asks the
  * member instead.
  */
-export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
+export function MemoryProposalCard({ proposal, live, onDecide }: ProposalProps) {
   const where = proposal.scope === "personal" ? " for you" : "";
+  // What it remembers travels into the companion, and back out when it's undone.
+  const line = useRef<HTMLElement>(null);
+  const was = useRef(live ? null : proposal.status);
+  useEffect(() => {
+    const before = was.current;
+    was.current = proposal.status;
+    if (!line.current || before === proposal.status) return;
+    if (proposal.status === "saved") sendSpark(line.current, "in");
+    else if (before === "saved" && proposal.status === "dismissed") sendSpark(line.current, "out");
+  }, [proposal.status]);
   if (proposal.status !== "pending") {
     const saved = proposal.status === "saved";
     return (
-      <section aria-label={saved ? "Remembered" : "Not remembered"} className="mt-2 flex items-start gap-2 text-[13px] animate-fade-up">
+      <section ref={line} aria-label={saved ? "Remembered" : "Not remembered"} className="mt-2 flex items-start gap-2 text-[13px] animate-fade-up">
         {saved ? (
           <BookmarkCheck size={14} className="mt-[3px] shrink-0 text-success" />
         ) : (
@@ -208,6 +224,7 @@ export function MemoryProposalCard({ proposal, onDecide }: ProposalProps) {
   }
   return (
     <section
+      ref={line}
       aria-label="Suggested memory"
       className="mt-3 flex items-start gap-3 rounded-xl border border-line px-3.5 py-3 animate-fade-up"
     >
@@ -255,6 +272,8 @@ export function QuestionCard({ questions, onAnswer, draftKey }: QuestionsProps) 
   const { picks, sent, heard } = drafts.question(draftKey, questions);
   const instant = questions.length === 1 && !questions[0].multiSelect;
   const complete = picks.every((p) => p.length > 0);
+  const card = useRef<HTMLElement>(null);
+  useWaitsOnMember(card, Boolean(onAnswer) && !sent);
 
   if (!onAnswer || sent) {
     return (
@@ -289,6 +308,7 @@ export function QuestionCard({ questions, onAnswer, draftKey }: QuestionsProps) 
 
   return (
     <section
+      ref={card}
       aria-label="Question from the agent"
       className="mt-4 overflow-hidden rounded-xl border border-line-strong bg-surface shadow-composer animate-fade-up"
     >

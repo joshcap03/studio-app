@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { usePresentMark } from "./presence";
 import type { Companion as CompanionInfo, CompanionLook, CompanionStage } from "@/lib/types";
 
 // The agent as one member knows it, drawn from the Studio diamond. A sketch in faint pencil at
@@ -74,6 +75,7 @@ export function Companion({
   mood = "idle",
   size = 22,
   seenKey,
+  present,
   className = "",
 }: {
   stage: CompanionStage;
@@ -82,8 +84,16 @@ export function Companion({
   size?: number;
   /** Plays the brass trace the first time this agent is seen ready (per device). */
   seenKey?: string;
+  /**
+   * A mark the member is looking at: it glances toward a card that waits on them, watches the
+   * message box while they type, and takes in what it remembers (src/components/ui/presence.ts).
+   * "home" is the agent's own mark, where remembered facts go.
+   */
+  present?: boolean | "home";
   className?: string;
 }) {
+  const svg = useRef<SVGSVGElement>(null);
+  const gaze = usePresentMark(svg, Boolean(present), present === "home");
   const { points, round } = SHAPES[look.shape];
   const [t, r, b, l] = points;
   const px = size <= 22 ? 1.3 : size <= 48 ? 1.5 : 2;
@@ -114,10 +124,12 @@ export function Companion({
     "--cm-tint": `var(--${look.tint})`,
     // Spread blinks so two marks never blink together.
     "--cm-delay": `-${(look.seed % 60) / 10}s`,
+    ...(gaze && stage === "arrived" ? { "--cm-gx": `${gaze.x.toFixed(2)}px`, "--cm-gy": `${gaze.y.toFixed(2)}px` } : {}),
   } as React.CSSProperties;
 
   return (
     <svg
+      ref={svg}
       width={size}
       height={size}
       viewBox="0 0 32 32"
@@ -125,6 +137,9 @@ export function Companion({
       aria-hidden="true"
       style={style}
       className={`cm cm-${stage} cm-mood-${mood} shrink-0 overflow-visible ${className}`}
+      onAnimationEnd={(e) => {
+        if (e.animationName === "cm-took") e.currentTarget.classList.remove("cm-took");
+      }}
     >
       {stage === "arrived" ? (
         <g className={arriving ? "cm-ink" : "cm-body"} onAnimationEnd={arriving ? () => setArriving(false) : undefined}>
