@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -304,6 +304,12 @@ class ProposeArgs(BaseModel):
                               json_schema_extra={"items": {"type": "object", "properties": {"voice": {"type": "string"},
                                                                                             "manner": {"type": "string"}},
                                                            "required": ["voice"]}, "maxItems": 3})
+    assumptions: list[str] = Field(default_factory=list, description=("Optional: the guesses you made writing this that the "
+                                                                      "owner should check, one sentence each, the way you'd "
+                                                                      "say it ('I assumed you always pick the cheapest "
+                                                                      "option.'), most important first. They confirm or fix "
+                                                                      "each one before applying."),
+                                   json_schema_extra={"maxItems": 6})
 
 
 MERGE_SCHEMA = {
@@ -336,6 +342,12 @@ class SecretArgs(BaseModel):
     reason: str = Field(description=("Why, in one short sentence as you'd say it, e.g. 'To sign in to your Acme account and "
                                      "download the March invoice.'"))
     username_hint: str = Field(default="", description="Optional: the username or email the site seems to expect, if you know it.")
+class WatchArgs(BaseModel):
+    job: str = Field(description=("The job they'll show you, in one sentence in their words, e.g. 'Book the cheapest nonstop "
+                                  "flight to see my parents.'"))
+    site: str = Field(default="", description="Optional: the site it starts on, 1-3 words, e.g. 'Google Flights'.")
+
+
 class HandBrowserArgs(BaseModel):
     reason: str = Field(description=("What the owner needs to do in the browser, in one sentence as you'd say it, e.g. "
                                      "'Solve the robot check on the USPS page, then tap Done and I'll make the label.'"))
@@ -357,6 +369,7 @@ MergeArgs.model_rebuild()
 OfferCallArgs.model_rebuild()
 SecretArgs.model_rebuild()
 HandBrowserArgs.model_rebuild()
+WatchArgs.model_rebuild()
 
 
 def words(s):
@@ -1135,7 +1148,7 @@ class ToolGatewayComponent(Component):
 
         def propose_agent(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
                           tasks: list | None = None, memories: list | None = None, identity: dict | None = None,
-                          sound: list | None = None) -> str:
+                          sound: list | None = None, assumptions: list | None = None) -> str:
             # Changes nothing: the app shows the proposal as a card, and only the owner's Apply
             # changes this agent's setup (or, for a name or a voice, the member's own pick). The
             # app checks each voice against Studio's catalog and drops the rest.
@@ -1155,6 +1168,9 @@ class ToolGatewayComponent(Component):
                     options.append({"voice": voice, "manner": str(option.get("manner") or "")[:600]})
             if options:
                 proposal["sound"] = options[:3]
+            guesses = [" ".join(str(a).split())[:300] for a in (assumptions or []) if str(a).strip()]
+            if guesses:
+                proposal["assumptions"] = guesses[:6]
             if not any(proposal.get(k) for k in ("profile", "instructions", "skills", "tasks", "memories", "identity", "sound")):
                 return ("Not shown: propose at least one change (profile, instructions, skills, tasks, memories, identity, "
                         "or sound).")
@@ -1168,13 +1184,16 @@ class ToolGatewayComponent(Component):
                          "sentence offering the name in your own words, without repeating what you've written."
                          if only_name else
                          "The owner now sees your proposal and can apply all or part of it; nothing changes until "
-                         "they do. End your reply here with one short sentence."),
+                         "they do. " + ("They also see your guesses and can fix any of them; a fix arrives as their "
+                                        "next message, so propose again with it. End your reply here with one short "
+                                        "sentence asking them to check your guesses."
+                                        if guesses else "End your reply here with one short sentence.")),
             })
 
         async def propose_agent_async(summary: str, profile: str = "", instructions: str = "", skills: list | None = None,
                                       tasks: list | None = None, memories: list | None = None, identity: dict | None = None,
-                                      sound: list | None = None) -> str:
-            return propose_agent(summary, profile, instructions, skills, tasks, memories, identity, sound)
+                                      sound: list | None = None, assumptions: list | None = None) -> str:
+            return propose_agent(summary, profile, instructions, skills, tasks, memories, identity, sound, assumptions)
 
         def merge_memories(merges: list, summary: str = "") -> str:
             # Changes nothing: the app checks each fact id against the owner's memory, shows the
@@ -1256,9 +1275,29 @@ class ToolGatewayComponent(Component):
         async def hand_browser_async(reason: str, site: str = "") -> str:
             return hand_browser(reason, site)
 
+        def watch_me(job: str, site: str = "") -> str:
+            # Changes nothing: the app shows a "Show me how" card under the reply. Only on the owner's
+            # tap do they drive your browser through Studio, which notes each step (never what goes
+            # into a password, card, or code field) and what they say; their Done sends it as their
+            # next message. The card is the same kind as hand_browser's, marked to watch.
+            job = " ".join(str(job or "").split())[:200]
+            if not job:
+                return "Not shown: say in one sentence which job they'll show you."
+            return json.dumps({
+                "hand_browser": {"reason": job, "site": " ".join(str(site or "").split())[:40], "watch": True},
+                "note": ("The owner now sees a card to show you the job in your browser, from the page you have "
+                         "open. End your reply here with one short sentence inviting them to show you and to say "
+                         "why they choose what they choose; don't explain the card. Their steps and notes arrive "
+                         "as their next message: write them up as a skill (what they meant, not their clicks) and "
+                         "propose it with propose_agent, with your guesses in assumptions."),
+            })
+
+        async def watch_me_async(job: str, site: str = "") -> str:
+            return watch_me(job, site)
+
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, read_result, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, read_result, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1434,5 +1473,15 @@ class ToolGatewayComponent(Component):
                              "last thing in your reply; their Done arrives as the next message. Never for something "
                              "you can do yourself, and never to get around their approval of a change. Changes "
                              "nothing."),
+            ),
+            StructuredTool.from_function(
+                func=watch_me, coroutine=watch_me_async, name="watch_me",
+                args_schema=WatchArgs,
+                description=("When the owner wants to show you how they do a job in a browser so you can learn it "
+                             "('let me show you', 'watch me do it', or the Show me once skill): open the page where "
+                             "the job starts, then call this. They do the job once in your browser while Studio "
+                             "notes each step and what they say (never passwords or card details); their steps "
+                             "arrive as their next message, for you to write up as a skill. Don't do the job "
+                             "yourself first. Call it as the last thing in your reply. Changes nothing."),
             ),
         ]

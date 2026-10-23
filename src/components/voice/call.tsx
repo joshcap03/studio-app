@@ -29,6 +29,7 @@ import { Orb, ORB_LABEL, type OrbState } from "./orb";
 import { BrowserView } from "./browser-view";
 import { publishCallApprovals } from "./call-approvals";
 import { useShare } from "./share";
+import { noteSaid } from "@/components/chat/show-me-notes";
 
 // A call with the agent, from any conversation: the orb (who has the floor, and whose move it is)
 // beside the stage, which shows only what the backend reported: the journey rail, the latest
@@ -672,6 +673,12 @@ export function Call({
     const said = pending();
     const words = said.join(" ").trim();
     if (!words) return "Refused: they haven't said anything new to pass on.";
+    // Showing the agent a job in its browser: what they say is narration on what they're showing
+    // (the card keeps it as a note, and it goes with their Done), not a request for the worker.
+    if (noteSaid(live.current.conversationId, words)) {
+      consume();
+      return "Noted: they're showing you a job in the browser, and their words go with it. They tap Done when they're through.";
+    }
     // "Pull up my Library", "pause it": the app moves, and nothing goes to the work. Anything
     // they said before it goes along as usual.
     const moved = await moveFor(said.at(-1) ?? "");

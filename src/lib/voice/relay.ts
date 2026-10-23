@@ -177,6 +177,7 @@ export function cardLine(block: UiBlock): string {
   // Never filled by voice: the values aren't said aloud, and the agent never hears them.
   if (block.kind === "secret") return `${block.secret === "card" ? "Your card" : "Your sign-in"} goes in on screen. That one's a tap.`;
   if (block.kind === "memory-merge") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Merge when it looks right.`;
+  if (block.kind === "browser" && block.watch) return `${sentence(plain(block.reason))} Tap Show me on screen, do it in my browser, and tell me why you pick what you pick. Tap Done when you're through.`;
   if (block.kind === "browser") return `${sentence(plain(block.reason))} Tap Take over on screen, and Done when you're through.`;
   const intro = block.intro ? ` ${sentence(plain(block.intro))}` : "";
   const taps = block.fields.some((f) => f.kind === "file" || f.kind === "connect");

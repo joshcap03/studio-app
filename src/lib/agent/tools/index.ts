@@ -326,6 +326,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "hand_browser":
       // The browser is handed over as a card under the reply; it's theirs only once they tap Take over.
       return { labels: { running: "Handing you the browser", done: "Handed you the browser", failed: "Couldn't hand you the browser" }, app: "agent", action: "note", hidden: true };
+    case "watch_me":
+      // A card under the reply where the member shows the agent a job in its browser, once they tap.
+      return { labels: { running: "Getting ready to watch", done: "Asked you to show me how", failed: "Couldn't get ready to watch" }, app: "agent", action: "note", hidden: true };
     case "report_run":
       // Decides whether the member is notified; the reply itself says how it went.
       return { labels: { running: "Wrapping up", done: "Wrapped up" }, app: "agent", action: "note", hidden: true };
@@ -888,7 +891,7 @@ export function talksMachinery(text: string): boolean {
 }
 
 /** Tools that report on the answer (its sources, charts, questions, what to remember) rather than do the work. */
-const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "request_secret", "hand_browser", "remember", "propose_memory"]);
+const REPORTING_TOOLS = new Set(["cite", "report_timeline", "report_visual", "ask_user", "show_form", "propose_agent", "merge_memories", "offer_call", "request_secret", "hand_browser", "watch_me", "remember", "propose_memory"]);
 
 /**
  * Whether a call only reports on the answer. Text the agent writes before such a call is

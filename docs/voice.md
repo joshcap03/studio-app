@@ -369,6 +369,12 @@ The page only ever gets pictures: no connection URL or debugger link leaves the 
 nothing is stored. (Taking over the browser, outside calls too, is the agent's `hand_browser`
 card: see `src/components/chat/browser-handoff.tsx`.)
 
+**Showing the agent a job.** While the member shows the agent a job on its "Show me how" card
+(`watch_me`, `src/components/chat/show-me.tsx`), what they say on the call is narration, not a
+request: the call hands their words to the recording card as notes (`noteSaid` in
+`src/components/chat/show-me-notes.ts`) and tells the voice to say at most "Mm-hm." Their notes go
+with their Done, in their own transcript's words, so the agent hears why they picked what they picked.
+
 To turn it on, set `BROWSERBASE_API_KEY` in Vercel to the raw API key of the same Browserbase
 project the flow's Studio Browser uses, and reinstall the flow (Studio Browser's tagging). It
 needs Browserbase minutes. Check on the first real use that taking a picture doesn't disturb the

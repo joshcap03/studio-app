@@ -1,7 +1,9 @@
+import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
 import type { Tenant } from "@/lib/tenant-core";
 import type { WorkspaceSkill } from "@/lib/types";
 import { INTRODUCE_SKILL_ID } from "./introduce";
+import { TEACH_SKILL } from "./teach";
 import { TIDY_SKILL_IDS } from "./tidy";
 
 // Skills every workspace has without adding them. They live in code, not the database, so
@@ -27,12 +29,17 @@ const BUILTIN: WorkspaceSkill[] = [
 
 // "builtin:setup" is every agent's setup interview (./setup.ts), loaded per template by getSkill,
 // "builtin:tidy:<topic>" tidies one topic of the Brain (./tidy.ts), started from the Brain, and
-// "builtin:introduce" is the agent introducing itself once it knows the member (./introduce.ts).
-export const BUILTIN_SKILL_IDS: [string, ...string[]] = ["builtin:setup", INTRODUCE_SKILL_ID, ...TIDY_SKILL_IDS, ...BUILTIN.map((s) => s.id)];
+// "builtin:introduce" is the agent introducing itself once it knows the member (./introduce.ts), and
+// "builtin:teach" is "Show me once", learning a job by watching the member do it (./teach.ts).
+export const BUILTIN_SKILL_IDS: [string, ...string[]] = ["builtin:setup", INTRODUCE_SKILL_ID, ...TIDY_SKILL_IDS, ...BUILTIN.map((s) => s.id), TEACH_SKILL.id];
 
-/** The built-in skills this member can use. */
+/**
+ * The built-in skills this member can use. "Show me once" needs the agent's hosted browser, which
+ * the member drives through Studio, and ends in a new skill, which only the owner can save.
+ */
 export function builtinSkills(tenant: Tenant): WorkspaceSkill[] {
-  return previewEnabled(tenant, "why") ? BUILTIN : [];
+  const teach = getConfig().browser && tenant.workspace.role === "owner" ? [TEACH_SKILL] : [];
+  return [...(previewEnabled(tenant, "why") ? BUILTIN : []), ...teach];
 }
 
 export function builtinSkill(tenant: Tenant, id: string): WorkspaceSkill | null {

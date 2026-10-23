@@ -16,7 +16,12 @@ interface Frame {
  * takes typing into the focused field, and records every command, so a test can check that
  * values went only into Input.insertText.
  */
-function fakeBrowser({ origin = "https://shop.example", page = { fields: {} } as Frame, frames = [] as Frame[] } = {}) {
+function fakeBrowser({
+  origin = "https://shop.example",
+  page = { fields: {} } as Frame,
+  frames = [] as Frame[],
+  focusedField = { target: "field “Search”", sensitive: false } as { target: string; sensitive: unknown },
+} = {}) {
   const sent: { method: string; params: Record<string, unknown>; sessionId?: string }[] = [];
   const docs: Record<string, Frame & { focused?: string; typed: Record<string, string> }> = {
     "s-page": { ...page, typed: {} },
@@ -54,6 +59,11 @@ function fakeBrowser({ origin = "https://shop.example", page = { fields: {} } as
           return reply({ result: { value: true } });
         }
         if (expression === "[innerWidth, innerHeight]") return reply({ result: { value: [1000, 500] } });
+        // What a showing asks the page: the element at a point, or the field with focus.
+        const page = { title: "Shop", url: `${origin}/beans` };
+        if (expression.includes("elementFromPoint")) return reply({ result: { value: { page, target: "button “Add to cart”" } } });
+        if (expression.includes("document.activeElement;\n  while")) return reply({ result: { value: { page, target: focusedField.target, sensitive: focusedField.sensitive } } });
+        if (expression.includes("return { page }")) return reply({ result: { value: { page } } });
         return reply({ result: {} });
       }
       return reply({});
@@ -132,5 +142,48 @@ describe("taking the browser over", () => {
     await drivePage("wss://x", browser.connect, { type: "key", key: "Enter" });
     expect(browser.sent.find((m) => m.method === "Input.insertText")?.params.text).toBe("123456");
     expect(browser.sent.filter((m) => m.method === "Input.dispatchKeyEvent").map((m) => m.params.type)).toEqual(["rawKeyDown", "char", "keyUp"]);
+  });
+});
+
+describe("showing the agent a job", () => {
+  it("says what each input was done to, by the names on the page", async () => {
+    const browser = fakeBrowser();
+    expect(await drivePage("wss://x", browser.connect, { type: "click", x: 0.5, y: 0.25 }, { record: true })).toMatchObject({
+      action: "click",
+      target: "button “Add to cart”",
+      page: { title: "Shop", url: "https://shop.example/beans" },
+    });
+    // The point asked about is where the click lands.
+    const asked = String(browser.sent.find((m) => String(m.params.expression ?? "").includes("elementFromPoint"))?.params.expression);
+    expect(asked).toContain("elementFromPoint(500, 125)");
+    // The page's script keeps its regex escapes (a lone \s in a template literal turns into "s").
+    expect(asked).not.toMatch(/\/s\+\/g/);
+    expect(asked.match(/\/\\s\+\/g/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(await drivePage("wss://x", browser.connect, { type: "text", text: "house blend" }, { record: true })).toMatchObject({ action: "type", target: "field “Search”", text: "house blend" });
+    expect(await drivePage("wss://x", browser.connect, { type: "key", key: "Enter" }, { record: true })).toMatchObject({ action: "key", key: "Enter" });
+    expect(await drivePage("wss://x", browser.connect, { type: "scroll", x: 0.5, y: 0.5, dy: 300 }, { record: true })).toMatchObject({ action: "scroll", dy: 300 });
+    expect(await drivePage("wss://x", browser.connect, { type: "look" }, { record: true })).toMatchObject({ action: "look", page: { title: "Shop" } });
+  });
+
+  it("never keeps what goes into a password, card, or code field, or anything that looks like a number to hide", async () => {
+    const secret = fakeBrowser({ focusedField: { target: "field “Password”", sensitive: true } });
+    const typed = await drivePage("wss://x", secret.connect, { type: "text", text: PASSWORD }, { record: true });
+    expect(typed).toEqual(expect.objectContaining({ action: "type", hidden: true }));
+    expect(JSON.stringify(typed)).not.toContain(PASSWORD);
+    // It still goes into the page.
+    expect(secret.sent.find((m) => m.method === "Input.insertText")?.params.text).toBe(PASSWORD);
+    // A page that doesn't answer counts as a field to hide.
+    const silent = fakeBrowser({ focusedField: { target: "field “Notes”", sensitive: undefined } });
+    expect(await drivePage("wss://x", silent.connect, { type: "text", text: "hello" }, { record: true })).toMatchObject({ hidden: true });
+    const plain = fakeBrowser();
+    expect(JSON.stringify(await drivePage("wss://x", plain.connect, { type: "text", text: CARD }, { record: true }))).not.toContain(CARD);
+    expect(JSON.stringify(await drivePage("wss://x", plain.connect, { type: "text", text: "123-45-6789" }, { record: true }))).not.toContain("6789");
+  });
+
+  it("asks the page nothing when it isn't recording", async () => {
+    const browser = fakeBrowser();
+    expect(await drivePage("wss://x", browser.connect, { type: "click", x: 0.1, y: 0.1 })).toBeNull();
+    expect(await drivePage("wss://x", browser.connect, { type: "text", text: "hi" })).toBeNull();
+    expect(browser.sent.some((m) => /elementFromPoint|activeElement/.test(String(m.params.expression ?? "")))).toBe(false);
   });
 });

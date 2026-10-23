@@ -222,6 +222,8 @@ const HOLDING = {
   look: ["Let me look.", "Okay, let me see."],
   /** They'll hang on while a long job works. */
   waiting: ["Sure, I'll keep going.", "Okay, still on it."],
+  /** They're talking it through while they show the agent a job: it listens. */
+  noted: ["Mm-hm.", "Okay.", "Mm."],
 } as const;
 export type HoldingKind = keyof typeof HOLDING;
 
@@ -284,6 +286,10 @@ export function speechForResults(results: string[], messages: FrontMessage[] = [
         break;
       case "waiting":
         lines.push(holdingLine("waiting", messages));
+        break;
+      case "noted":
+        // Narration while they show the agent a job in its browser: it goes with what they show.
+        lines.push(holdingLine("noted", messages));
         break;
       case "ending":
         // They'd rather have a voice note than wait: the call ends once this is said.

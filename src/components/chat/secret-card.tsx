@@ -1,12 +1,11 @@
 "use client";
 
-import { Check, CreditCard, KeyRound, Lock, MousePointerClick } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { useBrowserFrames } from "@/components/voice/browser-view";
+import { Check, CreditCard, KeyRound, Lock } from "lucide-react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
-import type { DriveInput } from "@/lib/browser-fill";
 import type { CredentialSummary } from "@/lib/secrets";
 import type { UiResponse, UiSecret } from "@/lib/types";
+import { BrowserDrive } from "./browser-drive";
 
 // The secure card for a login or card the agent asked for at its browser (request_secret). The
 // member picks one they saved or types one, and Studio types it into the browser's page
@@ -251,82 +250,12 @@ function SecretInput({
 }
 
 /**
- * Taking the agent's browser over: a live picture of the page, where a click or scroll on the
- * picture happens on the page, and what's typed in the box below is typed there. The browser's
- * connection stays on the server; Done hands it back to the agent.
+ * Taking the agent's browser over (see BrowserDrive); Done hands it back to the agent.
  */
 function TakeOver({ conversationId, busy, onDone, onCancel }: { conversationId: string; busy: boolean; onDone: () => void; onCancel: () => void }) {
-  const frames = useBrowserFrames(conversationId, true, 700);
-  const [text, setText] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  // One at a time, in order: a click has to land before the typing meant for the field it picks.
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const drive = (input: DriveInput) =>
-    (queue.current = queue.current.then(() =>
-      api.driveBrowser(conversationId, input).then(
-        () => setError(null),
-        (e: unknown) => setError(e instanceof ApiError ? e.message : "Couldn't reach the browser just now."),
-      ),
-    ));
-  const at = (e: React.MouseEvent<HTMLElement>) => {
-    const box = e.currentTarget.getBoundingClientRect();
-    return { x: Math.min(1, Math.max(0, (e.clientX - box.left) / box.width)), y: Math.min(1, Math.max(0, (e.clientY - box.top) / box.height)) };
-  };
-
   return (
     <div className="flex flex-col gap-2.5 px-4 pt-3 pb-3">
-      <div className="overflow-hidden rounded-lg border border-line bg-subtle">
-        {frames.kind === "showing" ? (
-          // eslint-disable-next-line @next/next/no-img-element -- a live picture from our own route, not a static asset
-          <img
-            src={frames.url}
-            alt="The agent's browser. Click to click there."
-            draggable={false}
-            className="block w-full cursor-pointer select-none"
-            onClick={(e) => void drive({ type: "click", ...at(e) })}
-            onWheel={(e) => void drive({ type: "scroll", ...at(e), dy: Math.max(-2000, Math.min(2000, e.deltaY)) })}
-          />
-        ) : (
-          <p className="px-3 py-6 text-center text-[13px] text-fg-3">{frames.kind === "gone" ? "The browser has closed." : "Opening the browser…"}</p>
-        )}
-      </div>
-      <form
-        className="flex items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!text) return;
-          const typed = text;
-          setText("");
-          void drive({ type: "text", text: typed });
-        }}
-      >
-        <input
-          type="password"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Click a field above, then type here"
-          autoComplete="off"
-          data-1p-ignore
-          data-lpignore="true"
-          aria-label="Type into the page"
-          className={input}
-        />
-        <button type="submit" disabled={!text} className={secondary}>
-          Type
-        </button>
-      </form>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {(["Tab", "Enter", "Backspace"] as const).map((key) => (
-          <button key={key} type="button" onClick={() => void drive({ type: "key", key })} className="inline-flex h-7 items-center rounded-md border border-line px-2 text-[12px] text-fg-2 hover:bg-hover hover:text-fg">
-            {key}
-          </button>
-        ))}
-        <span className={`ml-auto flex items-center gap-1.5 text-[12px] ${error ? "text-danger" : "text-fg-3"}`}>
-          {error ? null : <MousePointerClick size={12} aria-hidden="true" />}
-          {error ?? "You're driving. The agent waits."}
-        </span>
-      </div>
+      <BrowserDrive conversationId={conversationId} />
       <div className="flex items-center justify-end gap-2 border-t border-line pt-2.5">
         <button type="button" onClick={onCancel} disabled={busy} className={secondary}>
           Back

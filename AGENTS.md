@@ -149,6 +149,16 @@ raw/technical text.
   asked for and typed by the agent. `src/lib/browser-signins.ts` keeps one Browserbase context per
   person (sealed on `accounts.browser_context`, shared by all their agents), sent to Studio Browser
   each run as `{{browser_context}}`, so sites they signed in to stay signed in; Settings forgets them.
+- "Show me once" (`builtin:teach`, `src/lib/skills/teach.ts`, owners where there's a hosted browser):
+  the member teaches the agent a job by doing it once. The agent opens the page and calls `watch_me`,
+  a `hand_browser` card marked `watch` (`src/components/chat/show-me.tsx`). The member drives the
+  browser through Studio (`BrowserDrive`, `…/browser/input` with `record`), so the server says what
+  each input was done to by the page's own names, never a field's value, and never what was typed into
+  a password, card, or code field (`drivePage` in `src/lib/browser-fill.ts`). Their notes, typed or
+  said on a call (`show-me-notes.ts`: the call hands its words to the recording card instead of the
+  worker), go along. Done sends the steps as their next message (`src/lib/chat/show-me.ts`), and the
+  agent proposes the skill with `propose_agent`, listing its guesses in `assumptions`; the card lets
+  the member read and reword the skill, and fix a guess, which goes back as their next message.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `run-task.ts` signs in as each task's member and asks the app to run
   it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
@@ -195,7 +205,7 @@ raw/technical text.
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
   the member's behalf. Provider resume state stays server-side.
 - Agent-rendered UI is built as reusable gateway tools any skill can call (`ask_user`,
-  `show_form`, `propose_agent`, `merge_memories`, `offer_call`, `hand_browser`; cards in `src/components/chat/ui-cards.tsx` and
+  `show_form`, `propose_agent`, `merge_memories`, `offer_call`, `hand_browser`, `watch_me`; cards in `src/components/chat/ui-cards.tsx` and
   `requests.tsx`), never as UI for one flow or template. They change nothing: a form's
   answers go out as the member's next message, a proposed setup applies only when the
   member clicks Apply, and the card shows only what took effect; an offer to call only

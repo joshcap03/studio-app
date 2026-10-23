@@ -1,5 +1,5 @@
 import type { MarkedMove } from "@/lib/chat/move";
-import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, ScreenRef, SetupSummary, StreamEvent, UiResponse } from "@/lib/types";
+import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
@@ -132,8 +132,12 @@ export const api = {
       | { use: "self" },
   ) => request<{ response: UiResponse; message: string }>(`/api/conversations/${conversationId}/secrets/${blockId}`, { method: "POST", body: JSON.stringify(body) }),
   /** One click, key, scroll, or bit of typing in the agent's browser, while taking it over. */
-  driveBrowser: (conversationId: string, input: DriveInput) =>
-    request<{ ok: true }>(`/api/conversations/${conversationId}/browser/input`, { method: "POST", body: JSON.stringify(input) }),
+  /** One input to the agent's browser; with `record`, the step it was (showing the agent a job). */
+  driveBrowser: (conversationId: string, input: DriveInput, { record = false }: { record?: boolean } = {}) =>
+    request<{ ok: true; step?: ShownStep }>(`/api/conversations/${conversationId}/browser/input`, {
+      method: "POST",
+      body: JSON.stringify(record ? { ...input, record: true } : input),
+    }),
   listCredentials: () => request<{ credentials: CredentialSummary[]; enabled: boolean }>("/api/account/credentials"),
   deleteCredential: (id: string) => request<{ ok: true }>(`/api/account/credentials/${id}`, { method: "DELETE" }),
   /** A live view of the agent's browser in this conversation that the member can click and type in. */
@@ -146,10 +150,10 @@ export const api = {
     blockId: string,
     body:
       | { action: "submit"; keepFiles?: string[]; verdicts?: VerdictCall[] }
-      | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string }; timezone?: string }
+      | { action: "apply"; picks: ProposalPicks; edits?: { profile?: string; instructions?: string; name?: string; skills?: Record<string, string> }; timezone?: string }
       | { action: "merge"; picks: number[]; edits?: Record<string, string> }
       | { action: "first-run"; choice: "started" | "later" }
-      | { action: "handback" }
+      | { action: "handback"; steps?: number }
       | { action: "undo" }
       | { action: "accept"; sessionId: string }
       | { action: "decline" },
