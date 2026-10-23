@@ -138,6 +138,8 @@ if (!env.LANGFLOW_TWEAKS) {
     const values = nodes.flatMap(([, v]) => (v && typeof v === "object" ? Object.values(v) : []));
     if (!values.includes("{{system_context}}")) warn("LANGFLOW_TWEAKS", "no {{system_context}}; the agent won't get workspace context");
     if (!values.includes("{{files}}")) warn("LANGFLOW_TWEAKS", "no {{files}}; file attachments are turned off");
+    if (!values.includes("{{run_cause}}"))
+      warn("LANGFLOW_TWEAKS", "no {{run_cause}} on the Tool Gateway; a watch's runs won't ask before code, the browser, or links (rerun langflow/install.py)");
   }
 }
 
@@ -175,6 +177,17 @@ if (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
   fail("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY", "only one of the pair is set");
 } else {
   warn("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY", "not set; members can't turn on notifications (npx web-push generate-vapid-keys)");
+}
+
+// Watches (docs/watches.md): Composio's webhook secret and the Trigger.dev key the webhook hands
+// events to the worker with. Both or neither.
+if (env.COMPOSIO_WEBHOOK_SECRET && env.TRIGGER_SECRET_KEY) {
+  if (env.TRIGGER_SECRET_KEY.startsWith("tr_prod_")) pass("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY");
+  else fail("TRIGGER_SECRET_KEY", "must be the worker project's production secret key (tr_prod_…)");
+} else if (env.COMPOSIO_WEBHOOK_SECRET || env.TRIGGER_SECRET_KEY) {
+  fail("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY", "set both or neither; watches need both");
+} else {
+  warn("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY", "not set; watches never fire (scripts/composio-webhook.mjs)");
 }
 
 // Saved logins and cards for the agent's browser (src/lib/secrets).

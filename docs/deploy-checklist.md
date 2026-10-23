@@ -67,6 +67,7 @@ Do these in order (step 7, the background worker, can come later). `APP_URL` is 
   | `LANGSMITH_API_KEY` | optional; the key of the LangSmith workspace Langflow traces to. Reply ratings then show on each run's trace as `user_rating` feedback |
   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional; push notifications when a task finishes or needs approval while the member is away. Make the pair once with `npx web-push generate-vapid-keys` (changing it later drops every device's subscription); subject is `mailto:you@yourdomain` |
   | `BROWSERBASE_API_KEY` | optional; the Browserbase project the flow's Studio Browser uses. Lets members watch the agent's browser on a call, fill a login or card into it, and take it over |
+  | `COMPOSIO_WEBHOOK_SECRET`, `TRIGGER_SECRET_KEY` | optional; watches (tasks that run when something happens in a connected app, docs/watches.md). The first is printed by `scripts/composio-webhook.mjs` (step 7); the second is the worker project's production secret key (`tr_prod_…`, Trigger.dev → API keys). Both or neither |
   | `CREDENTIALS_KEY` | optional; 32 random bytes, base64 (`openssl rand -base64 32`). Seals the logins and cards members save. Set it once: changing or losing it loses every saved one |
   | `AGENT_LIVE_WORKSPACES` | `*` |
   | `LIMIT_RUNS_SERVICE_PER_DAY` | daily cap across all workspaces, e.g. `500` |
@@ -161,8 +162,16 @@ the rest of the app (including "Run now") works without it.
       minute; raise "Token verifications" as volume grows. Rate-limited runs are retried later.
 - [ ] Leave Supabase's "new sign-in" security emails off: each run is a sign-in.
 
+- [ ] Watches (optional): point Composio's webhook at the app, from your own terminal:
+      `COMPOSIO_API_KEY=ak_… APP_URL=https://… node scripts/composio-webhook.mjs`. Put the secret
+      it prints in Vercel as `COMPOSIO_WEBHOOK_SECRET`, and the project's `tr_prod_…` key as
+      `TRIGGER_SECRET_KEY`, then redeploy. Rerun `langflow/install.py` (or add
+      `"<ToolGateway id>":{"run_cause":"{{run_cause}}"}` to `LANGFLOW_TWEAKS`) so a watch's runs ask
+      before code, the browser, or links; `check:deploy-env` warns until it's there.
+
 Kill switch: Trigger.dev → Schedules → disable `dispatch-due-tasks` (runs already started
-finish). Rotating the `trigger-worker` secret key stops the worker entirely.
+finish). For watches alone, unset `COMPOSIO_WEBHOOK_SECRET` and redeploy: the webhook then
+refuses events. Rotating the `trigger-worker` secret key stops the worker entirely.
 
 ## 8. Rollback
 

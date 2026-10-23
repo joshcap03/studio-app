@@ -7,7 +7,8 @@ import { asMember, MemberUnavailable, settleUnstartedRun, SignInRateLimited } fr
 // settings and keys, exactly like "Run now". So the worker needs no agent or app keys. A run
 // that pauses for the member's approval ends here; they approve in the app, which continues it.
 // A run that can't be started is settled as such, so the member sees it on the task instead of
-// a run queued forever.
+// a run queued forever. A watch's run the app isn't starting yet comes back with when to ask
+// again, and is put back.
 
 export interface RunTaskPayload {
   runId: string;
@@ -49,6 +50,13 @@ export const runTask = task({
       const outcome = await asMember(payload.userId, (accessToken) =>
         startRunInApp(appUrl(), payload, accessToken, { timeoutMs: APP_TIMEOUT_MS }),
       );
+      // A watch's run that's waiting (for more events, or for its conversation) says when to ask again.
+      if (outcome.status === "queued" && typeof outcome.retryAt === "number" && Number.isFinite(outcome.retryAt)) {
+        const at = new Date(Math.max(outcome.retryAt, Date.now() + 5_000));
+        await runTask.trigger({ ...payload, deferred: 0 }, { delay: at, idempotencyKey: `${payload.runId}:at:${at.getTime()}`, idempotencyKeyTTL: "1d" });
+        logger.info("run waits", { runId: payload.runId, reason: outcome.reason, until: at.toISOString() });
+        return outcome;
+      }
       logger.info("run settled", { runId: payload.runId, ...outcome });
       return outcome;
     } catch (error) {

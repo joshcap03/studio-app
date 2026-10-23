@@ -74,6 +74,8 @@ export const TEMPLATE_VARIABLES = [
   "system_context",
   // The person's saved sign-ins for the agent's browser, for Studio Browser's context_id.
   "browser_context",
+  // "watch" when an event in a connected app started the run, for the Tool Gateway's run_cause.
+  "run_cause",
 ] as const;
 
 /**
@@ -155,6 +157,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     personal_guardrail: guardrail,
     system_context: system,
     browser_context: tenant.browserContext ?? "",
+    run_cause: tenant.runCause ?? "",
   };
 }
 
