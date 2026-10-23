@@ -234,6 +234,7 @@ async function selfFor(tenant: Tenant, settings: Promise<WorkspaceSettings>): Pr
       name: persona.nameKept ? persona.name : null,
       manner: persona.manner,
       ...(voice && !persona.nameKept ? { callName: persona.name } : {}),
+      ...(voice ? { voice: persona.voice } : {}),
       ...(naming ? {} : { naming: false }),
     };
   } catch (e) {

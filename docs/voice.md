@@ -155,7 +155,10 @@ premade ElevenLabs voice; templates, proposals and stored choices never hold pro
   (easygoing) for Start from scratch.
 - The member's choice is per member, on their companion row (`agent_companions.voice`, with the
   manner). They pick it on the agent's page ("Voice") or from a setup proposal's "How I'll sound"
-  options (`propose_agent` `sound`: up to three side by side, none preselected). Picking a voice
+  options (`propose_agent` `sound`: up to three side by side, none preselected). They can also
+  just ask, typed or on a call ("I don't like your voice"): every run's context says which voice
+  it speaks with and lists the others (`selfContext`), so the agent offers two or three as a
+  sound-only proposal, and a call says "They're on screen: tap one to hear it, then Apply." Picking a voice
   never gives the agent a name; that still comes from "Say hello".
 - `resolvePersona` (`src/lib/voice/persona.ts`) decides the name, voice and manner on the server
   for calls, the greeting, pushes and the agent's own context. The call grant carries the

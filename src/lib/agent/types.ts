@@ -1,5 +1,6 @@
 import type { ActivityStatus, Artifact, MemoryCategory, StepAction, StepPreview } from "@/lib/types";
 import type { Evidence } from "@/lib/agent/tools/evidence";
+import type { VoiceKey } from "@/lib/voice/voices";
 
 // The contract between this application and any agent provider (Langflow today; LangGraph,
 // Deep Agents, or others later). Adapters translate their provider's protocol into these
@@ -98,9 +99,10 @@ export interface AgentTenantContext {
    * Who the agent is to this member (src/lib/companion.ts): the name they kept (else null) and
    * how it talks with them once one is chosen. `callName` is the starting name calls introduce
    * it by while it has none of its own (voice on); `naming: false` where it can't be given one
-   * (companions off). Absent where neither companions nor voice are on.
+   * (companions off). `voice`: the voice it speaks with on calls and in voice notes (voice on).
+   * Absent where neither companions nor voice are on.
    */
-  self?: { name: string | null; manner: string | null; callName?: string | null; naming?: boolean } | null;
+  self?: { name: string | null; manner: string | null; callName?: string | null; naming?: boolean; voice?: VoiceKey } | null;
 }
 
 /** A file the member attached to the message being answered. */

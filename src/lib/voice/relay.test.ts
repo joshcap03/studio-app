@@ -278,6 +278,12 @@ describe("a reply that ends on a card", () => {
     ]);
   });
 
+  it("hands over other voices to pick from, and says when they'd take effect", () => {
+    const voices = { ...card, identity: undefined, sound: [{ voice: "warm" as const, manner: "I take my time." }, { voice: "gentle" as const, manner: "I keep it soft." }] };
+    const lines = relayReply(reply({ content: "Sure, here are a few other ways I could sound.", ui: [voices] })).map((l) => l.text);
+    expect(lines.at(-1)).toBe("They're on screen: tap one to hear it, then Apply. I'll sound like that from your next call.");
+  });
+
   it("says nothing more once the card's answered", () => {
     const lines = relayReply(reply({ content: introduction, ui: [card], uiResponse: { p1: { status: "applied" } as never } })).map((l) => l.text);
     expect(lines.join(" ")).not.toContain("Keep it");

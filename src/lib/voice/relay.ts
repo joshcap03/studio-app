@@ -171,6 +171,8 @@ export function cardLine(block: UiBlock): string {
   if (block.kind === "offer") return "";
   // The agent offering its name: the reply above it already says which, as it would in person.
   if (block.kind === "proposal" && introduces(block)) return "Keep it on screen, or tell me the name you'd like.";
+  // Other voices to pick from: heard with a tap, picked with a tap, used from the next call.
+  if (block.kind === "proposal" && onlySound(block)) return "They're on screen: tap one to hear it, then Apply. I'll sound like that from your next call.";
   if (block.kind === "proposal") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Apply when it looks right.`;
   // Never filled by voice: the values aren't said aloud, and the agent never hears them.
   if (block.kind === "secret") return `${block.secret === "card" ? "Your card" : "Your sign-in"} goes in on screen. That one's a tap.`;
@@ -191,6 +193,19 @@ function introduces(block: Extract<UiBlock, { kind: "proposal" }>): boolean {
     !block.tasks.length &&
     !block.memories.length &&
     !block.sound?.length
+  );
+}
+
+/** A proposal that's only ways it could sound. */
+function onlySound(block: Extract<UiBlock, { kind: "proposal" }>): boolean {
+  return (
+    Boolean(block.sound?.length) &&
+    block.identity === undefined &&
+    block.profile === undefined &&
+    block.instructions === undefined &&
+    !block.skills.length &&
+    !block.tasks.length &&
+    !block.memories.length
   );
 }
 

@@ -169,6 +169,16 @@ describe("Langflow request", () => {
     );
   });
 
+  it("tells it the voice it speaks with, and how to offer others when they'd like a change", () => {
+    const sound = selfContext({ name: "Sara", manner: null, voice: "easygoing" });
+    expect(sound).toContain("you speak in the Easygoing voice (smooth and friendly, on the lower side).");
+    expect(sound).toContain("offer two or three other voices with propose_agent, as sound only");
+    expect(sound).toContain("none marked as your pick");
+    expect(sound).toContain("- gentle: Gentle.");
+    // Without voice, nothing about how it sounds.
+    expect(selfContext({ name: "Sara", manner: null })).not.toContain("voice");
+  });
+
   it("tells the agent about its task and the member's tracker, only when there are some", () => {
     const system = templateValues({
       ...tenantA,
