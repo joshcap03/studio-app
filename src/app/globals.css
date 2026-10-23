@@ -502,12 +502,18 @@ body {
 .cm-mood-working .cm-look {
   animation: cm-glance 3s ease-in-out infinite;
 }
+/* Where it's looking (src/components/ui/presence.ts): toward a card that waits on the member,
+   or the message box while they type; at rest otherwise. */
+.cm-look {
+  transform: translate(var(--cm-gx, 0px), var(--cm-gy, 0px));
+  transition: transform 260ms var(--ease-out-soft);
+}
 /* Waiting on the member: it looks up and holds still. */
 .cm-mood-needs_you .cm-body {
   animation: none;
 }
 .cm-mood-needs_you .cm-look {
-  transform: translateY(-1.5px);
+  transform: translate(var(--cm-gx, 0px), var(--cm-gy, -1.5px));
 }
 .cm-mood-stuck .cm-look {
   transform: translateY(1.2px);
@@ -529,6 +535,19 @@ body {
 }
 .cm-ink {
   animation: cm-ink 260ms var(--ease-out-soft) both;
+}
+/* Taking in something it remembered: a small swell as the spark lands. */
+@keyframes cm-took {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.14);
+  }
+}
+.cm-took {
+  animation: cm-took 260ms var(--ease-out-soft);
 }
 @media (prefers-reduced-motion: reduce) {
   .cm-drawing {

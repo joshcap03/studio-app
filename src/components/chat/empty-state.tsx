@@ -144,7 +144,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
             aria-busy={ringing || undefined}
             className="animate-fade-up rounded-full transition-transform duration-150 hover:scale-105 active:scale-95"
           >
-            <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} />
+            <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} present />
           </button>
         ) : null}
         {fallback ? (

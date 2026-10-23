@@ -166,7 +166,7 @@ function WorkingHeader({
   const companion = useCompanion();
   return (
     <div className="flex h-6 items-center gap-2.5 text-[13.5px]">
-      {companion ? <Companion stage={companion.stage} look={companion.look} mood="working" size={18} /> : null}
+      {companion ? <Companion stage={companion.stage} look={companion.look} mood="working" size={18} present /> : null}
       <WorkAnimation action={app ? action : undefined} app={app} />
       <span key={status} className="text-shimmer min-w-0 truncate font-medium animate-fade-in">
         {status}
