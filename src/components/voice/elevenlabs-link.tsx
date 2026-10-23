@@ -2,6 +2,7 @@
 
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useEffect, useMemo, useRef } from "react";
+import { disconnectProblem, type Disconnect } from "@/lib/voice/disconnect";
 import { normalizeSpeech } from "@/lib/voice/intent";
 import { VOICE_TOOL_NAMES, type VoiceCue, type VoiceStage } from "@/lib/voice/types";
 import { isMarker, markerText, type LinkProps, type VoiceLink } from "./link";
@@ -42,7 +43,12 @@ function Session({ grant, events, tools, onReady }: LinkProps) {
   const conversation = useConversation({
     clientTools,
     onConnect: () => !closed.current && latest.current.events.onStatus("connected"),
-    onDisconnect: () => !closed.current && latest.current.events.onStatus("ended"),
+    // A close the provider explains (out of credits, an error) stays on screen, said plainly.
+    onDisconnect: (details: Disconnect) => {
+      if (closed.current) return;
+      const problem = disconnectProblem(details);
+      latest.current.events.onStatus(problem ? "error" : "ended", problem ?? undefined);
+    },
     onError: (message: string) => !closed.current && latest.current.events.onStatus("error", message || "The call dropped."),
     onModeChange: ({ mode }: { mode: "speaking" | "listening" }) => latest.current.events.onMode(mode),
     onInterruption: () => latest.current.events.onInterrupted(),
