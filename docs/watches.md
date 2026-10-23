@@ -67,7 +67,7 @@ run's.
 
 ## Data model
 
-Migration `supabase/migrations/20261109000000_agent_watches.sql`:
+Migration `supabase/migrations/20261110000000_agent_watches.sql`:
 
 - `agent_task_watches`: one per task (`unique (task_id)`): `toolkit`, `trigger_slug`,
   `trigger_config` (the trigger's own settings, ≤ 2 KB), `composio_trigger_id` (unique),

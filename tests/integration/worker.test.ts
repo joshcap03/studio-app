@@ -47,6 +47,8 @@ describe("worker functions", () => {
       expect(claimed.error?.code).toBe("42501");
       const moved = await client.rpc("worker_set_next_run", { p_task: id, p_due: due, p_next: new Date().toISOString() });
       expect(moved.error?.code).toBe("42501");
+      const settled = await client.rpc("worker_settle_unstarted_run", { p_run: crypto.randomUUID(), p_status: "failed", p_reason: "not_started" });
+      expect(settled.error?.code).toBe("42501");
     }
     const { data } = await alice.client.from("agent_task_runs").select("id").eq("task_id", id);
     expect(data).toEqual([]);
@@ -90,6 +92,28 @@ describe("claiming due tasks", () => {
     const later = await addTask({ next_run_at: new Date(Date.now() + 3600_000).toISOString() });
     const claimed = await claim();
     expect(claimed.some((r) => r.task_id === paused.id || r.task_id === later.id)).toBe(false);
+  });
+});
+
+describe("settling a run the worker couldn't start", () => {
+  it("records why on a queued run, and leaves a run the app began alone", async () => {
+    const { id } = await addTask();
+    const run = (await claim()).find((r) => r.task_id === id)!;
+    const failed = await admin.rpc("worker_settle_unstarted_run", { p_run: run.run_id, p_status: "failed", p_reason: "not_started" });
+    expect(failed.data).toBe(true);
+    const { data } = await alice.client.from("agent_task_runs").select("status, reason").eq("id", run.run_id).single();
+    expect(data).toEqual({ status: "failed", reason: "not_started" });
+
+    // No longer queued: a second settle (or a late one after the app started it) changes nothing.
+    const again = await admin.rpc("worker_settle_unstarted_run", { p_run: run.run_id, p_status: "skipped", p_reason: "member_unavailable" });
+    expect(again.data).toBe(false);
+  });
+
+  it("refuses any status but skipped or failed", async () => {
+    const { id } = await addTask();
+    const run = (await claim()).find((r) => r.task_id === id)!;
+    const refused = await admin.rpc("worker_settle_unstarted_run", { p_run: run.run_id, p_status: "done", p_reason: "x" });
+    expect(refused.error?.code).toBe("22023");
   });
 });
 
