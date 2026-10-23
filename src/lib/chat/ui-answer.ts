@@ -105,6 +105,22 @@ export function appliedText(a: Extract<UiResponse, { status: "applied" }>["appli
   return (parts.length ? `Applied: ${parts.join(", ")}.` : "Applied. Nothing needed changing.") + skipped;
 }
 
+/**
+ * The member's fixes to the guesses a proposal listed, as their next message: each guess they
+ * said isn't right, with what is. The agent rewrites what it proposed and proposes it again.
+ */
+export function guessFixText(assumptions: string[], fixes: Record<number, string>): string {
+  const wrong = assumptions.flatMap((a, i) => (fixes[i]?.trim() ? [`- You guessed: “${a}” Actually: ${fixes[i].trim()}`] : []));
+  const right = assumptions.filter((_, i) => fixes[i] === undefined);
+  return [
+    "Some of your guesses aren't right:",
+    ...wrong,
+    ...(right.length ? ["", "The rest are right."] : []),
+    "",
+    "Rewrite it with these and propose it again.",
+  ].join("\n");
+}
+
 /** The message that answers `questions` with the member's picks. */
 export function answerText(questions: Question[], picks: string[][]): string {
   if (questions.length === 1) return picks[0].join(", ");

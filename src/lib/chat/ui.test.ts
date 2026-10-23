@@ -179,6 +179,18 @@ describe("an offer to call", () => {
   });
 });
 
+describe("a proposal's guesses", () => {
+  it("keeps each guess as one line, at most six, only with something to apply", () => {
+    const skill = { name: "Reorder the beans", description: "When we're low.", instructions: "1. Open the shop." };
+    const guesses = [" I assumed you   always want the 5 lb bag. ", "I assumed you always want the 5 lb bag.", "", ...Array.from({ length: 8 }, (_, i) => `Guess ${i}.`)];
+    const block = buildUiBlock({ proposal: { summary: "A skill.", skills: [skill], assumptions: guesses } }, "p");
+    expect(block).toMatchObject({ kind: "proposal", skills: [skill] });
+    expect((block as { assumptions: string[] }).assumptions).toEqual(["I assumed you always want the 5 lb bag.", "Guess 0.", "Guess 1.", "Guess 2.", "Guess 3.", "Guess 4."]);
+    expect(buildUiBlock({ proposal: { summary: "s", assumptions: ["I assumed x."] } })).toBeNull();
+    expect(buildUiBlock({ proposal: { summary: "s", skills: [skill], assumptions: "nope" } })).not.toHaveProperty("assumptions");
+  });
+});
+
 describe("the browser handed to the member", () => {
   it("says what to do there and where, and nothing without the what", () => {
     expect(buildUiBlock({ hand_browser: { reason: "  Sign in to   your USPS account. ", site: " USPS " } }, "h1")).toEqual({
@@ -191,6 +203,17 @@ describe("the browser handed to the member", () => {
     expect(buildUiBlock({ hand_browser: { reason: "x".repeat(500), site: "y".repeat(90) } })).toMatchObject({ reason: "x".repeat(200), site: "y".repeat(40) });
     expect(buildUiBlock({ hand_browser: { reason: " ", site: "USPS" } })).toBeNull();
     expect(buildUiBlock({ hand_browser: "sign in" })).toBeNull();
+  });
+
+  it("watches only when it says so, to be shown a job", () => {
+    expect(buildUiBlock({ hand_browser: { reason: "Reorder the beans.", site: "Roasters", watch: true } }, "w1")).toEqual({
+      kind: "browser",
+      id: "w1",
+      reason: "Reorder the beans.",
+      site: "Roasters",
+      watch: true,
+    });
+    expect(buildUiBlock({ hand_browser: { reason: "Reorder the beans.", watch: "yes" } })).not.toHaveProperty("watch");
   });
 
   it("is left out, with what was done with it, for pages that don't know it", () => {

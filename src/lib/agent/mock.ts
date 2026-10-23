@@ -143,6 +143,38 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // "Show me once": the member shows the agent a job in its browser, and it writes it up as a
+    // skill with its guesses to check (the steps come back as their next message).
+    match: /^I've shown you how I do it/i,
+    steps: [
+      { kind: "text", text: "Got it. Here's how I'd write that up (mock)." },
+      {
+        kind: "ui",
+        block: {
+          proposal: {
+            summary: "A skill for the job you just showed me (mock).",
+            skills: [
+              {
+                name: "Order more coffee beans",
+                description: "Reorder the usual beans when we're running low (mock).",
+                instructions: "1. Open the supplier's site and find the usual beans.\n2. Pick the 5 lb bag.\n3. Add it to the cart and stop at checkout for your OK (mock).",
+              },
+            ],
+            assumptions: ["I assumed you always want the 5 lb bag (mock).", "I assumed you stop at checkout and pay yourself (mock)."],
+          },
+        },
+      },
+      { kind: "text", text: "Check my guesses before you save it (mock)." },
+    ],
+  },
+  {
+    match: /\b(show you how|watch me)\b/i,
+    steps: [
+      { kind: "text", text: "I've opened the page where it starts (mock)." },
+      { kind: "ui", block: { hand_browser: { reason: "Reorder the usual coffee beans (mock).", site: "Example", watch: true } } },
+    ],
+  },
+  {
     // A job that runs for over a minute with nothing new after it starts, so a call following it
     // asks whether to hang on or leave a voice note when it's done.
     match: /\b(takes a few minutes|very slow job)\b/i,

@@ -22,9 +22,9 @@ function applied(picks: Partial<Extract<UiResponse, { status: "applied" }>["pick
 
 function render(
   proposal: AgentProposal,
-  { response, mine = companion, canApply = !response, runs = false }: { response?: UiResponse; mine?: Companion; canApply?: boolean; runs?: boolean } = {},
+  { response, mine = companion, canApply = !response, runs = false, fix = false }: { response?: UiResponse; mine?: Companion; canApply?: boolean; runs?: boolean; fix?: boolean } = {},
 ) {
-  const run = runs ? { onRunTask: async () => undefined, onFirstRun: async () => undefined } : {};
+  const run = { ...(runs ? { onRunTask: async () => undefined, onFirstRun: async () => undefined } : {}), ...(fix ? { onFix: () => undefined } : {}) };
   return renderToStaticMarkup(
     <CompanionContext.Provider value={mine}>
       <VoicePreviews voice={MOCK_VOICE}>
@@ -75,5 +75,24 @@ describe("ProposalCard", () => {
     const started = render(tasked, { response: ran("started"), runs: true });
     expect(started).toContain("Started. It&#x27;s running in its own chat.");
     expect(started).not.toContain("Not now");
+  });
+
+  it("shows a new skill to read and its guesses to fix, as a suggested skill", () => {
+    const taught: AgentProposal = {
+      ...base,
+      summary: "A skill for what you showed me.",
+      skills: [{ name: "Reorder the beans", description: "When we're low.", instructions: "1. Open the shop.\n2. Pick the 5 lb bag." }],
+      assumptions: ["I assumed you always want the 5 lb bag."],
+    };
+    const html = render(taught, { fix: true });
+    expect(html).toContain("Suggested skill");
+    expect(html).toContain("2. Pick the 5 lb bag.");
+    expect(html).toContain("My guesses");
+    expect(html).toContain("Not quite");
+    // Without a way to send fixes (an older reply), the guesses are only shown.
+    const old = render(taught, { canApply: false });
+    expect(old).toContain("I assumed you always want the 5 lb bag.");
+    expect(old).not.toContain("Not quite");
+    expect(render(taught, { response: applied({ skills: [0] }, { skills: 1 }) })).toContain("Added skill");
   });
 });

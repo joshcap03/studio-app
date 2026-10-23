@@ -219,6 +219,8 @@ describe("speechForResults", () => {
     expect(speechForResults(["Filled: Keep 1, Keep 2, Pass 3 (Agency). Not sent yet.", "Filled: Remote, Hybrid. Not sent yet."])).toBe("Got it: Keep 1, Keep 2, Pass 3 (Agency); Remote, Hybrid.");
     expect(speechForResults(["Heard: Tailor applications? It's on screen for them to confirm with a tap."])).toBe("Did you mean Tailor applications? Tap it on screen if so.");
     expect(speechForResults(["Held: until the current work lands."])).toBe("Got it. I'll bring that in once this is done.");
+    // Talking it through while showing a job: it only listens.
+    expect(speechForResults(["Noted: they're showing you a job in the browser, and their words go with it. They tap Done when they're through."])).toBe("Mm-hm.");
     expect(speechForResults(["Held: it's waiting on their OK on screen; their words go along after."])).toBe("Got it. That goes along once you've OK'd the request on screen.");
     expect(speechForResults(["Sent: Trial run."])).toBe("Okay, that's sent.");
     expect(speechForResults(["Filled: 4 of 5. Not sent yet.", "Refused: no such field"])).toBeNull();

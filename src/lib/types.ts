@@ -656,7 +656,45 @@ export interface UiHandoff {
   reason: string;
   /** The site, in a few words (e.g. "USPS"). */
   site?: string;
+  /**
+   * "Show me once" (its watch_me tool): the member does a job in the browser while Studio notes
+   * each step and what they say, and the agent writes it up as a skill. The steps go out with
+   * their Done (src/lib/chat/show-me.ts). A page from before it takes it as a plain hand-off.
+   */
+  watch?: boolean;
 }
+
+/**
+ * One thing the member did in the agent's browser while showing it a job, as the server saw it
+ * over CDP (src/lib/browser-fill.ts): the page it happened on and what it was done to, never a
+ * field's value. What they typed is kept only when the field isn't a password, card, or code.
+ */
+export interface ShownStep {
+  at: number;
+  /** The page as it was: its title, and its address without the query or fragment. */
+  page: { title: string; url: string };
+  action: "click" | "type" | "key" | "scroll" | "look";
+  /** What it was done to, as the page names it, e.g. "button “Search”". */
+  target?: string;
+  /** What they typed, unless `hidden`. */
+  text?: string;
+  /** Typed into a password, card, or code field (or it looked like one): what was typed isn't kept. */
+  hidden?: boolean;
+  key?: string;
+  /** Scrolled down (positive) or up. */
+  dy?: number;
+}
+
+/** What the member said while showing the agent a job: typed as a note, or said on a call. */
+export interface ShownNote {
+  at: number;
+  text: string;
+  via: "typed" | "call";
+}
+
+/** The most steps and notes one showing keeps. */
+export const MAX_SHOWN_STEPS = 80;
+export const MAX_SHOWN_NOTES = 30;
 
 /** The agent's offer to talk something through on a call (its offer_call tool). It never rings anyone. */
 export interface UiOffer {
@@ -769,6 +807,11 @@ export interface AgentProposal {
    * Studio's catalog and, in its own words, how it would talk. The member chooses one or none.
    */
   sound?: ProposedSound[];
+  /**
+   * The guesses it made writing this, one sentence each ("I assumed you always pick the cheapest
+   * option."), for the member to confirm or fix before applying. A fix goes out as their next message.
+   */
+  assumptions?: string[];
 }
 
 export interface ProposedSound {
@@ -871,7 +914,7 @@ export type UiResponse =
    */
   | { status: "filled"; at: number; site: string; via: "card" | "takeover"; fields: SecretField[]; label?: string; saved?: boolean }
   /** The agent's browser, handed back by the member after taking it over. */
-  | { status: "handed-back"; at: number };
+  | { status: "handed-back"; at: number; steps?: number };
 
 /** Cards one reply keeps (the latest ones); an offer to call is kept besides them (src/lib/chat/ui.ts capUi). */
 export const MAX_UI_BLOCKS = 2;
@@ -880,6 +923,7 @@ export const MAX_LIST_ITEMS = 8;
 export const MAX_LIST_PARTS = 5;
 export const MAX_FORM_FILES = 5;
 export const MAX_PROPOSED_ITEMS = 8;
+export const MAX_ASSUMPTIONS = 6;
 /** Ways to sound a proposal offers side by side. */
 export const MAX_SOUND_OPTIONS = 3;
 export const MAX_VERDICT_ITEMS = 8;

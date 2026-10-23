@@ -677,7 +677,8 @@ export function toolEvidence(message: LangflowMessage): AgentEvent[] {
 /**
  * Forms (show_form), proposed agent setups (propose_agent), proposed merges of remembered facts
  * (merge_memories), offers to talk on a call (offer_call), requests for a login or card
- * (request_secret), and the browser handed to the member (hand_browser, read from that tool alone)
+ * (request_secret), and the browser handed to the member (hand_browser, or watch_me to show it a
+ * job, read from those tools alone)
  * for the member (validated, and offers and hand-offs kept only where the member could take them,
  * by the turn).
  */
@@ -692,7 +693,12 @@ export function toolUi(message: LangflowMessage): AgentEvent[] {
     else if (isRecord(result.memory_merge)) events.push({ type: "ui", block: { memory_merge: result.memory_merge } });
     else if (isRecord(result.offer_call)) events.push({ type: "ui", block: { offer_call: result.offer_call } });
     else if (isRecord(result.secret_request)) events.push({ type: "ui", block: { secret_request: result.secret_request } });
-    else if (tool.name === "hand_browser" && isRecord(result.hand_browser)) events.push({ type: "ui", block: { hand_browser: result.hand_browser } });
+    else if ((tool.name === "hand_browser" || tool.name === "watch_me") && isRecord(result.hand_browser)) {
+      // Only watch_me's card watches: a hand-off can't turn itself into a recording.
+      const watch = tool.name === "watch_me" && result.hand_browser.watch === true;
+      const { watch: _, ...handoff } = result.hand_browser;
+      events.push({ type: "ui", block: { hand_browser: watch ? { ...handoff, watch: true } : handoff } });
+    }
   }
   return events;
 }

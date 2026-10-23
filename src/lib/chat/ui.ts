@@ -11,6 +11,7 @@ import {
   MAX_FORM_FILES,
   MAX_LIST_ITEMS,
   MAX_LIST_PARTS,
+  MAX_ASSUMPTIONS,
   MAX_PROPOSED_ITEMS,
   MAX_SOUND_OPTIONS,
   MAX_VERDICT_ITEMS,
@@ -488,6 +489,8 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
   const soundRaw = isRecord(raw.sound) ? (Array.isArray(raw.sound.options) ? raw.sound.options : [raw.sound]) : list(raw.sound);
   const sounds = soundRaw.map(sound).filter((o): o is ProposedSound => Boolean(o));
   const options = sounds.filter((o, i) => sounds.findIndex((p) => p.voice === o.voice && p.manner === o.manner) === i).slice(0, MAX_SOUND_OPTIONS);
+  // Its guesses, for the member to check: only with something to apply that they're about.
+  const assumptions = [...new Set(list(raw.assumptions ?? raw.guesses).map((a) => line(a, 300)).filter(Boolean))].slice(0, MAX_ASSUMPTIONS);
   const proposal: AgentProposal = {
     kind: "proposal",
     id,
@@ -499,6 +502,7 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
     memories: memories.slice(0, MAX_PROPOSED_ITEMS),
     ...(identity ? { identity } : {}),
     ...(options.length ? { sound: options } : {}),
+    ...(assumptions.length ? { assumptions } : {}),
   };
   const empty = !profile && !instructions && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length && !identity && !options.length;
   return empty ? null : proposal;
@@ -520,12 +524,12 @@ export function buildOffer(raw: Record<string, unknown>, id: string = crypto.ran
   return { kind: "offer", id, reason, ...(topic ? { topic } : {}) };
 }
 
-/** The agent's browser, handed to the member: what they need to do there (required), and where. */
+/** The agent's browser, handed to the member: what they need to do there (required), where, and whether it's to show it a job (watch_me). */
 export function buildHandoff(raw: Record<string, unknown>, id: string = crypto.randomUUID()): UiHandoff | null {
   const reason = line(raw.reason, 200);
   if (!reason) return null;
   const site = line(raw.site, 40);
-  return { kind: "browser", id, reason, ...(site ? { site } : {}) };
+  return { kind: "browser", id, reason, ...(site ? { site } : {}), ...(raw.watch === true ? { watch: true } : {}) };
 }
 
 /** The agent asking for a login or card at its browser: which, and why. It never carries a secret. */

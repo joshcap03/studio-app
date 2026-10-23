@@ -73,7 +73,7 @@ function composerHint(move: WhoseMove | null): string | undefined {
     case "merge":
       return "Merge what fits above, or reply";
     case "browser":
-      return "Take over the browser above, or reply";
+      return "Use the browser card above, or reply";
     default:
       return undefined;
   }

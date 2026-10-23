@@ -185,6 +185,9 @@ describe("calls from anywhere", () => {
     expect(cardLine({ kind: "browser", id: "h", reason: "Sign in to your USPS account", site: "USPS" })).toBe(
       "Sign in to your USPS account. Tap Take over on screen, and Done when you're through.",
     );
+    expect(cardLine({ kind: "browser", id: "w", reason: "Reorder the beans", watch: true })).toBe(
+      "Reorder the beans. Tap Show me on screen, do it in my browser, and tell me why you pick what you pick. Tap Done when you're through.",
+    );
   });
 
   it("reads a reply a call joins only when it waits on the member", () => {

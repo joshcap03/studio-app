@@ -13,7 +13,7 @@ import { addFromCatalog, createSkill, listSkills } from "@/lib/skills";
 import { createTask, getTaskForConversation, listTasks, updateTask } from "@/lib/tasks";
 import { timezoneSchema } from "@/lib/tasks/schema";
 import { authorizeTenant, jsonError, type Tenant } from "@/lib/tenant";
-import { MAX_CONTEXT_LENGTH, MAX_FORM_FIELDS, MAX_FORM_FILES, MAX_VERDICT_ITEMS, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
+import { MAX_CONTEXT_LENGTH, MAX_FORM_FIELDS, MAX_FORM_FILES, MAX_SHOWN_STEPS, MAX_SKILL_INSTRUCTIONS_LENGTH, MAX_VERDICT_ITEMS, type AgentProposal, type ProposalPicks, type UiResponse } from "@/lib/types";
 import { firstName } from "@/lib/setup-words";
 import { saveVerdicts } from "@/lib/verdicts";
 import { openCall } from "@/lib/voice/calls";
@@ -52,6 +52,8 @@ const body = z.discriminatedUnion("action", [
         instructions: z.string().max(MAX_CONTEXT_LENGTH).optional(),
         // The name the member chose for the agent, when it isn't the one it suggested.
         name: z.string().max(80).optional(),
+        // Their own wording of a new skill's instructions, by the skill's place in the card.
+        skills: z.record(z.string().regex(/^\d$/), z.string().trim().min(1).max(MAX_SKILL_INSTRUCTIONS_LENGTH)).optional(),
       })
       .optional(),
     timezone: timezoneSchema.optional(),
@@ -74,8 +76,8 @@ const body = z.discriminatedUnion("action", [
   // (a run starts first, so one that's refused leaves the choice open).
   z.strictObject({ action: z.literal("first-run"), choice: z.enum(["started", "later"]) }),
   // The member handed the agent's browser back after taking it over (their "done" goes out as
-  // their next message).
-  z.strictObject({ action: z.literal("handback") }),
+  // their next message), with how many steps they showed it when they were showing it a job.
+  z.strictObject({ action: z.literal("handback"), steps: z.number().int().min(0).max(MAX_SHOWN_STEPS).optional() }),
 ]);
 
 /**
@@ -133,7 +135,7 @@ export async function POST(request: NextRequest, { params }: Context) {
     } else if (input.action === "handback") {
       if (block.kind !== "browser") return jsonError(400, "Only the browser can be handed back.");
       if (previous) return jsonError(409, "You already handed it back.");
-      response = { status: "handed-back", at: Date.now() };
+      response = { status: "handed-back", at: Date.now(), ...(block.watch && input.steps !== undefined ? { steps: input.steps } : {}) };
     } else if (input.action === "first-run") {
       if (block.kind !== "proposal" || previous?.status !== "applied" || !previous.taskIds?.length) return jsonError(409, "There's no first task to run here.");
       if (previous.firstRun) return jsonError(409, "You already chose.");
@@ -186,7 +188,7 @@ async function applyProposal(
   tenant: Tenant,
   proposal: AgentProposal,
   picks: ProposalPicks,
-  edits: { profile?: string; instructions?: string; name?: string },
+  edits: { profile?: string; instructions?: string; name?: string; skills?: Record<string, string> },
   timezone: string,
   source: { conversationId: string; messageId: string },
 ): Promise<Pick<Applied, "picks" | "applied" | "taskIds">> {
@@ -258,7 +260,7 @@ async function applyProposal(
     const skill = proposal.skills[i];
     if ("catalogId" in skill) {
       if (has(skill.catalogId)) done.skills.push(i);
-    } else if (owner && (await ignoreConflict(createSkill(tenant, skill)))) {
+    } else if (owner && (await ignoreConflict(createSkill(tenant, { ...skill, instructions: edits.skills?.[String(i)] ?? skill.instructions })))) {
       addedSkills += 1;
       done.skills.push(i);
     }

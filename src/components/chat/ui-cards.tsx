@@ -1,11 +1,11 @@
 "use client";
 
-import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, Combine, ExternalLink, FileUp, GripVertical, Paperclip, Pin, Plug, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, Combine, ExternalLink, FileUp, GripVertical, HelpCircle, Paperclip, Pin, Plug, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Companion, useCompanion } from "@/components/ui/companion";
 import { PreviewNote, VoiceTile, useVoicePreview } from "@/components/voice/voice-preview";
 import { appName, toolkitForApp } from "@/lib/apps";
-import { appliedText, type ConnectStatus, type FormValues } from "@/lib/chat/ui-answer";
+import { appliedText, guessFixText, type ConnectStatus, type FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
@@ -15,9 +15,10 @@ import { AppGlyph } from "./app-glyph";
 import { HandoffCard } from "./browser-handoff";
 import { useCardDrafts, type FormDraft } from "./card-drafts";
 import { SecretCard } from "./secret-card";
+import { ShowMeCard } from "./show-me";
 
 // Reusable cards for what the agent asks through its show_form, propose_agent, merge_memories,
-// offer_call, request_secret, and hand_browser tools. They know nothing about any one flow (setup, a template): every field
+// offer_call, request_secret, hand_browser, and watch_me tools. They know nothing about any one flow (setup, a template): every field
 // kind and proposal item is generic, and any skill can use them. Rendered only from what the
 // backend reported; nothing here acts until the member clicks.
 
@@ -55,6 +56,16 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
               const { response } = await api.answerUi(conversationId, block.id, body);
               onResponse?.(messageId, block.id, response);
             }}
+          />
+        ) : block.kind === "browser" && block.watch ? (
+          <ShowMeCard
+            key={block.id}
+            handoff={block}
+            response={responses?.[block.id]}
+            conversationId={conversationId}
+            messageId={messageId}
+            onAnswer={onAnswer}
+            onResponse={onResponse}
           />
         ) : block.kind === "browser" ? (
           <HandoffCard
@@ -103,6 +114,7 @@ export function UiCards({ blocks, responses, conversationId, messageId, onAnswer
             proposal={block}
             response={responses?.[block.id]}
             canApply={settled && Boolean(onResponse)}
+            onFix={onAnswer && settled ? (text) => onAnswer(text, { attachments: [] }) : undefined}
             onRunTask={onRunTask}
             onFirstRun={async (choice) => {
               const { response } = await api.answerUi(conversationId, block.id, { action: "first-run", choice });
@@ -888,7 +900,9 @@ interface ProposalProps {
   proposal: AgentProposal;
   response?: UiResponse;
   canApply: boolean;
-  onApply: (picks: ProposalPicks, edits: { profile?: string; instructions?: string; name?: string }) => Promise<void>;
+  onApply: (picks: ProposalPicks, edits: { profile?: string; instructions?: string; name?: string; skills?: Record<string, string> }) => Promise<void>;
+  /** Present while its guesses can be fixed (the latest reply, agent idle): sends the fixes as the member's next message. */
+  onFix?: (text: string) => void;
   onRunTask?: UiCardsProps["onRunTask"];
   /** Records whether the member ran the first task now or left it for later. */
   onFirstRun?: (choice: "started" | "later") => Promise<void>;
@@ -897,7 +911,7 @@ interface ProposalProps {
 const every = (n: number) => Array.from({ length: n }, (_, i) => i);
 
 /** The agent's suggested setup for itself. Nothing changes until the member applies it. */
-export function ProposalCard({ proposal, response, canApply, onApply, onRunTask, onFirstRun }: ProposalProps) {
+export function ProposalCard({ proposal, response, canApply, onApply, onFix, onRunTask, onFirstRun }: ProposalProps) {
   const [picks, setPicks] = useState<ProposalPicks>(() => ({
     profile: proposal.profile !== undefined,
     instructions: proposal.instructions !== undefined,
@@ -911,11 +925,23 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask,
   const [profile, setProfile] = useState(proposal.profile ?? "");
   const [instructions, setInstructions] = useState(proposal.instructions ?? "");
   const [editing, setEditing] = useState<"profile" | "instructions" | null>(null);
+  // A new skill's instructions, as the member may reword them, and which one is open to read.
+  const [skillTexts, setSkillTexts] = useState<Record<number, string>>({});
+  const onlySkills = proposal.skills.length > 0 && proposal.profile === undefined && proposal.instructions === undefined && !proposal.tasks.length;
+  // Nothing but skills to add: the card is about them, not the agent's setup.
+  const skillsOnly = onlySkills && !proposal.memories.length && !proposal.identity && !proposal.sound?.length;
+  const [openSkill, setOpenSkill] = useState<number | null>(() => (onlySkills && proposal.skills.length === 1 && !("catalogId" in proposal.skills[0]) ? 0 : null));
+  const [editingSkill, setEditingSkill] = useState<number | null>(null);
+  // Its guesses the member says aren't right, with what is: they go back to the agent, not applied.
+  const [fixes, setFixes] = useState<Record<number, string>>({});
+  const [fixesSent, setFixesSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const applied = response?.status === "applied" ? response : null;
-  const live = canApply && !applied;
+  const live = canApply && !applied && !fixesSent;
+  const fixing = Object.keys(fixes).length > 0;
+  const fixesReady = fixing && Object.values(fixes).every((f) => f.trim());
   // Once applied, what the server reports took effect; until then, the member's picks.
   const shown = applied ? applied.picks : picks;
 
@@ -944,6 +970,15 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask,
         ...(picks.profile ? { profile } : {}),
         ...(picks.instructions ? { instructions } : {}),
         ...(picks.identity && name.trim() !== proposal.identity?.name ? { name: name.trim() } : {}),
+        ...(() => {
+          const reworded = Object.fromEntries(
+            Object.entries(skillTexts).filter(([i, text]) => {
+              const skill = proposal.skills[Number(i)];
+              return skill && !("catalogId" in skill) && text.trim() && text.trim() !== skill.instructions;
+            }),
+          );
+          return Object.keys(reworded).length ? { skills: reworded } : {};
+        })(),
       });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn't apply this. Try again.");
@@ -1077,11 +1112,11 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask,
   }
 
   return (
-    <section aria-label="Suggested setup" className={applied ? "mt-4 overflow-hidden rounded-xl border border-line animate-fade-up" : card}>
+    <section aria-label={skillsOnly ? "Suggested skill" : "Suggested setup"} className={applied ? "mt-4 overflow-hidden rounded-xl border border-line animate-fade-up" : card}>
       <div className="flex items-start gap-3 px-4 pt-3.5">
         <Sparkles size={17} className="mt-0.5 shrink-0 text-accent" />
         <div className="min-w-0 flex-1">
-          <p className="text-[12px] font-medium tracking-[0.01em] text-fg-3">{applied ? "Applied setup" : "Suggested setup"}</p>
+          <p className="text-[12px] font-medium tracking-[0.01em] text-fg-3">{skillsOnly ? (applied ? (proposal.skills.length === 1 ? "Added skill" : "Added skills") : proposal.skills.length === 1 ? "Suggested skill" : "Suggested skills") : applied ? "Applied setup" : "Suggested setup"}</p>
           {proposal.summary ? <p className="mt-0.5 text-[14.5px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{proposal.summary}</p> : null}
         </div>
       </div>
@@ -1106,10 +1141,47 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask,
           chosen(shown.skills.includes(i)) ? (
             <div key={`s${i}`} className="flex items-start gap-2.5">
               {check(shown.skills.includes(i), () => toggle("skills", i), "catalogId" in s ? s.catalogId : s.name)}
-              <span className="min-w-0 flex-1 text-[13px] text-fg">
-                <span className="font-medium">Skill:</span> {"catalogId" in s ? (catalogEntry(s.catalogId)?.name ?? s.catalogId) : s.name}
-                {"catalogId" in s ? null : s.description ? <span className="text-fg-3"> · {s.description}</span> : null}
-              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 text-[13px] text-fg">
+                    <span className="font-medium">Skill:</span> {"catalogId" in s ? (catalogEntry(s.catalogId)?.name ?? s.catalogId) : s.name}
+                    {"catalogId" in s ? null : s.description ? <span className="text-fg-3"> · {s.description}</span> : null}
+                  </span>
+                  {"catalogId" in s ? null : (
+                    <span className="flex shrink-0 items-center">
+                      {live && openSkill === i ? (
+                        <button type="button" onClick={() => setEditingSkill(editingSkill === i ? null : i)} className={quiet}>
+                          {editingSkill === i ? "Done" : "Edit"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-expanded={openSkill === i}
+                        onClick={() => {
+                          setOpenSkill(openSkill === i ? null : i);
+                          setEditingSkill(null);
+                        }}
+                        className={quiet}
+                      >
+                        {openSkill === i ? "Hide" : "Read"}
+                      </button>
+                    </span>
+                  )}
+                </div>
+                {"catalogId" in s || openSkill !== i ? null : live && editingSkill === i ? (
+                  <textarea
+                    className={`${input} mt-1 min-h-40 resize-y`}
+                    value={skillTexts[i] ?? s.instructions}
+                    maxLength={4000}
+                    aria-label={`What “${s.name}” does`}
+                    onChange={(e) => setSkillTexts((t) => ({ ...t, [i]: e.target.value }))}
+                  />
+                ) : (
+                  <p className="mt-1 whitespace-pre-wrap rounded-lg bg-subtle px-3 py-2 text-[13px] leading-[1.55] text-fg-2 [overflow-wrap:anywhere]">
+                    {skillTexts[i] ?? s.instructions}
+                  </p>
+                )}
+              </div>
             </div>
           ) : null,
         )}
@@ -1123,6 +1195,48 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask,
             </div>
           ) : null,
         )}
+        {proposal.assumptions?.length ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-line px-3 py-2.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[13px] font-medium text-fg">My guesses</span>
+              {live && onFix ? <span className="text-[12px] text-fg-3">Fix any I got wrong.</span> : null}
+            </div>
+            {proposal.assumptions.map((a, i) => (
+              <div key={`a${i}`} className="flex flex-col gap-1.5">
+                <div className="flex items-start gap-2">
+                  <HelpCircle size={14} className={`mt-[3px] shrink-0 ${fixes[i] !== undefined ? "text-danger" : "text-fg-4"}`} aria-hidden="true" />
+                  <p className={`min-w-0 flex-1 text-[13px] leading-[1.5] [overflow-wrap:anywhere] ${fixes[i] !== undefined ? "text-fg-3 line-through decoration-fg-4" : "text-fg-2"}`}>{a}</p>
+                  {live && onFix ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFixes((f) => {
+                          if (f[i] === undefined) return { ...f, [i]: "" };
+                          const { [i]: _, ...rest } = f;
+                          return rest;
+                        })
+                      }
+                      className={quiet}
+                    >
+                      {fixes[i] !== undefined ? "It's right" : "Not quite"}
+                    </button>
+                  ) : null}
+                </div>
+                {live && fixes[i] !== undefined ? (
+                  <input
+                    autoFocus
+                    value={fixes[i]}
+                    maxLength={300}
+                    placeholder="What's right?"
+                    aria-label={`What's right instead of: ${a}`}
+                    onChange={(e) => setFixes((f) => ({ ...f, [i]: e.target.value }))}
+                    className={`${input} ml-[22px] w-[calc(100%-22px)]`}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
       {applied ? (
         <div className="border-t border-line">
@@ -1139,6 +1253,27 @@ export function ProposalCard({ proposal, response, canApply, onApply, onRunTask,
               onChoose={onFirstRun}
             />
           ) : null}
+        </div>
+      ) : fixesSent ? (
+        <p className="flex items-center gap-1.5 border-t border-line px-4 py-2 text-[12.5px] text-fg-3">
+          <Check size={13} className="settle-check text-success" />
+          Sent your fixes. I&apos;ll rewrite it.
+        </p>
+      ) : live && fixing && onFix ? (
+        <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
+          <span className="mr-auto pl-1 text-[12px] text-fg-3">I&apos;ll rewrite it with your fixes, then you can apply it.</span>
+          <button
+            type="button"
+            onClick={() => {
+              setFixesSent(true);
+              onFix(guessFixText(proposal.assumptions ?? [], fixes));
+            }}
+            disabled={!fixesReady}
+            className={primary}
+          >
+            <ArrowUp size={14} />
+            Send fixes
+          </button>
         </div>
       ) : live ? (
         <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
