@@ -5,6 +5,7 @@ import { getSetup, setupHolds, updateSetup } from "@/lib/setup-state";
 import type { Tenant } from "@/lib/tenant-core";
 import { MAX_GOAL_LENGTH, type Journey } from "@/lib/types";
 import { getTaskForConversation, updateTask } from "./index";
+import { fieldsByCollection, withoutBlanks } from "./fields";
 import { listRecords, upsertRecord } from "./records";
 import { MAX_PLAN_STEPS, planSchema, STEP_STATUSES, upsertRecordInput } from "./schema";
 import type { PlanStep } from "./types";
@@ -27,7 +28,7 @@ const contextSteps = (plan: PlanStep[]) => plan.map(({ text, status, note }) => 
 export async function taskContextFor(
   tenant: Tenant,
   conversationId: string | undefined,
-): Promise<Pick<AgentTenantContext, "task" | "plan" | "tracker">> {
+): Promise<Pick<AgentTenantContext, "task" | "plan" | "tracker" | "trackerFields">> {
   const [task, records, own] = await Promise.all([
     conversationId ? getTaskForConversation(tenant, conversationId) : Promise.resolve(null),
     listRecords(tenant),
@@ -45,6 +46,7 @@ export async function taskContextFor(
     task: task ? { title: task.title, instructions: task.instructions, goal: task.goal, plan: contextSteps(task.plan) } : null,
     plan: !task && own?.steps.length ? { goal: own.goal, steps: contextSteps(own.steps) } : null,
     tracker: records.slice(0, TRACKER_ROWS).map((r) => ({ collection: r.collection, key: r.key, title: r.title, status: r.status })),
+    trackerFields: fieldsByCollection(records),
   };
 }
 
@@ -164,7 +166,8 @@ export async function saveRecordFromAgent(
     ...(str(raw.title, 200) ? { title: str(raw.title, 200) } : {}),
     ...(str(raw.status, 40) ? { status: str(raw.status, 40) } : {}),
     ...(str(raw.url, 2000) ? { url: str(raw.url, 2000) } : {}),
-    ...(raw.fields && typeof raw.fields === "object" && !Array.isArray(raw.fields) ? { fields: raw.fields } : {}),
+    // A placeholder the agent wrote ("next_step": "None") is no detail, so it isn't kept.
+    ...(raw.fields && typeof raw.fields === "object" && !Array.isArray(raw.fields) ? { fields: withoutBlanks(raw.fields as Record<string, unknown>) } : {}),
     taskId: task?.id ?? null,
     sourceMessageId: source.messageId,
   });

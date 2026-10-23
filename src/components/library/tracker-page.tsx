@@ -3,7 +3,8 @@
 import { ArrowLeft, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { errorText } from "@/components/tasks/shared";
-import { collectionName, recordDetails, TrackerTable } from "@/components/tasks/tracker";
+import { collectionName, TrackerTable } from "@/components/tasks/tracker";
+import { shownFields } from "@/lib/tasks/fields";
 import { api } from "@/lib/client/api";
 import type { AgentRecord } from "@/lib/tasks/types";
 
@@ -51,7 +52,7 @@ export function TrackerPage({ collection, onBack }: Props) {
   const shown = (records ?? []).filter(
     (r) =>
       (!activeStatus || r.status === activeStatus) &&
-      (!needle || `${r.title} ${r.key} ${recordDetails(r, 20)}`.toLowerCase().includes(needle)),
+      (!needle || `${r.title} ${r.key} ${shownFields(r).map(([, text]) => text).join(" ")}`.toLowerCase().includes(needle)),
   );
 
   async function save(record: AgentRecord, next: string | null) {

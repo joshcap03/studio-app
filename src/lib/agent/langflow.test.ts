@@ -189,7 +189,12 @@ describe("Langflow request", () => {
       ...tenantA,
       task: { title: "Job hunt", instructions: "Find PM roles.", plan: [{ text: "Find roles", status: "doing", note: null }] },
       tracker: [{ collection: "applications", key: "https://jobs.example/1", title: "PM — Acme", status: "applied" }],
+      trackerFields: [{ collection: "applications", fields: ["pay", "location"] }],
     }).system_context;
+    // It keeps to the lists and field names already there, so the Library reads as one list each.
+    expect(system).toContain("- applications: pay, location");
+    expect(system).toContain("never a second name for the same list");
+    expect(system).toContain("rather than writing None or unknown");
     expect(system).toContain('works on the member\'s task "Job hunt"');
     expect(system).toContain("- [doing] Find roles");
     expect(system).toContain("- applications | https://jobs.example/1 | PM — Acme | applied");

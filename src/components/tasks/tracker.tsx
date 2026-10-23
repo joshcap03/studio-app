@@ -1,9 +1,10 @@
 "use client";
 
-import { ExternalLink, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, ExternalLink, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useInlineEdit } from "@/components/ui/inline-edit";
 import { api } from "@/lib/client/api";
+import { detailColumns, detailLine, fieldLabel, shownFields } from "@/lib/tasks/fields";
 import type { AgentRecord } from "@/lib/tasks/types";
 import { errorText, formatDay, iconButton } from "./shared";
 
@@ -84,15 +85,6 @@ export function Tracker({
   );
 }
 
-/** A few short fields of a row (e.g. "location: Remote · score: 4"), for its details line. */
-export function recordDetails(record: AgentRecord, max = 3): string {
-  return Object.entries(record.fields)
-    .filter(([, v]) => (typeof v === "string" && v.trim() && v.length <= 40) || typeof v === "number")
-    .slice(0, max)
-    .map(([k, v]) => `${k.replace(/[-_]+/g, " ")}: ${String(v).trim()}`)
-    .join(" · ");
-}
-
 /** Rows as a table: title (linked when there's a url), editable status, last change, remove. */
 export function TrackerTable({
   rows,
@@ -103,9 +95,12 @@ export function TrackerTable({
   rows: AgentRecord[];
   onSave: (record: AgentRecord, status: string | null) => void;
   onRemove: (record: AgentRecord) => void;
-  /** Show a line of each row's short fields under its title. */
+  /** Show a line of each row's short fields under its title, the same ones for every row, and open a row to read them all. */
   details?: boolean;
 }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const columns = useMemo(() => (details ? detailColumns(rows) : []), [details, rows]);
+
   return (
     <table className="w-full text-left text-[13px]">
       <thead className="sr-only">
@@ -116,37 +111,85 @@ export function TrackerTable({
           <th>Remove</th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-line">
-        {rows.map((r) => {
-          const extra = details ? recordDetails(r) : "";
-          return (
-            <tr key={r.id}>
-              <td className={`w-full max-w-0 px-1 ${extra ? "py-2" : "py-1.5"}`}>
+      {rows.map((r) => {
+        const all = details ? shownFields(r) : [];
+        const line = details ? detailLine(r, columns) : "";
+        const expanded = open === r.id;
+        const name = r.title || r.key;
+        return (
+          <tbody key={r.id} className="border-line not-first:border-t">
+            <tr>
+              <td className={`w-full max-w-0 px-1 ${details ? "py-2" : "py-1.5"}`}>
                 {r.url ? (
                   <a href={r.url} target="_blank" rel="noopener noreferrer" className="group/link inline-flex max-w-full items-center gap-1 text-fg hover:underline">
-                    <span className="truncate">{r.title || r.key}</span>
+                    <span className="truncate">{name}</span>
                     <ExternalLink size={12} className="shrink-0 text-fg-4" aria-hidden="true" />
                   </a>
                 ) : (
-                  <span className="block truncate text-fg">{r.title || r.key}</span>
+                  <span className="block truncate text-fg">{name}</span>
                 )}
-                {extra ? <span className="mt-0.5 block truncate text-[12px] text-fg-3">{extra}</span> : null}
+                {all.length > 0 ? (
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-controls={`record-${r.id}`}
+                    aria-label={`${expanded ? "Hide" : "Show"} details of ${name}`}
+                    onClick={() => setOpen(expanded ? null : r.id)}
+                    className="mt-0.5 flex max-w-full items-center gap-1 text-left text-[12px] text-fg-3 transition-colors hover:text-fg-2"
+                  >
+                    <span className="truncate">{line || "Details"}</span>
+                    <ChevronDown size={12} aria-hidden="true" className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                  </button>
+                ) : null}
               </td>
-              <td className="px-1 py-1.5">
+              <td className="px-1 py-1.5 align-top">
                 <RecordStatus record={r} onSave={(status) => onSave(r, status)} />
               </td>
-              <td className="px-1 py-1.5 text-right text-[12.5px] whitespace-nowrap text-fg-3 max-sm:hidden">{formatDay(r.updatedAt)}</td>
-              <td className="px-0 py-1.5">
-                <button type="button" aria-label={`Remove ${r.title || r.key}`} onClick={() => onRemove(r)} className={`${iconButton} hover:text-danger`}>
+              <td className={`px-1 text-right text-[12.5px] whitespace-nowrap text-fg-3 max-sm:hidden ${details ? "py-3.5 align-top" : "py-1.5"}`}>
+                {formatDay(r.updatedAt)}
+              </td>
+              <td className="px-0 py-1.5 align-top">
+                <button type="button" aria-label={`Remove ${name}`} onClick={() => onRemove(r)} className={`${iconButton} hover:text-danger`}>
                   <Trash2 size={14} />
                 </button>
               </td>
             </tr>
-          );
-        })}
-      </tbody>
+            {expanded ? (
+              <tr id={`record-${r.id}`}>
+                <td colSpan={4} className="px-1 pb-3">
+                  <dl className="grid animate-fade-in grid-cols-[minmax(0,7rem)_1fr] gap-x-4 gap-y-1.5 rounded-xl bg-subtle px-3 py-2.5 text-[12.5px]">
+                    {all.map(([key, text]) => (
+                      <Fragment key={key}>
+                        <dt className="truncate text-fg-3 first-letter:uppercase">{fieldLabel(key)}</dt>
+                        <dd className="min-w-0 break-words text-fg-2">
+                          {/^https:\/\/\S+$/.test(text) ? (
+                            <a href={text} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-fg hover:underline">
+                              {hostOf(text)}
+                              <ExternalLink size={11} className="shrink-0 text-fg-4" aria-hidden="true" />
+                            </a>
+                          ) : (
+                            text
+                          )}
+                        </dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        );
+      })}
     </table>
   );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 function RecordStatus({ record, onSave }: { record: AgentRecord; onSave: (status: string | null) => void }) {

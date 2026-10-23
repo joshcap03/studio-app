@@ -15,6 +15,7 @@ vi.mock("./index", () => ({
   updateTask: vi.fn(async (_tenant: unknown, _id: string, patch: Partial<AgentTask>) => (state.task = { ...state.task!, ...patch, updatedAt: 5 })),
 }));
 vi.mock("./records", () => ({ listRecords: vi.fn(async () => []), upsertRecord: vi.fn() }));
+const records = await import("./records");
 vi.mock("@/lib/chat/store-for", () => ({ storeFor: () => state.store }));
 vi.mock("@/lib/setup-state", async (original) => ({
   ...(await original<typeof import("@/lib/setup-state")>()),
@@ -26,7 +27,7 @@ vi.mock("@/lib/setup-state", async (original) => ({
   }),
 }));
 
-const { goalFor, goalFromAgent, planFromAgent, savePlanFromAgent, taskContextFor } = await import("./agent");
+const { goalFor, goalFromAgent, planFromAgent, savePlanFromAgent, saveRecordFromAgent, taskContextFor } = await import("./agent");
 
 const scope = { workspaceId: "ws-a", userId: "user-a" };
 const owner = { workspace: { id: scope.workspaceId, role: "owner" }, userId: scope.userId } as Tenant;
@@ -188,5 +189,14 @@ describe("taskContextFor", () => {
     const withTask = await taskContextFor(owner, chat);
     expect(withTask.task).toMatchObject({ title: "Job hunt", goal: "two roles" });
     expect(withTask.plan).toBeNull();
+  });
+});
+
+describe("saveRecordFromAgent", () => {
+  it("saves a row without the placeholders the agent filled fields with", async () => {
+    const saved = await saveRecordFromAgent(owner, chat, { collection: "Roles", key: "https://jobs.example/1", status: "closed", fields: { reason: "Filled", next_step: "None", pay: "" } }, { messageId: crypto.randomUUID() });
+    expect(saved).toBe("roles");
+    expect(vi.mocked(records.upsertRecord).mock.lastCall?.[1]).toMatchObject({ collection: "roles", status: "closed", fields: { reason: "Filled" } });
+    expect(vi.mocked(records.upsertRecord).mock.lastCall?.[1].fields).toEqual({ reason: "Filled" });
   });
 });

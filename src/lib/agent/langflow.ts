@@ -132,7 +132,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.task && taskContext(tenant.task, { voiceNotes: tenant.voiceNotes === true }),
     tenant.setup && setupContext(tenant.setup),
     tenant.plan && planContext(tenant.plan),
-    tenant.tracker && trackerContext(tenant.tracker),
+    tenant.tracker && trackerContext(tenant.tracker, tenant.trackerFields ?? []),
     tenant.notes?.length && notesContext(tenant.notes),
     tenant.library?.length && libraryContext(tenant.library),
     tenant.bar && barContext(tenant.bar),
@@ -352,11 +352,19 @@ export function planContext(plan: NonNullable<AgentTenantContext["plan"]>): stri
 }
 
 /**
- * The member's tracker, when they have one: the rows it already holds, so the agent updates
- * them instead of re-adding. Its presence is what tells the agent save_record will be kept.
+ * How a tracker stays one tidy list per kind of thing, since the member reads every collection as
+ * a page in their Library: the same collection and field names each time, and no filler.
  */
-function trackerContext(rows: NonNullable<AgentTenantContext["tracker"]>): string {
-  if (rows.length === 0) return "The member has a tracker, empty so far. Use save_record to keep things they'll want to follow over time.";
+const TRACKER_TIDY =
+  "Keep it tidy; the member reads each collection as a list in their Library. Save to the collection already here for that kind of thing, never a second name for the same list (even when instructions name another), and use the field names its rows already have. Status is where a row stands (one or two words, from the ones its collection uses); fields hold short facts worth seeing again (pay, location, a next step), with anything longer in one notes field. Leave a field out when there's nothing to say rather than writing None or unknown, and don't repeat the title or status in one.";
+
+/**
+ * The member's tracker, when they have one: the rows it already holds, so the agent updates
+ * them instead of re-adding, and each collection's field names, so new rows match. Its presence
+ * is what tells the agent save_record will be kept.
+ */
+function trackerContext(rows: NonNullable<AgentTenantContext["tracker"]>, fields: NonNullable<AgentTenantContext["trackerFields"]>): string {
+  if (rows.length === 0) return `The member has a tracker, empty so far. Use save_record to keep things they'll want to follow over time. ${TRACKER_TIDY}`;
   let budget = TRACKER_CHARS;
   const lines: string[] = [];
   for (const r of rows) {
@@ -365,7 +373,14 @@ function trackerContext(rows: NonNullable<AgentTenantContext["tracker"]>): strin
     budget -= line.length + 1;
     lines.push(line);
   }
-  return `The member's tracker (collection | key | title | status; most recent first). save_record with the same collection and key updates a row instead of adding one:\n${lines.join("\n")}`;
+  const named = fields.filter((c) => c.fields.length > 0).map((c) => `- ${c.collection}: ${c.fields.join(", ")}`);
+  return [
+    `The member's tracker (collection | key | title | status; most recent first). save_record with the same collection and key updates a row instead of adding one, keeping the fields you don't send:\n${lines.join("\n")}`,
+    named.length ? `Fields each collection's rows use (most used first):\n${named.join("\n")}` : "",
+    TRACKER_TIDY,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**

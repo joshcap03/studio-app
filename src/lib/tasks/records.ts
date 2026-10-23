@@ -92,7 +92,7 @@ export function summarize(rows: Pick<RecordRow, "collection" | "status" | "updat
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Adds a record, or updates the one already in its collection under the same key. */
+/** Adds a record, or updates the one already in its collection under the same key, keeping fields it doesn't name. */
 export async function upsertRecord(tenant: Tenant, input: RecordUpsert): Promise<AgentRecord> {
   const inserted = await records(tenant)
     .insert({
@@ -115,9 +115,21 @@ export async function upsertRecord(tenant: Tenant, input: RecordUpsert): Promise
   // Tenancy columns can't be updated, so an existing key is updated separately rather than
   // through an on-conflict upsert.
   if (inserted.error?.code !== "23505") return toRecord(check(inserted, MISSING_LINK) as RecordRow);
+  // Saving a row again adds to its fields rather than replacing them, so a status change that
+  // names only the new details doesn't lose the pay or location saved with it before.
+  const existing = check(
+    await records(tenant)
+      .select("fields")
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .eq("collection", input.collection)
+      .eq("key", input.key)
+      .maybeSingle(),
+  ) as Pick<RecordRow, "fields"> | null;
+  const fields = input.fields === undefined ? undefined : { ...existing?.fields, ...input.fields };
   const rows = check(
     await records(tenant)
-      .update(changes(input))
+      .update(changes({ ...input, fields }))
       .eq("workspace_id", tenant.workspace.id)
       .eq("user_id", tenant.userId)
       .eq("collection", input.collection)
