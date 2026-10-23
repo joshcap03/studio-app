@@ -24,6 +24,7 @@ describe("parseOpen", () => {
     expect(parseOpen("start a new chat")).toEqual({ place: "new_chat", name: "" });
     expect(parseOpen("go back")).toEqual({ place: "back", name: "" });
     expect(parseOpen("pull up Highbeam cover letter")).toEqual({ place: null, name: "highbeam cover letter" });
+    expect(parseOpen("Um, can you pull up my library and show me what I've got in there?")).toEqual({ place: "library", name: "" });
   });
 });
 

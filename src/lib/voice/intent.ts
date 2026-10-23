@@ -272,21 +272,25 @@ const OPEN = new RegExp(
 
 /**
  * The member asked to go somewhere in Studio, and nothing more: "open my tasks", "show me the job
- * tracker", "go back to the Ramp chat", "new chat", "go back". Never "open to ideas", "show me how
- * to…", or anything joined to more ("open my tasks and run the first one").
+ * tracker", "go back to the Ramp chat", "new chat", "go back", "can you pull up my Library and show
+ * me what's in there?". Never "open to ideas", "show me how to…", or anything joined to more
+ * ("open my tasks and run the first one").
  */
 export function isOpenIntent(text: string): boolean {
-  if (/\?\s*$/.test(text.trim()) && !/^(?:can|could|would|will) you\b/.test(normalizeSpeech(text))) return false;
+  if (/\?\s*$/.test(text.trim()) && !/^(?:can|could|would|will) you\b/.test(spokenWords(text))) return false;
   // "And" splits only where more is asked, so a name with one in it ("the sales and marketing tracker") still opens.
   const all = text
     .split(/[.!?;\n]+|,\s*(?:and\s+)?then\b|\band then\b/i)
-    .map((c) => normalizeSpeech(c).replace(FILLERS, " ").replace(/\s+/g, " ").trim())
+    .map((c) => spokenWords(c).replace(SEE_IT, ""))
     .filter(Boolean);
   return all.length === 1 && all[0].split(" ").length <= 12 && !MORE.test(all[0]) && OPEN.test(all[0]);
 }
 
+/** "…and show me what's in there": only more of the same ask. */
+export const SEE_IT = /\s+(?:and|so)\s+(?:(?:show|let) me|i can see|see)\b.*$/;
+
 /** Something more asked after where to go: "…and run the first one", "…and tell me what's new". */
-const MORE = /\band (?:also |then )?(?:run|send|email|tell|add|ask|make|create|do|book|write|draft|find|search|look|check|pause|start|stop|reply|update|delete|remove|text|call|schedule|apply|show|read|summarize|give)\b/;
+const MORE = /\band (?:also |then )?(?:run|send|email|tell|add|ask|make|create|do|book|write|draft|find|search|look|check|pause|start|stop|reply|update|delete|remove|text|call|schedule|apply|read|summarize|give)\b/;
 
 const THIS = "(?:\\s+(?:it|this|that|this one|that one|this task|that task|the task))?";
 const DONE = "(?:\\s+(?:now|please|for now|for me|right now|then|thanks|thank you))*$";
@@ -303,7 +307,7 @@ const PRESS: Record<ScreenAction, RegExp> = {
  * this", "resume it", "open its chat", "show me the results". Null for anything else.
  */
 export function pressIntent(text: string): ScreenAction | null {
-  if (/\?/.test(text) && !/^(?:can|could|would|will) you\b/.test(normalizeSpeech(text))) return null;
+  if (/\?/.test(text) && !/^(?:can|could|would|will) you\b/.test(spokenWords(text))) return null;
   const all = spokenClauses(text);
   if (all.length !== 1) return null;
   return SCREEN_ACTIONS.find((action) => PRESS[action].test(all[0])) ?? null;

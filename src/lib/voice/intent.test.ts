@@ -301,7 +301,7 @@ describe("greetingKind", () => {
 
 describe("isOpenIntent", () => {
   it("takes asking to go somewhere in Studio, and nothing more", () => {
-    for (const said of ["Open my tasks", "show me the job tracker", "Can you pull up the Ramp chat?", "go back to the Ramp and Stash chat", "new chat", "Go back.", "take me to settings please"]) {
+    for (const said of ["Open my tasks", "show me the job tracker", "Can you pull up the Ramp chat?", "go back to the Ramp and Stash chat", "new chat", "Go back.", "take me to settings please", "Um, can you pull up my library and show me what I've got in there?"]) {
       expect(isOpenIntent(said), said).toBe(true);
     }
   });
