@@ -41,6 +41,44 @@ export interface TaskRun {
   reason: string | null;
   messageId: string | null;
   cancelRequestedAt: number | null;
+  /** What started a watch's run (docs/watches.md), oldest first; null for any other run. */
+  events: WatchEvent[] | null;
+  /** Events that arrived after the run held its 20. */
+  moreEvents: number;
+  /** When a watch's run starts: it waits a little for more events, or for its conversation. */
+  notBefore: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One thing that happened in a connected app, as a watch's run carries it. */
+export interface WatchEvent {
+  /** The provider's id for this delivery. */
+  id: string;
+  /** When it arrived, as an ISO time. */
+  at: string;
+  /** One line, e.g. "New email from Dana Lee: Intro call?". */
+  summary: string;
+  /** The event's own fields, capped; written by whoever sent it, not the member. */
+  data: Record<string, unknown>;
+}
+
+export type WatchStatus = "watching" | "paused" | "broken";
+export type WatchProblem = "disconnected" | "refused" | "removed";
+
+/** What a task watches for: one trigger in one of the member's connected apps. */
+export interface TaskWatch {
+  id: string;
+  taskId: string;
+  /** The app, e.g. gmail. */
+  toolkit: string;
+  /** The provider's trigger, e.g. GMAIL_NEW_GMAIL_MESSAGE. */
+  trigger: string;
+  /** The trigger's own settings (its filter), as the member set them. */
+  config: Record<string, unknown>;
+  status: WatchStatus;
+  problem: WatchProblem | null;
+  lastEventAt: number | null;
   createdAt: number;
   updatedAt: number;
 }

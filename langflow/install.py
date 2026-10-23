@@ -254,7 +254,9 @@ def main(argv):
         call("PATCH", f"/api/v1/flows/{flow_id}", {"data": data})
         print("updated flow", flow_id)
 
-    tweaks = {context_id: {"workspace_context": "{{system_context}}"}, chat_input["data"]["id"]: {"files": "{{files}}"}}
+    # The gateway hears when an event in the member's app started the run (docs/watches.md).
+    tweaks = {context_id: {"workspace_context": "{{system_context}}"}, chat_input["data"]["id"]: {"files": "{{files}}"},
+              gateway["data"]["id"]: {"run_cause": "{{run_cause}}"}}
     if member_apps_id:
         tweaks[member_apps_id] = {"member_id": "{{composio_user_id}}", "toolkits": "{{composio_toolkits}}"}
     if browser_id:

@@ -96,6 +96,12 @@ export interface AgentTenantContext {
    */
   browserContext?: string;
   /**
+   * Why this run started when the member didn't ask: "watch" for a run started by an event in a
+   * connected app (docs/watches.md), whose input includes other people's words. The gateway then
+   * asks before code, the browser, or any call with a link in it. Absent otherwise.
+   */
+  runCause?: "watch";
+  /**
    * Who the agent is to this member (src/lib/companion.ts): the name they kept (else null) and
    * how it talks with them once one is chosen. `callName` is the starting name calls introduce
    * it by while it has none of its own (voice on); `naming: false` where it can't be given one

@@ -22,3 +22,13 @@ describe("VOICE_SPOKEN_APPROVALS", () => {
     }
   });
 });
+
+describe("watches", () => {
+  it("are on only with connected apps, the webhook secret, and the worker's key", async () => {
+    const all = { COMPOSIO_API_KEY: "ak_test", COMPOSIO_WEBHOOK_SECRET: "whsec_test", TRIGGER_SECRET_KEY: "tr_dev_test" };
+    expect((await configWith(all)).watches).toEqual({ webhookSecret: "whsec_test", triggerKey: "tr_dev_test" });
+    expect((await configWith({ ...all, COMPOSIO_API_KEY: "" })).watches).toBeUndefined();
+    expect((await configWith({ ...all, COMPOSIO_WEBHOOK_SECRET: "" })).watches).toBeUndefined();
+    expect((await configWith({ ...all, TRIGGER_SECRET_KEY: " " })).watches).toBeUndefined();
+  });
+});

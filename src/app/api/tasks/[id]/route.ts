@@ -3,6 +3,7 @@ import { z } from "zod";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { deleteTask, getTask, updateTask } from "@/lib/tasks";
 import { patchTaskBody } from "@/lib/tasks/schema";
+import { followTask, unwatchTask } from "@/lib/tasks/watches";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { barScore, describeScore } from "@/lib/verdicts";
 
@@ -34,6 +35,8 @@ export async function PATCH(request: NextRequest, { params }: Context) {
   try {
     const task = await updateTask(auth.value, id.data, patch);
     if (!task) return jsonError(404, "Task not found.");
+    // A task's watch is on only while the task is active.
+    if (patch.status !== undefined) await followTask(auth.value, task).catch((e) => console.error("[watches] couldn't follow the task", e));
     return NextResponse.json({ task });
   } catch (error) {
     return errorResponse(error);
@@ -46,6 +49,8 @@ export async function DELETE(request: NextRequest, { params }: Context) {
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) return jsonError(404, "Task not found.");
   try {
+    // Its watch's trigger goes first, so nothing at Composio keeps watching for a task that's gone.
+    await unwatchTask(auth.value, id.data).catch((e) => console.error("[watches] couldn't remove the task's watch", e));
     if (!(await deleteTask(auth.value, id.data))) return jsonError(404, "Task not found.");
     return new NextResponse(null, { status: 204 });
   } catch (error) {

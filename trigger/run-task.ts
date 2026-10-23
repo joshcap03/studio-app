@@ -5,6 +5,7 @@ import { asMember, MemberUnavailable, SignInRateLimited } from "./lib/elevated";
 // the app runs the task (POST /api/tasks/<id>/runs/<run>), as them under RLS and with its own
 // settings and keys, exactly like "Run now". So the worker needs no agent or app keys. A run
 // that pauses for the member's approval ends here; they approve in the app, which continues it.
+// A watch's run the app isn't starting yet comes back with when to ask again, and is put back.
 
 export interface RunTaskPayload {
   runId: string;
@@ -26,7 +27,7 @@ function appUrl(): string {
 }
 
 /** Asks the app to run the claimed run as the member; resolves with how it ended. */
-async function startInApp(payload: RunTaskPayload, accessToken: string): Promise<{ status: string; reason: string | null }> {
+async function startInApp(payload: RunTaskPayload, accessToken: string): Promise<{ status: string; reason: string | null; retryAt?: number }> {
   const url = `${appUrl()}/api/tasks/${payload.taskId}/runs/${payload.runId}?workspace=${payload.workspaceId}`;
   const res = await fetch(url, {
     method: "POST",
@@ -35,7 +36,7 @@ async function startInApp(payload: RunTaskPayload, accessToken: string): Promise
   });
   if (res.status === 404) return { status: "skipped", reason: "not_found" };
   if (!res.ok) throw new Error(`The app couldn't start run ${payload.runId}: ${res.status}`);
-  return (await res.json()) as { status: string; reason: string | null };
+  return (await res.json()) as { status: string; reason: string | null; retryAt?: number };
 }
 
 export const runTask = task({
@@ -48,6 +49,13 @@ export const runTask = task({
     try {
       // The session stays open until the app answers, so the run's queries keep a live sign-in.
       const outcome = await asMember(payload.userId, (accessToken) => startInApp(payload, accessToken));
+      // A watch's run that's waiting (for more events, or for its conversation) says when to ask again.
+      if (outcome.status === "queued" && typeof outcome.retryAt === "number" && Number.isFinite(outcome.retryAt)) {
+        const at = new Date(Math.max(outcome.retryAt, Date.now() + 5_000));
+        await runTask.trigger({ ...payload, deferred: 0 }, { delay: at, idempotencyKey: `${payload.runId}:at:${at.getTime()}`, idempotencyKeyTTL: "1d" });
+        logger.info("run waits", { runId: payload.runId, reason: outcome.reason, until: at.toISOString() });
+        return outcome;
+      }
       logger.info("run settled", { runId: payload.runId, ...outcome });
       return outcome;
     } catch (error) {

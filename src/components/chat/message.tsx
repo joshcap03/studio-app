@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, AudioLines, CalendarClock, Check, Copy, Mic, Pencil, RotateCcw, Sparkles } from "lucide-react";
+import { AlertCircle, AudioLines, CalendarClock, Check, Copy, Eye, Mic, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Companion, companionHint, useCompanion, type CompanionMood } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
@@ -38,8 +38,12 @@ export const UserMessage = memo(function UserMessage({ message, onEdit }: UserPr
       {attachments.length > 0 ? <AttachmentList attachments={attachments} /> : null}
       {message.origin?.kind === "task" ? (
         <span className="inline-flex h-7 max-w-[min(85%,36rem)] items-center gap-1.5 rounded-full border border-line px-2.5 text-[13px] font-medium text-fg-2">
-          <CalendarClock size={13} className="shrink-0 text-fg-3" />
-          <span className="truncate">Scheduled · {message.origin.title}</span>
+          {message.origin.cause ? <Eye size={13} className="shrink-0 text-fg-3" /> : <CalendarClock size={13} className="shrink-0 text-fg-3" />}
+          <span className="truncate">
+            {message.origin.cause
+              ? `Watching · ${message.origin.cause.summary}${message.origin.cause.count > 1 ? ` and ${message.origin.cause.count - 1} more` : ""}`
+              : `Scheduled · ${message.origin.title}`}
+          </span>
         </span>
       ) : null}
       {message.origin?.kind === "voice" ? (

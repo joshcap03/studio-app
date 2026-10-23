@@ -15,8 +15,10 @@ import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { getSkill } from "@/lib/skills";
 import { SETUP_SKILL_ID } from "@/lib/skills/setup";
-import { getTask } from "@/lib/tasks";
+import { getRun, getTask } from "@/lib/tasks";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
+import { eventsCause, eventsMessage, getWatch } from "@/lib/tasks/watches";
+import { appName } from "@/lib/integrations/composio";
 import { browserContextFor } from "@/lib/browser-signins";
 import { saveBrowserSession } from "@/lib/browser-view";
 import type { Tenant } from "@/lib/tenant-core";
@@ -70,11 +72,22 @@ export async function buildTurnDeps(
   // A task's run is a message with the task's brief and skill, labeled with where it came from.
   let origin: MessageOrigin | undefined;
   let input: Exclude<RunInput, { kind: "task" }>;
+  // A watch's run carries what happened in the member's app, written by other people.
+  let watchRun = false;
   if (asked.kind === "task") {
-    const task = await getTask(tenant, asked.taskId);
+    const [task, run] = await Promise.all([getTask(tenant, asked.taskId), asked.runId ? getRun(tenant, asked.runId) : null]);
     if (!task) throw new TurnError(404, "Task not found.");
-    origin = { kind: "task", taskId: task.id, title: task.title, runId: asked.runId };
-    input = { kind: "send", text: task.instructions.trim() || task.title, skillId: task.skillId ?? undefined };
+    const brief = task.instructions.trim() || task.title;
+    const events = run?.taskId === task.id && run.events?.length ? run.events : null;
+    const cause = events && eventsCause(events, run!.moreEvents);
+    origin = { kind: "task", taskId: task.id, title: task.title, runId: asked.runId, ...(cause ? { cause } : {}) };
+    let text = brief;
+    if (events) {
+      watchRun = true;
+      const watch = await getWatch(tenant, task.id);
+      text = eventsMessage(brief, watch ? appName(watch.toolkit) : "a connected app", events, run!.moreEvents);
+    }
+    input = { kind: "send", text, skillId: task.skillId ?? undefined };
   } else {
     input = asked;
     // Words said on a call, or held as a voice message, are labeled as spoken; words said on a
@@ -93,6 +106,11 @@ export async function buildTurnDeps(
   // message), whatever the browser sends.
   const modality: Modality | undefined =
     input.kind === "send" ? input.modality : modalityOf((await earlier)?.findLast((m) => m.role === "user")?.origin);
+  // A retry or a decision carries on a watch's run under the same rules.
+  if (asked.kind === "retry" || asked.kind === "decide") {
+    const answered = (await earlier)?.findLast((m) => m.role === "user")?.origin;
+    watchRun = answered?.kind === "task" && Boolean(answered.cause);
+  }
   // The agent may offer a call where the member could take one: they have calls, they aren't on
   // one, they haven't said Not now to an offer here, and the page the reply streams to can show
   // the offer. A task's run streams to no page; a page that predates offers loads it without them.
@@ -175,11 +193,14 @@ export async function buildTurnDeps(
       ...(offerCalls ? { calls: true } : {}),
       ...(browserContext ? { browserContext } : {}),
       ...(screen ? { screen } : {}),
+      ...(watchRun ? { runCause: "watch" as const } : {}),
     },
     projectFiles: files,
     remember: memoryEnabled()
       ? async (content, scope, options) => {
-          const { memory, replaced } = await rememberReplacing(tenant, content, scope, options);
+          // Other people's words started a watch's run: what it learns goes to this agent's shared
+          // memory, where the reply's Undo and the Brain show it, never the person's own.
+          const { memory, replaced } = await rememberReplacing(tenant, content, watchRun ? "workspace" : scope, options);
           return { id: memory.id, replaced };
         }
       : undefined,

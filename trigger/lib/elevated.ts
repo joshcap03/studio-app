@@ -2,7 +2,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 // The only code that holds the Supabase secret key (see AGENTS.md; a test fails if it shows
 // up anywhere else). It's used for exactly two things:
-//   1. the service_role-only worker_* functions that find due tasks and move their schedule on;
+//   1. the service_role-only worker_* functions that find due tasks, move their schedule on, and
+//      match a watch's events to their runs;
 //   2. issuing a one-time sign-in for a task's member, so the run happens as them under RLS.
 // The admin client never reads or writes tables. The member's session goes only to the app
 // (trigger/run-task.ts), which runs the task as them with its own settings and keys.
@@ -70,6 +71,52 @@ export async function setNextRun(taskId: string, due: string, next: Date | null)
   });
   if (error) throw error;
   return data === true;
+}
+
+/**
+ * The run an event joined, and whether to start it: a new run, or one a repeat of this event
+ * finds still queued (starting it again is a no-op per run). An event folded into a run already
+ * waiting doesn't start it.
+ */
+export interface ClaimedEvent {
+  runId: string;
+  taskId: string;
+  workspaceId: string;
+  userId: string;
+  notBefore: string;
+  start: boolean;
+}
+
+interface EventRow {
+  run_id: string;
+  task_id: string;
+  workspace_id: string;
+  user_id: string;
+  not_before: string;
+  start_run: boolean;
+}
+
+/**
+ * Takes one of a watch's events (docs/watches.md). Null when there's nothing to run: a repeat
+ * whose run already started, a trigger with no watch, a watch that's off, or an event for someone other than its owner.
+ */
+export async function claimWatchEvent(event: {
+  triggerId: string;
+  composioUserId: string;
+  eventId: string;
+  event: Record<string, unknown>;
+}): Promise<ClaimedEvent | null> {
+  const { data, error } = await adminClient().rpc("worker_claim_watch_event", {
+    p_trigger_id: event.triggerId,
+    p_composio_user_id: event.composioUserId,
+    p_event_id: event.eventId,
+    p_event: event.event,
+  });
+  if (error) throw error;
+  const row = ((data ?? []) as EventRow[])[0];
+  return row
+    ? { runId: row.run_id, taskId: row.task_id, workspaceId: row.workspace_id, userId: row.user_id, notBefore: row.not_before, start: row.start_run }
+    : null;
 }
 
 /** The member no longer exists or can't sign in (deleted, banned): their run is skipped. */

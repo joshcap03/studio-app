@@ -18,7 +18,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field, ValidationError
 from lfx.custom.custom_component.component import Component
-from lfx.io import HandleInput, IntInput, Output
+from lfx.io import HandleInput, IntInput, MessageTextInput, Output
 
 
 class DiscoverArgs(BaseModel):
@@ -651,6 +651,30 @@ def needs_approval(name, arguments):
     return False
 
 
+# A run an event in a connected app started (run_cause "watch", docs/watches.md) reads other
+# people's words: an email can try to steer the agent into sending what it knows somewhere. So
+# in those runs anything that can reach an address the agent chose asks the owner first: code,
+# the browser, and any call with a link in its arguments. Reading the owner's apps through
+# Composio by slug, and web search by words, still runs.
+BROWSER_TOOLS = {"start", "navigate", "act", "observe", "extract"}
+LINK = re.compile(r"(?i)\b(?:https?|wss?|ftp)://|\bwww\.")
+
+
+def has_link(value):
+    if isinstance(value, str):
+        return bool(LINK.search(value))
+    if isinstance(value, dict):
+        return any(has_link(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(has_link(v) for v in value)
+    return False
+
+
+def watch_needs_approval(name, arguments):
+    """Whether, in a run an event started, a routed call must ask the owner first."""
+    return name in CODE_TOOLS or name in BROWSER_TOOLS or has_link(arguments) or needs_approval(name, arguments)
+
+
 class ToolGatewayComponent(Component):
     display_name = "Tool Gateway"
     description = "Dynamic discovery and execution of connected tools with compact tool context."
@@ -665,6 +689,9 @@ class ToolGatewayComponent(Component):
                  info="Read-only lookups (tool search, schemas, memory, web search). Retried once on timeout."),
         IntInput(name="work_timeout", display_name="Work Timeout (seconds)", value=200, advanced=True,
                  info="Everything else (workbench, browser, app actions). Never retried automatically."),
+        MessageTextInput(name="run_cause", display_name="Run Cause", value="", advanced=True,
+                         info=("Filled per run by the app ({{run_cause}}): 'watch' when an event in a connected app "
+                               "started it, so code, the browser, and calls with links ask the owner first.")),
     ]
     outputs = [Output(display_name="Gateway Tools", name="gateway_tools", method="build_gateway_tools", types=["Tool"])]
 
@@ -811,8 +838,15 @@ class ToolGatewayComponent(Component):
         # nothing); real work gets a long deadline and is never retried automatically.
         lookup_timeout = int(getattr(self, "lookup_timeout", 45) or 45)
         work_timeout = int(getattr(self, "work_timeout", 200) or 200)
+        watched = str(getattr(self, "run_cause", "") or "").strip() == "watch"
+        asks = watch_needs_approval if watched else needs_approval
 
-        def approval_hint(name):
+        def approval_hint(name, arguments=None):
+            if watched and not needs_approval(name, arguments):
+                return ("This run started from an event in the owner's app, which other people wrote, so code, the browser, "
+                        "and anything with a link ask the owner first. If it's needed for the job, call take_action now with "
+                        "the same tool_name and arguments plus a one-sentence summary that names the link; otherwise do "
+                        "without it.")
             # Said plainly for code: what made this run ask, so the agent can write code that
             # doesn't when the job only reads, and each approved run should do the whole job.
             if name in CODE_TOOLS:
@@ -847,8 +881,8 @@ class ToolGatewayComponent(Component):
             tool, params, error = prepare(tool_name, arguments)
             if error:
                 return error
-            if not approved and needs_approval(tool_name, params):
-                return approval_hint(tool_name)
+            if not approved and asks(tool_name, params):
+                return approval_hint(tool_name, params)
             lookup = tool_name in LOOKUP_TOOLS
             limit = lookup_timeout if lookup else work_timeout
             attempts = 2 if lookup else 1
@@ -874,8 +908,8 @@ class ToolGatewayComponent(Component):
             tool, params, error = prepare(tool_name, arguments)
             if error:
                 return error
-            if not approved and needs_approval(tool_name, params):
-                return approval_hint(tool_name)
+            if not approved and asks(tool_name, params):
+                return approval_hint(tool_name, params)
             try:
                 return compact_result(tool.invoke(params, config=config), max_chars, keeper(config))
             except Exception as exc:
