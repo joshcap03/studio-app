@@ -124,6 +124,8 @@ const RUN_REASON_TEXT: Record<string, string> = {
   error: "The agent hit an error.",
   stopped: "Stopped before it finished.",
   interrupted: "Interrupted before it finished.",
+  not_started: "Didn't start: Studio couldn't reach the agent at the scheduled time.",
+  member_unavailable: "Skipped: Studio couldn't sign in as you to run it.",
 };
 
 export function runReason(run: TaskRun): string | null {
