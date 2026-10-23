@@ -2,7 +2,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 // The only code that holds the Supabase secret key (see AGENTS.md; a test fails if it shows
 // up anywhere else). It's used for exactly two things:
-//   1. the service_role-only worker_* functions that find due tasks and move their schedule on;
+//   1. the service_role-only worker_* functions that find due tasks, move their schedule on,
+//      and settle a run that couldn't start;
 //   2. issuing a one-time sign-in for a task's member, so the run happens as them under RLS.
 // The admin client never reads or writes tables. The member's session goes only to the app
 // (trigger/run-task.ts), which runs the task as them with its own settings and keys.
@@ -67,6 +68,17 @@ export async function setNextRun(taskId: string, due: string, next: Date | null)
     p_task: taskId,
     p_due: due,
     p_next: next?.toISOString() ?? null,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
+/** Settles a claimed run the worker couldn't start, if it's still queued; the reason is a code the Tasks page explains. */
+export async function settleUnstartedRun(runId: string, status: "skipped" | "failed", reason: string): Promise<boolean> {
+  const { data, error } = await adminClient().rpc("worker_settle_unstarted_run", {
+    p_run: runId,
+    p_status: status,
+    p_reason: reason,
   });
   if (error) throw error;
   return data === true;

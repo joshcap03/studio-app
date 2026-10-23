@@ -1,10 +1,13 @@
 import { logger, task } from "@trigger.dev/sdk";
-import { asMember, MemberUnavailable, SignInRateLimited } from "./lib/elevated";
+import { startRunInApp } from "@/lib/tasks/start-in-app";
+import { asMember, MemberUnavailable, settleUnstartedRun, SignInRateLimited } from "./lib/elevated";
 
 // Starts one claimed run of a member's task. The worker only signs in as the task's member;
 // the app runs the task (POST /api/tasks/<id>/runs/<run>), as them under RLS and with its own
 // settings and keys, exactly like "Run now". So the worker needs no agent or app keys. A run
 // that pauses for the member's approval ends here; they approve in the app, which continues it.
+// A run that can't be started is settled as such, so the member sees it on the task instead of
+// a run queued forever.
 
 export interface RunTaskPayload {
   runId: string;
@@ -20,22 +23,18 @@ const MAX_DEFERRALS = 5;
 const APP_TIMEOUT_MS = 320_000;
 
 function appUrl(): string {
-  const value = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  const value = process.env.APP_URL?.trim();
   if (!value) throw new Error("APP_URL is not set");
   return value;
 }
 
-/** Asks the app to run the claimed run as the member; resolves with how it ended. */
-async function startInApp(payload: RunTaskPayload, accessToken: string): Promise<{ status: string; reason: string | null }> {
-  const url = `${appUrl()}/api/tasks/${payload.taskId}/runs/${payload.runId}?workspace=${payload.workspaceId}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(APP_TIMEOUT_MS),
-  });
-  if (res.status === 404) return { status: "skipped", reason: "not_found" };
-  if (!res.ok) throw new Error(`The app couldn't start run ${payload.runId}: ${res.status}`);
-  return (await res.json()) as { status: string; reason: string | null };
+/** Records why a run never started; a failure to record it is logged, never hides the cause. */
+async function settle(payload: RunTaskPayload, status: "skipped" | "failed", reason: string): Promise<void> {
+  try {
+    await settleUnstartedRun(payload.runId, status, reason);
+  } catch (e) {
+    logger.error("couldn't settle the run", { runId: payload.runId, error: String(e) });
+  }
 }
 
 export const runTask = task({
@@ -47,7 +46,9 @@ export const runTask = task({
   run: async (payload: RunTaskPayload) => {
     try {
       // The session stays open until the app answers, so the run's queries keep a live sign-in.
-      const outcome = await asMember(payload.userId, (accessToken) => startInApp(payload, accessToken));
+      const outcome = await asMember(payload.userId, (accessToken) =>
+        startRunInApp(appUrl(), payload, accessToken, { timeoutMs: APP_TIMEOUT_MS }),
+      );
       logger.info("run settled", { runId: payload.runId, ...outcome });
       return outcome;
     } catch (error) {
@@ -60,8 +61,13 @@ export const runTask = task({
       }
       if (error instanceof MemberUnavailable) {
         logger.warn(error.message, { runId: payload.runId });
+        await settle(payload, "skipped", "member_unavailable");
         return { status: "skipped", reason: "member_unavailable" };
       }
+      // The cause stays in the worker's logs; the member sees that it didn't start. A run the app
+      // already began isn't touched (only a queued one is settled), so it ends as the app records.
+      logger.error("couldn't start the run", { runId: payload.runId, error: String(error) });
+      await settle(payload, "failed", "not_started");
       throw error;
     }
   },
