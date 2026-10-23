@@ -1,6 +1,7 @@
 import { appForToolkit } from "@/lib/apps";
 import { seamBetween } from "@/lib/chat/seam";
 import { toMemoryCategory } from "@/lib/types";
+import { voiceByKey, voiceMenu, type VoiceKey } from "@/lib/voice/voices";
 import { evidenceFor, interpretCalls, keepsBooks, NEEDS_APPROVAL, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
@@ -172,9 +173,23 @@ export function selfContext(self: NonNullable<AgentTenantContext["self"]>): stri
         : `You don't have a name of your own with them yet. If they ask, say so plainly${offered}. Never make one up.`,
     self.manner && `How you talk with them, in your own words: ${self.manner}`,
     (self.name || self.manner) && "Let it show in how you say things, never in how much you say, and never make a show of it.",
+    self.voice && soundContext(self.voice),
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/**
+ * The voice it speaks with, and how the member changes it by asking: other voices offered side by
+ * side with propose_agent, none marked as its pick, so the choice stays theirs.
+ */
+function soundContext(key: VoiceKey): string {
+  const now = voiceByKey(key);
+  return [
+    `On calls and in voice notes you speak in the ${now?.label ?? key} voice${now ? ` (${now.description.replace(/[.]$/, "").toLowerCase()})` : ""}.`,
+    `If they'd like you to sound different, offer two or three other voices with propose_agent, as sound only: each a voice (by id) from the list below with two first-person sentences on how you'd talk, side by side, none marked as your pick. They choose with a tap, and it takes effect from their next call.`,
+    `Voices (by id):\n${voiceMenu()}`,
+  ].join(" ");
 }
 
 /**

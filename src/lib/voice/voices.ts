@@ -31,6 +31,11 @@ export function isVoiceKey(value: unknown): value is VoiceKey {
   return typeof value === "string" && VOICES.some((v) => v.key === value);
 }
 
+/** The catalog as the agent reads it, one voice a line, by id. */
+export function voiceMenu(): string {
+  return VOICES.map((v) => `- ${v.key}: ${v.label}. ${v.description}`).join("\n");
+}
+
 export function voiceByKey(key: string | null | undefined): (typeof VOICES)[number] | undefined {
   return VOICES.find((v) => v.key === key);
 }
