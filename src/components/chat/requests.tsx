@@ -2,7 +2,6 @@
 
 import { ArrowUp, Ban, BookmarkCheck, BookmarkPlus, Check, Clock, MessageCircleQuestion, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { HoldButton } from "@/components/ui/hold-button";
 import { sendSpark, useWaitsOnMember } from "@/components/ui/presence";
 import { appName } from "@/lib/apps";
 import { api } from "@/lib/client/api";
@@ -107,14 +106,15 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
             <X size={14} />
             Decline
           </button>
-          <HoldButton
-            onHold={() => decide("approve")}
+          <button
+            type="button"
+            onClick={() => decide("approve")}
             disabled={choice !== null}
-            label="Approve"
-            nudge="Hold to approve"
-            icon={choice === "approve" ? <span className="spinner size-3.5" aria-hidden="true" /> : <Check size={14} />}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-50"
-          />
+          >
+            {choice === "approve" ? <span className="spinner size-3.5" aria-hidden="true" /> : <Check size={14} />}
+            Approve
+          </button>
         </div>
       ) : (
         <ApprovalOutcome approval={approval} conversationId={conversationId} />
