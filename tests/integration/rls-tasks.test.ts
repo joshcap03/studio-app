@@ -227,6 +227,9 @@ describe("agent tasks, runs, and records", () => {
     const second = await upsertRecord(tenant, { collection: "leads", key: "acme", status: "contacted" });
     expect(second.id).toBe(first.id);
     expect(second).toMatchObject({ title: "Acme", status: "contacted", fields: { size: 10 } });
+    // Saving it again with some fields adds to the ones it has rather than losing them.
+    const third = await upsertRecord(tenant, { collection: "leads", key: "acme", status: "replied", fields: { next_step: "Call", size: 12 } });
+    expect(third.fields).toEqual({ size: 12, next_step: "Call" });
     await expect(upsertRecord(tenant, { collection: "capped", key: "new" })).rejects.toMatchObject({ status: 409 });
     await expect(upsertRecord(tenant, { collection: "leads", key: "x", taskId: crypto.randomUUID() })).rejects.toMatchObject({ status: 400 });
 

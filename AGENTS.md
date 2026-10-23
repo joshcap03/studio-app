@@ -82,7 +82,11 @@ raw/technical text.
   message out of the agent's view.
 - `src/lib/tasks/`: long-horizon tasks (a goal, a plan, a schedule, a linked conversation) and
   their runs (`index.ts`), the agent's tracker of records per collection (`records.ts`), and
-  request validation (`schema.ts`). Private to each member; the API is the "tasks" preview.
+  request validation (`schema.ts`). The member reads each collection as a list in the Library, so
+  `fields.ts` keeps it one list: the agent's placeholders ("None", "n/a") are dropped on save, saving
+  a row again adds to its fields rather than replacing them, each collection's rows show the same
+  detail fields (the rest open from the row), and every run is told the collections and field names
+  already in use so it reuses them instead of starting a second list for the same thing. Private to each member; the API is the "tasks" preview.
   `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike.
   `watches.ts`: a task that runs when something happens in a connected app (the "watches" preview,
   docs/watches.md). Its Composio trigger is created under the member's own id and follows the task;

@@ -38,6 +38,8 @@ export interface AgentTenantContext {
    * it found. Absent when the member has no tracker, so the agent knows not to save to one.
    */
   tracker?: { collection: string; key: string; title: string; status: string | null }[];
+  /** The field names each tracker collection's rows use, most used first, so new rows match them. */
+  trackerFields?: { collection: string; fields: string[] }[];
   /** Set when this conversation is the agent's setup interview: its checklist so far, and what done looks like. */
   setup?: {
     plan: { text: string; status: string; note?: string | null }[];
