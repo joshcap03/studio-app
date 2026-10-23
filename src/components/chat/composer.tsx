@@ -30,6 +30,8 @@ export interface ComposerHandle {
   attachSkill(skill: MessageSkill): void;
   /** Attach files, e.g. dropped anywhere on the chat. */
   addFiles(files: FileList | File[]): void;
+  /** Starts dictating into the draft; false where there's no mic. */
+  dictate(): boolean;
 }
 
 /** What goes with a message besides its text, and how it was said (held to the mic: a voice message). */
@@ -146,6 +148,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     addFiles: (list) => {
       addFiles(list);
       focusEnd(value);
+    },
+    dictate: () => {
+      if (!hasMic || !mic) return false;
+      mic.dictate();
+      return true;
     },
   }));
 
