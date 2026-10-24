@@ -118,6 +118,13 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    match: /\bask me for the code\b/i,
+    steps: [
+      { kind: "text", text: "The site sent you a code (mock)." },
+      { kind: "ui", block: { secret_request: { kind: "code", reason: "To finish signing in: the code the site just texted you (mock)." } } },
+    ],
+  },
+  {
     match: /\bpay with my card\b/i,
     steps: [
       { kind: "text", text: "I'm at checkout (mock)." },

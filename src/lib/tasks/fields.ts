@@ -3,6 +3,8 @@
 // row of a collection shows its details in the same order, so a list reads as one list.
 
 const BLANK = new Set(["", "none", "n/a", "na", "null", "nil", "unknown", "tbd", "-", "–", "—", "nothing", "not applicable", "not available"]);
+// "Pay: not listed" says only that nothing was found.
+const NOT_FOUND = /^(not (listed|specified|stated|disclosed|mentioned|given|provided|shown|seen|found)|unspecified|undisclosed|unlisted)$/;
 
 /** A details line holds a field this long or shorter; longer ones wait for the row to open. */
 export const SHORT_FIELD = 32;
@@ -10,7 +12,10 @@ export const SHORT_FIELD = 32;
 /** True for a value that says nothing: empty, or a placeholder like "None" or "n/a". */
 export function isBlankValue(value: unknown): boolean {
   if (value === null || value === undefined) return true;
-  if (typeof value === "string") return BLANK.has(value.replace(/\s+/g, " ").trim().toLowerCase().replace(/\.$/, ""));
+  if (typeof value === "string") {
+    const text = value.replace(/\s+/g, " ").trim().toLowerCase().replace(/\.$/, "");
+    return BLANK.has(text) || NOT_FOUND.test(text);
+  }
   if (Array.isArray(value)) return value.every(isBlankValue);
   if (typeof value === "object") return Object.values(value).every(isBlankValue);
   return false;
@@ -79,15 +84,16 @@ export function detailColumns(rows: Row[], max = 2): string[] {
     .map(([key]) => key);
 }
 
-/** One row's details line: its values for the collection's columns, in their order. */
+/**
+ * One row's details line: its values for the collection's columns, in their order. A row with
+ * none of them shows its own first short fields instead (a score), rather than nothing.
+ */
 export function detailLine(row: Row, columns: string[]): string {
-  const shown = new Map(shownFields(row));
-  return columns
-    .flatMap((key) => {
-      const text = shown.get(key);
-      return text ? [`${fieldLabel(key)}: ${text}`] : [];
-    })
-    .join(" · ");
+  const shown = shownFields(row);
+  const byKey = new Map(shown);
+  const own = columns.filter((key) => byKey.has(key));
+  const keys = own.length ? own : shown.filter(([, text]) => text.length <= SHORT_FIELD).slice(0, columns.length || 2).map(([key]) => key);
+  return keys.map((key) => `${fieldLabel(key)}: ${byKey.get(key)}`).join(" · ");
 }
 
 /** Each collection's field names, most used first, so the agent saves new rows the same way. */

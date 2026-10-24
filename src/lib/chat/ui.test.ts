@@ -258,7 +258,7 @@ describe("ways to sound, for a member without voice", () => {
   });
 });
 
-describe("requests for a login or card", () => {
+describe("requests for a login, card, or code", () => {
   it("say which and why, and never carry anything else", () => {
     expect(buildUiBlock({ secret_request: { kind: "login", reason: " To sign in to  Acme. ", username_hint: "ada@example.test", password: "x" } }, "s1")).toEqual({
       kind: "secret",
@@ -268,6 +268,12 @@ describe("requests for a login or card", () => {
       usernameHint: "ada@example.test",
     });
     expect(buildUiBlock({ secret_request: { kind: "card", reason: "To pay.", username_hint: "ada" } }, "s2")).toEqual({ kind: "secret", id: "s2", secret: "card", reason: "To pay." });
+    expect(buildUiBlock({ secret_request: { kind: "code", reason: "To finish signing in.", username_hint: "ada" } }, "s3")).toEqual({
+      kind: "secret",
+      id: "s3",
+      secret: "code",
+      reason: "To finish signing in.",
+    });
     expect(buildUiBlock({ secret_request: { kind: "ssn", reason: "Because." } })).toBeNull();
     expect(buildUiBlock({ secret_request: { kind: "card", reason: "" } })).toBeNull();
   });

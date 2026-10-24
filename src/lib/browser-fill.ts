@@ -2,7 +2,7 @@ import { attachToPage, browserConnection, defaultConnect, withCdp, type CdpCall,
 import type { Tenant } from "@/lib/tenant-core";
 import type { SecretField, ShownStep } from "@/lib/types";
 
-// Filling a login or card into the agent's browser, so the agent never sees it. The member picks
+// Filling a login, card, or one-time code into the agent's browser, so the agent never sees it. The member picks
 // or types it on the secure card (src/components/chat/secret-card.tsx); the server connects to the
 // conversation's own browser over CDP (as watching it does, src/lib/browser-view.ts), checks which
 // site the page is on, finds the fields by what they're for, and types into them as a person would
@@ -43,9 +43,13 @@ const FOCUS = (role: Role) => `(() => {
     card_exp_month: ['[autocomplete~="cc-exp-month"]', 'select[name*="month" i]', 'input[name*="exp_month" i]', 'input[name*="expmonth" i]'],
     card_exp_year: ['[autocomplete~="cc-exp-year"]', 'select[name*="year" i]', 'input[name*="exp_year" i]', 'input[name*="expyear" i]'],
     card_code: ['input[autocomplete~="cc-csc"]', 'input[name*="cvc" i]', 'input[id*="cvc" i]', 'input[name*="cvv" i]', 'input[id*="cvv" i]', 'input[name*="csc" i]', 'input[name*="securitycode" i]'],
+    one_time_code: ['input[autocomplete~="one-time-code"]', 'input[name*="otp" i]', 'input[id*="otp" i]', 'input[name*="mfa" i]', 'input[id*="mfa" i]', 'input[name*="2fa" i]', 'input[id*="2fa" i]', 'input[name*="verif" i]', 'input[id*="verif" i]', 'input[name*="passcode" i]', 'input[name*="token" i]', 'input[name*="code" i]', 'input[id*="code" i]', 'input[inputmode="numeric"]'],
   };
   const skip = role === "username" ? /^(password|hidden|checkbox|radio|submit|button)$/i : /^(hidden|checkbox|radio|submit|button)$/i;
-  const usable = (el) => !el.disabled && !el.readOnly && !skip.test(el.type || "") && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+  // A code field's name can be another kind of code: a postcode, a promo code, a phone's area code.
+  const notCode = /zip|postal|post_?code|promo|coupon|discount|gift|country|area|phone/i;
+  const usable = (el) => !el.disabled && !el.readOnly && !skip.test(el.type || "") && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden" &&
+    !(role === "one_time_code" && notCode.test((el.name || "") + " " + (el.id || "")));
   for (const selector of R[role] || []) {
     for (const el of document.querySelectorAll(selector)) {
       if (!usable(el)) continue;
@@ -53,6 +57,8 @@ const FOCUS = (role: Role) => `(() => {
       el.focus();
       if (role === "card_number" || role === "card_code") el.style.setProperty("-webkit-text-security", "disc", "important");
       if (el.tagName === "SELECT") return "select";
+      // A code split into one box per character.
+      if (role === "one_time_code" && el.maxLength === 1) return "split";
       if (typeof el.select === "function") el.select();
       return document.activeElement === el ? "input" : "unfocused";
     }
@@ -73,6 +79,17 @@ const PICK = (part: "month" | "year", value: string) => `(() => {
   return true;
 })()`;
 
+/** Focuses box `i` of a code split into one-character boxes (they move on by themselves on most pages, not all). */
+const CODE_BOX = (i: number) => `(() => {
+  const box = ${i};
+  const boxes = [...document.querySelectorAll("input")].filter((el) => el.maxLength === 1 && !el.disabled && !el.readOnly && el.type !== "hidden" && el.getClientRects().length > 0);
+  const el = boxes[box];
+  if (!el) return false;
+  el.focus();
+  if (typeof el.select === "function") el.select();
+  return document.activeElement === el;
+})()`;
+
 /** How long the focused field's value is now: whether typing reached it, without reading it. */
 const TYPED = `(() => { const el = document.activeElement; return el && "value" in el ? String(el.value).length : -1; })()`;
 
@@ -85,11 +102,11 @@ async function evaluate(call: CdpCall, sessionId: string, expression: string): P
 }
 
 /** The order parts are filled in: as a person would, top to bottom. */
-const ORDER: SecretField[] = ["username", "password", "card_name", "card_number", "card_expiry", "card_code"];
+const ORDER: SecretField[] = ["username", "password", "card_name", "card_number", "card_expiry", "card_code", "one_time_code"];
 
 /**
  * Fills `values` into the browser's current page over CDP. The page must be https, and when
- * `origin` is given (a saved login's site) exactly that site. Login fields are looked for on the
+ * `origin` is given (a saved login's site) exactly that site. Login and code fields are looked for on the
  * page itself; card fields there and in its frames (a checkout's payment frames).
  */
 export function fillPage(url: string, connect: SocketFactory, values: FillValues, { origin, timeoutMs = FILL_MS }: { origin?: string; timeoutMs?: number } = {}): Promise<FillResult> {
@@ -116,6 +133,20 @@ export function fillPage(url: string, connect: SocketFactory, values: FillValues
         if (found === "none" || found === undefined) continue;
         if (found === "select") {
           if (role === "card_exp_month" || role === "card_exp_year") return (await evaluate(call, frame, PICK(role === "card_exp_month" ? "month" : "year", text))) === true;
+          continue;
+        }
+        if (found === "split") {
+          // One character per box, in order; it went in if the last box took its character.
+          const chars = [...text];
+          let all = true;
+          for (const [i, char] of chars.entries()) {
+            if ((await evaluate(call, frame, CODE_BOX(i))) !== true) {
+              all = false;
+              break;
+            }
+            await call("Input.insertText", { text: char }, frame);
+          }
+          if (all && ((await evaluate(call, frame, TYPED)) as number) > 0) return true;
           continue;
         }
         await call("Input.insertText", { text }, frame);
@@ -147,7 +178,7 @@ export function fillPage(url: string, connect: SocketFactory, values: FillValues
   });
 }
 
-/** Fills a login or card into the conversation's browser (see fillPage). Never throws with a value in it. */
+/** Fills a login, card, or code into the conversation's browser (see fillPage). Never throws with a value in it. */
 export async function fillBrowser(tenant: Tenant, conversationId: string, values: FillValues, options: { origin?: string } = {}, connect: SocketFactory = defaultConnect): Promise<FillResult> {
   const connection = await browserConnection(tenant, conversationId);
   if (!connection.ok) return connection;

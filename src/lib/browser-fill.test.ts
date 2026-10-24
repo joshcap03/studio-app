@@ -7,7 +7,9 @@ const CARD = "4242424242424242";
 
 interface Frame {
   /** The roles this document has a field for, and what the field is. */
-  fields: Record<string, "input" | "select">;
+  fields: Record<string, "input" | "select" | "split">;
+  /** How many one-character boxes a split code has. */
+  boxes?: number;
   origin?: string;
 }
 
@@ -47,6 +49,12 @@ function fakeBrowser({
       if (m.method === "Runtime.evaluate") {
         const expression = String(m.params.expression);
         if (expression === "location.origin") return reply({ result: { value: origin } });
+        const box = /const box = (\d+)/.exec(expression)?.[1];
+        if (box !== undefined && doc) {
+          const ok = Number(box) < (doc.boxes ?? 0);
+          doc.focused = ok ? `box${box}` : undefined;
+          return reply({ result: { value: ok } });
+        }
         const role = /const role = "([a-z_]+)"/.exec(expression)?.[1];
         if (role && doc) {
           const kind = doc.fields[role];
@@ -122,6 +130,26 @@ describe("filling a card", () => {
     const result = await fillPage("wss://x", browser.connect, { card_number: CARD, card_expiry: "04/27" });
     expect(result).toMatchObject({ ok: true, fields: ["card_number", "card_expiry"] });
     expect(browser.docs["s-page"].typed).toMatchObject({ card_exp_month: "picked", card_exp_year: "picked" });
+  });
+});
+
+describe("filling a one-time code", () => {
+  it("types the code into the page's code field", async () => {
+    const browser = fakeBrowser({ origin: "https://acme.example", page: { fields: { one_time_code: "input" } } });
+    expect(await fillPage("wss://x", browser.connect, { one_time_code: "482913" })).toEqual({ ok: true, site: "https://acme.example", fields: ["one_time_code"] });
+    expect(browser.docs["s-page"].typed).toEqual({ one_time_code: "482913" });
+    expect(browser.sent.filter((m) => m.method !== "Input.insertText").some((m) => JSON.stringify(m).includes("482913"))).toBe(false);
+  });
+
+  it("types one character per box when the code is split into boxes", async () => {
+    const browser = fakeBrowser({ origin: "https://acme.example", page: { fields: { one_time_code: "split" }, boxes: 6 } });
+    expect(await fillPage("wss://x", browser.connect, { one_time_code: "482913" })).toMatchObject({ ok: true, fields: ["one_time_code"] });
+    expect(browser.docs["s-page"].typed).toEqual({ box0: "4", box1: "8", box2: "2", box3: "9", box4: "1", box5: "3" });
+  });
+
+  it("says so when there are fewer boxes than characters", async () => {
+    const browser = fakeBrowser({ page: { fields: { one_time_code: "split" }, boxes: 4 } });
+    expect(await fillPage("wss://x", browser.connect, { one_time_code: "482913" })).toMatchObject({ ok: false, reason: "no_fields" });
   });
 });
 

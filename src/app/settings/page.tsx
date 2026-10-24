@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { SettingsView } from "@/components/settings/settings-view";
+import { TabAgent } from "@/components/tab-agent";
 import { requirePageTenant } from "@/lib/tenant";
 import { getGuardrail } from "@/lib/workspace";
 
@@ -13,6 +14,7 @@ export default async function SettingsPage() {
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
+      <TabAgent id={tenant.workspace.id} />
       <div className="mx-auto max-w-[640px]">
         <a
           href="/"

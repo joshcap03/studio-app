@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
+import { AGENT_HEADER } from "@/lib/client/tab-agent";
 import { isCrossSite, isSameOrigin } from "@/lib/same-origin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { resolveTenant, sessionFor, type Session, type Tenant } from "@/lib/tenant-core";
@@ -8,10 +9,12 @@ import { resolveTenant, sessionFor, type Session, type Tenant } from "@/lib/tena
 export { isSameOrigin, resolveTenant, sessionFor, type Session, type Tenant };
 
 // Identity and tenancy are derived only from the authenticated session. The active
-// workspace is a preference cookie, honored only if the user is actually a member of it
-// (checked against the database under RLS); request bodies and URLs never choose it.
+// workspace is a preference, honored only if the user is actually a member of it (checked
+// against the database under RLS): the tab's own (AGENT_HEADER, the agent its page shows),
+// else the cookie, the last one picked in any tab. Request bodies and URLs never choose it.
 
 export const ACTIVE_WORKSPACE_COOKIE = "lj_ws";
+export { AGENT_HEADER };
 
 export async function getSession(): Promise<Session | null> {
   const db = await createSupabaseServerClient();
@@ -58,8 +61,14 @@ export async function authorizeSession(request: NextRequest, { writes = false }:
 export async function authorizeTenant(request: NextRequest, options: Options = {}): Promise<Authorized<Tenant>> {
   const auth = await authorizeSession(request, options);
   if (!auth.ok) return auth;
-  const tenant = await resolveTenant(auth.value, request.cookies.get(ACTIVE_WORKSPACE_COOKIE)?.value);
+  // A tab asks for the agent it shows, which another tab switching agents doesn't change.
+  const shown = request.headers.get(AGENT_HEADER);
+  const tenant = await resolveTenant(auth.value, shown ?? request.cookies.get(ACTIVE_WORKSPACE_COOKIE)?.value);
   if (!tenant) return { ok: false, response: jsonError(409, "Create an agent first.", "no_workspace") };
+  // Never quietly another agent: one the member left (or never had) is refused.
+  if (shown && tenant.workspace.id !== shown) {
+    return { ok: false, response: jsonError(409, "This agent isn't available anymore. Reload the page.", "agent_gone") };
+  }
   return { ok: true, value: tenant };
 }
 

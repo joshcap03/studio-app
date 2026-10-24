@@ -8,7 +8,7 @@ import { cardBrand, cardDigits, cardExpiry } from "@/lib/secrets/card";
 import { authorizeTenant, jsonError, type Tenant } from "@/lib/tenant";
 import type { SecretField, UiResponse, UiSecret } from "@/lib/types";
 
-// The secure card for a login or card the agent asked for at its browser (request_secret). What
+// The secure card for a login, card, or one-time code the agent asked for at its browser (request_secret). What
 // the member picks or types comes here, never into the chat: the server types it into this
 // conversation's own browser (src/lib/browser-fill.ts), saves it if asked (src/lib/secrets), and
 // answers with the words the member's next message says to the agent, which name what was filled
@@ -38,6 +38,15 @@ const body = z.discriminatedUnion("use", [
     cvv,
     save: z.boolean(),
   }),
+  // A one-time code the site sent them (2FA), as they read it: spaces and dashes are dropped.
+  z.strictObject({
+    use: z.literal("code"),
+    code: z
+      .string()
+      .max(40)
+      .transform((c) => c.replace(/[\s-]/g, ""))
+      .pipe(z.string().regex(/^[A-Za-z0-9]{3,12}$/, "Enter the code as the site sent it.")),
+  }),
   // The member did it themself, taking over the browser.
   z.strictObject({ use: z.literal("self") }),
 ]);
@@ -57,7 +66,10 @@ const FIELD_WORDS: Record<SecretField, string> = {
   card_number: "card number",
   card_expiry: "expiry",
   card_code: "security code",
+  one_time_code: "code",
 };
+
+const ASKS: Record<UiSecret["secret"], string> = { login: "a sign-in", card: "a payment card", code: "a code" };
 
 const list = (words: string[]) => (words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words.at(-1)}` : (words[0] ?? ""));
 
@@ -65,6 +77,7 @@ const list = (words: string[]) => (words.length > 1 ? `${words.slice(0, -1).join
 function filledMessage(request: UiSecret, response: Extract<UiResponse, { status: "filled" }>): string {
   const where = host(response.site);
   if (response.via === "takeover") return `I took over your browser on ${where} and did that part myself. Carry on from the page it's on now.`;
+  if (request.secret === "code") return `I filled in the code on ${where}. You can't see it. Carry on, e.g. press Verify.`;
   const what = request.secret === "card" ? `my card${response.label ? ` (${response.label})` : ""}` : `my sign-in${response.label ? ` (${response.label})` : ""}`;
   return `I filled in ${what} on ${where}: ${list(response.fields.map((f) => FIELD_WORDS[f]))}. You can't see the values. Carry on, e.g. submit the form.`;
 }
@@ -99,16 +112,18 @@ export async function GET(request: NextRequest, { params }: Context) {
     const page = await browserSite(auth.value, parsed.data.id);
     const site = page.ok ? page.site : null;
     let saved: CredentialSummary[] = [];
-    if (credentialsEnabled() && (found.block.secret === "card" || site?.startsWith("https://"))) {
+    // A code is used once: nothing is saved or offered for it.
+    const keeps = found.block.secret !== "code" && credentialsEnabled();
+    if (keeps && (found.block.secret === "card" || site?.startsWith("https://"))) {
       saved = await listCredentials(auth.value, found.block.secret === "card" ? { kind: "card" } : { kind: "login", origin: site! });
     }
-    return NextResponse.json({ site, browser: page.ok ? "open" : page.reason, saved, canSave: credentialsEnabled() }, noStore);
+    return NextResponse.json({ site, browser: page.ok ? "open" : page.reason, saved, canSave: keeps }, noStore);
   } catch (error) {
     return errorResponse(error);
   }
 }
 
-/** Fills the login or card into the browser (or records that the member did it themself). */
+/** Fills the login, card, or code into the browser (or records that the member did it themself). */
 export async function POST(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
@@ -146,13 +161,16 @@ export async function POST(request: NextRequest, { params }: Context) {
           const { number, name, expMonth, expYear } = saved.card;
           values = { card_name: name, card_number: number, card_expiry: `${expMonth}/${expYear}`, card_code: input.cvv };
         }
+      } else if (input.use === "code") {
+        if (block.secret !== "code") return jsonError(400, `This card asks for ${ASKS[block.secret]}.`);
+        values = { one_time_code: input.code };
       } else if (input.use === "login") {
-        if (block.secret !== "login") return jsonError(400, "This card asks for a payment card.");
+        if (block.secret !== "login") return jsonError(400, `This card asks for ${ASKS[block.secret]}.`);
         values = { ...(input.username ? { username: input.username } : {}), password: input.password };
         const { username, password } = input;
         if (input.save && credentialsEnabled()) save = (site) => saveLogin(tenant, { origin: site, username, password });
       } else {
-        if (block.secret !== "card") return jsonError(400, "This card asks for a sign-in.");
+        if (block.secret !== "card") return jsonError(400, `This card asks for ${ASKS[block.secret]}.`);
         const number = cardDigits(input.number);
         if (!number) return jsonError(400, "That card number doesn't look right.");
         const exp = cardExpiry(input.expiry);

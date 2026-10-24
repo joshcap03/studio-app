@@ -9,6 +9,7 @@ import {
   type MemoryCategory,
   type MemoryPromotion,
 } from "@/lib/types";
+import { agentHeaders } from "@/lib/client/tab-agent";
 
 // Business Brain: what the agent knows, grouped by what it's about, with where each fact
 // came from. Members edit, pin, and share their own facts; owners review shares. A long Brain
@@ -25,7 +26,7 @@ interface Props {
 async function send<T>(url: string, method: string, body?: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   const res = await fetch(url, {
     method,
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: body === undefined ? agentHeaders() : { "Content-Type": "application/json", ...agentHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (res.status === 204) return { ok: true, data: undefined as T };

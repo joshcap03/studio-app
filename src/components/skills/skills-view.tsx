@@ -11,6 +11,7 @@ import {
   MAX_SKILL_NAME_LENGTH,
   type WorkspaceSkill,
 } from "@/lib/types";
+import { agentHeaders } from "@/lib/client/tab-agent";
 
 interface Draft {
   id?: string;
@@ -38,7 +39,7 @@ const iconButton =
 async function call<T>(path: string, method: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...agentHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (res.status === 204) return undefined as T;

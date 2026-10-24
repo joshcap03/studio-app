@@ -7,6 +7,7 @@ import { PreviewNote, VoiceTile, useVoicePreview } from "@/components/voice/voic
 import { appName, toolkitForApp } from "@/lib/apps";
 import { appliedText, guessFixText, type ConnectStatus, type FormValues } from "@/lib/chat/ui-answer";
 import { api, ApiError, uploadAttachment } from "@/lib/client/api";
+import { agentHeaders } from "@/lib/client/tab-agent";
 import { catalogEntry } from "@/lib/skills/catalog";
 import { describeSchedule } from "@/lib/tasks/schedule";
 import type { AgentProposal, Attachment, ConnectionsState, MemoryMergeProposal, ProposalPicks, UiBlock, UiField, UiForm, UiOffer, UiResponse } from "@/lib/types";
@@ -832,7 +833,7 @@ function ConnectField({
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
     const load = () =>
-      fetch("/api/workspace/connections")
+      fetch("/api/workspace/connections", { headers: agentHeaders() })
         .then((r) => (r.ok ? (r.json() as Promise<ConnectionsState>) : null))
         .then(setState)
         .catch(() => setState(null));
@@ -857,7 +858,7 @@ function ConnectField({
   async function connect(slug: string) {
     setBusy(slug);
     const tab = window.open("", "_blank");
-    const res = await fetch(`/api/workspace/connections/${slug}?return=/settings`, { method: "POST" });
+    const res = await fetch(`/api/workspace/connections/${slug}?return=/settings`, { method: "POST", headers: agentHeaders() });
     const body = (await res.json().catch(() => null)) as { url?: string } | null;
     if (body?.url && tab) tab.location.href = body.url;
     else tab?.close();

@@ -3,6 +3,7 @@
 import { Check, Plug } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ConnectionsState, ToolkitConnection } from "@/lib/types";
+import { agentHeaders } from "@/lib/client/tab-agent";
 
 /**
  * The signed-in member's own connected apps. Connecting sends them to the provider's
@@ -21,7 +22,7 @@ export function ConnectionsList({
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
-    const res = await fetch("/api/workspace/connections");
+    const res = await fetch("/api/workspace/connections", { headers: agentHeaders() });
     if (!res.ok) {
       setError("Couldn't load your connected apps.");
       return;
@@ -38,7 +39,7 @@ export function ConnectionsList({
   async function connect(slug: string) {
     setBusy(slug);
     setError(null);
-    const res = await fetch(`/api/workspace/connections/${slug}?return=${encodeURIComponent(returnTo)}`, { method: "POST" });
+    const res = await fetch(`/api/workspace/connections/${slug}?return=${encodeURIComponent(returnTo)}`, { method: "POST", headers: agentHeaders() });
     const body = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
     if (!res.ok || !body?.url) {
       setError(body?.error ?? "Couldn't start connecting. Try again.");
@@ -50,7 +51,7 @@ export function ConnectionsList({
 
   async function remove(slug: string) {
     setBusy(slug);
-    await fetch(`/api/workspace/connections/${slug}`, { method: "DELETE" });
+    await fetch(`/api/workspace/connections/${slug}`, { method: "DELETE", headers: agentHeaders() });
     await load();
     setBusy(null);
   }
