@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { z } from "zod";
 import { SkillsView } from "@/components/skills/skills-view";
+import { TabAgent } from "@/components/tab-agent";
 import { storeFor } from "@/lib/chat/store-for";
 import { listSkills } from "@/lib/skills";
 import { draftFromConversation } from "@/lib/skills/render";
@@ -36,6 +37,7 @@ export default async function SkillsPage({ searchParams }: { searchParams: Promi
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
+      <TabAgent id={tenant.workspace.id} />
       <div className="mx-auto max-w-[760px]">
         <a
           href="/"

@@ -185,7 +185,10 @@ raw/technical text.
 ## Rules
 
 - Derive user and workspace from the session (`authorizeTenant` / `requirePageTenant`). Never
-  accept a workspace or user id from a URL, body, or unverified cookie.
+  accept a workspace or user id from a URL, body, or unverified cookie. The active-agent cookie
+  is the last agent picked in any tab, so each page names its own (`<TabAgent>`) and the browser
+  sends it on every API request (`agentHeaders()`, `src/lib/client/tab-agent.ts`); the server
+  honors it only for the member's own agents and never falls back to another.
 - Query Supabase only through the user's session client so RLS applies; don't add a
   service-role client to request paths. Every new table gets RLS policies and an isolation test.
   The one exception is the background worker: `trigger/lib/elevated.ts`, and nothing else, holds

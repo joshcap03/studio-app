@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { agentHeaders } from "@/lib/client/tab-agent";
 
 // What the agent's browser shows, for watching it on a call: a picture the server takes every
 // couple of seconds (src/lib/browser-view.ts), view only. Nothing here can drive the browser:
@@ -24,7 +25,7 @@ export function useBrowserFrames(conversationId: string, active: boolean, everyM
       if (stopped) return;
       if (document.visibilityState === "visible") {
         try {
-          const res = await fetch(`/api/conversations/${conversationId}/browser`, { cache: "no-store" });
+          const res = await fetch(`/api/conversations/${conversationId}/browser`, { cache: "no-store", headers: agentHeaders() });
           if (res.status === 404) {
             setState((s) => (s.kind === "showing" ? { kind: "gone" } : s));
             if (stopped) return;
