@@ -8,6 +8,7 @@ import type { VerdictCall } from "@/lib/verdicts";
 import type { DriveInput } from "@/lib/browser-fill";
 import type { CredentialSummary } from "@/lib/secrets";
 import { disablePush } from "./push";
+import { agentHeaders } from "./tab-agent";
 
 /** What a member sets on a task; the server fills in the rest. */
 export interface TaskFields {
@@ -33,7 +34,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...agentHeaders(), ...init?.headers },
   });
   if (res.status === 401) {
     window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
@@ -50,7 +51,7 @@ async function errorMessage(res: Response): Promise<string> {
 
 /** Audio from one of the app's own routes, as a blob to play from (no range requests needed). */
 async function audio(path: string): Promise<Blob> {
-  const res = await fetch(path);
+  const res = await fetch(path, { headers: agentHeaders() });
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
   return res.blob();
 }
@@ -96,7 +97,7 @@ export const api = {
   voiceNote: (conversationId: string, messageId: string): Promise<Blob> => audio(`/api/conversations/${conversationId}/messages/${messageId}/speech`),
   /** What the member said in a recording from the message box's mic; the recording isn't kept. */
   transcribe: async (recording: Blob): Promise<{ text: string; mock?: true }> => {
-    const res = await fetch("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": recording.type || "audio/webm" }, body: recording });
+    const res = await fetch("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": recording.type || "audio/webm", ...agentHeaders() }, body: recording });
     if (res.status === 401) {
       window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
       throw new ApiError(401, "Signed out.");
@@ -207,7 +208,7 @@ export const api = {
 async function upload<T>(path: string, file: File, signal?: AbortSignal): Promise<T> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(path, { method: "POST", body: form, signal });
+  const res = await fetch(path, { method: "POST", headers: agentHeaders(), body: form, signal });
   if (res.status === 401) {
     window.location.assign("/login");
     throw new ApiError(401, "Signed out.");
@@ -256,7 +257,7 @@ export async function streamTurn(
 ): Promise<void> {
   const res = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...agentHeaders() },
     // This page can show the agent's offer to call and its requests for a login or card, and its browser handed over; the
     // server leaves them out for a page that can't.
     body: JSON.stringify({ ...body, offers: true, secrets: true, handoffs: true }),

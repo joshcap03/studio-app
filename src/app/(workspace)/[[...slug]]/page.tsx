@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { TabAgent } from "@/components/tab-agent";
 import { Workspace, type InitialProject, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
 import { marksOf } from "@/lib/chat/move";
@@ -103,23 +104,26 @@ export default async function WorkspacePage({
   }
 
   return (
-    <Workspace
-      initialConversations={conversations}
-      initialMoves={moves}
-      initialThread={initialThread}
-      initialProjects={projects}
-      initialProject={initialProject}
-      agent={getAgentStatus(tenant.workspace.id)}
-      workspace={tenant.workspace}
-      workspaces={tenant.workspaces}
-      email={tenant.email}
-      skills={skills}
-      initialSkillId={initialSkillId}
-      setup={setup}
-      voice={voice}
-      member={firstName(tenant.account.name)}
-      greeter={greeter}
-      companions={own}
-    />
+    <>
+      <TabAgent id={tenant.workspace.id} />
+      <Workspace
+        initialConversations={conversations}
+        initialMoves={moves}
+        initialThread={initialThread}
+        initialProjects={projects}
+        initialProject={initialProject}
+        agent={getAgentStatus(tenant.workspace.id)}
+        workspace={tenant.workspace}
+        workspaces={tenant.workspaces}
+        email={tenant.email}
+        skills={skills}
+        initialSkillId={initialSkillId}
+        setup={setup}
+        voice={voice}
+        member={firstName(tenant.account.name)}
+        greeter={greeter}
+        companions={own}
+      />
+    </>
   );
 }

@@ -171,6 +171,18 @@ describe("API tenant isolation", () => {
     }
   });
 
+  it("refuses a tab that names another user's agent", async () => {
+    const res = await bob.request("/api/conversations", { headers: { "x-studio-agent": aliceWs } });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { code?: string }).code).toBe("agent_gone");
+    const send = await bob.request(`/api/conversations/${aliceConv}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "send", text: "hi" }),
+      headers: { "x-studio-agent": aliceWs },
+    });
+    expect(send.status).toBe(409);
+  });
+
   it("refuses to switch into a workspace the user doesn't belong to", async () => {
     expect((await bob.json("/api/workspaces/active", "POST", { workspaceId: aliceWs })).status).toBe(404);
   });
@@ -414,5 +426,30 @@ describe("one person, several agents", () => {
     expect(contents).not.toContain("carol-job-search-fact");
     const bobs = (await (await bob.json("/api/workspace/memories", "GET")).json()) as { memories: { content: string }[] };
     expect(bobs.memories.map((m) => m.content)).not.toContain("carol-personal-fact");
+  }, 60_000);
+
+  it("keep each tab on its own agent when another tab switches", async () => {
+    const dana = await signUp("dana");
+    const first = ((await (await dana.json("/api/workspaces", "POST", { name: "Dana Business" })).json()) as { workspaceId: string }).workspaceId;
+    const conversation = crypto.randomUUID();
+    const tab = { "x-studio-agent": first };
+    const send = (text: string, headers: Record<string, string> = {}) =>
+      dana.request(`/api/conversations/${conversation}/messages`, { method: "POST", body: JSON.stringify({ kind: "send", text }), headers });
+    const started = await send("non-streaming hello", tab);
+    expect(started.status).toBe(200);
+    await started.text();
+
+    // Another tab makes a second agent active (creating one switches to it).
+    await dana.json("/api/workspaces", "POST", { name: "Dana Job Search" });
+
+    // Going by the cookie alone, the first tab's conversation is in an agent that isn't active.
+    const lost = await send("non-streaming still there?");
+    expect(lost.status).toBe(404);
+    // Naming its own agent, the first tab carries on.
+    const kept = await send("non-streaming still there?", tab);
+    expect(kept.status, await kept.clone().text()).toBe(200);
+    await kept.text();
+    const thread = (await (await dana.request(`/api/conversations/${conversation}`, { headers: tab })).json()) as { messages: { role: string }[] };
+    expect(thread.messages.filter((m) => m.role === "user")).toHaveLength(2);
   }, 60_000);
 });

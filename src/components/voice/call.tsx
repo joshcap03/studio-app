@@ -30,6 +30,7 @@ import { BrowserView } from "./browser-view";
 import { publishCallApprovals } from "./call-approvals";
 import { useShare } from "./share";
 import { noteSaid } from "@/components/chat/show-me-notes";
+import { agentHeaders } from "@/lib/client/tab-agent";
 
 // A call with the agent, from any conversation: the orb (who has the floor, and whose move it is)
 // beside the stage, which shows only what the backend reported: the journey rail, the latest
@@ -528,7 +529,8 @@ export function Call({
     leaving.current = null;
     const url = `/api/voice/session/${grant.sessionId}/end`;
     const onLeave = () => {
-      if (!ended.current) navigator.sendBeacon(url);
+      // Kept alive past the page, like a beacon, but with the tab's agent: the call is that agent's.
+      if (!ended.current) void fetch(url, { method: "POST", keepalive: true, headers: { "Content-Type": "application/json", ...agentHeaders() }, body: "{}" }).catch(() => undefined);
     };
     window.addEventListener("pagehide", onLeave);
     return () => {

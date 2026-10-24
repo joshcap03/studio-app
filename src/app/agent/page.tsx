@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { AgentView } from "@/components/agent/agent-view";
+import { TabAgent } from "@/components/tab-agent";
 import { getAgentAdapter } from "@/lib/agent";
 import { listAgentFiles } from "@/lib/agent-files";
 import { requirePageTenant } from "@/lib/tenant";
@@ -42,6 +43,7 @@ export default async function AgentPage() {
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
+      <TabAgent id={tenant.workspace.id} />
       <div className="mx-auto max-w-[640px]">
         <a
           href="/"

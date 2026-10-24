@@ -23,6 +23,7 @@ import {
 } from "@/lib/types";
 import type { VoiceStatus } from "@/lib/voice/types";
 import { VOICES, type VoiceKey } from "@/lib/voice/voices";
+import { agentHeaders } from "@/lib/client/tab-agent";
 
 /** How the agent sounds to the caller, when they have voice. */
 export interface AgentVoice {
@@ -59,7 +60,7 @@ interface Props {
 async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<WorkspaceSettings> {
   const res = await fetch("/api/workspace/settings", {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...agentHeaders() },
     body: JSON.stringify(patch),
   });
   const body = (await res.json().catch(() => null)) as { settings?: WorkspaceSettings; error?: string } | null;
@@ -664,7 +665,7 @@ function TemplatePicker({ current, onApplied }: { current: string | null; onAppl
     setMessage(null);
     const res = await fetch("/api/workspace/template", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...agentHeaders() },
       body: JSON.stringify({ templateId: choice, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
     const body = (await res.json().catch(() => null)) as { settings?: WorkspaceSettings; addedSkills?: number; addedTasks?: number; error?: string } | null;
@@ -742,7 +743,7 @@ function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner
     setError(null);
     const res = await fetch("/api/workspace/memories", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...agentHeaders() },
       body: JSON.stringify({ content, scope }),
     });
     const body = (await res.json().catch(() => null)) as { memory?: Memory; error?: string } | null;
@@ -759,7 +760,7 @@ function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner
     const previous = memories;
     setMemories((list) => list.filter((m) => m.id !== id));
     setError(null);
-    const res = await fetch(`/api/workspace/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const res = await fetch(`/api/workspace/memories/${encodeURIComponent(id)}`, { method: "DELETE", headers: agentHeaders() });
     if (!res.ok) {
       setMemories(previous);
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
