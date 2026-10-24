@@ -532,9 +532,9 @@ export function buildHandoff(raw: Record<string, unknown>, id: string = crypto.r
   return { kind: "browser", id, reason, ...(site ? { site } : {}), ...(raw.watch === true ? { watch: true } : {}) };
 }
 
-/** The agent asking for a login or card at its browser: which, and why. It never carries a secret. */
+/** The agent asking for a login, card, or one-time code at its browser: which, and why. It never carries a secret. */
 export function buildSecretRequest(raw: Record<string, unknown>, id: string = crypto.randomUUID()): UiSecret | null {
-  const secret = raw.kind === "login" || raw.kind === "card" ? raw.kind : null;
+  const secret = raw.kind === "login" || raw.kind === "card" || raw.kind === "code" ? raw.kind : null;
   const reason = line(raw.reason, 200);
   if (!secret || !reason) return null;
   const usernameHint = secret === "login" ? line(raw.username_hint ?? raw.usernameHint, 200) : "";

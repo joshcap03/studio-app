@@ -338,7 +338,9 @@ class OfferCallArgs(BaseModel):
 
 
 class SecretArgs(BaseModel):
-    kind: str = Field(description="'login' for a sign-in (username and password), 'card' for a payment card.")
+    kind: str = Field(description=("'login' for a sign-in (username and password), 'card' for a payment card, 'code' for a "
+                                   "one-time code the site sent them (by text, email, or an authenticator app) to finish "
+                                   "signing in."))
     reason: str = Field(description=("Why, in one short sentence as you'd say it, e.g. 'To sign in to your Acme account and "
                                      "download the March invoice.'"))
     username_hint: str = Field(default="", description="Optional: the username or email the site seems to expect, if you know it.")
@@ -1272,20 +1274,22 @@ class ToolGatewayComponent(Component):
 
         def request_secret(kind: str, reason: str, username_hint: str = "") -> str:
             # Changes nothing and carries no secret: the app shows a card where the member picks a
-            # saved login or card (or types one), and the app types it into this conversation's
-            # browser itself. The agent hears only that it was filled, never the values.
+            # saved login or card (or types one, or the code a site sent them), and the app types it
+            # into this conversation's browser itself. The agent hears only that it was filled, never the values.
             kind = str(kind or "").strip().lower()
-            if kind not in ("login", "card"):
-                return "Not shown: kind must be 'login' or 'card'."
+            if kind not in ("login", "card", "code"):
+                return "Not shown: kind must be 'login', 'card', or 'code'."
             reason = " ".join(str(reason or "").split())[:200]
             if not reason:
                 return "Not shown: say in one sentence why you need it."
             return json.dumps({
                 "secret_request": {"kind": kind, "reason": reason, "username_hint": " ".join(str(username_hint or "").split())[:200]},
                 "note": ("The owner now sees a secure card that fills this into your browser's current page; you will "
-                         "never see the values. End your reply here with one short sentence, without asking for them. "
-                         "A message saying what was filled arrives next; then carry on (e.g. press Sign in). Never ask "
-                         "for a password, card number, or card security code in chat or a form."),
+                         "never see the values. End your reply here with one short sentence, without asking for them, "
+                         "and leave your browser open while they get it. A message saying what was filled arrives next; "
+                         "then carry on (e.g. press Sign in or Verify). If the site then asks for a code it sent them, "
+                         "look for it in their connected email if you can, else call request_secret with kind 'code'. "
+                         "Never ask for a password, card number, or card security code in chat or a form."),
             })
 
         async def request_secret_async(kind: str, reason: str, username_hint: str = "") -> str:
@@ -1488,11 +1492,12 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=request_secret, coroutine=request_secret_async, name="request_secret",
                 args_schema=SecretArgs,
-                description=("When your browser reaches a sign-in form or a payment form, ask the owner to fill it in "
-                             "securely: they pick a saved login or card (or type one) and Studio types it into the "
-                             "page you have open. You never see it. Open the page with the fields first. Never ask "
-                             "for passwords, card numbers, or card security codes any other way. Call it as the last "
-                             "thing in your reply. Changes nothing."),
+                description=("When your browser reaches a sign-in form, a payment form, or a page asking for a one-time "
+                             "code the site sent the owner (two-step verification), ask the owner to fill it in "
+                             "securely: they pick a saved login or card (or type one, or the code) and Studio types it "
+                             "into the page you have open. You never see it. Open the page with the fields first. Never "
+                             "ask for passwords, card numbers, or card security codes any other way. Call it as the "
+                             "last thing in your reply. Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=hand_browser, coroutine=hand_browser_async, name="hand_browser",

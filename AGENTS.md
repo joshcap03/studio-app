@@ -142,7 +142,7 @@ raw/technical text.
   On a call the member can watch the agent's browser, view only: `src/lib/browser-view.ts` keeps the
   conversation's sealed session id and takes screenshots server-side (the connection never leaves
   the server).
-- `src/lib/browser-fill.ts` + `src/lib/secrets/`: logins and cards for the agent's browser. The agent's
+- `src/lib/browser-fill.ts` + `src/lib/secrets/`: logins, cards, and one-time codes for the agent's browser. The agent's
   `request_secret` shows the secure card (`src/components/chat/secret-card.tsx`); the member picks a
   saved one or types one, and the server types it into the conversation's browser over CDP
   (`/api/conversations/<id>/secrets/<block>`): an https page only, a saved login only on its own site.
@@ -155,8 +155,9 @@ raw/technical text.
   (`src/components/chat/browser-handoff.tsx`). Their tap fetches a short-lived Browserbase live view
   of that conversation's browser (`browserControl` in `src/lib/browser-view.ts`, `POST
   /api/conversations/<id>/browser/control`), shown only to them; Done hands it back as their next
-  message. Sign-in and payment forms go through `request_secret`, and a one-time code is found or
-  asked for and typed by the agent. `src/lib/browser-signins.ts` keeps one Browserbase context per
+  message. Sign-in and payment forms go through `request_secret`, and a one-time code (2FA) is found
+  in the member's email by the agent, or asked for on the same secure card (`kind: code`) and typed
+  by the server. `src/lib/browser-signins.ts` keeps one Browserbase context per
   person (sealed on `accounts.browser_context`, shared by all their agents), sent to Studio Browser
   each run as `{{browser_context}}`, so sites they signed in to stay signed in; Settings forgets them.
 - "Show me once" (`builtin:teach`, `src/lib/skills/teach.ts`, owners where there's a hosted browser):
@@ -177,7 +178,7 @@ raw/technical text.
   the Supabase secret key.
 - `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
   Context, Member Apps for per-member Composio tools, Studio Browser for a Browserbase browser per
-  conversation, Load Skill) and `install.py`, which
+  conversation, kept alive while the agent waits on the member, Load Skill) and `install.py`, which
   backs up a flow and installs them.
 - `src/app/`: pages (`(workspace)`, `login`, `onboarding`, `settings`) and `api/` routes.
 - `src/components/`: `workspace/` (chat state owner), `chat/`, `sidebar/`, `settings/`, `ui/`.

@@ -175,7 +175,7 @@ export function cardLine(block: UiBlock): string {
   if (block.kind === "proposal" && onlySound(block)) return "They're on screen: tap one to hear it, then Apply. I'll sound like that from your next call.";
   if (block.kind === "proposal") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Apply when it looks right.`;
   // Never filled by voice: the values aren't said aloud, and the agent never hears them.
-  if (block.kind === "secret") return `${block.secret === "card" ? "Your card" : "Your sign-in"} goes in on screen. That one's a tap.`;
+  if (block.kind === "secret") return `${block.secret === "card" ? "Your card" : block.secret === "code" ? "The code" : "Your sign-in"} goes in on screen. That one's a tap.`;
   if (block.kind === "memory-merge") return `${block.summary ? `${sentence(plain(block.summary))} ` : ""}It's on screen. Tap Merge when it looks right.`;
   if (block.kind === "browser" && block.watch) return `${sentence(plain(block.reason))} Tap Show me on screen, do it in my browser, and tell me why you pick what you pick. Tap Done when you're through.`;
   if (block.kind === "browser") return `${sentence(plain(block.reason))} Tap Take over on screen, and Done when you're through.`;

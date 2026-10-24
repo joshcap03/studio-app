@@ -12,17 +12,21 @@ The browser session `start` returns is bound to the conversation and passed on e
 call; the model never sees or sets a `sessionId` argument. A page tool called before `start`
 opens the conversation's browser first (a new connection has none). Results drop the signed
 CDP URL (`cdpUrl`, full control of the browser) and any other `signingKey`, so neither
-reaches the model, chat history, or traces. When the plan's concurrent browsers are all in
-use, opening one ends the browser idle longest (five minutes or more) in this process and tries
-again; nothing else ends a browser early (Browserbase ends each after its session timeout).
+reaches the model, chat history, or traces.
+
+The browser outlives the run that opened it: the member may take minutes to find a password or
+a code the site sent them. So this node opens each conversation's browser itself through
+Browserbase's API, kept alive across disconnects for BROWSER_TIMEOUT_S, and passes the new session
+to `start`. It ends when the agent calls `end` (released through the API too, since keep-alive
+outlasts the server's own close), at that timeout, or when the plan's concurrent browsers are all
+in use and it's the one idle longest (MIN_IDLE_TO_END_S or more) in this process. If the plan
+refuses keep-alive it opens without it; if Browserbase's API can't open one at all, `start` opens
+the server's own.
 
 Saved sign-ins: the app fills `context_id` per run with the member's own Browserbase context (one
-per person). The hosted server's `start` can't take a context, so this node opens the
-conversation's browser itself through Browserbase's API with that context (persisted, so a site
-the member signed in to there stays signed in once that browser closes) and passes the new session
-to `start`. Tweaks are dropped when a paused run resumes, so the member's context is also kept in
-the process cache under their id from the session id. If the browser can't be opened that way it
-opens without sign-ins, as before.
+per person), and the browser opens with it (persisted, so a site the member signed in to there
+stays signed in once that browser closes). Tweaks are dropped when a paused run resumes, so the
+member's context is also kept in the process cache under their id from the session id.
 
 Tool names stay Browserbase's (start, end, navigate, act, observe, extract): the Tool Gateway
 routes `act` through take_action, so it still needs the owner's approval. Wire the output to
@@ -64,8 +68,11 @@ MAX_CONNECTIONS = 200
 BINDING_TTL_S = 3600
 # When the plan's concurrent browsers are all in use, `start` ends this process's browser
 # that has been idle longest, if idle at least this long, and tries once more.
-# (Long enough that an owner reading an approval card doesn't lose the browser it's for.)
-MIN_IDLE_TO_END_S = 300
+# (Long enough that an owner finding a password or reading an approval card doesn't lose the
+# browser it's for.)
+MIN_IDLE_TO_END_S = 900
+# How long a browser this node opens lives, kept alive while the agent waits on the member.
+BROWSER_TIMEOUT_S = 3600
 CONCURRENCY_LIMIT = re.compile(r"concurrent sessions", re.IGNORECASE)
 # Browserbase's own API, for opening a browser with the member's saved sign-ins.
 BROWSERBASE_API = "https://api.browserbase.com/v1"
@@ -301,6 +308,7 @@ class StudioBrowserComponent(ComponentWithCache):
                 await end.coroutine(**({session_field: sid} if session_field else {}))
             except ValueError:
                 pass  # Already ended; the slot is free either way.
+            await release(sid)
             return True
 
         schema_key = f"studio_browser:schemas:{server}"
@@ -329,18 +337,25 @@ class StudioBrowserComponent(ComponentWithCache):
         context = known[member][1] if member in known else None
         api_key = auth[7:].strip() if auth.lower().startswith("bearer ") else auth
 
-        async def open_signed_in() -> str | None:
-            """A new browser with the member's saved sign-ins (saved again when it closes), or None."""
-            body = {"browserSettings": {"context": {"id": context, "persist": True}}}
-            for attempt in (0, 1):
+        async def open_browser() -> str | None:
+            """A new browser kept alive between runs, with the member's saved sign-ins if they have
+            any (saved again when it closes), or None."""
+            body = {"keepAlive": True, "timeout": BROWSER_TIMEOUT_S}
+            if context:
+                body["browserSettings"] = {"context": {"id": context, "persist": True}}
+            made_room = False
+            for _ in range(3):
                 try:
                     async with httpx.AsyncClient(timeout=20) as client:
                         res = await client.post(f"{BROWSERBASE_API}/sessions", json=body,
                                                 headers={"X-BB-API-Key": api_key, "Content-Type": "application/json"})
                 except httpx.HTTPError:
                     return None
-                if res.status_code == 429 and attempt == 0 and await make_room():
+                if res.status_code == 429 and not made_room and await make_room():
+                    made_room = True
                     continue
+                if res.status_code in (400, 403) and body.pop("keepAlive", None):
+                    continue  # A plan without keep-alive: open one that lives while it's connected.
                 if res.status_code >= 300:
                     return None
                 try:
@@ -351,7 +366,7 @@ class StudioBrowserComponent(ComponentWithCache):
             return None
 
         async def release(sid: str) -> None:
-            """Ends a browser opened here that `start` couldn't use, rather than leave it running."""
+            """Ends a browser for good (kept-alive ones outlast the server's own close)."""
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     await client.post(f"{BROWSERBASE_API}/sessions/{sid}", json={"status": "REQUEST_RELEASE"},
@@ -363,10 +378,10 @@ class StudioBrowserComponent(ComponentWithCache):
             """Starts (or reuses) this conversation's browser, making room once if the plan is full."""
             current = bound()
             opened = None
-            if current is None and context:
-                current = opened = await open_signed_in()
+            if current is None:
+                current = opened = await open_browser()
                 if current is None:
-                    self.status = "Couldn't open the browser with saved sign-ins; opening it without"
+                    self.status = "Couldn't open a kept-alive browser; opening the server's own"
             _, session_field = without_session_arg(tool.args_schema)
             args = {**kwargs, **({session_field: current} if session_field and current else {})}
             try:
@@ -374,10 +389,13 @@ class StudioBrowserComponent(ComponentWithCache):
             except ValueError as exc:
                 if opened:
                     await release(opened)
-                if current and not DISCONNECTED.search(str(exc)):
-                    # The bound browser ended; start a fresh one for this conversation.
+                    if not DISCONNECTED.search(str(exc)):
+                        # The server couldn't use the browser opened here; let it open its own.
+                        return await tool.coroutine(**kwargs)
+                elif current and not DISCONNECTED.search(str(exc)):
+                    # The bound browser ended; open a fresh one for this conversation.
                     bind(None)
-                    return await tool.coroutine(**kwargs)
+                    return await start(tool, kwargs)
                 if CONCURRENCY_LIMIT.search(str(exc)) and await make_room():
                     return await tool.coroutine(**kwargs)
                 forget_connection(conv)
@@ -412,7 +430,11 @@ class StudioBrowserComponent(ComponentWithCache):
                     forget_connection(conv)
                     if current and bound() == current:
                         bind(None)  # Next call opens a fresh browser rather than retrying a dead one.
+                    if name == "end" and current:
+                        await release(current)
                     raise
+                if name == "end" and current:
+                    await release(current)
                 if name == "end" or bound() == current:
                     bind(None if name == "end" else current)
                 return with_session(clean_result(result), None if name == "end" else current)
