@@ -130,6 +130,7 @@ export const api = {
       | { use: "saved"; credentialId: string; cvv?: string }
       | { use: "login"; username: string; password: string; save: boolean }
       | { use: "card"; number: string; name: string; expiry: string; cvv: string; save: boolean }
+      | { use: "code"; code: string }
       | { use: "self" },
   ) => request<{ response: UiResponse; message: string }>(`/api/conversations/${conversationId}/secrets/${blockId}`, { method: "POST", body: JSON.stringify(body) }),
   /** One click, key, scroll, or bit of typing in the agent's browser, while taking it over. */

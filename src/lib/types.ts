@@ -625,22 +625,23 @@ export interface Question {
 export type UiBlock = UiForm | AgentProposal | MemoryMergeProposal | UiOffer | UiSecret | UiHandoff;
 
 /**
- * The agent asking for a login or card at its browser (its request_secret tool). It carries no
- * secret: the member picks a saved one or types one on the card, and the app types it into the
- * conversation's browser itself (src/lib/browser-fill.ts). The agent hears only what was filled.
+ * The agent asking for a login, a card, or a one-time code the site sent the member (2FA) at its
+ * browser (its request_secret tool). It carries no secret: the member picks a saved one or types
+ * one on the card, and the app types it into the conversation's browser itself
+ * (src/lib/browser-fill.ts). The agent hears only what was filled.
  */
 export interface UiSecret {
   kind: "secret";
   id: string;
-  secret: "login" | "card";
+  secret: "login" | "card" | "code";
   /** Why the agent needs it, in one sentence. */
   reason: string;
   /** The username or email the site seems to expect, as the agent read it. */
   usernameHint?: string;
 }
 
-/** The parts of a login or card the app can fill into a page. */
-export const SECRET_FIELDS = ["username", "password", "card_number", "card_name", "card_expiry", "card_code"] as const;
+/** The parts of a login, card, or one-time code the app can fill into a page. */
+export const SECRET_FIELDS = ["username", "password", "card_number", "card_name", "card_expiry", "card_code", "one_time_code"] as const;
 export type SecretField = (typeof SECRET_FIELDS)[number];
 
 /**
