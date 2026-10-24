@@ -356,7 +356,7 @@ export function planContext(plan: NonNullable<AgentTenantContext["plan"]>): stri
  * a page in their Library: the same collection and field names each time, and no filler.
  */
 const TRACKER_TIDY =
-  "Keep it tidy; the member reads each collection as a list in their Library. Save to the collection already here for that kind of thing, never a second name for the same list (even when instructions name another), and use the field names its rows already have. Status is where a row stands (one or two words, from the ones its collection uses); fields hold short facts worth seeing again (pay, location, a next step), with anything longer in one notes field. Leave a field out when there's nothing to say rather than writing None or unknown, and don't repeat the title or status in one.";
+  "Keep it tidy; the member reads each collection as a list in their Library. Save to the collection already here for that kind of thing, never a second name for the same list (even when instructions name another), and use the field names its rows already have and write titles in the one pattern they use. Status is where a row stands (one or two words, from the ones its collection uses); fields hold short facts worth seeing again (pay, location, a next step), with anything longer in one notes field. Leave a field out when there's nothing to say rather than writing None or unknown, and don't repeat the title or status in one.";
 
 /**
  * The member's tracker, when they have one: the rows it already holds, so the agent updates

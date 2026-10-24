@@ -5,10 +5,10 @@ const row = (title: string, fields: Record<string, unknown>, status: string | nu
 
 describe("isBlankValue", () => {
   it("reads empty values and the agent's placeholders as nothing", () => {
-    for (const value of [null, undefined, "", "  ", "None", "none.", "N/A", "unknown", "—", [], ["", "n/a"], {}, { a: null }]) {
+    for (const value of [null, undefined, "", "  ", "None", "none.", "N/A", "unknown", "—", "Not listed", "not specified", [], ["", "n/a"], {}, { a: null }]) {
       expect(isBlankValue(value), String(value)).toBe(true);
     }
-    for (const value of [0, false, "Remote", "None of the above", ["Remote"], { a: 1 }]) {
+    for (const value of [0, false, "Remote", "None of the above", "Not listed on LinkedIn, only the careers page", ["Remote"], { a: 1 }]) {
       expect(isBlankValue(value), String(value)).toBe(false);
     }
   });
@@ -39,6 +39,8 @@ describe("detailColumns", () => {
       row("PM - Beta", { location: "NYC", pay: "$160K", notes: long }),
       row("PM - Gamma", { pay: "$170K", experience: "3 years", notes: long }),
       row("PM - Delta", { next_step: "Apply", pay: "$140K" }),
+      row("PM - Epsilon", { score: 4, verdict: "kept", notes: long }),
+      row("PM - Zeta", { notes: long }),
     ];
     const columns = detailColumns(rows);
     expect(columns).toEqual(["pay", "location"]);
@@ -47,6 +49,9 @@ describe("detailColumns", () => {
       "pay: $160K · location: NYC",
       "pay: $170K",
       "pay: $140K",
+      // Without any of the columns, a row shows its own short fields rather than nothing.
+      "score: 4 · verdict: kept",
+      "",
     ]);
   });
 });
