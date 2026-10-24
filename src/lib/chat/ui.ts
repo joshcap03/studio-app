@@ -17,6 +17,7 @@ import {
   MAX_VERDICT_ITEMS,
   MAX_VERDICT_REASONS,
   type AgentProposal,
+  type Approval,
   type ChatMessage,
   type ProposedSkill,
   type ProposedSound,
@@ -28,6 +29,7 @@ import {
   type UiListPart,
   type UiOffer,
   type UiOption,
+  type UiResponse,
   type UiSecret,
   type UiVerdictItem,
   MAX_UI_BLOCKS,
@@ -504,8 +506,12 @@ function buildProposal(raw: Record<string, unknown>, id: string): AgentProposal 
     ...(options.length ? { sound: options } : {}),
     ...(assumptions.length ? { assumptions } : {}),
   };
-  const empty = !profile && !instructions && !proposal.skills.length && !proposal.tasks.length && !proposal.memories.length && !identity && !options.length;
-  return empty ? null : proposal;
+  return applies(proposal) || options.length ? proposal : null;
+}
+
+/** Whether a proposal sets anything up besides how it sounds. */
+function applies(p: Omit<AgentProposal, "sound">): boolean {
+  return p.profile !== undefined || p.instructions !== undefined || p.skills.length > 0 || p.tasks.length > 0 || p.memories.length > 0 || p.identity !== undefined;
 }
 
 /**
@@ -589,6 +595,53 @@ export function withoutCards(messages: ChatMessage[], kinds: readonly NewerCard[
     const uiResponse = m.uiResponse ? Object.fromEntries(Object.entries(m.uiResponse).filter(([id]) => !gone.includes(id))) : undefined;
     return { ...m, ui, ...(uiResponse ? { uiResponse } : {}) };
   });
+}
+
+/**
+ * A card without the ways a proposal offered to sound, for a member without voice: a proposal
+ * that offered only that is nothing (null). Any other card is as it was.
+ */
+export function withoutSound(block: UiBlock): UiBlock | null {
+  if (block.kind !== "proposal" || !block.sound?.length) return block;
+  const { sound: _sound, ...rest } = block;
+  return applies(rest) ? rest : null;
+}
+
+/**
+ * Messages as a member without voice sees them (docs/voice.md): without voice notes, the "On a
+ * call" and "Voice message" labels, offers to call, the ways a proposal offered to sound (and the
+ * voice an applied one picked), and the word that an approval was said aloud. The words stay:
+ * they're the conversation.
+ */
+export function withoutVoice(messages: ChatMessage[]): ChatMessage[] {
+  return withoutCards(messages, ["offer"]).map((m) => {
+    const { voiceNote: _note, ...rest } = m;
+    const ui = m.ui?.flatMap((b) => withoutSound(b) ?? []);
+    const kept = new Set(ui?.map((b) => b.id));
+    const uiResponse = m.uiResponse && Object.fromEntries(Object.entries(m.uiResponse).filter(([id]) => kept.has(id)).map(([id, r]) => [id, unvoiced(r)]));
+    return {
+      ...rest,
+      ...(m.origin?.kind === "voice" ? { origin: null } : {}),
+      ...(ui ? { ui } : {}),
+      ...(uiResponse ? { uiResponse } : {}),
+      ...(m.approvals ? { approvals: m.approvals.map(asTapped) } : {}),
+    };
+  });
+}
+
+/** An approval decided by voice, as one decided by hand. */
+function asTapped(a: Approval): Approval {
+  if (a.decidedVia !== "voice") return a;
+  const { decidedVia: _via, decidedWords: _words, ...rest } = a;
+  return rest;
+}
+
+/** What the member did with a card, without the voice an applied proposal picked. */
+export function unvoiced(r: UiResponse): UiResponse {
+  if (r.status !== "applied" || (r.picks.sound === undefined && !r.applied.voice)) return r;
+  const { sound: _sound, ...picks } = r.picks;
+  const { voice: _voice, ...applied } = r.applied;
+  return { ...r, picks, applied };
 }
 
 /** Messages as a page from before offers to call (and the cards after them) reads them. */

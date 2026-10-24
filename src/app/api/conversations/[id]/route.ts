@@ -10,7 +10,7 @@ import { journeyOrNone } from "@/lib/journey";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { getProject } from "@/lib/projects";
 import { MAX_TITLE_LENGTH, type ConversationSummary } from "@/lib/types";
-import { callsOrNone } from "@/lib/voice/calls";
+import { messagesWithCalls } from "@/lib/voice/calls";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -45,8 +45,8 @@ export async function GET(request: NextRequest, { params }: Context) {
     if (!conversation) return jsonError(404, "Conversation not found.");
     // The plan of the work here comes with it, so a run followed from elsewhere fills in the rail
     // too, and so do the calls its messages were said on (for their recaps).
-    const [messages, journey] = await Promise.all([store.listMessages(conversation.id), journeyOrNone(auth.value, conversation.id)]);
-    const calls = await callsOrNone(auth.value, messages);
+    const [listed, journey] = await Promise.all([store.listMessages(conversation.id), journeyOrNone(auth.value, conversation.id)]);
+    const { messages, calls } = await messagesWithCalls(auth.value, listed);
     // Offers to call (?offers=1), requests for a login or card (?secrets=1), and the browser
     // handed over (?handoffs=1) only go to pages that know them: a tab still on older code breaks on one.
     const params = request.nextUrl.searchParams;

@@ -80,21 +80,19 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
   // Until setup is done, the agent greets them and offers to guide them through it.
   const greeting = Boolean(setup && onSetup);
   // A tap on the companion calls it; when calls are out, it says to talk through the mic instead.
+  // Without voice it's the message box it opens.
   const ring = call?.onCall ?? onTalk;
   // Tapped to call (and, when it couldn't, whether they took the mic instead).
   const [tapped, setTapped] = useState<"call" | "mic" | null>(null);
-  const [noCall, setNoCall] = useState(false);
-  const canDictate = Boolean(voice?.speech.stt) && (noCall || Boolean(micInstead));
+  const canDictate = Boolean(voice?.speech.stt) && Boolean(micInstead);
   const ringing = Boolean(call?.busy ?? talking);
 
   function tapCompanion() {
     if (ringing) return;
     if (ring) {
-      setNoCall(false);
       setTapped("call");
       ring();
     } else if (!voice) {
-      setNoCall(true);
       composer?.current?.focus();
     }
     // Otherwise a call is already on.
@@ -102,7 +100,6 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
 
   function dictate() {
     setTapped("mic");
-    setNoCall(false);
     if (!composer?.current?.dictate()) composer?.current?.focus();
   }
 
@@ -113,7 +110,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
   };
 
   // Why the companion couldn't call, and the way to talk to it anyway.
-  const fallback = tapped === "call" && talkNotice ? (canDictate ? "I can't take a call right now." : talkNotice) : noCall ? "Calls aren't on for you yet." : null;
+  const fallback = tapped === "call" && talkNotice ? (canDictate ? "I can't take a call right now." : talkNotice) : null;
 
   function attach(skill: WorkspaceSkill) {
     composer?.current?.attachSkill({ id: skill.id, name: skill.name });
@@ -155,8 +152,6 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
                 <Mic size={14} strokeWidth={1.75} />
                 Talk to me with the mic instead
               </button>
-            ) : noCall ? (
-              <span>Type to me here instead.</span>
             ) : null}
           </p>
         ) : null}

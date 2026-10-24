@@ -16,7 +16,7 @@ import { summarizeSetup } from "@/lib/setup-state";
 import { requirePageTenant } from "@/lib/tenant";
 import { firstName } from "@/lib/setup-words";
 import { voiceStatus } from "@/lib/voice";
-import { callsOrNone } from "@/lib/voice/calls";
+import { messagesWithCalls } from "@/lib/voice/calls";
 import { resolvePersona } from "@/lib/voice/persona";
 import { getSettings } from "@/lib/workspace";
 
@@ -96,10 +96,10 @@ export default async function WorkspacePage({
   ]);
   let initialThread: InitialThread | null = null;
   if (conversationId) {
-    // The calls its messages were said on, for their recaps.
-    const calls = thread ? await callsOrNone(tenant, thread[0]) : [];
-    initialThread = thread
-      ? { id: conversationId, status: "ready", messages: thread[0], journey: thread[1], calls }
+    // The calls its messages were said on, for their recaps (and nothing of voice, with it off).
+    const said = thread ? await messagesWithCalls(tenant, thread[0]) : null;
+    initialThread = thread && said
+      ? { id: conversationId, status: "ready", messages: said.messages, journey: thread[1], calls: said.calls }
       : { id: conversationId, status: "missing", messages: [], journey: null, calls: [] };
   }
 

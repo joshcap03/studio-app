@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The parts of the server configuration that fail closed, read from a clean environment each time.
 
-const BASE = { NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321", NEXT_PUBLIC_SUPABASE_ANON_KEY: "a".repeat(40), VOICE_PROVIDER: "mock" };
+const BASE = { NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321", NEXT_PUBLIC_SUPABASE_ANON_KEY: "a".repeat(40), VOICE_ENABLED: "on", VOICE_PROVIDER: "mock" };
 
 async function configWith(env: Record<string, string>) {
   vi.resetModules();
@@ -11,6 +11,18 @@ async function configWith(env: Record<string, string>) {
 }
 
 afterEach(() => vi.unstubAllEnvs());
+
+describe("VOICE_ENABLED", () => {
+  it("keeps voice out of the app unless it's on, whatever else is set", async () => {
+    expect((await configWith({ VOICE_ENABLED: "" })).voice).toBeUndefined();
+    for (const off of ["off", "false", "0", "no", "of", "enabled"]) {
+      expect((await configWith({ VOICE_ENABLED: off })).voice, off).toBeUndefined();
+    }
+    for (const on of ["on", "ON", " on ", "true", "1", "yes"]) {
+      expect((await configWith({ VOICE_ENABLED: on })).voice?.provider, on).toBe("mock");
+    }
+  });
+});
 
 describe("VOICE_SPOKEN_APPROVALS", () => {
   it("is on unless set to something that reads as off", async () => {

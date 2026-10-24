@@ -1,6 +1,8 @@
 import { callOf } from "@/lib/chat/modality";
+import { withoutVoice } from "@/lib/chat/ui";
 import type { Tenant } from "@/lib/tenant-core";
 import type { CallSummary, ChatMessage } from "@/lib/types";
+import { voiceStatus } from "./status";
 
 // The member's own calls, as the rest of the app sees them: which call a message was said on
 // (checked, never taken from the browser), whether a call is over, and the calls a conversation's
@@ -73,4 +75,13 @@ export function callsOrNone(tenant: Tenant, messages: ChatMessage[]): Promise<Ca
     console.error("[voice] couldn't read the conversation's calls", error);
     return [];
   });
+}
+
+/**
+ * A conversation's messages as the member's page gets them, with the calls they were said on (for
+ * their recaps). With voice off for them (docs/voice.md), nothing from when it was on shows.
+ */
+export async function messagesWithCalls(tenant: Tenant, messages: ChatMessage[]): Promise<{ messages: ChatMessage[]; calls: CallSummary[] }> {
+  if (voiceStatus(tenant)) return { messages, calls: await callsOrNone(tenant, messages) };
+  return { messages: withoutVoice(messages), calls: [] };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { UiBlock, UiForm } from "@/lib/types";
-import { buildUiBlock, capUi, proposalPicksSchema, scheduleFrom, unknownCards, withoutCards, withoutOffers } from "./ui";
+import type { ChatMessage, UiBlock, UiForm } from "@/lib/types";
+import { buildUiBlock, capUi, proposalPicksSchema, scheduleFrom, unknownCards, withoutCards, withoutOffers, withoutSound, withoutVoice } from "./ui";
 import { answerText, formAnswerText, isQuestionAnswer, missingAnswer } from "./ui-answer";
 
 describe("buildUiBlock", () => {
@@ -241,6 +241,20 @@ describe("pages that don't know offers", () => {
     expect(stripped.ui).toEqual([form]);
     expect(stripped.uiResponse).toEqual({ f1: { status: "submitted", at: 1 } });
     expect(withoutOffers([{ ...base, id: "m2", ui: [offer] }])[0]).toMatchObject({ ui: [] });
+  });
+});
+
+describe("ways to sound, for a member without voice", () => {
+  it("leave the proposal, and take a proposal of only them with them", () => {
+    const sound = [{ voice: "warm" as const, manner: "Easy and brief." }];
+    const proposal: UiBlock = { kind: "proposal", id: "p1", summary: "s", instructions: "Be brief.", skills: [], tasks: [], memories: [], sound };
+    expect(withoutSound(proposal)).toEqual({ kind: "proposal", id: "p1", summary: "s", instructions: "Be brief.", skills: [], tasks: [], memories: [] });
+    expect(withoutSound({ ...proposal, instructions: undefined })).toBeNull();
+    const named: UiBlock = { kind: "proposal", id: "p2", summary: "s", skills: [], tasks: [], memories: [], identity: { name: "Wren", manner: "" }, sound };
+    expect(withoutSound(named)).not.toHaveProperty("sound");
+    const form: UiBlock = { kind: "form", id: "f1", title: "Roles", fields: [], submitLabel: "Send" };
+    expect(withoutSound(form)).toBe(form);
+    expect(withoutSound({ ...proposal, sound: [] })).toEqual({ ...proposal, sound: [] });
   });
 });
 
@@ -712,5 +726,56 @@ describe("question answers", () => {
     expect(isQuestionAnswer([level], "Senior, Staff")).toBe(false);
     expect(isQuestionAnswer([where, level], "Where: Remote")).toBe(false);
     expect(isQuestionAnswer([], "Remote")).toBe(false);
+  });
+});
+
+// A conversation from when voice was on, as a member without it gets it: the words, and nothing
+// that needs voice.
+const voiceBase = { conversationId: "c1", status: "complete" as const, activity: [], artifacts: [], createdAt: 0 };
+const soundOptions = [{ voice: "warm" as const, manner: "Easy and brief." }];
+
+describe("withoutVoice", () => {
+  it("keeps the words and drops what needs voice", () => {
+    const said: ChatMessage = { ...voiceBase, id: "u1", role: "user", content: "Remote only", origin: { kind: "voice", sessionId: "call-1" } };
+    const held: ChatMessage = { ...voiceBase, id: "u2", role: "user", content: "And senior", origin: { kind: "voice", via: "note" } };
+    const offer: UiBlock = { kind: "offer", id: "o1", reason: "Quicker to talk." };
+    const named: UiBlock = { kind: "proposal", id: "p1", summary: "s", instructions: "Be brief.", skills: [], tasks: [], memories: [], sound: soundOptions };
+    const soundOnly: UiBlock = { kind: "proposal", id: "p2", summary: "How I'll sound.", skills: [], tasks: [], memories: [], sound: soundOptions };
+    const reply: ChatMessage = {
+      ...voiceBase,
+      id: "a1",
+      role: "assistant",
+      content: "Three roles.",
+      voiceNote: { script: "Three roles.", source: "reply" },
+      ui: [named, soundOnly, offer],
+      uiResponse: {
+        p1: { status: "applied", at: 1, picks: { profile: false, instructions: true, skills: [], tasks: [], memories: [], sound: 0 }, applied: { settings: true, skills: 0, tasks: 0, memories: 0, skipped: 0, voice: "warm", manner: "Easy and brief." } },
+        o1: { status: "declined", at: 2 },
+        p2: { status: "submitted", at: 3 },
+      },
+      approvals: [
+        { id: "ap1", status: "approved", summary: "Send the email", decidedVia: "voice", decidedWords: "send it" },
+        { id: "ap2", status: "approved", summary: "Send the other", decidedVia: "tap" },
+      ] as ChatMessage["approvals"],
+    };
+    const [a, b, c] = withoutVoice([said, held, reply]);
+    expect(a).toMatchObject({ content: "Remote only", origin: null });
+    expect(b).toMatchObject({ content: "And senior", origin: null });
+    expect(c.content).toBe("Three roles.");
+    expect(c).not.toHaveProperty("voiceNote");
+    expect(c.ui).toEqual([{ kind: "proposal", id: "p1", summary: "s", instructions: "Be brief.", skills: [], tasks: [], memories: [] }]);
+    expect(c.uiResponse).toEqual({
+      p1: { status: "applied", at: 1, picks: { profile: false, instructions: true, skills: [], tasks: [], memories: [] }, applied: { settings: true, skills: 0, tasks: 0, memories: 0, skipped: 0, manner: "Easy and brief." } },
+    });
+    expect(c.approvals).toEqual([
+      { id: "ap1", status: "approved", summary: "Send the email" },
+      { id: "ap2", status: "approved", summary: "Send the other", decidedVia: "tap" },
+    ]);
+  });
+
+  it("leaves typed messages and other origins as they are", () => {
+    const typed: ChatMessage = { ...voiceBase, id: "u1", role: "user", content: "Hi" };
+    const task: ChatMessage = { ...voiceBase, id: "u2", role: "user", content: "Check roles", origin: { kind: "task", taskId: "t1", title: "Weekly roles", runId: null } };
+    expect(withoutVoice([typed, task])).toEqual([typed, task]);
   });
 });

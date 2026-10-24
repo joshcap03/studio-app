@@ -82,6 +82,10 @@ const schema = z.object({
   // Accounts that see only the voice preview (the Setup Call), on top of the ones above.
   PREVIEW_VOICE_EMAILS: z.string().optional(),
 
+  // Voice (calls, the mic, voice notes, voice choices) is out of the app unless this is "on":
+  // members see and hear none of it, and the routes behind it refuse. The rest of the settings
+  // below only count once it's on.
+  VOICE_ENABLED: z.string().optional(),
   // Voice calls (preview). "elevenlabs" needs every ELEVENLABS_* and VOICE_* value below; "mock"
   // is a labeled stand-in for QA (typed speech, captions, no audio). Unset means calls are off,
   // unless the ElevenLabs keys are set.
@@ -263,6 +267,8 @@ function emails(list: string | undefined): Set<string> {
 }
 
 function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
+  // Only something that reads as on (on, true, 1, yes) brings voice back, so a mistyped switch leaves it out.
+  if (!/^(on|true|1|yes)$/i.test(env.VOICE_ENABLED?.trim() ?? "")) return undefined;
   const provider = env.VOICE_PROVIDER ?? (env.ELEVENLABS_API_KEY && env.ELEVENLABS_AGENT_ID ? "elevenlabs" : undefined);
   if (!provider) return undefined;
   const llm =

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { claimAsAgentFile } from "@/lib/agent-files";
 import { errorResponse, parseBody } from "@/lib/api";
 import { storeFor } from "@/lib/chat/store-for";
-import { proposalPicksSchema } from "@/lib/chat/ui";
+import { proposalPicksSchema, unvoiced } from "@/lib/chat/ui";
 import { nameCompanion, setCompanionSound } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { isSetupConversation, updateSetup } from "@/lib/setup-state";
@@ -167,7 +167,8 @@ export async function POST(request: NextRequest, { params }: Context) {
       if (await isSetupConversation(auth.value, ids.data.id)) await updateSetup(auth.value, { status: "done" });
     }
     await store.updateMessage(message.id, { uiResponse: { ...(message.uiResponse ?? {}), [block.id]: response } });
-    return NextResponse.json({ response });
+    // Without voice, the voice an earlier apply picked stays out of the card, as it does on load.
+    return NextResponse.json({ response: voiceStatus(auth.value) ? response : unvoiced(response) });
   } catch (error) {
     return errorResponse(error);
   }
