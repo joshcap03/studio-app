@@ -1,5 +1,9 @@
 # Voice calls (preview)
 
+**Voice is out of the app for now.** Unless `VOICE_ENABLED=on`, nobody sees or hears any of it
+(calls, the mic, voice notes, voice choices, call offers), the agent isn't told about it, and the
+voice routes refuse. The code below stays as it is; `npm run qa:serve` turns it on for tests.
+
 A call puts a fast voice in front of the agent. The voice (ElevenLabs Agents) listens, talks, and
 handles being talked over; the agent (the worker, Langflow) does all the thinking and work, as in
 the chat. The voice may only reflect the member's words back, say what the agent reported, ask

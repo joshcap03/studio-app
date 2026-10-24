@@ -5,7 +5,7 @@ import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
 import { buildQuestions } from "./questions";
-import { buildUiBlock, capUi, isMergeRequest, unknownCards, withoutCards, type NewerCard } from "./ui";
+import { buildUiBlock, capUi, isMergeRequest, unknownCards, withoutCards, withoutSound, withoutVoice, type NewerCard } from "./ui";
 import { callOf } from "./modality";
 import { buildCitations, mergeCitations } from "./citations";
 import { buildTimeline, linksSeen } from "./timeline";
@@ -162,6 +162,12 @@ export interface TurnDeps {
    * Without it, offers are dropped.
    */
   offerCalls?: boolean;
+  /**
+   * Whether the member has voice (docs/voice.md). Without it, a proposal offers no ways to sound
+   * (one of only those is dropped), and what's streamed leaves out what needs voice, as their page
+   * does (withoutVoice): a reply continued, or a message edited, from when it was on.
+   */
+  voice?: boolean;
   /**
    * False when the page this streams to predates offers to call: it breaks on the card, so the
    * events it's sent leave out any offer already on the reply (one continued after an approval).
@@ -491,7 +497,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const send = (event: StreamEvent) => {
         if (!open) return;
         try {
-          stream.enqueue(encoder.encode(`${JSON.stringify(unknown.length ? withoutCardsIn(event, unknown) : event)}\n`));
+          const shown = deps.voice ? event : withoutVoiceIn(event);
+          stream.enqueue(encoder.encode(`${JSON.stringify(unknown.length ? withoutCardsIn(shown, unknown) : shown)}\n`));
         } catch {
           open = false;
         }
@@ -710,9 +717,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                     })
                   : null;
               // An offer to call shows only where the member could take it, and the browser
-              // only where they could take it over.
-              if (built && (built.kind !== "offer" || deps.offerCalls) && (built.kind !== "browser" || deps.handoffs)) {
-                ui = capUi([...(ui ?? []), built]);
+              // only where they could take it over; ways to sound only for a member with voice.
+              const block = built && !deps.voice ? withoutSound(built) : built;
+              if (block && (block.kind !== "offer" || deps.offerCalls) && (block.kind !== "browser" || deps.handoffs)) {
+                ui = capUi([...(ui ?? []), block]);
                 send({ type: "ui", ui });
               }
               break;
@@ -932,6 +940,17 @@ function withoutCardsIn(event: StreamEvent, kinds: readonly NewerCard[]): Stream
   if (event.type === "ui") return { ...event, ui: event.ui.filter((b) => !(kinds as readonly string[]).includes(b.kind)) };
   if (event.type === "start") return { ...event, assistantMessage: withoutCards([event.assistantMessage], kinds)[0] };
   if (event.type === "end") return { ...event, message: withoutCards([event.message], kinds)[0] };
+  return event;
+}
+
+/** An event as a member without voice gets it, the way their page loads the conversation. */
+function withoutVoiceIn(event: StreamEvent): StreamEvent {
+  if (event.type === "ui") return { ...event, ui: event.ui.flatMap((b) => withoutSound(b) ?? []).filter((b) => b.kind !== "offer") };
+  if (event.type === "start") {
+    const [assistantMessage] = withoutVoice([event.assistantMessage]);
+    return { ...event, assistantMessage, userMessage: event.userMessage && withoutVoice([event.userMessage])[0] };
+  }
+  if (event.type === "end") return { ...event, message: withoutVoice([event.message])[0] };
   return event;
 }
 

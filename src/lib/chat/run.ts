@@ -69,6 +69,9 @@ export async function buildTurnDeps(
   tenant: Tenant,
   { conversationId, input: asked, onFinished, shouldStop }: RunOptions,
 ): Promise<{ deps: TurnDeps; request: TurnRequest }> {
+  // Whether the member has voice: without it nothing about the run is spoken, whatever the
+  // browser sends or an older message from when it was on says.
+  const voiceOn = Boolean(voiceStatus(tenant));
   // A task's run is a message with the task's brief and skill, labeled with where it came from.
   let origin: MessageOrigin | undefined;
   let input: Exclude<RunInput, { kind: "task" }>;
@@ -91,8 +94,9 @@ export async function buildTurnDeps(
   } else {
     input = asked;
     // Words said on a call, or held as a voice message, are labeled as spoken; words said on a
-    // call carry the call, once it's known to be the member's own (for its recap).
-    if (asked.kind === "send") {
+    // call carry the call, once it's known to be the member's own (for its recap). Without voice
+    // everything is typed.
+    if (asked.kind === "send" && voiceOn) {
       const call = asked.modality === "call" && asked.voiceSessionId && asked.text.trim() ? await callForWords(tenant, asked.voiceSessionId).catch(() => null) : null;
       origin = originFor(asked.modality, asked.text, call?.id);
     }
@@ -104,8 +108,11 @@ export async function buildTurnDeps(
   // A new message says how it was sent. A retry, an edit, or a decision answers the member's
   // latest message again, so it's said the way that one was (spoken on a call, or a voice
   // message), whatever the browser sends.
-  const modality: Modality | undefined =
-    input.kind === "send" ? input.modality : modalityOf((await earlier)?.findLast((m) => m.role === "user")?.origin);
+  const modality: Modality | undefined = !voiceOn
+    ? undefined
+    : input.kind === "send"
+      ? input.modality
+      : modalityOf((await earlier)?.findLast((m) => m.role === "user")?.origin);
   // A retry or a decision carries on a watch's run under the same rules.
   if (asked.kind === "retry" || asked.kind === "decide") {
     const answered = (await earlier)?.findLast((m) => m.role === "user")?.origin;
@@ -115,7 +122,7 @@ export async function buildTurnDeps(
   // one, they haven't said Not now to an offer here, and the page the reply streams to can show
   // the offer. A task's run streams to no page; a page that predates offers loads it without them.
   const shown = asked.kind === "task" || asked.offers === true;
-  const offerCalls = shown && Boolean(voiceStatus(tenant)) && modality !== "call" && !(await earlier)?.some(declinedOffer);
+  const offerCalls = shown && voiceOn && modality !== "call" && !(await earlier)?.some(declinedOffer);
   // Context (settings and memory recall) loads alongside the skill and project lookups rather
   // than after them; it only reads, so a refused run just discards it.
   // Memory is searched with the member's recent messages, not just this one, so a follow-up
@@ -146,7 +153,7 @@ export async function buildTurnDeps(
       console.error("[browser] couldn't load saved sign-ins:", error instanceof Error ? error.message : error);
       return null;
     }),
-    input.kind === "send" && input.screen ? onScreen(tenant, input.screen).catch(() => null) : Promise.resolve(null),
+    input.kind === "send" && input.screen && voiceOn ? onScreen(tenant, input.screen).catch(() => null) : Promise.resolve(null),
   ]);
   if (skill === null) throw new TurnError(404, "Skill not found.");
   if (project === null) throw new TurnError(404, "Project not found.");
@@ -215,7 +222,9 @@ export async function buildTurnDeps(
     // A reply to words said on a call the member has since hung up on comes back as a voice note.
     callEnded: (callId) => callEnded(tenant, callId),
     offerCalls,
-    offersShown: shown,
+    // Without voice, an offer from when it was on never shows again (on a reply continued after an approval).
+    offersShown: shown && voiceOn,
+    voice: voiceOn,
     secretsShown: asked.kind === "task" || asked.secrets === true,
     // The member can take over the agent's browser wherever the app can reach it.
     handoffs: Boolean(getConfig().browser),

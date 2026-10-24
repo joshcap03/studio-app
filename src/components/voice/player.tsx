@@ -49,6 +49,12 @@ const State = createContext<PlayerState | null>(null);
 const Controls = createContext<PlayerControls | null>(null);
 const Progress = createContext<PlayerProgress | null>(null);
 const CallLive = createContext(false);
+const VoiceOn = createContext(false);
+
+/** Whether the member has voice at all (docs/voice.md): without it, nothing mentions calls or speaking. */
+export function useVoiceOn(): boolean {
+  return useContext(VoiceOn);
+}
 
 /** Whether a voice call is live, so nothing else may use the speaker or the mic. */
 export function useCallLive(): boolean {
@@ -99,15 +105,17 @@ function silence(): string {
 /** The player for a member with voice (and speech that can say a line); without, nothing plays. */
 export function VoicePlayer({ voice, onCall = false, children }: { voice: VoiceStatus | null; onCall?: boolean; children: React.ReactNode }) {
   return (
-    <CallLive.Provider value={onCall}>
-      {voice?.speech.tts ? (
-        <PlayerProvider mock={!voice.live} onCall={onCall}>
-          {children}
-        </PlayerProvider>
-      ) : (
-        children
-      )}
-    </CallLive.Provider>
+    <VoiceOn.Provider value={voice !== null}>
+      <CallLive.Provider value={onCall}>
+        {voice?.speech.tts ? (
+          <PlayerProvider mock={!voice.live} onCall={onCall}>
+            {children}
+          </PlayerProvider>
+        ) : (
+          children
+        )}
+      </CallLive.Provider>
+    </VoiceOn.Provider>
   );
 }
 

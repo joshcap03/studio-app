@@ -121,7 +121,8 @@ raw/technical text.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
-- `src/lib/voice/`: voice calls (preview; `docs/voice.md`). `index.ts` starts and ends calls under
+- `src/lib/voice/`: voice calls (preview; `docs/voice.md`), out of the app unless `VOICE_ENABLED=on`
+  (`voiceConfig` in `src/lib/config.ts`; `qa:serve` sets it). `index.ts` starts and ends calls under
   the member's session (`claim_voice` caps daily voice time; `claimVoiceClip` charges speech outside
   calls to the same time), `voices.ts` is Studio's voice catalog (keys only; `elevenlabs.ts` alone
   maps them to provider voices), `speech.ts` says text and hears recordings (a labeled tone under

@@ -142,6 +142,27 @@ describe("buildTurnDeps", () => {
     }
   });
 
+  it("treats every run as typed for a member without voice, whatever the browser or an older message says", async () => {
+    seen.voice = false;
+    const id = await conversationWith(null);
+    const called = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only", modality: "call", voiceSessionId: MY_CALL, offers: true } });
+    expect((called.request as { origin?: unknown }).origin).toBeUndefined();
+    expect(called.deps.offersShown).toBe(false);
+    expect(called.deps.voice).toBe(false);
+    const held = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only", modality: "voice_note" } });
+    expect((held.request as { origin?: unknown }).origin).toBeUndefined();
+    // A retry or decision under words said on a call, from when voice was on.
+    const spoken = await conversationWith({ kind: "voice" });
+    seen.modality = [];
+    const { deps } = await buildTurnDeps(tenant, { conversationId: spoken, input: { kind: "retry" } });
+    await buildTurnDeps(tenant, { conversationId: spoken, input: { kind: "decide", approvalId: crypto.randomUUID(), decision: "approve" } });
+    expect(seen.modality).toEqual([undefined, undefined]);
+    await deps.loadSkill?.("builtin:setup");
+    expect(seen.skills).toEqual([{ call: false }]);
+    seen.voice = true;
+    expect((await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Remote only", offers: true } })).deps.voice).toBe(true);
+  });
+
   it("loads a call's skills for the call, and gives voice notes only to members with voice", async () => {
     const id = await conversationWith({ kind: "voice" });
     const { deps } = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "retry" } });

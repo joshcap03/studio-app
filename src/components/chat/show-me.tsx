@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { shownLines, shownText } from "@/lib/chat/show-me";
 import { api, ApiError } from "@/lib/client/api";
 import { MAX_SHOWN_NOTES, MAX_SHOWN_STEPS, type Attachment, type ShownNote, type ShownStep, type UiHandoff, type UiResponse } from "@/lib/types";
+import { useVoiceOn } from "@/components/voice/player";
 import { BrowserDrive } from "./browser-drive";
 import { listenForNotes } from "./show-me-notes";
 
@@ -46,6 +47,8 @@ export function ShowMeCard({
   const [steps, setSteps] = useState<ShownStep[]>([]);
   const [notes, setNotes] = useState<ShownNote[]>([]);
   const [note, setNote] = useState("");
+  // Notes can be said on a call only where there are calls.
+  const voiceOn = useVoiceOn();
   const [busy, setBusy] = useState<"start" | "done" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -198,7 +201,7 @@ export function ShowMeCard({
               value={note}
               onChange={(e) => setNote(e.target.value)}
               maxLength={300}
-              placeholder="Why that one? Add a note, or say it on a call"
+              placeholder={voiceOn ? "Why that one? Add a note, or say it on a call" : "Why that one? Add a note"}
               aria-label="Add a note on what you're doing"
               className={input}
             />

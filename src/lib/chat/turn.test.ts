@@ -197,6 +197,22 @@ describe("startTurn", () => {
     expect((await store.listMessages(id))[0]).toMatchObject({ content: "for April", skill: { id: "skill-1" } });
   });
 
+  it("streams a message said aloud back then the way a member without voice sees it, as their page does", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const deps = { store, adapter: scripted([{ type: "message", text: "Done" }]), context: context(scopeA), idleTimeoutMs: 1000 };
+    await collect(startTurn({ ...deps, voice: true }, { conversationId: id, kind: "send", text: "for March", origin: { kind: "voice", via: "note" } }));
+    const userId = (await store.listMessages(id))[0].id;
+    const edit = async (voice: boolean) => {
+      const events = await collect(startTurn({ ...deps, voice }, { conversationId: id, kind: "edit", messageId: userId, text: "for April" }));
+      return events.find((e) => e.type === "start") as Extract<StreamEvent, { type: "start" }>;
+    };
+    expect((await edit(true)).userMessage?.origin).toEqual({ kind: "voice", via: "note" });
+    expect((await edit(false)).userMessage?.origin).toBeNull();
+    // What's stored stays as it was said.
+    expect((await store.listMessages(id))[0].origin).toEqual({ kind: "voice", via: "note" });
+  });
+
   it("does not reuse a thread id recorded by a different provider", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
@@ -617,7 +633,7 @@ describe("approvals", () => {
       const { id, deps, approval, store } = await pause(createMemoryStore(scopeA), seen, pausingWith({ actions }, seen));
       const claim = vi.fn(async () => null);
       const allowSpokenDecision = vi.fn(async () => null);
-      const events = await collect(startTurn({ ...deps, claim, allowSpokenDecision }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken }));
+      const events = await collect(startTurn({ ...deps, voice: true, claim, allowSpokenDecision }, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", spoken }));
       expect(allowSpokenDecision).toHaveBeenCalledWith(expect.objectContaining({ id: approval.id, spoken: expect.objectContaining({ ok: true }) }), "approve", spoken);
       expect(seen[1].resume).toMatchObject({ decision: "approve" });
       const end = events.at(-1);
@@ -1139,6 +1155,32 @@ describe("edits, files, and memory suggestions", () => {
     expect((await run(undefined)).map((b) => b.kind)).toEqual(["form", "proposal"]);
   });
 
+  it("offers ways to sound only to a member with voice", async () => {
+    const sound = [{ voice: "warm", manner: "Easy and brief." }];
+    const run = async (voice: boolean | undefined) => {
+      const store = createMemoryStore(scopeA);
+      const id = crypto.randomUUID();
+      const adapter = scripted([
+        { type: "message", text: "A few ways I could be." },
+        { type: "ui", block: { proposal: { summary: "s", instructions: "Be brief.", sound } } },
+        { type: "ui", block: { proposal: { summary: "How I'll sound.", sound } } },
+      ]);
+      await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, voice }, { conversationId: id, kind: "send", text: "x" }));
+      return (await store.listMessages(id))[1].ui ?? [];
+    };
+    expect(await run(true)).toMatchObject([
+      { kind: "proposal", instructions: "Be brief.", sound },
+      { kind: "proposal", summary: "How I'll sound.", sound },
+    ]);
+    // Without voice the options go, and so does a proposal of nothing but them.
+    for (const off of [false, undefined]) {
+      const ui = await run(off);
+      expect(ui).toHaveLength(1);
+      expect(ui[0]).toMatchObject({ kind: "proposal", instructions: "Be brief." });
+      expect(ui[0]).not.toHaveProperty("sound");
+    }
+  });
+
   it("hands the member the browser only where they could take it over, and only to pages that know it", async () => {
     const handoff = { hand_browser: { reason: "Sign in to your USPS account.", site: "USPS" } };
     const run = async (deps: { handoffs?: boolean; handoffsShown?: boolean }) => {
@@ -1238,7 +1280,7 @@ describe("voice notes", () => {
     const finished: ChatMessage[] = [];
     const streamed = await collect(
       startTurn(
-        { store, adapter: scripted(events, fail), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes, onFinished: (m) => void finished.push(m) },
+        { store, adapter: scripted(events, fail), context: context(scopeA), idleTimeoutMs: 1000, voice: true, voiceNotes, onFinished: (m) => void finished.push(m) },
         { conversationId: id, kind: "send", text: "Find me roles", origin: origin ?? undefined },
       ),
     );
@@ -1295,7 +1337,7 @@ describe("voice notes", () => {
           if (resumed) yield { type: "text-delta", text: resumed };
         },
       };
-      const deps = { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true };
+      const deps = { store, adapter, context: context(scopeA), idleTimeoutMs: 1000, voice: true, voiceNotes: true };
       const first = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "Reply to Jo for me", origin: VOICE_MESSAGE }));
       const approval = first.find((e) => e.type === "approval");
       if (approval?.type !== "approval") throw new Error("no approval");
@@ -1321,7 +1363,7 @@ describe("voice notes", () => {
       const callEnded = vi.fn(async () => over);
       const events = await collect(
         startTurn(
-          { store, adapter: scripted([{ type: "message", text: "Found three. The best is remote." }]), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true, callEnded },
+          { store, adapter: scripted([{ type: "message", text: "Found three. The best is remote." }]), context: context(scopeA), idleTimeoutMs: 1000, voice: true, voiceNotes: true, callEnded },
           { conversationId: id, kind: "send", text: "Find me roles", origin: onCall },
         ),
       );
@@ -1352,7 +1394,7 @@ describe("voice notes", () => {
       });
       const events = await collect(
         startTurn(
-          { store, adapter: scripted([{ type: "message", text: "Found three. The best is remote." }]), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true, callEnded },
+          { store, adapter: scripted([{ type: "message", text: "Found three. The best is remote." }]), context: context(scopeA), idleTimeoutMs: 1000, voice: true, voiceNotes: true, callEnded },
           { conversationId: id, kind: "send", text: "Find me roles", origin: onCall },
         ),
       );
@@ -1370,7 +1412,7 @@ describe("voice notes", () => {
   it("follow the member's voice message through a retry", async () => {
     const { store, id } = await turn(VOICE_MESSAGE, [{ type: "message", text: "First try." }]);
     const events = await collect(
-      startTurn({ store, adapter: scripted([{ type: "message", text: "Second try." }]), context: context(scopeA), idleTimeoutMs: 1000, voiceNotes: true }, { conversationId: id, kind: "retry" }),
+      startTurn({ store, adapter: scripted([{ type: "message", text: "Second try." }]), context: context(scopeA), idleTimeoutMs: 1000, voice: true, voiceNotes: true }, { conversationId: id, kind: "retry" }),
     );
     const end = events.at(-1);
     expect(end?.type === "end" && end.message.voiceNote).toEqual({ script: "Second try.", source: "reply" });
