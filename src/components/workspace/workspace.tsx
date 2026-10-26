@@ -387,6 +387,8 @@ function WorkspaceShell({
   const [micInstead, setMicInstead] = useState(false);
   // Streams this tab let go of while the run kept going on the server (the app was hidden).
   const detached = useRef(new WeakSet<AbortController>());
+  // Streams whose run the server has taken (its "start" arrived), so its copy has the message.
+  const confirmed = useRef(new WeakSet<AbortController>());
   /** Sends that never reached the server, keyed by placeholder id, so Retry can resend them. */
   const unsent = useRef(new Map<string, { text: string; extras: SendExtras }>());
   /** What each pending reply's message was sent with, keyed by its placeholder id. */
@@ -656,6 +658,9 @@ function WorkspaceShell({
               ),
             );
             upsertConversation(event.conversation);
+            confirmed.current.add(controller);
+            // Hidden before the server took it: let go now that its copy has the message.
+            if (detached.current.has(controller)) controller.abort();
             break;
           }
           case "text":
@@ -1034,13 +1039,19 @@ function WorkspaceShell({
 
   // When the app is hidden (phone locked, app switched), let go of open streams. The runs
   // keep going on the server, which notifies the member when one ends while they're away;
-  // coming back follows them from the saved state.
+  // coming back follows them from the saved state. A run the server hasn't taken yet is let go
+  // of once it has: its saved state could still be missing the message, and nothing would follow it.
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState !== "hidden") return;
+      const hidden = document.visibilityState === "hidden";
       for (const controller of controllers.current.values()) {
+        if (controller.signal.aborted) continue;
+        if (!hidden) {
+          detached.current.delete(controller);
+          continue;
+        }
         detached.current.add(controller);
-        controller.abort();
+        if (confirmed.current.has(controller)) controller.abort();
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
