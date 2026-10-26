@@ -1,5 +1,5 @@
 import type { MarkedMove } from "@/lib/chat/move";
-import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse } from "@/lib/types";
+import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSummary } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
@@ -146,6 +146,9 @@ export const api = {
   takeBrowser: (conversationId: string) =>
     request<{ url: string }>(`/api/conversations/${conversationId}/browser/control`, { method: "POST" }),
   browserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser"),
+  /** Deletes one of the member's agents; `next` is the agent to open now, null when none is left. */
+  deleteAgent: (id: string) => request<{ next: string | null }>(`/api/workspaces/${id}`, { method: "DELETE" }),
+  listAgents: () => request<{ workspaces: WorkspaceSummary[]; active: string | null }>("/api/workspaces"),
   forgetBrowserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser", { method: "DELETE" }),
   answerUi: (
     conversationId: string,

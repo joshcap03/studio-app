@@ -156,7 +156,9 @@ describe("row level security", () => {
   it("limits how many workspaces one account can create", async () => {
     await createWorkspace(bob, "Second");
     await createWorkspace(bob, "Third");
-    await expect(createWorkspace(bob, "Fourth")).rejects.toMatchObject({ message: "workspace limit reached" });
+    await createWorkspace(bob, "Fourth");
+    await createWorkspace(bob, "Fifth");
+    await expect(createWorkspace(bob, "Sixth")).rejects.toMatchObject({ message: "workspace limit reached" });
   });
 
   it("gives anonymous callers nothing", async () => {

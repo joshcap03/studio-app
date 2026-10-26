@@ -31,7 +31,7 @@ export default async function SettingsPage() {
           </a>
           .
         </p>
-        <SettingsView email={tenant.email} guardrail={guardrail} account={tenant.account} />
+        <SettingsView email={tenant.email} guardrail={guardrail} account={tenant.account} agents={tenant.workspaces} current={tenant.workspace.id} />
       </div>
     </main>
   );
