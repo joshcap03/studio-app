@@ -693,6 +693,10 @@ export interface ShownNote {
   via: "typed" | "call";
 }
 
+/** The keys the member can press on the agent's browser while driving it (src/lib/browser-fill.ts). */
+export const DRIVE_KEYS = ["Enter", "Tab", "Backspace", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] as const;
+export type DriveKey = (typeof DRIVE_KEYS)[number];
+
 /** The most steps and notes one showing keeps. */
 export const MAX_SHOWN_STEPS = 80;
 export const MAX_SHOWN_NOTES = 30;
