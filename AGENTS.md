@@ -72,6 +72,9 @@ raw/technical text.
   it really knows and suggests a name with `propose_agent` (identity), which the member keeps or changes.
   Its name and manner then ride in every run's context, on calls and in push titles. Members never read
   the stage words: the change is shown, not announced.
+- `src/lib/delete-agent.ts`: deleting an agent its owner picks (Settings → Agents, up to `MAX_AGENTS`
+  per person, held again by `create_workspace`). The row's delete cascades its data; the owner's watch
+  triggers, its memory namespaces, and their files go after it, best effort.
 - `src/lib/account.ts`: the person's profile (Settings → You, onboarding's first step), sent to
   every agent as "You're assisting".
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the

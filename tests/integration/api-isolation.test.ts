@@ -452,4 +452,58 @@ describe("one person, several agents", () => {
     const thread = (await (await dana.request(`/api/conversations/${conversation}`, { headers: tab })).json()) as { messages: { role: string }[] };
     expect(thread.messages.filter((m) => m.role === "user")).toHaveLength(2);
   }, 60_000);
+
+  it("delete one the person owns, freeing its place, and never another person's", async () => {
+    const erin = await signUp("erin");
+    const ids: string[] = [];
+    for (const name of ["One", "Two", "Three", "Four", "Five"]) {
+      const res = await erin.json("/api/workspaces", "POST", { name: `Erin ${name}` });
+      expect(res.status, await res.clone().text()).toBe(201);
+      ids.push(((await res.json()) as { workspaceId: string }).workspaceId);
+    }
+    const sixth = await erin.json("/api/workspaces", "POST", { name: "Erin Six" });
+    expect(sixth.status).toBe(409);
+    expect(((await sixth.json()) as { error: string }).error).toMatch(/up to 5 agents/);
+
+    // A conversation in the agent going away goes with it.
+    const conversation = crypto.randomUUID();
+    const tab = { "x-studio-agent": ids[4] };
+    const sent = await erin.request(`/api/conversations/${conversation}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "send", text: "non-streaming erin-private" }),
+      headers: tab,
+    });
+    expect(sent.status).toBe(200);
+    await sent.text();
+
+    // Nobody else can delete it, and a cross-origin delete is refused.
+    expect((await bob.json(`/api/workspaces/${ids[4]}`, "DELETE")).status).toBe(404);
+    expect((await bob.json(`/api/workspaces/${aliceWs}`, "DELETE")).status).toBe(404);
+    const forged = await erin.request(`/api/workspaces/${ids[4]}`, { method: "DELETE", headers: { Origin: "https://evil.example" } });
+    expect(forged.status).toBe(403);
+    expect((await erin.json("/api/workspaces/not-a-uuid", "DELETE")).status).toBe(404);
+
+    // Deleting the active agent opens another one.
+    const deleted = await erin.json(`/api/workspaces/${ids[4]}`, "DELETE");
+    expect(deleted.status, await deleted.clone().text()).toBe(200);
+    const { next } = (await deleted.json()) as { next: string | null };
+    expect(ids.slice(0, 4)).toContain(next);
+    const list = (await (await erin.json("/api/workspaces", "GET")).json()) as { workspaces: { id: string }[]; active: string };
+    expect(list.workspaces.map((w) => w.id)).toEqual(ids.slice(0, 4));
+    expect(list.active).toBe(next);
+    expect((await erin.request(`/api/conversations/${conversation}`, { headers: tab })).status).toBe(409);
+    expect((await erin.json(`/api/workspaces/${ids[4]}`, "DELETE")).status).toBe(404);
+
+    // Its place is free again; Alice's agent is untouched.
+    expect((await erin.json("/api/workspaces", "POST", { name: "Erin Again" })).status).toBe(201);
+    expect((await alice.json(`/api/conversations/${aliceConv}`, "GET")).status).toBe(200);
+
+    // Deleting the last one leaves the person with none, for onboarding.
+    const all = (await (await erin.json("/api/workspaces", "GET")).json()) as { workspaces: { id: string }[] };
+    let last: string | null = "";
+    for (const w of all.workspaces) last = ((await (await erin.json(`/api/workspaces/${w.id}`, "DELETE")).json()) as { next: string | null }).next;
+    expect(last).toBeNull();
+    expect((await erin.json("/api/workspaces", "GET")).status).toBe(200);
+    expect(((await (await erin.json("/api/workspaces", "GET")).json()) as { workspaces: unknown[] }).workspaces).toEqual([]);
+  }, 90_000);
 });

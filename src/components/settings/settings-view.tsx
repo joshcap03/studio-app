@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/client/api";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
 import type { AccountProfile } from "@/lib/tenant-core";
+import type { WorkspaceSummary } from "@/lib/types";
+import { AgentsList } from "./agents-list";
 import { ConnectionsList } from "./connections-list";
 import { SavedCredentials } from "./saved-credentials";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "./section";
@@ -14,10 +16,13 @@ interface Props {
   guardrail: string | null;
   /** The person's own profile, shared by all their agents. */
   account: AccountProfile;
+  /** The member's agents, and the one this page was opened from. */
+  agents: WorkspaceSummary[];
+  current: string;
 }
 
 // What belongs to the person, shared by all their agents. Each agent's own setup lives at /agent.
-export function SettingsView({ email, guardrail, account }: Props) {
+export function SettingsView({ email, guardrail, account, agents, current }: Props) {
   return (
     <div className="mt-10 space-y-14">
       {guardrail ? (
@@ -29,6 +34,9 @@ export function SettingsView({ email, guardrail, account }: Props) {
         </Section>
       ) : null}
       <YouSection initial={account} />
+      <Section id="agents" title="Agents" description="Each agent keeps its own chats, tasks, skills, and memory. They all share you, your connected apps, and your saved logins.">
+        <AgentsList initial={agents} current={current} />
+      </Section>
       <Section
         title="Connected apps"
         description="Apps your agents can use for you. Every one of your agents shares these. It asks before changing anything, and only you can use your connections."

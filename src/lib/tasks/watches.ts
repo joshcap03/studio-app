@@ -80,9 +80,17 @@ async function newTrigger(tenant: Tenant, draft: WatchDraft): Promise<string> {
   return startTrigger(tenant.composioUserId, draft.toolkit, draft.trigger, draft.config);
 }
 
-async function dropTrigger(tenant: Tenant, triggerId: string | null): Promise<void> {
+export async function dropTrigger(tenant: Tenant, triggerId: string | null): Promise<void> {
   if (!triggerId || triggerId.startsWith("dev_standin_")) return;
   await deleteTrigger(tenant.composioUserId, triggerId);
+}
+
+/** The member's watch triggers on this agent, read before the agent goes so they can be dropped after. */
+export async function agentTriggers(tenant: Tenant): Promise<string[]> {
+  const rows = check(
+    await watches(tenant).select("composio_trigger_id").eq("workspace_id", tenant.workspace.id).eq("user_id", tenant.userId),
+  ) as Pick<WatchRow, "composio_trigger_id">[];
+  return rows.flatMap((r) => (r.composio_trigger_id ? [r.composio_trigger_id] : []));
 }
 
 /**

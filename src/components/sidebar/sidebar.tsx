@@ -18,6 +18,7 @@ import {
   Plus,
   Search,
   Settings,
+  Settings2,
   SlidersHorizontal,
   SquarePen,
   Trash2,
@@ -823,6 +824,10 @@ function AgentMenu({
           <DropdownMenu.Item onSelect={() => window.location.assign("/onboarding?new=1")} className={`${menuItem} text-fg-2`}>
             <Plus size={14} className="text-fg-3" />
             New agent
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => openPage("/settings#agents", onCall)} className={`${menuItem} text-fg-2`}>
+            <Settings2 size={14} className="text-fg-3" />
+            Manage agents
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-line" />
           <DropdownMenu.Item onSelect={() => openPage("/agent", onCall)} className={menuItem}>

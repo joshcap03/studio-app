@@ -368,6 +368,29 @@ export async function forgetConversations(tenant: Tenant, conversationIds: strin
   return forgotten;
 }
 
+/**
+ * Forgets everything kept for one agent: its shared memory and the person's old per-agent
+ * namespace. The person's own memory, shared by their other agents, stays. For an agent being deleted.
+ */
+export async function forgetAgent(tenant: Tenant): Promise<void> {
+  if (!memoryEnabled()) return;
+  for (const where of ["workspace", "legacy"] as const) {
+    // Each page is deleted before the next is read, so the first page is always the rest.
+    for (let page = 0; page < FORGET_MAX_PAGES; page++) {
+      const { documents = [] } = await call<{ documents?: DocumentRow[] }>(tenant, where, `list/documents?limit=${PAGE}`, {
+        method: "POST",
+        body: { include: { memoryCount: false } },
+      }).catch((error: { status?: number }) => {
+        if (error.status === 404) return { documents: [] };
+        throw error;
+      });
+      if (documents.length === 0) break;
+      const { count } = await call<{ count: number }>(tenant, where, "document", { method: "DELETE", body: { ids: documents.map((d) => d.id) } });
+      if (count === 0 || documents.length < PAGE) break;
+    }
+  }
+}
+
 export interface MemoryChange {
   content?: string;
   category?: MemoryCategory;

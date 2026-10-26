@@ -5,7 +5,7 @@ import { ACTIVE_WORKSPACE_COOKIE, authorizeSession, jsonError, resolveTenant } f
 import { applyTemplate } from "@/lib/templates/apply";
 import { templateById } from "@/lib/templates";
 import { timezoneSchema } from "@/lib/tasks/schema";
-import { MAX_CONTEXT_LENGTH } from "@/lib/types";
+import { MAX_AGENTS, MAX_CONTEXT_LENGTH } from "@/lib/types";
 
 const create = z.object({
   name: z.string().trim().min(1, "Name this agent.").max(80),
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       p_business_context: input.profile,
     });
     if (error) {
-      if (error.hint === "workspace_limit") return jsonError(409, "You've reached the limit of 3 agents.");
+      if (error.hint === "workspace_limit") return jsonError(409, `You can have up to ${MAX_AGENTS} agents. Delete one in Settings to make room.`);
       throw error;
     }
     if (input.templateId) {

@@ -486,6 +486,8 @@ export const MAX_MESSAGE_LENGTH = 32_000;
 export const MAX_TITLE_LENGTH = 120;
 export const MAX_MEMORY_LENGTH = 2000;
 export const MAX_CONTEXT_LENGTH = 8000;
+/** Agents one person may own; `create_workspace` holds the same number. */
+export const MAX_AGENTS = 5;
 
 /** Files a message can carry. The agent reads text and documents; images go to vision models. */
 export const MAX_ATTACHMENTS = 5;
