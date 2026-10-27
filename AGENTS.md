@@ -27,6 +27,14 @@ gitignored and stays out of the repo.
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
   with those, `job-search.eval.test.ts` evals the Job search template and `tidy.eval.test.ts`
   the Brain's "Tidy up" on the real model, and `library.eval.test.ts` filing a link with `file_link`.
+  `behavior.eval.test.ts` is the set to tune the agent's instructions by: long-horizon work (a task's
+  runs, a project over several turns) and everyday behavior, scored into a scorecard
+  (`BEHAVIOR_EVAL_RUNS`, `BEHAVIOR_EVAL_LOG`, `BEHAVIOR_EVAL_BASELINE` to compare; see its header).
+  `connectors.eval.test.ts` runs each template's work, and the inbox setup to its trial, in connected
+  apps for a test member (`CONNECTORS_EVAL_USER`, with throwaway accounts connected). The flow's
+  Member Apps gives app tools only to a member-shaped Composio id (`lj_` + 32 hex), so an eval
+  member with any other id has no app tools at all. Eval flows share the production Langflow and
+  its model account: keep live evals' concurrency low.
 - `npx trigger.dev dev`: runs the background worker locally (needs a Trigger.dev login and
   `TRIGGER_PROJECT_REF`); it deploys from GitHub Actions after each Vercel production deploy.
 
