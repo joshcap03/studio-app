@@ -231,7 +231,9 @@ export type AgentEvent =
   /** A link the agent filed in the member's Library on their request (file_link), unvalidated. */
   | { type: "library-item"; item: unknown }
   /** How a task's run went (nothing new, an update, or needs the member), unvalidated. */
-  | { type: "run-report"; report: unknown };
+  | { type: "run-report"; report: unknown }
+  /** The agent's keep_going: out of time with the job unfinished, the rest needing nothing from the member. */
+  | { type: "keep-going"; remaining: unknown };
 
 /**
  * One thing approving a request would run: the tool as the provider names it (a Composio slug

@@ -354,6 +354,7 @@ describe("Langflow request", () => {
             { type: "tool_use", name: "update_plan", output: JSON.stringify({ plan_update: { steps: [{ text: "b", status: "doing" }], goal: "a and b done" } }) },
             { type: "tool_use", name: "save_record", output: { record: { collection: "applications", key: "k" } } },
             { type: "tool_use", name: "report_run", output: { run_report: { outcome: "nothing_new", summary: "" } } },
+            { type: "tool_use", name: "keep_going", output: JSON.stringify({ keep_going: { remaining: "label the rest" }, note: "Carrying on." }) },
             { type: "tool_use", name: "web_search", output: { results: [] } },
             { type: "tool_use", name: "save_record", output: { record: { collection: "x", key: "y" } }, error: true },
             { type: "tool_use", name: "file_link", output: JSON.stringify({ library_item: { url: "https://docs.google.com/document/d/1", title: "Plan" }, note: "Saved." }) },
@@ -369,6 +370,7 @@ describe("Langflow request", () => {
       { type: "plan-update", plan: [{ text: "b", status: "doing" }], goal: "a and b done" },
       { type: "record", record: { collection: "applications", key: "k" } },
       { type: "run-report", report: { outcome: "nothing_new", summary: "" } },
+      { type: "keep-going", remaining: "label the rest" },
       { type: "library-item", item: { url: "https://docs.google.com/document/d/1", title: "Plan" } },
     ]);
   });

@@ -76,6 +76,11 @@ export type TurnRequest = { conversationId: string } & (
       origin?: MessageOrigin;
     }
   | { kind: "retry" }
+  /**
+   * Carry on the job the latest reply left unfinished with keep_going: a new reply, with no
+   * message from the member, at most MAX_KEEP_GOING in a row.
+   */
+  | { kind: "continue" }
   /** Replace the latest member message and answer it again (keeping its skill and files). */
   | { kind: "edit"; messageId: string; text: string }
   /**
@@ -396,6 +401,13 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         throw new TurnError(403, "You haven't OK'd that for good.");
       }
     }
+  } else if (request.kind === "continue") {
+    // Only right after a reply that said there's more, and only so many in a row.
+    const last = existing.at(-1);
+    if (!conversation || last?.role !== "assistant" || last.status !== "complete" || !last.keepGoing || pending) {
+      throw new TurnError(409, "There's nothing to carry on here.");
+    }
+    if (keepGoingRun(existing) >= MAX_KEEP_GOING) throw new TurnError(409, "That's as far as it goes on its own. Tell it to carry on.");
   } else if (pending && request.kind === "send") {
     // A new message waits for the pending decision.
     throw new TurnError(409, "Approve or decline the agent's request first.");
@@ -439,7 +451,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     return renderSkillMessage(skill, text);
   };
 
-  if (request.kind === "retry") {
+  if (request.kind === "continue") {
+    prompt = renderContinueMessage(existing.at(-1)!.keepGoing!);
+  } else if (request.kind === "retry") {
     if (!conversation) throw new TurnError(404, "Conversation not found.");
     const lastUser = existing.findLast((m) => m.role === "user");
     if (!lastUser) throw new TurnError(400, "There is no message to retry.");
@@ -581,6 +595,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       let records = 0;
       let filed = 0;
       let report: RunReport | null = null;
+      // What's left of the job, when the agent says the next reply should carry it on.
+      let keepGoing: string | null = null;
       let timeline: Timeline | null = assistant.timeline ?? null;
       // Kept from before a pause for approval; this run's citations are added to them.
       const earlierCitations: Citation[] = assistant.citations ?? [];
@@ -801,6 +817,11 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               }
               break;
             }
+            case "keep-going": {
+              const remaining = typeof event.remaining === "string" ? event.remaining.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+              keepGoing = remaining || "the rest of the job";
+              break;
+            }
             case "run-report": {
               const raw = isRecord(event.report) ? event.report : {};
               const outcome = RUN_OUTCOMES.find((o) => o === raw.outcome);
@@ -967,16 +988,18 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const callEnded = callId && deps.callEnded ? await deps.callEnded(callId).catch(() => false) : false;
       const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier, callEnded }) : null;
       const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
+      // A reply carries on by itself only when it finished with nothing asked of the member.
+      const going = keepGoing && status === "complete" && !questions?.length ? { keepGoing } : {};
       let updated = summary;
       try {
-        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted });
+        await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted, ...going });
         updated = await store.touchConversation(conversationId);
       } catch (e) {
         console.error("[turn] failed to save final state", e);
       }
       finished();
       const watched = open;
-      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted };
+      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted, ...(going.keepGoing ? { keepGoing: going.keepGoing } : {}) };
       send({ type: "end", message: final, conversation: updated });
       if (open) {
         try {
@@ -997,6 +1020,20 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       open = false;
     },
   });
+}
+
+/** Replies in a row that carry a job on by themselves, after the member's last message. */
+export const MAX_KEEP_GOING = 8;
+
+/** How many replies have carried the job on by themselves since the member's last message. */
+function keepGoingRun(messages: ChatMessage[]): number {
+  const lastUser = messages.findLastIndex((m) => m.role === "user");
+  return messages.slice(lastUser + 1).filter((m) => m.role === "assistant").length - 1;
+}
+
+/** What the agent is sent to carry on a job its last reply said wasn't finished. */
+export function renderContinueMessage(remaining: string): string {
+  return `[Carry on with the job from where your last reply left off, without redoing what's done. What was left: ${remaining}]`;
 }
 
 const MAX_STEER_STEPS = 12;

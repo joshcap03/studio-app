@@ -248,6 +248,7 @@ export async function uploadAgentFile(file: File): Promise<Attachment> {
 export type TurnBody =
   | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
   | { kind: "retry" }
+  | { kind: "continue" }
   | { kind: "edit"; messageId: string; text: string }
   | ({ kind: "decide"; approvalId: string; decision: "approve" | "reject" } & ({ via?: "tap"; always?: true } | SpokenDecision));
 

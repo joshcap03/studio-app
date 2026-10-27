@@ -50,6 +50,7 @@ export interface MessagePatch {
   ui?: UiBlock[] | null;
   uiResponse?: Record<string, UiResponse> | null;
   voiceNote?: VoiceNote | null;
+  keepGoing?: string | null;
   error?: string | null;
 }
 
@@ -186,6 +187,7 @@ interface MessageRow {
   ui_response: Record<string, UiResponse> | null;
   feedback: MessageFeedback | null;
   voice_note: VoiceNote | null;
+  keep_going: string | null;
   error: string | null;
   skill: MessageSkill | null;
   origin: MessageOrigin | null;
@@ -252,7 +254,7 @@ const PLAN_COLUMNS = "plan, goal, plan_updated_at";
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
-  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, error, skill, origin, created_at, updated_at, " +
+  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, keep_going, error, skill, origin, created_at, updated_at, " +
   "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at, standing), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS =
@@ -330,6 +332,7 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   uiResponse: r.ui_response ?? null,
   feedback: r.feedback ?? null,
   voiceNote: r.voice_note ?? null,
+  ...(r.keep_going ? { keepGoing: r.keep_going } : {}),
   attachments: (r.attachments ?? []).map(toAttachment),
   error: r.error,
   skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
@@ -610,6 +613,7 @@ export function createStore(db: Db, scope: Scope): Store {
       if (patch.ui !== undefined) values.ui = patch.ui;
       if (patch.uiResponse !== undefined) values.ui_response = patch.uiResponse;
       if (patch.voiceNote !== undefined) values.voice_note = patch.voiceNote;
+      if (patch.keepGoing !== undefined) values.keep_going = patch.keepGoing;
       if (patch.error !== undefined) values.error = patch.error;
       // A reply that starts streaming again (after an approval) starts without a stop asked of it.
       if (patch.status === "streaming") values.stop_requested_at = null;

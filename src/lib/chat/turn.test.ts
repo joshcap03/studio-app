@@ -4,7 +4,7 @@ import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, typ
 import { readNdjson } from "@/lib/client/api";
 import { createMemoryDb, createMemoryStore } from "@/test/memory-store";
 import type { Artifact, ChatMessage, Journey, StreamEvent } from "@/lib/types";
-import { sanitizeArtifact, startTurn, stopRun, titleFromMessage, TurnError } from "./turn";
+import { MAX_KEEP_GOING, renderContinueMessage, sanitizeArtifact, startTurn, stopRun, titleFromMessage, TurnError } from "./turn";
 
 const scopeA = { workspaceId: "ws-a", userId: "user-a" };
 const scopeB = { workspaceId: "ws-b", userId: "user-b" };
@@ -1673,5 +1673,50 @@ describe("when a run ends", () => {
       ),
     );
     expect(events.at(-1)?.type).toBe("end");
+  });
+});
+
+describe("keep going", () => {
+  const more = [{ type: "text-delta", text: "Labeled the first 200." }, { type: "keep-going", remaining: "label  the other\n400" }] as AgentEvent[];
+  const deps = (events: AgentEvent[], seen?: AgentRunInput[]) => ({
+    store: createMemoryStore(scopeA),
+    adapter: scripted(events, undefined, seen),
+    context: context(scopeA),
+    idleTimeoutMs: 1000,
+  });
+
+  it("saves what's left on a reply that finished with more to do, and carries it on with no message of the member's", async () => {
+    const seen: AgentRunInput[] = [];
+    const d = deps(more, seen);
+    const id = crypto.randomUUID();
+    const end = (await collect(startTurn(d, { conversationId: id, kind: "send", text: "Tag my inbox" }))).at(-1);
+    expect(end?.type === "end" && end.message.keepGoing).toBe("label the other 400");
+    expect((await d.store.listMessages(id)).at(-1)?.keepGoing).toBe("label the other 400");
+
+    await collect(startTurn(d, { conversationId: id, kind: "continue" }));
+    expect(seen.at(-1)?.message).toBe(renderContinueMessage("label the other 400"));
+    const messages = await d.store.listMessages(id);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
+  });
+
+  it("carries nothing on without the reply saying so, after the member's own message, or past the cap", async () => {
+    const plain = deps([{ type: "text-delta", text: "All done." }] as AgentEvent[]);
+    const id = crypto.randomUUID();
+    await collect(startTurn(plain, { conversationId: id, kind: "send", text: "Tag my inbox" }));
+    await expect(startTurn(plain, { conversationId: id, kind: "continue" })).rejects.toMatchObject({ status: 409 });
+    await expect(startTurn(plain, { conversationId: crypto.randomUUID(), kind: "continue" })).rejects.toMatchObject({ status: 409 });
+
+    const long = deps(more);
+    const chain = crypto.randomUUID();
+    await collect(startTurn(long, { conversationId: chain, kind: "send", text: "Tag my inbox" }));
+    for (let i = 0; i < MAX_KEEP_GOING; i++) await collect(startTurn(long, { conversationId: chain, kind: "continue" }));
+    await expect(startTurn(long, { conversationId: chain, kind: "continue" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("doesn't carry on a reply that asked the member something", async () => {
+    const asking = deps([...more, { type: "questions", questions: [{ id: "q1", question: "Which label?", options: ["A", "B"] }] }] as AgentEvent[]);
+    const id = crypto.randomUUID();
+    const end = (await collect(startTurn(asking, { conversationId: id, kind: "send", text: "Tag my inbox" }))).at(-1);
+    expect(end?.type === "end" && end.message.keepGoing).toBeUndefined();
   });
 });

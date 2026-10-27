@@ -329,6 +329,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "watch_me":
       // A card under the reply where the member shows the agent a job in its browser, once they tap.
       return { labels: { running: "Getting ready to watch", done: "Asked you to show me how", failed: "Couldn't get ready to watch" }, app: "agent", action: "note", hidden: true };
+    case "keep_going":
+      // Starts the next reply to carry the job on; the reply says what's done and what's left.
+      return { labels: { running: "Carrying on next", done: "Carrying on next" }, app: "agent", action: "note", hidden: true };
     case "report_run":
       // Decides whether the member is notified; the reply itself says how it went.
       return { labels: { running: "Wrapping up", done: "Wrapped up" }, app: "agent", action: "note", hidden: true };
@@ -903,7 +906,7 @@ export function reportsOnAnswer(name: string, input: unknown): boolean {
 }
 
 /** Calls that only keep the agent's own books (its plan, a task run's outcome) and do no work. */
-const BOOKKEEPING_TOOLS = new Set(["update_plan", "report_run"]);
+const BOOKKEEPING_TOOLS = new Set(["update_plan", "report_run", "keep_going"]);
 
 /**
  * Whether a call says or does nothing the member waits on. A run that ends with only such calls
