@@ -95,4 +95,28 @@ describe("ProposalCard", () => {
     expect(old).not.toContain("Not quite");
     expect(render(taught, { response: applied({ skills: [0] }, { skills: 1 }) })).toContain("Added skill");
   });
+
+  it("lists each item on one line, its guesses first, and folds the items away once applied", () => {
+    const full: AgentProposal = {
+      ...base,
+      profile: "Tracks the market.",
+      tasks: [{ title: "Weekly brief", instructions: "Read the week's news and summarize it.", schedule: null }],
+      skills: [{ name: "Teardown", description: "One competitor.", instructions: "Compare features." }],
+      memories: ["Prefers short answers."],
+      assumptions: ["I assumed weekly is enough."],
+    };
+    const html = render(full, { fix: true });
+    expect(html).toContain("Weekly brief");
+    expect(html).toContain("When you ask");
+    // Details open on a tap, not up front.
+    expect(html).not.toContain("Read the week&#x27;s news");
+    expect(html).not.toContain("Compare features.");
+    expect(html.indexOf("My guesses")).toBeLessThan(html.indexOf("Weekly brief"));
+
+    const done = render(full, { response: applied({ profile: true, tasks: [0], skills: [0], memories: [0] }, { settings: true, tasks: 1, skills: 1, memories: 1 }) });
+    expect(done).toContain("Applied setup");
+    expect(done).toContain("Show details (4)");
+    expect(done).not.toContain("Weekly brief");
+    expect(done).not.toContain("My guesses");
+  });
 });
