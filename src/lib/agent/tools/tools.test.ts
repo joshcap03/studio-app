@@ -424,6 +424,21 @@ describe("interpretCalls", () => {
     expect(failed).toMatchObject({ status: "failed", app: "gmail", detail: "The app is rate-limiting requests right now." });
   });
 
+  it("says in plain words when code ran too long or the reply ran out of time", () => {
+    const run = (content: string) =>
+      gateway("composio_remote_workbench", { code_to_execute: "print(1)", current_step: "Pulling 90 days of Gmail" }, { type: "tool", tool_call_id: "w", content });
+    const [interrupted, cut, skipped] = interpretCalls([
+      run(
+        `Tool composio_remote_workbench failed: ValueError: MCP tool 'COMPOSIO_REMOTE_WORKBENCH' failed: {"successful":false,"data":{"results":"❌ RUNTIME ERROR: KeyboardInterrupt\\nKeyboardInterrupt\\n\\nOutput before error:\\n","stdout":"False\\n","stderr":"","error":"KeyboardInterrupt","sandbox_id_suffix":"w1bv"},"error":"KeyboardInterrupt","log_id":"log_x"}. Do not blindly retry writes.`,
+      ),
+      run("Tool composio_remote_workbench ran out of this reply's time after 95s. It may or may not have finished. Don't call more tools: answer now."),
+      run("Tool composio_remote_workbench didn't run: this reply is out of time. Don't call more tools: answer now."),
+    ]);
+    expect(interrupted).toMatchObject({ status: "failed", detail: "The code ran too long and was stopped." });
+    expect(cut).toMatchObject({ status: "failed", detail: "Stopped so the reply could finish in time." });
+    expect(skipped).toMatchObject({ status: "failed", detail: "Didn't run: the reply was out of time." });
+  });
+
   it("finds readable results from apps it has no special handling for, across multi-tool calls", () => {
     const [step] = interpretCalls([
       {

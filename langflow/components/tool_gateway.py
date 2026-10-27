@@ -14,6 +14,7 @@ import asyncio
 import difflib
 import json
 import re
+import time
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field, ValidationError
@@ -690,6 +691,15 @@ def watch_needs_approval(name, arguments):
     return name in CODE_TOOLS or name in BROWSER_TOOLS or has_link(arguments) or needs_approval(name, arguments)
 
 
+# Seconds a run's tools may take in all (see run_budget). The app's request lasts 300: this leaves
+# time for the run to start, for the agent to write its answer, and for the app to save it.
+RUN_BUDGET = 210
+# A tool isn't started with less time than this left in the budget.
+MIN_TOOL_SECONDS = 15
+WRAP_UP = ("Don't call more tools: answer now with what you have, say plainly what's left, and offer "
+           "to carry on in your next reply. For a big job, do it in pieces that each fit in one reply.")
+
+
 class ToolGatewayComponent(Component):
     display_name = "Tool Gateway"
     description = "Dynamic discovery and execution of connected tools with compact tool context."
@@ -704,6 +714,10 @@ class ToolGatewayComponent(Component):
                  info="Read-only lookups (tool search, schemas, memory, web search). Retried once on timeout."),
         IntInput(name="work_timeout", display_name="Work Timeout (seconds)", value=200, advanced=True,
                  info="Everything else (workbench, browser, app actions). Never retried automatically."),
+        IntInput(name="run_budget", display_name="Run Budget (seconds)", value=RUN_BUDGET, advanced=True,
+                 info=("How long this run's tools may take in all, from the start of the run (a resumed run "
+                       "starts again), so the agent still has time to answer before the app's request ends "
+                       "(5 minutes). Approved actions always run. 0 turns it off.")),
         MessageTextInput(name="run_cause", display_name="Run Cause", value="", advanced=True,
                          info=("Filled per run by the app ({{run_cause}}): 'watch' when an event in a connected app "
                                "started it, so code, the browser, and calls with links ask the owner first.")),
@@ -854,6 +868,19 @@ class ToolGatewayComponent(Component):
         lookup_timeout = int(getattr(self, "lookup_timeout", 45) or 45)
         work_timeout = int(getattr(self, "work_timeout", 200) or 200)
         watched = str(getattr(self, "run_cause", "") or "").strip() == "watch"
+        # One reply runs inside one app request, which ends after five minutes. Tools share the
+        # first part of that, from when this run started, so a slow one can't use it all up and
+        # the agent still has time to answer with what it has. Approved actions always run: the
+        # owner said yes to them, and a resumed run gets a new request.
+        budget = getattr(self, "run_budget", None)
+        budget = RUN_BUDGET if budget is None else int(budget)
+        started = time.monotonic()
+
+        def time_left():
+            return None if budget <= 0 else budget - (time.monotonic() - started)
+
+        def out_of_time(name):
+            return f"Tool {name} didn't run: this reply is out of time. {WRAP_UP}"
         asks = watch_needs_approval if watched else needs_approval
 
         def approval_hint(name, arguments=None):
@@ -898,9 +925,15 @@ class ToolGatewayComponent(Component):
                 return error
             if not approved and asks(tool_name, params):
                 return approval_hint(tool_name, params)
+            left = None if approved else time_left()
+            if left is not None and left < MIN_TOOL_SECONDS:
+                return out_of_time(tool_name)
             lookup = tool_name in LOOKUP_TOOLS
             limit = lookup_timeout if lookup else work_timeout
             attempts = 2 if lookup else 1
+            cut = left is not None and left < limit * attempts
+            if cut:
+                limit, attempts = min(limit, int(left)), 1
             for attempt in range(attempts):
                 try:
                     try:
@@ -911,6 +944,8 @@ class ToolGatewayComponent(Component):
                 except asyncio.TimeoutError:
                     if attempt + 1 < attempts:
                         continue
+                    if cut:
+                        return f"Tool {tool_name} ran out of this reply's time after {limit}s. It may or may not have finished. {WRAP_UP}"
                     tried = " (tried twice)" if attempts > 1 else ""
                     hint = ("The service didn't respond; try another approach or tell the user." if lookup else
                             "It may or may not have finished; check before retrying, and tell the user.")
@@ -925,6 +960,9 @@ class ToolGatewayComponent(Component):
                 return error
             if not approved and asks(tool_name, params):
                 return approval_hint(tool_name, params)
+            left = None if approved else time_left()
+            if left is not None and left < MIN_TOOL_SECONDS:
+                return out_of_time(tool_name)
             try:
                 return compact_result(tool.invoke(params, config=config), max_chars, keeper(config))
             except Exception as exc:

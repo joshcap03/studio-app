@@ -928,6 +928,9 @@ export function gatewayFailure(text: string): string | undefined {
   const value = text.trim().replace(/^"|"$/g, "");
   const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(value);
   if (failed) return humanReason(errorMessage(failed[1]) ?? failed[1]);
+  // The gateway keeps the end of a reply's time for the answer: it cuts a tool short, or skips it.
+  if (/^Tool \S+ ran out of this reply's time/.test(value)) return "Stopped so the reply could finish in time.";
+  if (/^Tool \S+ didn't run: this reply is out of time/.test(value)) return "Didn't run: the reply was out of time.";
   const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(value);
   if (timedOut) return `The service didn't respond within ${timedOut[1]} seconds.`;
   const unknown = /^Unknown tool '([^']+)'/.exec(value);
@@ -958,6 +961,8 @@ export function humanReason(raw: string, fallback = "Something went wrong on the
   }
   if (/\b429\b|rate.?limit|too many requests/i.test(reason)) return "The app is rate-limiting requests right now.";
   if (/\b404\b|not found/i.test(reason)) return "It couldn't find what it was looking for.";
+  // A code runner stops code that runs past its time limit as if someone pressed Ctrl-C.
+  if (/\bKeyboardInterrupt\b/.test(reason)) return "The code ran too long and was stopped.";
   if (/timed? ?out|timeout/i.test(reason)) return "The app took too long to respond.";
   if (/\b5\d\d\b|internal server error|service unavailable|bad gateway/i.test(reason)) return "The app had a temporary problem.";
   if (/no active session|session (closed|expired)/i.test(reason)) return "The browser session had closed.";
@@ -968,7 +973,8 @@ export function humanReason(raw: string, fallback = "Something went wrong on the
   // Anything that still reads like code or a stack trace gets a plain fallback. An apostrophe
   // inside a word ("wasn't") is plain English, not a quote.
   const unquoted = reason.replace(/(\p{L})['’](\p{L})/gu, "$1$2");
-  if (!reason || /['"`{}()<>\[\]]|_[a-z]|[a-z]_|object has no attribute|traceback|undefined|null\b|nonetype|\.py\b/i.test(unquoted)) {
+  // A bare exception name ("SystemExit") is code too.
+  if (!reason || /^[A-Z][a-z]+(?:[A-Z][a-z]+)+$/.test(reason) || /['"`{}()<>\[\]]|_[a-z]|[a-z]_|object has no attribute|traceback|undefined|null\b|nonetype|\.py\b/i.test(unquoted)) {
     return fallback;
   }
   return clip(reason, 200);
