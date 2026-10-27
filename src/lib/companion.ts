@@ -200,21 +200,28 @@ export async function companionSignals(tenant: Tenant, setup: AgentSetup | null)
   };
 }
 
-/** The companion with what's left before it introduces itself, while it's still getting to know them. */
+/**
+ * The companion with what's left before it introduces itself, while it's still getting to know
+ * them. Moves it forward first when their history has earned more than the last chat run saw
+ * (a task's runs, setup set aside since), so nobody is told "soon" with nothing left to do.
+ */
 export async function withToMeet(tenant: Tenant, companion: Companion, setup: AgentSetup | null): Promise<Companion> {
   if (stageRank(companion.stage) >= stageRank("ready")) return companion;
-  return { ...companion, toMeet: toMeet(await companionSignals(tenant, setup)) };
+  const signals = await companionSignals(tenant, setup);
+  const now = stageRank(companionStage(signals)) > stageRank(companion.stage) ? await refreshCompanion(tenant, setup, signals) : companion;
+  return stageRank(now.stage) >= stageRank("ready") ? now : { ...now, toMeet: toMeet(signals) };
 }
 
 /**
  * Moves the member's companion forward to the stage their history has earned (never back,
- * and never to arrived, which takes the member keeping a name). Called after each chat run.
+ * and never to arrived, which takes the member keeping a name). Called after each chat run, and
+ * when the member opens a page that says what's left (withToMeet).
  */
-export async function refreshCompanion(tenant: Tenant, setup: AgentSetup | null): Promise<Companion> {
+export async function refreshCompanion(tenant: Tenant, setup: AgentSetup | null, signals?: CompanionSignals): Promise<Companion> {
   const row = await loadRow(tenant);
   const current = toCompanion(tenant.workspace.id, tenant.userId, row);
   if (stageRank(current.stage) >= stageRank("ready")) return current;
-  const earned = companionStage(await companionSignals(tenant, setup));
+  const earned = companionStage(signals ?? (await companionSignals(tenant, setup)));
   if (stageRank(earned) <= stageRank(current.stage)) return current;
   await saveRow(tenant, Boolean(row), { stage: earned });
   return { ...current, stage: earned };

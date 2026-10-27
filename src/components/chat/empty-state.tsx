@@ -136,16 +136,24 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:justify-center md:px-8 md:pb-[12vh]">
       <div className="flex flex-1 flex-col items-center justify-center gap-4 md:flex-none">
         {companion ? (
-          <button
-            type="button"
-            onClick={tapCompanion}
-            aria-label={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name, companion.toMeet)}
-            title={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name, companion.toMeet)}
-            aria-busy={ringing || undefined}
-            className="animate-fade-up rounded-full transition-transform duration-150 hover:scale-105 active:scale-95"
-          >
-            <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} present />
-          </button>
+          <div className={`flex flex-col items-center gap-1 ${meet ? "mb-3" : ""}`}>
+            <button
+              type="button"
+              onClick={tapCompanion}
+              aria-label={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name, companion.toMeet)}
+              title={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name, companion.toMeet)}
+              aria-busy={ringing || undefined}
+              className="animate-fade-up rounded-full transition-transform duration-150 hover:scale-105 active:scale-95"
+            >
+              <Companion stage={companion.stage} look={companion.look} size={48} seenKey={companion.workspaceId} present />
+            </button>
+            {meet ? (
+              <>
+                <PointUp />
+                <p className="max-w-[32rem] text-center text-[14px] leading-[1.5] text-fg-2 animate-fade-up [animation-delay:40ms]">{meet}</p>
+              </>
+            ) : null}
+          </div>
         ) : null}
         {fallback ? (
           <p role="status" className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-[13.5px] text-fg-2 animate-fade-up">
@@ -161,7 +169,6 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
         <h1 className="animate-fade-up text-center font-display text-[30px] leading-tight tracking-[-0.015em] text-fg md:text-[36px]">
           {greeting ? `Hey${member ? ` ${member}` : ""}!` : "What should we work on?"}
         </h1>
-        {meet ? <p className="max-w-[32rem] text-center text-[14px] leading-[1.5] text-fg-3 animate-fade-up [animation-delay:40ms]">{meet}</p> : null}
       </div>
 
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
@@ -309,6 +316,16 @@ function SetupGreeting({
         </p>
       ) : null}
     </section>
+  );
+}
+
+// A pencil arrow from the hint up to the companion, in the mark's own stroke, drawn in once.
+function PointUp() {
+  return (
+    <svg width="22" height="34" viewBox="0 0 22 34" fill="none" aria-hidden="true" className="stroke-fg-2" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 32 C2.5 23 16.5 18 11 3.5" pathLength={1} className="cm-trace" />
+      <path d="M6.2 8 L11 3.5 L15 8.6" pathLength={1} className="cm-trace [animation-delay:420ms]" />
+    </svg>
   );
 }
 
