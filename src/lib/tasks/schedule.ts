@@ -14,6 +14,12 @@ export const taskScheduleSchema = z.discriminatedUnion("every", [
 
 export type TaskSchedule = z.infer<typeof taskScheduleSchema>;
 
+/**
+ * Whether a task repeats on a schedule. Each of its runs does the brief's job afresh, so it keeps
+ * no plan: a plan of one run's steps would be rewritten every run and left on its last step.
+ */
+export const repeats = (task: { schedule?: TaskSchedule | null }): boolean => Boolean(task.schedule);
+
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

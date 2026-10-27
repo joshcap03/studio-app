@@ -237,6 +237,23 @@ describe("Langflow request", () => {
     expect(setup).toContain("Done means: a setup you'd trust\nThere's no setup checklist yet");
   });
 
+  it("tells a scheduled task's runs to keep no plan, and others to update it at milestones, not each step's start", () => {
+    const daily = templateValues({
+      ...tenantA,
+      task: { title: "Find new roles", instructions: "Find 3 roles.", goal: "3 new roles", plan: [], repeats: true, allowed: [] },
+    }).system_context;
+    expect(daily).toContain("which runs on a schedule");
+    expect(daily).toContain("Done means, each run: 3 new roles");
+    expect(daily).toContain("Don't call update_plan in this conversation");
+    expect(daily).toContain("The brief is how each run does the job");
+    expect(daily).toContain("call report_run once");
+    expect(daily).not.toContain("no plan yet");
+    expect(daily).not.toContain("Keep the plan current");
+    const once = templateValues({ ...tenantA, task: { title: "Plan the offsite", instructions: "", goal: null, plan: [] } }).system_context;
+    expect(once).toContain("when a step finishes, gets blocked, or needs the member");
+    expect(once).not.toContain("whenever a step starts");
+  });
+
   it("lists the member's Library so the agent reopens what it made, only when there's something in it", () => {
     const system = templateValues({
       ...tenantA,

@@ -61,6 +61,11 @@ describe("journeyFor", () => {
     expect(await journeyFor(owner, empty)).toBeNull();
   });
 
+  it("shows no rail for a scheduled task, even with a plan left from before", async () => {
+    state.task = { ...state.task!, schedule: { every: "weekdays", at: "08:00" } };
+    expect(await journeyFor(owner, chat)).toBeNull();
+  });
+
   it("shows nothing for a plan with no steps", () => {
     expect(taskJourney({ plan: [], goal: "x", updatedAt: 1 })).toBeNull();
     expect(setupJourney({ plan: [], goal: "x", updatedAt: 1 })).toBeNull();

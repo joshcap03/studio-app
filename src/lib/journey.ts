@@ -2,6 +2,7 @@ import { storeFor } from "@/lib/chat/store-for";
 import type { ConversationPlan } from "@/lib/db/store";
 import { getSetup, setupHolds, toTheBar } from "@/lib/setup-state";
 import { getTaskForConversation } from "@/lib/tasks";
+import { repeats } from "@/lib/tasks/schedule";
 import type { AgentTask, PlanStep } from "@/lib/tasks/types";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentSetup, Journey, JourneyStep } from "@/lib/types";
@@ -32,7 +33,7 @@ export function conversationJourney(plan: ConversationPlan): Journey | null {
   return plan.steps.length ? { kind: "conversation", goal: plan.goal, steps: plan.steps.map(toStep), updatedAt: plan.updatedAt ?? Date.now() } : null;
 }
 
-/** The journey of the work in this conversation, or null when the agent keeps no plan for it. */
+/** The journey of the work in this conversation, or null when the agent keeps no plan for it (or its task repeats). */
 export async function journeyFor(tenant: Tenant, conversationId: string): Promise<Journey | null> {
   const [task, setup, own] = await Promise.all([
     getTaskForConversation(tenant, conversationId),
@@ -40,7 +41,8 @@ export async function journeyFor(tenant: Tenant, conversationId: string): Promis
     tenant.workspace.role === "owner" ? getSetup(tenant) : Promise.resolve(null),
     storeFor(tenant).getPlan(conversationId),
   ]);
-  if (task) return taskJourney(task);
+  // A task that repeats keeps no plan; each run's reply says what it did.
+  if (task) return repeats(task) ? null : taskJourney(task);
   if (setup && setupHolds(setup, conversationId)) return setupJourney(setup);
   return own ? conversationJourney(own) : null;
 }

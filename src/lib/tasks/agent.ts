@@ -7,6 +7,7 @@ import { MAX_GOAL_LENGTH, type Journey } from "@/lib/types";
 import { getTaskForConversation, updateTask } from "./index";
 import { fieldsByCollection, withoutBlanks } from "./fields";
 import { listRecords, upsertRecord } from "./records";
+import { repeats } from "./schedule";
 import { MAX_PLAN_STEPS, planSchema, STEP_STATUSES, upsertRecordInput } from "./schema";
 import type { PlanStep } from "./types";
 
@@ -48,7 +49,8 @@ export async function taskContextFor(
           title: task.title,
           instructions: task.instructions,
           goal: task.goal,
-          plan: contextSteps(task.plan),
+          plan: repeats(task) ? [] : contextSteps(task.plan),
+          ...(repeats(task) ? { repeats: true } : {}),
           ...(task.allowedActions.length ? { allowed: task.allowedActions } : {}),
         }
       : null,
@@ -112,8 +114,8 @@ export function planFromAgent(value: unknown, previous: PlanStep[] = []): PlanSt
  * setup interview is under way here, or else on the conversation itself (so work after setup is
  * applied or set aside never writes over its checklist). `setup`: the run was started with the
  * setup skill, so its plan is the setup's even before the conversation is recorded as the
- * setup's. Returns the journey as saved, or null when nothing was (no plan in it, or no such
- * conversation).
+ * setup's. Returns the journey as saved, or null when nothing was (no plan in it, no such
+ * conversation, or a task that repeats, which keeps none).
  */
 export async function savePlanFromAgent(
   tenant: Tenant,
@@ -129,6 +131,7 @@ export async function savePlanFromAgent(
     owner ? getSetup(tenant) : Promise.resolve(null),
   ]);
   if (task) {
+    if (repeats(task)) return null;
     const plan = planFromAgent(value, task.plan);
     if (!plan) return null;
     // The member may have said what done means on the task page, before any plan or since: a

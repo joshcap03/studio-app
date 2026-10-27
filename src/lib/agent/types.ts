@@ -35,6 +35,8 @@ export interface AgentTenantContext {
     plan: { text: string; status: string; note: string | null }[];
     /** Kinds of change the member has OK'd for good on this task (src/lib/approvals/standing.ts). */
     allowed?: StandingKind[];
+    /** It runs on a schedule, so its runs keep no plan (plan is empty). */
+    repeats?: boolean;
   } | null;
   /**
    * In a conversation that's neither a task's nor the setup interview, the plan the agent keeps

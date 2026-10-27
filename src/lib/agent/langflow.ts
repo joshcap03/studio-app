@@ -317,18 +317,21 @@ export function libraryContext(items: NonNullable<AgentTenantContext["library"]>
   return `The member's Library (docs you made for them and links they filed; title | kind | link; pinned first, then most recent). When they ask for something one of these already covers, open and update that one rather than making a new copy, and give them its link:\n${lines.join("\n")}`;
 }
 
+// The brief rides along with every reply here, so without this it outranks the member's own
+// edits to what a run sent: their "much shorter" came back as the brief's parts, trimmed.
+const BRIEF_IS_NOT_A_RULE =
+  "The brief is how each run does the job, not a rule for every reply here. When the member asks you to change what you sent (shorter, a style or example they name, fewer items, another focus), rewrite it now in their form, even where that drops parts the brief asks for. Shorter means fewer parts, not shorter parts: give each item a bold headline and a sentence or two that carry what matters (the fact, why it matters, your call), merge or drop the brief's other labeled parts, keep the links, and drop sections they didn't ask for. \"Much more concise\" means a third of the length or less. Don't ask first, and don't only remember it or propose a setup instead. After the rewrite, one line can say they can make it the brief's form for every run by editing the task's instructions.";
+
 /**
  * The task this conversation works on: what it's for, and the plan so far. With `voiceNotes`,
  * a run's news comes back as a voice note that says its report_run summary.
  */
 export function taskContext(task: NonNullable<AgentTenantContext["task"]>, { voiceNotes = false }: { voiceNotes?: boolean } = {}): string {
+  if (task.repeats) return repeatingTaskContext(task, { voiceNotes });
   return [
     `This conversation works on the member's task "${task.title}". Each run continues it.`,
     task.instructions.trim() && `Task brief:\n${task.instructions.trim()}`,
-    // The brief rides along with every reply here, so without this it outranks the member's own
-    // edits to what a run sent: their "much shorter" came back as the brief's parts, trimmed.
-    task.instructions.trim() &&
-      "The brief is how each run does the job, not a rule for every reply here. When the member asks you to change what you sent (shorter, a style or example they name, fewer items, another focus), rewrite it now in their form, even where that drops parts the brief asks for. Shorter means fewer parts, not shorter parts: give each item a bold headline and a sentence or two that carry what matters (the fact, why it matters, your call), merge or drop the brief's other labeled parts, keep the links, and drop sections they didn't ask for. \"Much more concise\" means a third of the length or less. Don't ask first, and don't only remember it or propose a setup instead. After the rewrite, one line can say they can make it the brief's form for every run by editing the task's instructions.",
+    task.instructions.trim() && BRIEF_IS_NOT_A_RULE,
     task.plan.length
       ? `Plan so far:\n${planLines(task.plan, task.goal)}`
       : task.goal
@@ -336,15 +339,40 @@ export function taskContext(task: NonNullable<AgentTenantContext["task"]>, { voi
         : "There's no plan yet. If the task has several steps, write one with update_plan, with what done looks like as its goal.",
     // The member can set or change it on the task page, so it's theirs as much as the agent's.
     task.goal && "The task's goal stays as it is when you leave update_plan's goal empty; give one only if the member asks to change what done means.",
-    "Keep the plan current with update_plan whenever a step starts, finishes, gets blocked, or needs the member.",
-    task.allowed?.length &&
+    "Keep the plan current with update_plan when a step finishes, gets blocked, or needs the member: the whole plan in one call, not a call per step as you start it.",
+    ...taskRunLines(task, voiceNotes),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
+ * A task that repeats on a schedule: each run does the brief's job afresh, so it keeps no plan.
+ * Its runs used to write their own steps as the task's plan every time ("Search", "Score",
+ * "Show the form"), rewriting it each run and leaving it on its last step.
+ */
+function repeatingTaskContext(task: NonNullable<AgentTenantContext["task"]>, { voiceNotes }: { voiceNotes: boolean }): string {
+  return [
+    `This conversation works on the member's task "${task.title}", which runs on a schedule. Each run does the brief's job afresh.`,
+    task.instructions.trim() && `Task brief:\n${task.instructions.trim()}`,
+    task.instructions.trim() && BRIEF_IS_NOT_A_RULE,
+    task.goal && `Done means, each run: ${task.goal}`,
+    "Don't call update_plan in this conversation: a task that repeats keeps no plan, and the member follows each run in its reply.",
+    ...taskRunLines(task, voiceNotes),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** What every run of a task is told about its standing approvals and its report. */
+function taskRunLines(task: NonNullable<AgentTenantContext["task"]>, voiceNotes: boolean): (string | false | undefined)[] {
+  return [
+    !!task.allowed?.length &&
       `The member has OK'd these for good on this task, so they still go through take_action but are approved without asking them: ${task.allowed.map((k) => STANDING_GUIDES[k]).join("; ")}. Anything else still waits for their approval.`,
     "When this run's work is done, call report_run once: nothing_new if you found nothing worth their attention, update if there's something to read, needs_you if they must decide or act. They're only notified for update and needs_you.",
     voiceNotes &&
       "For update and needs_you, they hear your report_run summary as a voice note: write it to be heard, in two or three short spoken sentences with the best result first, with no symbols, lists, or links, in 300 characters at most.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  ];
 }
 
 /**
