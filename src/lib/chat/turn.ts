@@ -1033,7 +1033,7 @@ function keepGoingRun(messages: ChatMessage[]): number {
 
 /** What the agent is sent to carry on a job its last reply said wasn't finished. */
 export function renderContinueMessage(remaining: string): string {
-  return `[Carry on with the job from where your last reply left off, without redoing what's done. What was left: ${remaining}]`;
+  return `[Carry on with the job from where your last reply left off, without redoing what's done. This reply has the same time as the last, so a step that ran out of time there goes in smaller pieces. What was left: ${remaining}]`;
 }
 
 const MAX_STEER_STEPS = 12;
