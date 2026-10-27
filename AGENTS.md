@@ -26,7 +26,8 @@ gitignored and stays out of the repo.
 - `npm run test:integration`: needs local Supabase; API tests also need `qa:serve`;
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
   with those, `job-search.eval.test.ts` evals the Job search template and `tidy.eval.test.ts`
-  the Brain's "Tidy up" on the real model, and `library.eval.test.ts` filing a link with `file_link`.
+  the Brain's "Tidy up" on the real model, `library.eval.test.ts` filing a link with `file_link`, and
+  `revise.eval.test.ts` rewriting a task's result in the form the member asks for over the brief's.
 - `npx trigger.dev dev`: runs the background worker locally (needs a Trigger.dev login and
   `TRIGGER_PROJECT_REF`); it deploys from GitHub Actions after each Vercel production deploy.
 
