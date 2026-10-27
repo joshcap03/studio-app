@@ -705,8 +705,9 @@ def watch_needs_approval(name, arguments):
 RUN_BUDGET = 210
 # A tool isn't started with less time than this left in the budget.
 MIN_TOOL_SECONDS = 15
-WRAP_UP = ("Don't call more tools: answer now with what you have, say plainly what's left, and offer "
-           "to carry on in your next reply. For a big job, do it in pieces that each fit in one reply.")
+WRAP_UP = ("Don't call more tools: answer now with what you have for the owner, say in a sentence what's "
+           "still to do in terms of their job, and offer to carry on. Don't explain how you got it: no "
+           "fetches, pages, counts of what you pulled, or running out of time.")
 
 
 class ToolGatewayComponent(Component):
