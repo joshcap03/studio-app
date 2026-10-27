@@ -194,7 +194,9 @@ export const api = {
   runTask: (id: string) => request<{ conversationId: string; runId: string }>(`/api/tasks/${id}/run`, { method: "POST" }),
   listRecords: (signal?: AbortSignal, collection?: string) =>
     request<{ records: AgentRecord[] }>(collection ? `/api/records?collection=${encodeURIComponent(collection)}` : "/api/records", { signal }),
-  updateRecord: (id: string, patch: { status?: string | null }) =>
+  createRecord: (row: { collection: string; title: string; status?: string | null; fields?: Record<string, unknown> }) =>
+    request<{ record: AgentRecord }>("/api/records", { method: "POST", body: JSON.stringify(row) }),
+  updateRecord: (id: string, patch: { title?: string; status?: string | null; url?: string | null; fields?: Record<string, unknown> }) =>
     request<{ record: AgentRecord }>(`/api/records/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteRecord: (id: string) => request<void>(`/api/records/${id}`, { method: "DELETE" }),
   listLibrary: (signal?: AbortSignal) => request<{ items: LibraryItem[]; trackers: TrackerSummary[] }>("/api/library", { signal }),

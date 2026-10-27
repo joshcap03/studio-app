@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detailCells, detailColumns, fieldsByCollection, isBlankValue, shownFields, withoutBlanks } from "./fields";
+import { cellText, fieldKey, sheetColumns, fieldsByCollection, isBlankValue, shownFields, withoutBlanks } from "./fields";
 
 const row = (title: string, fields: Record<string, unknown>, status: string | null = "discovered") => ({ title, status, fields });
 
@@ -31,27 +31,43 @@ describe("shownFields", () => {
   });
 });
 
-describe("detailColumns", () => {
-  it("picks the short fields most rows have, the same for every row, and leaves long ones for the open row", () => {
-    const long = "A long note about the role that goes well past what a details line can hold.";
+describe("sheetColumns", () => {
+  it("lists every field the rows have, short ones most rows have first and long ones last", () => {
+    const long = "A long note about the role that goes well past what a narrow column can hold.";
     const rows = [
       row("PM - Acme", { company: "Acme", pay: "$150K", location: "Remote", notes: long, next_step: "None" }),
       row("PM - Beta", { location: "NYC", pay: "$160K", notes: long }),
       row("PM - Gamma", { pay: "$170K", experience: "3 years", notes: long }),
       row("PM - Delta", { next_step: "Apply", pay: "$140K" }),
-      row("PM - Epsilon", { score: 4, verdict: "kept", notes: long }),
-      row("PM - Zeta", { notes: long }),
     ];
-    const columns = detailColumns(rows, 2);
-    expect(columns).toEqual(["pay", "location"]);
-    expect(rows.map((r) => detailCells(r, columns))).toEqual([
-      ["$150K", "Remote"],
-      ["$160K", "NYC"],
-      ["$170K", ""],
-      ["$140K", ""],
-      ["", ""],
-      ["", ""],
+    expect(sheetColumns(rows)).toEqual([
+      { key: "pay", long: false },
+      { key: "location", long: false },
+      { key: "company", long: false },
+      { key: "experience", long: false },
+      { key: "next_step", long: false },
+      { key: "notes", long: true },
     ]);
+  });
+});
+
+describe("cellText", () => {
+  it("reads a value as a cell's text, blank for placeholders and null for what isn't text", () => {
+    expect(cellText("  NYC  hybrid ")).toBe("NYC hybrid");
+    expect(cellText(4)).toBe("4");
+    expect(cellText(["a", "b"])).toBe("a, b");
+    expect(cellText("n/a")).toBe("");
+    expect(cellText(undefined)).toBe("");
+    expect(cellText({ min: 1, max: 2 })).toBeNull();
+  });
+});
+
+describe("fieldKey", () => {
+  it("turns a typed column name into a field key like the agent's", () => {
+    expect(fieldKey(" Next step ")).toBe("next_step");
+    expect(fieldKey("Pay ($)")).toBe("pay");
+    expect(fieldKey("Café / Bar")).toBe("café_bar");
+    expect(fieldKey("!!")).toBe("");
   });
 });
 

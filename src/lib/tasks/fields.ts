@@ -6,7 +6,7 @@ const BLANK = new Set(["", "none", "n/a", "na", "null", "nil", "unknown", "tbd",
 // "Pay: not listed" says only that nothing was found.
 const NOT_FOUND = /^(not (listed|specified|stated|disclosed|mentioned|given|provided|shown|seen|found)|unspecified|undisclosed|unlisted)$/;
 
-/** A details line holds a field this long or shorter; longer ones wait for the row to open. */
+/** A field this long or shorter is short: it fits a sheet's narrow column. */
 export const SHORT_FIELD = 32;
 
 /** True for a value that says nothing: empty, or a placeholder like "None" or "n/a". */
@@ -62,31 +62,41 @@ export function shownFields(row: Row): [key: string, text: string][] {
   });
 }
 
+/** A field's value as a sheet cell's text: "" when it's blank, null when it isn't text (a nested object), which a cell shows but can't edit. */
+export function cellText(value: unknown): string | null {
+  if (isBlankValue(value)) return "";
+  return fieldText(value) || null;
+}
+
 /**
- * The fields a collection's table shows as columns, the same ones on every row: the short ones
- * most rows have (a long one, like notes, is read with the row open).
+ * A collection's columns as a sheet: every field its rows have, the same for every row. Short
+ * ones come first, those most rows have leading; long ones (notes) come last, as wider columns.
  */
-export function detailColumns(rows: Row[], max = 3): string[] {
+export function sheetColumns(rows: Row[]): { key: string; long: boolean }[] {
   const counts = new Map<string, { short: number; long: number }>();
   for (const row of rows) {
-    for (const [key, text] of shownFields(row)) {
+    for (const [key, value] of Object.entries(row.fields)) {
+      if (isBlankValue(value)) continue;
       const count = counts.get(key) ?? { short: 0, long: 0 };
-      if (text.length <= SHORT_FIELD) count.short += 1;
+      if ((fieldText(value) || JSON.stringify(value)).length <= SHORT_FIELD) count.short += 1;
       else count.long += 1;
       counts.set(key, count);
     }
   }
   return [...counts]
-    .filter(([, c]) => c.short >= 2 * c.long)
-    .sort((a, b) => b[1].short - a[1].short || a[0].localeCompare(b[0]))
-    .slice(0, max)
-    .map(([key]) => key);
+    .map(([key, c]) => ({ key, long: c.long > c.short, count: c.short + c.long }))
+    .sort((a, b) => Number(a.long) - Number(b.long) || b.count - a.count || a.key.localeCompare(b.key))
+    .map(({ key, long }) => ({ key, long }));
 }
 
-/** One row's values for the collection's columns, in their order ("" where it has none). */
-export function detailCells(row: Row, columns: string[]): string[] {
-  const byKey = new Map(shownFields(row));
-  return columns.map((key) => byKey.get(key) ?? "");
+/** A column name the member typed as a field key, the way the agent writes them ("Next step" → "next_step"). */
+export function fieldKey(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
 }
 
 /** Each collection's field names, most used first, so the agent saves new rows the same way. */
