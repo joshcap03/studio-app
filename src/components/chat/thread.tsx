@@ -16,7 +16,7 @@ interface Props {
   running: boolean;
   onRetry: (messageId: string) => void;
   onEdit: (messageId: string, text: string) => void;
-  /** `always`: approve, and don't ask again on this task for its kind. */
+  /** `always`: approve, and don't ask again for its kind. */
   onDecide: (approvalId: string, decision: "approve" | "reject", always?: boolean) => void;
   onProposal: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
   /** Sends the member's answer to the agent's questions as their next message. */

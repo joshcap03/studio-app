@@ -4,7 +4,7 @@ import { readAttachment } from "@/lib/attachments";
 import { modalityOf, originFor } from "@/lib/chat/modality";
 import { storeFor } from "@/lib/chat/store-for";
 import type { AgentAttachment } from "@/lib/agent/types";
-import { TurnError, type TurnDeps, type TurnRequest } from "@/lib/chat/turn";
+import { TurnError, startTurn, type TurnDeps, type TurnRequest } from "@/lib/chat/turn";
 import { getCompanion, refreshCompanion } from "@/lib/companion";
 import { getConfig } from "@/lib/config";
 import { previewEnabled } from "@/lib/flags";
@@ -15,7 +15,9 @@ import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { getSkill } from "@/lib/skills";
 import { SETUP_SKILL_ID } from "@/lib/skills/setup";
-import { getRun, getTask, getTaskForConversation, setTaskAllowed, settleWaitingRun } from "@/lib/tasks";
+import { getRun, getTask, getTaskForConversation, settleWaitingRun } from "@/lib/tasks";
+import type { AgentTask } from "@/lib/tasks/types";
+import { getAllowedActions, setAllowedAction } from "@/lib/account";
 import type { StandingKind } from "@/lib/approvals/standing";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import { eventsCause, eventsMessage, getWatch } from "@/lib/tasks/watches";
@@ -55,7 +57,7 @@ export type RunInput = (
       via?: "tap" | "voice";
       heard?: string;
       voiceSessionId?: string;
-      /** "grant": approve, and don't ask again on this task for its kind; "auto": the task's run, under that OK. */
+      /** "grant": approve, and don't ask again for its kind; "auto": the run itself, under that OK. */
       standing?: "grant" | "auto";
     }
 ) & { offers?: boolean; secrets?: boolean; handoffs?: boolean }
@@ -72,9 +74,33 @@ export interface RunOptions {
   /**
    * Asked first when the reply's final state is saved: whether something carries the run on at
    * once (a task's run approving a request under the member's standing OK). True skips the
-   * notification and onFinished; the run carried on reports instead.
+   * notification and onFinished; the run carried on reports instead. Without it, a request the
+   * member's standing OK covers is approved and carried on here (standingCarryOn).
    */
   carryOn?: (message: ChatMessage) => Promise<boolean>;
+  /** How many more requests this run may approve itself under a standing OK (MAX_STANDING to start). */
+  standingLeft?: number;
+  /**
+   * When the request running this turn must stop (epoch ms). A run carried on in the same request
+   * keeps the one it started with; a new request gets its own.
+   */
+  deadline?: number;
+}
+
+/** Requests one run approves itself under the member's standing OK before it waits on them anyway. */
+export const MAX_STANDING = 20;
+
+/**
+ * The kinds of change the member has OK'd for good that cover a run here
+ * (src/lib/approvals/standing.ts): their own, for any of their agents, and the conversation's
+ * task's, from before those were the person's. Read fresh; none when they can't be read.
+ */
+export async function allowedHere(tenant: Tenant, task: Pick<AgentTask, "allowedActions"> | null): Promise<StandingKind[]> {
+  const own = await getAllowedActions(tenant).catch((error) => {
+    console.error("[run] couldn't read standing OKs", error);
+    return [] as StandingKind[];
+  });
+  return [...new Set([...own, ...(task?.allowedActions ?? [])])];
 }
 
 /**
@@ -83,7 +109,9 @@ export interface RunOptions {
  */
 export const REQUEST_LIMIT_MS = 300_000;
 /** Kept back at the end of the request to save the reply and say it ran out of time. */
-const SAVE_MARGIN_MS = 20_000;
+export const SAVE_MARGIN_MS = 20_000;
+/** A run isn't carried on under a standing OK with less of its request left than this: the member answers it. */
+const MIN_CARRY_MS = 60_000;
 
 /**
  * The deps and request for `startTurn`. Throws a TurnError (404) when the skill or project
@@ -91,9 +119,8 @@ const SAVE_MARGIN_MS = 20_000;
  */
 export async function buildTurnDeps(
   tenant: Tenant,
-  { conversationId, input: asked, onFinished, shouldStop, carryOn }: RunOptions,
+  { conversationId, input: asked, onFinished, shouldStop, carryOn, standingLeft = MAX_STANDING, deadline = Date.now() + REQUEST_LIMIT_MS - SAVE_MARGIN_MS }: RunOptions,
 ): Promise<{ deps: TurnDeps; request: TurnRequest }> {
-  const deadline = Date.now() + REQUEST_LIMIT_MS - SAVE_MARGIN_MS;
   // Whether the member has voice: without it nothing about the run is spoken, whatever the
   // browser sends or an older message from when it was on says.
   const voiceOn = Boolean(voiceStatus(tenant));
@@ -179,9 +206,10 @@ export async function buildTurnDeps(
       return null;
     }),
     input.kind === "send" && input.screen && voiceOn ? onScreen(tenant, input.screen).catch(() => null) : Promise.resolve(null),
-    // In a task's conversation, the member's standing OKs on it (src/lib/approvals/standing.ts).
+    // In a task's conversation, the task, with the member's standing OKs on it from before.
     getTaskForConversation(tenant, conversationId).catch(() => null),
   ]);
+  const allowed = await allowedHere(tenant, task);
   if (skill === null) throw new TurnError(404, "Skill not found.");
   if (project === null) throw new TurnError(404, "Project not found.");
   // Every run gets the member's files for this agent, then the project's, within the cap; the
@@ -194,13 +222,23 @@ export async function buildTurnDeps(
   // name once it has one (with voice, the name its calls go by). Each chat run also moves its
   // companion along (best-effort).
   const companion = previewEnabled(tenant, "companion");
+  // Anywhere else (a chat, or the member answering a task's request), a request their standing OK
+  // covers is approved here and the run carries on, as a task's run does (src/lib/tasks/run-task.ts).
+  const carry =
+    carryOn ??
+    ((message: ChatMessage) =>
+      standingCarryOn(tenant, conversationId, message, {
+        onFinished,
+        shouldStop,
+        standingLeft,
+        deadline,
+        pages: asked.kind === "task" ? {} : { offers: asked.offers, secrets: asked.secrets, handoffs: asked.handoffs },
+      }));
   const finished: NonNullable<TurnDeps["onFinished"]> = async (message, conversation, info) => {
-    const carried = carryOn
-      ? await carryOn(message).catch((error) => {
-          console.error("[run] couldn't carry the run on", error);
-          return false;
-        })
-      : false;
+    const carried = await carry(message).catch((error) => {
+      console.error("[run] couldn't carry the run on", error);
+      return false;
+    });
     if (carried) return;
     try {
       const self = companion
@@ -238,6 +276,7 @@ export async function buildTurnDeps(
       ...(offerCalls ? { calls: true } : {}),
       ...(browserContext ? { browserContext } : {}),
       ...(screen ? { screen } : {}),
+      ...(allowed.length ? { allowed } : {}),
       ...(watchRun ? { runCause: "watch" as const } : {}),
     },
     projectFiles: files,
@@ -255,14 +294,12 @@ export async function buildTurnDeps(
     // Checks the limits and records the run in one step, so a burst can't slip under them.
     claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
     allowSpokenDecision: (approval, decision, spoken) => checkSpokenDecision(tenant, approval, decision, spoken),
-    ...(task
-      ? {
-          standing: {
-            allowed: task.allowedActions,
-            grant: async (kind: StandingKind) => Boolean(await setTaskAllowed(tenant, task.id, kind, true)),
-          },
-        }
-      : {}),
+    // The member's standing OKs (src/lib/approvals/standing.ts), and how their tap adds one: to
+    // the person, so every chat and task of every agent of theirs stops asking for that kind.
+    standing: {
+      allowed,
+      grant: async (kind: StandingKind) => (await setAllowedAction(tenant, kind, true)).includes(kind),
+    },
     timelines: previewEnabled(tenant, "why"),
     // Replies to a voice message, and a task run's news, come back as voice notes for members with speech.
     voiceNotes: Boolean(voiceStatus(tenant)?.speech.tts),
@@ -313,6 +350,59 @@ export async function buildTurnDeps(
           }
         : { conversationId, ...input };
   return { deps, request };
+}
+
+/**
+ * The conversation's messages with its pending request marked `auto` when the member's standing
+ * OK covers it: the run is approving it itself, so their page follows the run rather than asking.
+ */
+export async function markCovered(tenant: Tenant, conversationId: string, messages: ChatMessage[]): Promise<ChatMessage[]> {
+  const last = messages.at(-1);
+  const pending = last?.status === "awaiting" ? last.approvals?.find((a) => a.status === "pending" && a.standing) : undefined;
+  if (!last || !pending?.standing) return messages;
+  const allowed = await allowedHere(tenant, await getTaskForConversation(tenant, conversationId).catch(() => null));
+  if (!allowed.includes(pending.standing)) return messages;
+  const approvals = last.approvals!.map((a) => (a.id === pending.id ? { ...a, auto: true as const } : a));
+  return [...messages.slice(0, -1), { ...last, approvals }];
+}
+
+/**
+ * When a reply ends waiting on a request the member's standing OK covers, approves it as the run
+ * (recorded as decided_via 'standing') and carries the run on in a turn of its own, which the
+ * member's page follows. Resolves whether it did. The OK is read fresh, so one taken back stops
+ * the next request; at most `standingLeft` more in a row, and only with time left in the request.
+ */
+export async function standingCarryOn(
+  tenant: Tenant,
+  conversationId: string,
+  message: ChatMessage,
+  options: Pick<RunOptions, "onFinished" | "shouldStop" | "carryOn"> & {
+    standingLeft: number;
+    /** The deadline of the request this runs in, which the run carried on keeps. */
+    deadline: number;
+    pages?: { offers?: boolean; secrets?: boolean; handoffs?: boolean };
+    task?: Pick<AgentTask, "allowedActions"> | null;
+  },
+): Promise<boolean> {
+  if (message.status !== "awaiting" || options.standingLeft <= 0 || options.deadline - Date.now() < MIN_CARRY_MS) return false;
+  const [pending, task] = await Promise.all([
+    storeFor(tenant).pendingApproval(conversationId),
+    options.task !== undefined ? options.task : getTaskForConversation(tenant, conversationId).catch(() => null),
+  ]);
+  if (!pending?.standing || pending.messageId !== message.id) return false;
+  if (!(await allowedHere(tenant, task)).includes(pending.standing)) return false;
+  const next = await buildTurnDeps(tenant, {
+    conversationId,
+    input: { kind: "decide", approvalId: pending.id, decision: "approve", standing: "auto", ...options.pages },
+    onFinished: options.onFinished,
+    shouldStop: options.shouldStop,
+    carryOn: options.carryOn,
+    standingLeft: options.standingLeft - 1,
+    deadline: options.deadline,
+  });
+  // No one reads this stream: the member's page follows the reply from its saved state.
+  void (await startTurn(next.deps, next.request)).cancel();
+  return true;
 }
 
 /** Whether the member said Not now to an offer to call under this message. */

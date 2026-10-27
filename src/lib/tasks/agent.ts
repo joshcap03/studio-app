@@ -51,7 +51,6 @@ export async function taskContextFor(
           goal: task.goal,
           plan: repeats(task) ? [] : contextSteps(task.plan),
           ...(repeats(task) ? { repeats: true } : {}),
-          ...(task.allowedActions.length ? { allowed: task.allowedActions } : {}),
         }
       : null,
     plan: !task && own?.steps.length ? { goal: own.goal, steps: contextSteps(own.steps) } : null,

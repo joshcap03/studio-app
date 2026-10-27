@@ -22,7 +22,7 @@ interface ApprovalProps {
   approval: Approval;
   /**
    * Present only while this request can still be answered. `always`: approve, and don't ask again
-   * on this task for its kind (offered only on a request of a kind that qualifies, in a task's conversation).
+   * for its kind (offered only on a request of a kind that qualifies).
    */
   onDecide?: (decision: "approve" | "reject", always?: boolean) => void;
   /** The conversation it's in, so an approval made by voice can be reported as not what they said. */
@@ -36,6 +36,9 @@ interface ApprovalProps {
   call?: { spoken: boolean; spent?: boolean; hold: { left: number; waiting?: boolean; onCancel: () => void } | null };
 }
 
+/** How long a request the member's standing OK covers waits for the run to approve it before it's theirs to answer. */
+const AUTO_GRACE_MS = 20_000;
+
 export function ApprovalCard({ approval, onDecide, conversationId, call }: ApprovalProps) {
   const pending = approval.status === "pending";
   const [choice, setChoice] = useState<"approve" | "reject" | null>(null);
@@ -44,8 +47,16 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
   const offerAlways = Boolean(approval.standing) && !call;
   const spent = call?.spent ? [approval.id] : [];
   const readBack = call && !tapReason(approval, call.spoken, spent) && approval.spoken?.ok ? approval.spoken.readBack : null;
+  // Covered by the member's standing OK: the run approves it itself and carries on. Should that
+  // not happen (the run stopped short), it's theirs to answer after a while, like any other.
+  const [goingAhead, setGoingAhead] = useState(pending && approval.auto === true);
+  useEffect(() => {
+    if (!goingAhead) return;
+    const timer = setTimeout(() => setGoingAhead(false), AUTO_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [goingAhead]);
   const card = useRef<HTMLElement>(null);
-  useWaitsOnMember(card, pending && Boolean(onDecide));
+  useWaitsOnMember(card, pending && Boolean(onDecide) && !goingAhead);
 
   function decide(decision: "approve" | "reject") {
     if (!onDecide || choice) return;
@@ -66,7 +77,7 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
         <AppGlyph app={approval.app} size={20} className="mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-[12px] font-medium tracking-[0.01em] text-fg-3">
-            {pending ? "Needs your OK" : "Asked for your OK"}
+            {goingAhead ? "Covered by your OK" : pending ? "Needs your OK" : "Asked for your OK"}
             {approval.app ? ` · ${appName(approval.app)}` : ""}
           </p>
           <p className="mt-0.5 text-[15px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{approval.summary}</p>
@@ -101,6 +112,11 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
             Cancel
           </button>
         </div>
+      ) : pending && goingAhead ? (
+        <p role="status" className="flex items-center gap-1.5 border-t border-line px-4 py-2 text-[12.5px] text-fg-3">
+          <span className="spinner size-3" aria-hidden="true" />
+          Going ahead with the OK you gave
+        </p>
       ) : pending && onDecide ? (
         <>
         {offerAlways && approval.standing ? (
@@ -113,9 +129,9 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
               className="mt-[3px] size-3.5 shrink-0 accent-accent"
             />
             <span>
-              <span className="text-fg">Don&apos;t ask again on this task</span>
+              <span className="text-fg">Don&apos;t ask again</span>
               <span className="block text-fg-3">
-                {STANDING_LABELS[approval.standing]} on its runs without asking. Sending, deleting, and archiving still wait for you. You can take it back on the task.
+                {STANDING_LABELS[approval.standing]} without asking, in any chat or task. Sending, deleting, and archiving still wait for you. You can take it back in Settings.
               </span>
             </span>
           </label>
@@ -164,7 +180,7 @@ function ApprovalOutcome({ approval, conversationId }: { approval: Approval; con
           text: byVoice
             ? `You approved this by voice: “${approval.decidedWords}”`
             : approval.decidedVia === "standing"
-              ? "Approved by the OK you gave on this task"
+              ? "Approved by the OK you gave"
               : "You approved this",
           tone: "text-success",
         }

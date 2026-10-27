@@ -237,10 +237,17 @@ describe("Langflow request", () => {
     expect(setup).toContain("Done means: a setup you'd trust\nThere's no setup checklist yet");
   });
 
+  it("tells every run what the member OK'd for good, and nothing when they haven't", () => {
+    const okd = templateValues({ ...tenantA, allowed: ["gmail_labels"] }).system_context;
+    expect(okd).toContain("The member has OK'd these for good");
+    expect(okd).toContain("GMAIL_BATCH_MODIFY_MESSAGES");
+    expect(templateValues(tenantA).system_context).not.toContain("OK'd these for good");
+  });
+
   it("tells a scheduled task's runs to keep no plan, and others to update it at milestones, not each step's start", () => {
     const daily = templateValues({
       ...tenantA,
-      task: { title: "Find new roles", instructions: "Find 3 roles.", goal: "3 new roles", plan: [], repeats: true, allowed: [] },
+      task: { title: "Find new roles", instructions: "Find 3 roles.", goal: "3 new roles", plan: [], repeats: true },
     }).system_context;
     expect(daily).toContain("which runs on a schedule");
     expect(daily).toContain("Done means, each run: 3 new roles");

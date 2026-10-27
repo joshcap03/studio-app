@@ -628,8 +628,10 @@ CODE_TOOLS = {"composio_remote_workbench", "composio_remote_bash_tool"}
 # read-only slugs, and touches nothing else that could reach Composio or hide what runs, can't
 # change their accounts, so it runs without approval. Anything else asks (fail closed).
 CALLED_SLUG = re.compile(r"""\brun_composio_tool\s*\(\s*(?:tool_slug\s*=\s*)?(['"])([A-Za-z0-9_]+)\1""")
+# Python's own compile() is caught, not a module's (re.compile, which sorting mail by pattern uses);
+# builtins is caught so compile can't be reached through it.
 HIDDEN_CODE = re.compile(
-    r"proxy_execute|environ|getenv|\bexec\b|\beval\b|\bcompile\s*\(|__import__|importlib|getattr|setattr|"
+    r"proxy_execute|environ|getenv|\bexec\b|\beval\b|(?<![.\w])compile\s*\(|\bbuiltins\b|__import__|importlib|getattr|setattr|"
     r"\bglobals\b|\blocals\b|\bvars\s*\(|__builtins__|__dict__|sys\.modules|subprocess|\bos\.(system|popen|exec|spawn)|"
     r"\bpty\b|ctypes|marshal|pickle|base64|codecs",
     re.IGNORECASE,
@@ -904,6 +906,13 @@ class ToolGatewayComponent(Component):
                         "without it.")
             # Said plainly for code: what made this run ask, so the agent can write code that
             # doesn't when the job only reads, and each approved run should do the whole job.
+            if name == "composio_remote_bash_tool":
+                return ("Shell commands always need the owner's approval. To read or work through data, including "
+                        "files an earlier step saved, run Python in composio_remote_workbench through execute_tool "
+                        "instead: code that only reads (no proxy_execute, environment, exec, eval, or getattr, and "
+                        "app tools only through run_composio_tool with literal read-only slugs) runs without "
+                        "approval. Only if a shell command is truly needed, call take_action with the same "
+                        "tool_name and arguments plus a one-sentence summary.")
             if name in CODE_TOOLS:
                 return ("Running code needs the owner's approval when it could change their accounts: it calls a "
                         "changing app tool, uses proxy_execute or the environment, or hides what it runs (exec, eval, "

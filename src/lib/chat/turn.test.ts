@@ -813,7 +813,7 @@ describe("approvals", () => {
     expect(await storeB.getApproval(approval.id)).toBeNull();
   });
 
-  describe("a standing OK on a task", () => {
+  describe("a standing OK", () => {
     const labels = {
       type: "approval",
       summary: "Label 3 threads Priority",
@@ -849,10 +849,16 @@ describe("approvals", () => {
       return { id, deps, store, granted, approval: found.approval };
     }
 
-    it("marks only requests of a kind that qualifies, and only in a task's conversation", async () => {
+    it("marks only requests of a kind that qualifies, and only where standing OKs are on", async () => {
       expect((await pauseOn(labels, { allowed: [] })).approval.standing).toBe("gmail_labels");
       expect((await pauseOn(sending, { allowed: [] })).approval.standing).toBeUndefined();
       expect((await pauseOn(labels)).approval.standing).toBeUndefined();
+    });
+
+    it("marks a request the member already OK'd as going ahead on its own, and nothing else", async () => {
+      expect((await pauseOn(labels, { allowed: ["gmail_labels"] })).approval.auto).toBe(true);
+      expect((await pauseOn(labels, { allowed: [] })).approval.auto).toBeUndefined();
+      expect((await pauseOn(sending, { allowed: ["gmail_labels"] })).approval.auto).toBeUndefined();
     });
 
     it("saves the OK when the member taps Approve with it, and approves this one as a tap", async () => {
@@ -862,7 +868,7 @@ describe("approvals", () => {
       expect(await store.getApproval(approval.id)).toMatchObject({ status: "approved", decidedVia: "tap" });
     });
 
-    it("lets a task's run approve a request the member already OK'd, and records it as theirs", async () => {
+    it("lets the run approve a request the member already OK'd, and records it as theirs", async () => {
       const { id, deps, store, approval } = await pauseOn(labels, { allowed: ["gmail_labels"] });
       const events = await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", standing: "auto" }));
       const end = events.at(-1);
@@ -870,7 +876,7 @@ describe("approvals", () => {
       expect(await store.getApproval(approval.id)).toMatchObject({ status: "approved", decidedVia: "standing" });
     });
 
-    it("never approves without the OK, for another kind, or outside a task", async () => {
+    it("never approves without the OK, for another kind, or where standing OKs are off", async () => {
       const notYet = await pauseOn(labels, { allowed: [] });
       await expect(
         startTurn(notYet.deps, { conversationId: notYet.id, kind: "decide", approvalId: notYet.approval.id, decision: "approve", standing: "auto" }),

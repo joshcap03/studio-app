@@ -27,14 +27,14 @@ export interface AgentTenantContext {
   memories: string[];
   /** The newest facts the member may change, with ids, so the agent updates one rather than saving it again. */
   recentMemories?: { id: string; content: string }[];
+  /** Kinds of change the member has OK'd for good, for any run here (src/lib/approvals/standing.ts). */
+  allowed?: StandingKind[];
   /** The member's task this conversation works on, if any: its brief, what done looks like, and current plan. */
   task?: {
     title: string;
     instructions: string;
     goal?: string | null;
     plan: { text: string; status: string; note: string | null }[];
-    /** Kinds of change the member has OK'd for good on this task (src/lib/approvals/standing.ts). */
-    allowed?: StandingKind[];
     /** It runs on a schedule, so its runs keep no plan (plan is empty). */
     repeats?: boolean;
   } | null;

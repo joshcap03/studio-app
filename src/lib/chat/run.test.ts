@@ -8,7 +8,7 @@ import type { Tenant } from "@/lib/tenant-core";
 
 const scope = { workspaceId: "ws-a", userId: "user-a" };
 const db = vi.hoisted(() => ({ current: null as unknown }));
-const seen = vi.hoisted(() => ({ modality: [] as unknown[], skills: [] as unknown[], voice: true }));
+const seen = vi.hoisted(() => ({ modality: [] as unknown[], skills: [] as unknown[], voice: true, allowed: [] as string[], started: [] as unknown[] }));
 
 vi.mock("@/lib/chat/store-for", () => ({ storeFor: () => db.current }));
 vi.mock("@/lib/agent", () => ({ getAgentAdapter: () => ({ id: "mock", capabilities: { attachments: false } }) }));
@@ -25,7 +25,16 @@ vi.mock("@/lib/push", () => ({ notificationFor: vi.fn(), notify: vi.fn(), pushEn
 vi.mock("@/lib/skills", () => ({
   getSkill: vi.fn(async (_t: unknown, id: string, options: unknown) => (seen.skills.push(options), { id, name: "Skill", instructions: "Do it." })),
 }));
-vi.mock("@/lib/tasks", () => ({ getTask: vi.fn(), getTaskForConversation: vi.fn(async () => null), setTaskAllowed: vi.fn(), settleWaitingRun: vi.fn() }));
+vi.mock("@/lib/tasks", () => ({ getTask: vi.fn(), getTaskForConversation: vi.fn(async () => null), settleWaitingRun: vi.fn() }));
+vi.mock("@/lib/account", () => ({
+  getAllowedActions: vi.fn(async () => seen.allowed),
+  setAllowedAction: vi.fn(async (_t: unknown, kind: string) => (seen.allowed = [...new Set([...seen.allowed, kind])])),
+}));
+// A run carried on is started, not run: what it was asked is all that's checked.
+vi.mock("@/lib/chat/turn", async (actual) => ({
+  ...(await actual<typeof import("./turn")>()),
+  startTurn: vi.fn(async (_deps: unknown, request: unknown) => (seen.started.push(request), new ReadableStream())),
+}));
 vi.mock("@/lib/tasks/agent", () => ({ savePlanFromAgent: vi.fn(), saveRecordFromAgent: vi.fn() }));
 vi.mock("@/lib/voice/persona", () => ({ resolvePersona: vi.fn() }));
 // Only "mine" is the member's own call in this agent, still going or just hung up on.
@@ -43,7 +52,7 @@ vi.mock("@/lib/workspace", () => ({
 const MY_CALL = "11111111-1111-4111-8111-111111111111";
 const THEIR_CALL = "22222222-2222-4222-8222-222222222222";
 
-const { buildTurnDeps } = await import("./run");
+const { buildTurnDeps, standingCarryOn, MAX_STANDING } = await import("./run");
 const tenant = { workspace: { id: scope.workspaceId }, userId: scope.userId } as Tenant;
 
 async function conversationWith(origin: unknown) {
@@ -61,6 +70,8 @@ beforeEach(() => {
   seen.modality = [];
   seen.skills = [];
   seen.voice = true;
+  seen.allowed = [];
+  seen.started = [];
 });
 
 describe("buildTurnDeps", () => {
@@ -186,5 +197,58 @@ describe("buildTurnDeps", () => {
     await plain.deps.savePlan?.([{ text: "y", status: "todo" }], undefined);
     expect(savePlanFromAgent).toHaveBeenLastCalledWith(tenant, id, [{ text: "y", status: "todo" }], undefined, { setup: false });
     expect(buildAgentContext).toHaveBeenLastCalledWith(tenant, "", id, undefined, { setupRun: false });
+  });
+});
+
+describe("standing OKs", () => {
+  /** A conversation whose latest reply waits on a request of `standing`'s kind (or another kind). */
+  async function waitingOn(standing?: "gmail_labels") {
+    const id = await conversationWith(null);
+    const store = db.current as ReturnType<typeof createMemoryStore>;
+    const reply = await store.insertMessage({ id: crypto.randomUUID(), conversationId: id, role: "assistant", content: "", status: "awaiting", activity: [], artifacts: [] });
+    const approval = await store.createApproval({
+      conversationId: id,
+      messageId: reply.id,
+      summary: "Label 3 threads Priority",
+      details: [],
+      provider: "mock",
+      providerState: {},
+      ...(standing ? { standing } : {}),
+    });
+    return { id, reply, approval };
+  }
+  const time = () => Date.now() + 200_000;
+
+  it("come with every conversation, and a tap gives one to the person, for all their agents", async () => {
+    seen.allowed = ["gmail_labels"];
+    const id = await conversationWith(null);
+    const { deps } = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Sort my mail" } });
+    expect(deps.standing?.allowed).toEqual(["gmail_labels"]);
+    expect(deps.context.allowed).toEqual(["gmail_labels"]);
+    seen.allowed = [];
+    const fresh = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Sort my mail" } });
+    expect(fresh.deps.context.allowed).toBeUndefined();
+    expect(await fresh.deps.standing!.grant("gmail_labels")).toBe(true);
+    expect(seen.allowed).toEqual(["gmail_labels"]);
+  });
+
+  it("carry a chat on past a request the member OK'd for good, as the run, in the time left", async () => {
+    seen.allowed = ["gmail_labels"];
+    const { id, reply, approval } = await waitingOn("gmail_labels");
+    expect(await standingCarryOn(tenant, id, reply, { standingLeft: MAX_STANDING, deadline: time(), pages: { offers: true } })).toBe(true);
+    expect(seen.started).toEqual([{ conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", standing: "auto" }]);
+  });
+
+  it("leave everything else waiting on the member", async () => {
+    const notOkd = await waitingOn("gmail_labels");
+    expect(await standingCarryOn(tenant, notOkd.id, notOkd.reply, { standingLeft: MAX_STANDING, deadline: time() })).toBe(false);
+    seen.allowed = ["gmail_labels"];
+    const otherKind = await waitingOn();
+    expect(await standingCarryOn(tenant, otherKind.id, otherKind.reply, { standingLeft: MAX_STANDING, deadline: time() })).toBe(false);
+    const covered = await waitingOn("gmail_labels");
+    expect(await standingCarryOn(tenant, covered.id, covered.reply, { standingLeft: 0, deadline: time() })).toBe(false);
+    expect(await standingCarryOn(tenant, covered.id, covered.reply, { standingLeft: MAX_STANDING, deadline: Date.now() + 30_000 })).toBe(false);
+    expect(await standingCarryOn(tenant, covered.id, { ...covered.reply, status: "complete" }, { standingLeft: MAX_STANDING, deadline: time() })).toBe(false);
+    expect(seen.started).toEqual([]);
   });
 });

@@ -284,8 +284,10 @@ name, never inside composio_multi_execute_tool.
 
 Code that only reads runs without the owner's approval: call app tools
 in it only with run_composio_tool and a literal read-only slug, and don't
-use proxy_execute, the environment, exec, eval, or getattr. Code that
-could change their accounts needs approval each run. Either way, do the
+use proxy_execute, the environment, exec, eval, or getattr. Work
+through data, including files an earlier step saved, in that Python
+code, never with the shell (composio_remote_bash_tool), which always
+asks. Code that could change their accounts needs approval each run. Either way, do the
 whole job in one code call: fetch and process the data there. Tool
 results come back cut to a few thousand characters. When one ends with
 [PARTIAL RESULT ...], read the rest with read_result instead of running
