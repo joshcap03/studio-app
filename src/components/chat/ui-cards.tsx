@@ -925,14 +925,17 @@ export function ProposalCard({ proposal, response, canApply, onApply, onFix, onR
   const companion = useCompanion();
   const [profile, setProfile] = useState(proposal.profile ?? "");
   const [instructions, setInstructions] = useState(proposal.instructions ?? "");
-  const [editing, setEditing] = useState<"profile" | "instructions" | null>(null);
-  // A new skill's instructions, as the member may reword them, and which one is open to read.
+  // A new skill's instructions, as the member may reword them.
   const [skillTexts, setSkillTexts] = useState<Record<number, string>>({});
   const onlySkills = proposal.skills.length > 0 && proposal.profile === undefined && proposal.instructions === undefined && !proposal.tasks.length;
   // Nothing but skills to add: the card is about them, not the agent's setup.
   const skillsOnly = onlySkills && !proposal.memories.length && !proposal.identity && !proposal.sound?.length;
-  const [openSkill, setOpenSkill] = useState<number | null>(() => (onlySkills && proposal.skills.length === 1 && !("catalogId" in proposal.skills[0]) ? 0 : null));
-  const [editingSkill, setEditingSkill] = useState<number | null>(null);
+  // Each item is one line; the one open shows its details ("profile", "t0", "s1"), and may be
+  // reworded. A lone new skill opens on its own, since reading it is the point of the card.
+  const [open, setOpen] = useState<string | null>(() => (onlySkills && proposal.skills.length === 1 && !("catalogId" in proposal.skills[0]) ? "s0" : null));
+  const [editing, setEditing] = useState<string | null>(null);
+  // Once it's settled (applied, or an older reply), its items fold away behind a count.
+  const [showItems, setShowItems] = useState(false);
   // Its guesses the member says aren't right, with what is: they go back to the agent, not applied.
   const [fixes, setFixes] = useState<Record<number, string>>({});
   const [fixesSent, setFixesSent] = useState(false);
@@ -1005,27 +1008,63 @@ export function ProposalCard({ proposal, response, canApply, onApply, onFix, onR
       <Check size={14} className={`mt-[3px] shrink-0 ${applied && on ? "text-success" : "text-fg-4"}`} />
     );
 
-  const textItem = (key: "profile" | "instructions", title: string, value: string, set: (v: string) => void) =>
-    proposal[key] !== undefined && chosen(shown[key]) ? (
-      <div className="flex items-start gap-2.5">
-        {check(shown[key], () => setPicks((p) => ({ ...p, [key]: !p[key] })), title)}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[13px] font-medium text-fg">{title}</span>
-            {live ? (
-              <button type="button" onClick={() => setEditing(editing === key ? null : key)} className={quiet}>
-                {editing === key ? "Done" : "Edit"}
-              </button>
-            ) : null}
-          </div>
-          {editing === key ? (
-            <textarea className={`${input} mt-1 min-h-28 resize-y`} value={value} maxLength={8000} onChange={(e) => set(e.target.value)} />
-          ) : (
-            <p className="mt-0.5 line-clamp-4 whitespace-pre-wrap text-[13px] leading-[1.5] text-fg-3 [overflow-wrap:anywhere]">{value}</p>
-          )}
-        </div>
+  // One item on one line: its pick, its title and a muted aside; a tap opens what's behind it.
+  // An aside that only previews the details steps aside while they're open.
+  const row = (id: string, on: boolean, onToggle: () => void, label: string, title: string, aside: string | null, detail: React.ReactNode, preview = false) => (
+    <div key={id} className="flex items-start gap-2.5">
+      {check(on, onToggle, label)}
+      <div className="min-w-0 flex-1">
+        {detail ? (
+          <button
+            type="button"
+            aria-expanded={open === id}
+            onClick={() => {
+              setOpen(open === id ? null : id);
+              setEditing(null);
+            }}
+            className="group flex w-full items-center gap-2 text-left"
+          >
+            <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
+              <span className="font-medium">{title}</span>
+              {aside && !(preview && open === id) ? <span className="text-fg-3"> · {aside}</span> : null}
+            </span>
+            <ChevronDown size={14} className={`shrink-0 text-fg-4 transition-transform group-hover:text-fg-3 ${open === id ? "rotate-180" : ""}`} aria-hidden="true" />
+          </button>
+        ) : (
+          <p className="text-[13px] leading-[1.5] text-fg-2 [overflow-wrap:anywhere]">{title}</p>
+        )}
+        {detail && open === id ? <div className="mt-1.5 mb-1 animate-fade-in">{detail}</div> : null}
+      </div>
+    </div>
+  );
+  // What's behind an item: its text to read, or to reword while the card is live.
+  const body = (id: string, value: string, set: ((v: string) => void) | null, max: number, label: string) => (
+    <div className="flex flex-col gap-1">
+      {live && set && editing === id ? (
+        <textarea className={`${input} min-h-32 resize-y`} value={value} maxLength={max} aria-label={label} onChange={(e) => set(e.target.value)} />
+      ) : (
+        <p className="whitespace-pre-wrap rounded-lg bg-subtle px-3 py-2 text-[13px] leading-[1.55] text-fg-2 [overflow-wrap:anywhere]">{value}</p>
+      )}
+      {live && set ? (
+        <button type="button" onClick={() => setEditing(editing === id ? null : id)} className={`${quiet} self-end`}>
+          {editing === id ? "Done" : "Edit"}
+        </button>
+      ) : null}
+    </div>
+  );
+  const group = (label: string, rows: React.ReactNode[]) => {
+    const kept = rows.filter(Boolean);
+    return kept.length ? (
+      <div className="flex flex-col gap-2">
+        {label ? <p className="text-[12px] font-medium tracking-[0.01em] text-fg-3">{label}</p> : null}
+        {kept}
       </div>
     ) : null;
+  };
+  const textItem = (key: "profile" | "instructions", title: string, value: string, set: (v: string) => void) =>
+    proposal[key] !== undefined && chosen(shown[key])
+      ? row(key, shown[key], () => setPicks((p) => ({ ...p, [key]: !p[key] })), title, title, value.split("\n")[0], body(key, value, set, 8000, title), true)
+      : null;
 
   const kept = applied?.applied.name;
   // How it talks with them, shown once: with a picked sound option that has its own manner, on
@@ -1090,6 +1129,56 @@ export function ProposalCard({ proposal, response, canApply, onApply, onFix, onR
       </div>
     ) : null;
 
+  // Its guesses come first while they can be fixed: they're what most needs the member's eye.
+  const guesses = proposal.assumptions?.length ? (
+    <div className="flex flex-col gap-2 rounded-lg border border-line px-3 py-2.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[13px] font-medium text-fg">My guesses</span>
+        {live && onFix ? <span className="text-[12px] text-fg-3">Fix any I got wrong.</span> : null}
+      </div>
+      {proposal.assumptions.map((a, i) => (
+        <div key={`a${i}`} className="flex flex-col gap-1.5">
+          <div className="flex items-start gap-2">
+            <HelpCircle size={14} className={`mt-[3px] shrink-0 ${fixes[i] !== undefined ? "text-danger" : "text-fg-4"}`} aria-hidden="true" />
+            <p className={`min-w-0 flex-1 text-[13px] leading-[1.5] [overflow-wrap:anywhere] ${fixes[i] !== undefined ? "text-fg-3 line-through decoration-fg-4" : "text-fg-2"}`}>{a}</p>
+            {live && onFix ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setFixes((f) => {
+                    if (f[i] === undefined) return { ...f, [i]: "" };
+                    const { [i]: _, ...rest } = f;
+                    return rest;
+                  })
+                }
+                className={quiet}
+              >
+                {fixes[i] !== undefined ? "It's right" : "Not quite"}
+              </button>
+            ) : null}
+          </div>
+          {live && fixes[i] !== undefined ? (
+            <input
+              autoFocus
+              value={fixes[i]}
+              maxLength={300}
+              placeholder="What's right?"
+              aria-label={`What's right instead of: ${a}`}
+              onChange={(e) => setFixes((f) => ({ ...f, [i]: e.target.value }))}
+              className={`${input} ml-[22px] w-[calc(100%-22px)]`}
+            />
+          ) : null}
+        </div>
+      ))}
+    </div>
+  ) : null;
+  const items =
+    Number(proposal.profile !== undefined && shown.profile) +
+    Number(proposal.instructions !== undefined && shown.instructions) +
+    proposal.tasks.filter((_, i) => chosen(shown.tasks.includes(i))).length +
+    proposal.skills.filter((_, i) => chosen(shown.skills.includes(i))).length +
+    proposal.memories.filter((_, i) => chosen(shown.memories.includes(i))).length;
+
   if (introduction) {
     return (
       <section aria-label="My name" className={applied ? "mt-4 overflow-hidden rounded-xl border border-line animate-fade-up" : card}>
@@ -1121,123 +1210,66 @@ export function ProposalCard({ proposal, response, canApply, onApply, onFix, onR
           {proposal.summary ? <p className="mt-0.5 text-[14.5px] leading-[1.5] text-fg [overflow-wrap:anywhere]">{proposal.summary}</p> : null}
         </div>
       </div>
-      <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
+      <div className="flex flex-col gap-4 px-4 pt-3 pb-4">
         {identity}
         {sound}
-        {textItem("profile", "What this agent is for", profile, setProfile)}
-        {textItem("instructions", "Standing instructions", instructions, setInstructions)}
-        {proposal.tasks.map((t, i) =>
-          chosen(shown.tasks.includes(i)) ? (
-            <div key={`t${i}`} className="flex items-start gap-2.5">
-              {check(shown.tasks.includes(i), () => toggle("tasks", i), t.title)}
-              <div className="min-w-0 flex-1">
-                <span className="text-[13px] font-medium text-fg">{t.title}</span>
-                <span className="text-[12.5px] text-fg-3"> · {t.schedule ? describeSchedule(t.schedule, zone) : "When you ask"}</span>
-                {t.instructions ? <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.5] text-fg-3">{t.instructions}</p> : null}
-              </div>
-            </div>
-          ) : null,
-        )}
-        {proposal.skills.map((s, i) =>
-          chosen(shown.skills.includes(i)) ? (
-            <div key={`s${i}`} className="flex items-start gap-2.5">
-              {check(shown.skills.includes(i), () => toggle("skills", i), "catalogId" in s ? s.catalogId : s.name)}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="min-w-0 text-[13px] text-fg">
-                    <span className="font-medium">Skill:</span> {"catalogId" in s ? (catalogEntry(s.catalogId)?.name ?? s.catalogId) : s.name}
-                    {"catalogId" in s ? null : s.description ? <span className="text-fg-3"> · {s.description}</span> : null}
-                  </span>
-                  {"catalogId" in s ? null : (
-                    <span className="flex shrink-0 items-center">
-                      {live && openSkill === i ? (
-                        <button type="button" onClick={() => setEditingSkill(editingSkill === i ? null : i)} className={quiet}>
-                          {editingSkill === i ? "Done" : "Edit"}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        aria-expanded={openSkill === i}
-                        onClick={() => {
-                          setOpenSkill(openSkill === i ? null : i);
-                          setEditingSkill(null);
-                        }}
-                        className={quiet}
-                      >
-                        {openSkill === i ? "Hide" : "Read"}
-                      </button>
-                    </span>
-                  )}
-                </div>
-                {"catalogId" in s || openSkill !== i ? null : live && editingSkill === i ? (
-                  <textarea
-                    className={`${input} mt-1 min-h-40 resize-y`}
-                    value={skillTexts[i] ?? s.instructions}
-                    maxLength={4000}
-                    aria-label={`What “${s.name}” does`}
-                    onChange={(e) => setSkillTexts((t) => ({ ...t, [i]: e.target.value }))}
-                  />
-                ) : (
-                  <p className="mt-1 whitespace-pre-wrap rounded-lg bg-subtle px-3 py-2 text-[13px] leading-[1.55] text-fg-2 [overflow-wrap:anywhere]">
-                    {skillTexts[i] ?? s.instructions}
-                  </p>
-                )}
-              </div>
-            </div>
-          ) : null,
-        )}
-        {proposal.memories.map((m, i) =>
-          chosen(shown.memories.includes(i)) ? (
-            <div key={`m${i}`} className="flex items-start gap-2.5">
-              {check(shown.memories.includes(i), () => toggle("memories", i), m)}
-              <span className="min-w-0 flex-1 text-[13px] text-fg-2">
-                <span className="font-medium text-fg">Remember:</span> {m}
-              </span>
-            </div>
-          ) : null,
-        )}
-        {proposal.assumptions?.length ? (
-          <div className="flex flex-col gap-2 rounded-lg border border-line px-3 py-2.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[13px] font-medium text-fg">My guesses</span>
-              {live && onFix ? <span className="text-[12px] text-fg-3">Fix any I got wrong.</span> : null}
-            </div>
-            {proposal.assumptions.map((a, i) => (
-              <div key={`a${i}`} className="flex flex-col gap-1.5">
-                <div className="flex items-start gap-2">
-                  <HelpCircle size={14} className={`mt-[3px] shrink-0 ${fixes[i] !== undefined ? "text-danger" : "text-fg-4"}`} aria-hidden="true" />
-                  <p className={`min-w-0 flex-1 text-[13px] leading-[1.5] [overflow-wrap:anywhere] ${fixes[i] !== undefined ? "text-fg-3 line-through decoration-fg-4" : "text-fg-2"}`}>{a}</p>
-                  {live && onFix ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFixes((f) => {
-                          if (f[i] === undefined) return { ...f, [i]: "" };
-                          const { [i]: _, ...rest } = f;
-                          return rest;
-                        })
-                      }
-                      className={quiet}
-                    >
-                      {fixes[i] !== undefined ? "It's right" : "Not quite"}
-                    </button>
-                  ) : null}
-                </div>
-                {live && fixes[i] !== undefined ? (
-                  <input
-                    autoFocus
-                    value={fixes[i]}
-                    maxLength={300}
-                    placeholder="What's right?"
-                    aria-label={`What's right instead of: ${a}`}
-                    onChange={(e) => setFixes((f) => ({ ...f, [i]: e.target.value }))}
-                    className={`${input} ml-[22px] w-[calc(100%-22px)]`}
-                  />
-                ) : null}
-              </div>
-            ))}
-          </div>
+        {applied ? null : guesses}
+        {live || showItems ? (
+          <>
+            {group("About this agent", [
+              textItem("profile", "What it's for", profile, setProfile),
+              textItem("instructions", "Standing instructions", instructions, setInstructions),
+            ])}
+            {group(
+              proposal.tasks.length === 1 ? "Task" : "Tasks",
+              proposal.tasks.map((t, i) =>
+                chosen(shown.tasks.includes(i))
+                  ? row(
+                      `t${i}`,
+                      shown.tasks.includes(i),
+                      () => toggle("tasks", i),
+                      t.title,
+                      t.title,
+                      t.schedule ? describeSchedule(t.schedule, zone) : "When you ask",
+                      t.instructions ? body(`t${i}`, t.instructions, null, 0, t.title) : null,
+                    )
+                  : null,
+              ),
+            )}
+            {group(
+              skillsOnly ? "" : proposal.skills.length === 1 ? "Skill" : "Skills",
+              proposal.skills.map((s, i) => {
+                if (!chosen(shown.skills.includes(i))) return null;
+                const pick = () => toggle("skills", i);
+                if ("catalogId" in s) {
+                  const entry = catalogEntry(s.catalogId);
+                  const name = entry?.name ?? s.catalogId;
+                  return row(`s${i}`, shown.skills.includes(i), pick, name, name, entry?.description ?? null, entry ? body(`s${i}`, entry.description, null, 0, name) : null, true);
+                }
+                return row(
+                  `s${i}`,
+                  shown.skills.includes(i),
+                  pick,
+                  s.name,
+                  s.name,
+                  s.description || null,
+                  body(`s${i}`, skillTexts[i] ?? s.instructions, (v) => setSkillTexts((t) => ({ ...t, [i]: v })), 4000, `What “${s.name}” does`),
+                );
+              }),
+            )}
+            {group(
+              "I'll remember",
+              proposal.memories.map((m, i) => (chosen(shown.memories.includes(i)) ? row(`m${i}`, shown.memories.includes(i), () => toggle("memories", i), m, m, null, null) : null)),
+            )}
+            {applied ? guesses : null}
+          </>
         ) : null}
+        {live || !items ? null : (
+          <button type="button" aria-expanded={showItems} onClick={() => setShowItems(!showItems)} className={`${quiet} -ml-2 self-start`}>
+            <ChevronDown size={14} className={`transition-transform ${showItems ? "rotate-180" : ""}`} aria-hidden="true" />
+            {showItems ? "Hide details" : `Show details (${items})`}
+          </button>
+        )}
       </div>
       {applied ? (
         <div className="border-t border-line">
