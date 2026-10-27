@@ -27,7 +27,8 @@ gitignored and stays out of the repo.
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
   with those, `job-search.eval.test.ts` evals the Job search template and `tidy.eval.test.ts`
   the Brain's "Tidy up" on the real model, `library.eval.test.ts` filing a link with `file_link`, and
-  `revise.eval.test.ts` rewriting a task's result in the form the member asks for over the brief's.
+  `revise.eval.test.ts` rewriting a task's result in the form the member asks for over the brief's,
+  `keep-going.eval.test.ts` a job longer than one reply handed on with `keep_going`, never "tell me to carry on".
   `behavior.eval.test.ts` is the set to tune the agent's instructions by: long-horizon work (a task's
   runs, a project over several turns) and everyday behavior, scored into a scorecard
   (`BEHAVIOR_EVAL_RUNS`, `BEHAVIOR_EVAL_LOG`, `BEHAVIOR_EVAL_BASELINE` to compare; see its header).
@@ -121,8 +122,10 @@ raw/technical text.
   the rest needs nothing from the member, the agent calls the gateway's `keep_going` with what's
   left, saved on its reply (`messages.keep_going`); while that reply is the latest, the member's
   page starts the next one by itself (a `continue` turn, no message of theirs, a new request with
-  its own time), up to `MAX_KEEP_GOING` in a row (`src/lib/chat/turn.ts`). Anything they send or
-  stop ends it. A task's run doesn't carry on this way yet.
+  its own time), up to `MAX_KEEP_GOING` in a row (`src/lib/chat/turn.ts`). A reply whose time ran out
+  (the gateway cut a tool short, or the request's own limit) carries on the same way even when the
+  agent didn't call it, unless it asked the member something. Anything they send or stop ends it.
+  A task's run doesn't carry on this way yet.
 - `src/lib/chat/move.ts`: whose move it is in a conversation (working, the member's call, done, stuck,
   idle), from real state only. The one signal for the reply's mark, the composer hint, the call's orb,
   the rail, the sidebar's marks (`conversation_moves`, `GET /api/conversations/moves`), and push copy.

@@ -404,7 +404,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   } else if (request.kind === "continue") {
     // Only right after a reply that said there's more, and only so many in a row.
     const last = existing.at(-1);
-    if (!conversation || last?.role !== "assistant" || last.status !== "complete" || !last.keepGoing || pending) {
+    if (!conversation || last?.role !== "assistant" || !CARRIES_ON.has(last.status) || !last.keepGoing || pending) {
       throw new TurnError(409, "There's nothing to carry on here.");
     }
     if (keepGoingRun(existing) >= MAX_KEEP_GOING) throw new TurnError(409, "That's as far as it goes on its own. Tell it to carry on.");
@@ -597,6 +597,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       let report: RunReport | null = null;
       // What's left of the job, when the agent says the next reply should carry it on.
       let keepGoing: string | null = null;
+      // The gateway cut a tool short or skipped one because this reply's time ran out.
+      let ranOut = false;
       let timeline: Timeline | null = assistant.timeline ?? null;
       // Kept from before a pause for approval; this run's citations are added to them.
       const earlierCitations: Citation[] = assistant.citations ?? [];
@@ -822,6 +824,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               keepGoing = remaining || "the rest of the job";
               break;
             }
+            case "out-of-time":
+              ranOut = true;
+              break;
             case "run-report": {
               const raw = isRecord(event.report) ? event.report : {};
               const outcome = RUN_OUTCOMES.find((o) => o === raw.outcome);
@@ -988,8 +993,14 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const callEnded = callId && deps.callEnded ? await deps.callEnded(callId).catch(() => false) : false;
       const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier, callEnded }) : null;
       const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
-      // A reply carries on by itself only when it finished with nothing asked of the member.
-      const going = keepGoing && status === "complete" && !questions?.length ? { keepGoing } : {};
+      // A reply carries on by itself only when it ended with nothing asked of the member: when the
+      // agent said so, and also when its time ran out (a tool cut short, or the request's own
+      // limit) and the agent didn't, so a long job never waits on the member to say carry on.
+      const cutOff = (ranOut && status === "complete") || (outOfTime && status === "error");
+      const asks = Boolean(questions?.length || ui?.length);
+      const left = keepGoing ?? (cutOff ? UNFINISHED : null);
+      const going = left && (status === "complete" || cutOff) && !asks ? { keepGoing: left } : {};
+      if (going.keepGoing && outOfTime && status === "error") error = CARRIED_ON;
       let updated = summary;
       try {
         await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted, ...going });
@@ -1024,6 +1035,12 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
 
 /** Replies in a row that carry a job on by themselves, after the member's last message. */
 export const MAX_KEEP_GOING = 8;
+
+/** A reply that can carry on by itself: finished, or cut off by the request's time limit. */
+const CARRIES_ON = new Set<MessageStatus>(["complete", "error"]);
+
+/** What's left when a reply's time ran out and the agent didn't say. */
+const UNFINISHED = "whatever your last reply left unfinished";
 
 /** How many replies have carried the job on by themselves since the member's last message. */
 function keepGoingRun(messages: ChatMessage[]): number {
@@ -1126,6 +1143,7 @@ function sameStep(a: ActivityStep, b: ActivityStep): boolean {
 }
 
 const OUT_OF_TIME = "This ran past the time one reply can take, so it stopped here. Try asking for a smaller piece of it.";
+const CARRIED_ON = "This ran past the time one reply can take, so it carries on in the next one.";
 
 /** Fails the run if the agent goes quiet for longer than `ms`, and stops on abort. */
 async function* withIdleTimeout<T>(source: AsyncIterable<T>, ms: number, signal: AbortSignal): AsyncGenerator<T> {

@@ -1719,4 +1719,39 @@ describe("keep going", () => {
     const end = (await collect(startTurn(asking, { conversationId: id, kind: "send", text: "Tag my inbox" }))).at(-1);
     expect(end?.type === "end" && end.message.keepGoing).toBeUndefined();
   });
+
+  it("carries on a reply whose time ran out even when the agent didn't say so", async () => {
+    const seen: AgentRunInput[] = [];
+    const cut = [{ type: "out-of-time" }, { type: "text-delta", text: "Nothing is tagged yet. Tell me to carry on." }] as AgentEvent[];
+    const d = deps(cut, seen);
+    const id = crypto.randomUUID();
+    const end = (await collect(startTurn(d, { conversationId: id, kind: "send", text: "Tag my inbox" }))).at(-1);
+    expect(end?.type === "end" && end.message.keepGoing).toBeTruthy();
+    await collect(startTurn(d, { conversationId: id, kind: "continue" }));
+    expect(seen.at(-1)?.message).toMatch(/smaller pieces/);
+
+    // Not when it left the member a card to answer.
+    const form = deps([...cut, { type: "ui", block: { form: { title: "Labels", fields: [{ id: "a", label: "Label", type: "text" }] } } }] as AgentEvent[]);
+    const asked = (await collect(startTurn(form, { conversationId: crypto.randomUUID(), kind: "send", text: "Tag my inbox" }))).at(-1);
+    expect(asked?.type === "end" && asked.message.ui?.length).toBeTruthy();
+    expect(asked?.type === "end" && asked.message.keepGoing).toBeUndefined();
+  });
+
+  it("carries on a reply the request's own time limit cut off", async () => {
+    const store = createMemoryStore(scopeA);
+    const slow: AgentAdapter = {
+      ...scripted([]),
+      async *run({ signal }) {
+        yield { type: "text-delta", text: "Read the first 300." };
+        await new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+      },
+    };
+    const id = crypto.randomUUID();
+    const end = (await collect(startTurn({ store, adapter: slow, context: context(scopeA), idleTimeoutMs: 5000, deadline: Date.now() + 30 }, { conversationId: id, kind: "send", text: "Tag my inbox" }))).at(-1);
+    if (end?.type !== "end") throw new Error("no end");
+    expect(end.message).toMatchObject({ status: "error", error: expect.stringMatching(/carries on in the next one/) });
+    expect(end.message.keepGoing).toBeTruthy();
+    const next = await collect(startTurn({ store, adapter: scripted([{ type: "text-delta", text: "Done." }]), context: context(scopeA), idleTimeoutMs: 1000 }, { conversationId: id, kind: "continue" }));
+    expect(next.at(-1)).toMatchObject({ type: "end", message: { status: "complete" } });
+  });
 });

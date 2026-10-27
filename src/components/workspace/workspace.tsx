@@ -1047,12 +1047,20 @@ function WorkspaceShell({
   // new request with its own time. Each reply once per tab; the server caps how many in a row,
   // and anything the member sends or stops ends it.
   const continuedFrom = useRef(new Set<string>());
+  // Looked at again when the tab comes back into view: a reply that ended while it was hidden
+  // carries on then, rather than waiting for something else to change.
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const onShow = () => document.visibilityState === "visible" && setShown((n) => n + 1);
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, []);
   useEffect(() => {
     if (document.visibilityState !== "visible") return;
     const timers: ReturnType<typeof setTimeout>[] = [];
     for (const [conversationId, thread] of Object.entries(threads)) {
       const last = thread.status === "ready" ? thread.messages.at(-1) : undefined;
-      if (!last?.keepGoing || last.status !== "complete" || last.role !== "assistant") continue;
+      if (!last?.keepGoing || (last.status !== "complete" && last.status !== "error") || last.role !== "assistant") continue;
       if (running.has(conversationId) || controllers.current.has(conversationId) || continuedFrom.current.has(last.id)) continue;
       timers.push(
         setTimeout(() => {
@@ -1075,7 +1083,7 @@ function WorkspaceShell({
       );
     }
     return () => timers.forEach(clearTimeout);
-  }, [threads, running, patchMessages, runTurn]);
+  }, [threads, running, patchMessages, runTurn, shown]);
 
   // Stopping is a request to the server: closing the tab doesn't stop the agent, Stop does.
   const stop = useCallback((conversationId: string) => {

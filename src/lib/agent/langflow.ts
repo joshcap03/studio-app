@@ -3,7 +3,7 @@ import { seamBetween } from "@/lib/chat/seam";
 import { toMemoryCategory } from "@/lib/types";
 import { voiceByKey, voiceMenu, type VoiceKey } from "@/lib/voice/voices";
 import { STANDING_GUIDES } from "@/lib/approvals/standing";
-import { evidenceFor, interpretCalls, keepsBooks, NEEDS_APPROVAL, OPENING_LINE_MAX, opensWork, reportsOnAnswer, type ToolCall } from "./tools";
+import { evidenceFor, interpretCalls, keepsBooks, NEEDS_APPROVAL, OPENING_LINE_MAX, opensWork, ranOutOfTime, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
 
@@ -771,13 +771,15 @@ export function toolQuestions(message: LangflowMessage): AgentEvent[] {
 /**
  * Plan updates, tracker rows, Library links, and a reply's keep-going the agent reported through
  * update_plan, save_record, file_link, and keep_going (validated and saved by the turn, under the
- * member's session).
+ * member's session), and the gateway's word that the reply's time ran out.
  */
 export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
   for (const tool of toolUses(message)) {
     if (tool.output == null || tool.error) continue;
     const result = unwrapResult(tool.output);
+    const text = typeof result === "string" ? result : isRecord(result) && typeof result.content === "string" ? result.content : "";
+    if (ranOutOfTime(text)) events.push({ type: "out-of-time" });
     if (!isRecord(result)) continue;
     if (isRecord(result.plan_update)) events.push({ type: "plan-update", plan: result.plan_update.steps, goal: result.plan_update.goal });
     if (isRecord(result.record)) events.push({ type: "record", record: result.record });

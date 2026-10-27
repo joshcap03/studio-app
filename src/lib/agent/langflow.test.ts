@@ -356,6 +356,8 @@ describe("Langflow request", () => {
             { type: "tool_use", name: "report_run", output: { run_report: { outcome: "nothing_new", summary: "" } } },
             { type: "tool_use", name: "keep_going", output: JSON.stringify({ keep_going: { remaining: "label the rest" }, note: "Carrying on." }) },
             { type: "tool_use", name: "web_search", output: { results: [] } },
+            { type: "tool_use", name: "execute_tool", output: { content: "Tool composio_remote_workbench ran out of this reply's time after 159s. It may or may not have finished." } },
+            { type: "tool_use", name: "execute_tool", output: "Tool GMAIL_FETCH_EMAILS didn't run: this reply is out of time." },
             { type: "tool_use", name: "save_record", output: { record: { collection: "x", key: "y" } }, error: true },
             { type: "tool_use", name: "file_link", output: JSON.stringify({ library_item: { url: "https://docs.google.com/document/d/1", title: "Plan" }, note: "Saved." }) },
             { type: "tool_use", name: "file_link", output: "Not saved: give it a title the owner will recognize." },
@@ -371,6 +373,8 @@ describe("Langflow request", () => {
       { type: "record", record: { collection: "applications", key: "k" } },
       { type: "run-report", report: { outcome: "nothing_new", summary: "" } },
       { type: "keep-going", remaining: "label the rest" },
+      { type: "out-of-time" },
+      { type: "out-of-time" },
       { type: "library-item", item: { url: "https://docs.google.com/document/d/1", title: "Plan" } },
     ]);
   });
