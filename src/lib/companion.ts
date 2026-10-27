@@ -6,8 +6,8 @@ import { isVoiceKey, type VoiceKey } from "@/lib/voice/voices";
 // they work together, and is ready to introduce itself once it knows them: real conversations,
 // on more than one day, with setup settled. It arrives when the member keeps the name it
 // suggests. The stage only shapes how the agent looks and talks; it never gates what it can
-// do. Members never read the stage names, but they're told it's on the way and what's left
-// before it introduces itself (toMeet). How it sounds
+// do. Members never read the stage names, but they're told the mark is their agent, that it's
+// on the way, and what to do to meet it (toMeet). How it sounds
 // (its voice and manner) is the member's to choose at any stage; only the name waits.
 
 export const COMPANION_STAGES = ["sketch", "drawn", "ready", "arrived"] as const satisfies readonly CompanionStage[];
@@ -44,19 +44,21 @@ const COUNT = ["no", "one", "two", "three", "four", "five", "six", "seven", "eig
 const more = (n: number, thing: string) => `${COUNT[n] ?? n} more ${thing}${n === 1 ? "" : "s"}`;
 
 /**
- * What's left before it introduces itself, said by the agent, so members know someone is on
- * the way and roughly when (from the same signals as companionStage, never made up).
+ * What the member does to meet it, said by the agent as plain steps ("Send eight more messages,
+ * start two more chats and come back another day"), so someone new to Studio knows the mark is
+ * their agent, that it's on the way, and how to get there (from the same signals as
+ * companionStage, never made up).
  */
 export function toMeet({ runs, days, conversations, setupSettled }: CompanionSignals): string {
-  const left = [
-    setupSettled ? null : "setup",
-    runs < KNOWS_YOU.readyRuns ? more(KNOWS_YOU.readyRuns - runs, "message") : null,
-    conversations < KNOWS_YOU.readyConversations ? more(KNOWS_YOU.readyConversations - conversations, "conversation") : null,
-    days < KNOWS_YOU.readyDays ? (KNOWS_YOU.readyDays - days === 1 ? "another day together" : `${COUNT[KNOWS_YOU.readyDays - days]} days together`) : null,
-  ].filter((part): part is string => part !== null);
-  if (!left.length) return "I'll introduce myself soon, and you'll choose what to call me.";
-  const list = left.length === 1 ? left[0] : `${left.slice(0, -1).join(", ")} and ${left.at(-1)}`;
-  return `I'll introduce myself after ${list}, and you'll choose what to call me.`;
+  const steps = [
+    setupSettled ? null : "finish setting me up",
+    runs < KNOWS_YOU.readyRuns ? `send ${more(KNOWS_YOU.readyRuns - runs, "message")}` : null,
+    conversations < KNOWS_YOU.readyConversations ? `start ${more(KNOWS_YOU.readyConversations - conversations, "chat")}` : null,
+    days < KNOWS_YOU.readyDays ? (KNOWS_YOU.readyDays - days === 1 ? "come back another day" : `use me on ${COUNT[KNOWS_YOU.readyDays - days]} different days`) : null,
+  ].filter((step): step is string => step !== null);
+  if (!steps.length) return "I'll come to life soon, and you can name me.";
+  const list = steps.length === 1 ? steps[0] : `${steps.slice(0, -1).join(", ")} and ${steps.at(-1)}`;
+  return `${list[0].toUpperCase()}${list.slice(1)}, and I'll come to life and you can name me.`;
 }
 
 export const MAX_COMPANION_NAME = 40;

@@ -32,21 +32,22 @@ describe("companionStage", () => {
 });
 
 describe("toMeet", () => {
-  it("tells a new member someone is on the way, and what's left", () => {
+  it("tells someone new what to do to meet their agent", () => {
     expect(toMeet({ runs: 0, days: 0, conversations: 0, setupSettled: true })).toBe(
-      "I'll introduce myself after ten more messages, three more conversations and two days together, and you'll choose what to call me.",
+      "Send ten more messages, start three more chats and use me on two different days, and I'll come to life and you can name me.",
     );
   });
 
-  it("names only what's still left, counting down with real use", () => {
+  it("names only the steps still left, counting down with real use", () => {
+    expect(toMeet({ ...knowsYou, conversations: KNOWS_YOU.readyConversations - 1 })).toBe("Start one more chat, and I'll come to life and you can name me.");
     expect(toMeet({ ...knowsYou, runs: KNOWS_YOU.readyRuns - 1, days: 1 })).toBe(
-      "I'll introduce myself after one more message and another day together, and you'll choose what to call me.",
+      "Send one more message and come back another day, and I'll come to life and you can name me.",
     );
-    expect(toMeet({ ...knowsYou, setupSettled: false })).toBe("I'll introduce myself after setup, and you'll choose what to call me.");
+    expect(toMeet({ ...knowsYou, setupSettled: false })).toBe("Finish setting me up, and I'll come to life and you can name me.");
   });
 
   it("says soon once nothing is left", () => {
-    expect(toMeet(knowsYou)).toBe("I'll introduce myself soon, and you'll choose what to call me.");
+    expect(toMeet(knowsYou)).toBe("I'll come to life soon, and you can name me.");
   });
 });
 
