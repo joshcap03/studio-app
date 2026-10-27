@@ -117,6 +117,15 @@ export const upsertRecordInput = z.strictObject({
   sourceMessageId: z.uuid().nullable().optional(),
 });
 
+/** A row the member adds to one of their trackers; the server gives it a key of its own. */
+export const createRecordBody = z.strictObject({
+  collection: collectionSchema,
+  ...recordFields,
+  status: recordFields.status.optional(),
+  url: recordFields.url.optional(),
+  fields: recordFields.fields.optional(),
+});
+
 export const patchRecordBody = z
   .strictObject(recordFields)
   .partial()
@@ -127,3 +136,4 @@ export type TaskPatch = z.infer<typeof patchTaskBody>;
 export type AppendRunInput = z.input<typeof appendRunInput>;
 export type RecordUpsert = z.infer<typeof upsertRecordInput>;
 export type RecordPatch = z.infer<typeof patchRecordBody>;
+export type RecordCreate = z.infer<typeof createRecordBody>;

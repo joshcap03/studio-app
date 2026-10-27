@@ -224,6 +224,21 @@ describe("records API", () => {
   });
 });
 
+describe("adding a row", () => {
+  it("adds the member's own row under a key of its own, in their tracker only", async () => {
+    const sheet = `${collection}-own`;
+    const res = await alice.api.json("/api/records", "POST", { collection: sheet, title: "Typed by hand", fields: { pay: "$1" } });
+    expect(res.status).toBe(201);
+    const { record } = (await res.json()) as { record: { id: string; key: string; title: string } };
+    expect(record).toMatchObject({ title: "Typed by hand", key: expect.stringMatching(/^member-/) });
+    expect((await alice.api.json("/api/records", "POST", { collection: sheet, title: "x", key: "job-1" })).status).toBe(400);
+    expect((await alice.api.json("/api/records", "POST", { collection: "Not a slug", title: "x" })).status).toBe(400);
+    const theirs = (await (await bob.api.json(`/api/records?collection=${sheet}`, "GET")).json()) as { records: unknown[] };
+    expect(theirs.records).toEqual([]);
+    await alice.db.from("agent_records").delete().eq("collection", sheet);
+  });
+});
+
 describe("running a task", () => {
   it("runs the brief in the task's own conversation and saves the plan and tracker rows the agent reports", async () => {
     // The mock agent's "roles" run reports a plan and two tracker rows.

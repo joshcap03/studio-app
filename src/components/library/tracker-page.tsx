@@ -1,15 +1,17 @@
 "use client";
 
 import { ArrowLeft, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "@/components/tasks/shared";
-import { collectionName, TrackerTable } from "@/components/tasks/tracker";
-import { shownFields } from "@/lib/tasks/fields";
+import { collectionName } from "@/components/tasks/tracker";
+import { cellText } from "@/lib/tasks/fields";
+import { type RecordChange, TrackerSheet } from "./tracker-sheet";
 import { api } from "@/lib/client/api";
 import type { AgentRecord } from "@/lib/tasks/types";
 
-// One tracker from the Library (e.g. job applications): every row, narrowed by status or a
-// search, with each row's status editable. Rows are the agent's and the member's alike.
+// One tracker from the Library (e.g. job applications) as a sheet: every row, newest first,
+// narrowed by status or a search, every cell editable, and rows and columns the member adds.
+// Rows are the agent's and the member's alike.
 
 interface Props {
   collection: string;
@@ -28,6 +30,9 @@ export function TrackerPage({ collection, onBack }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // Rows added here stay in view whatever the filter or search, so a new row doesn't vanish.
+  const [added, setAdded] = useState<Set<string>>(() => new Set());
+  const saving = useRef(new Map<string, number>());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -49,19 +54,47 @@ export function TrackerPage({ collection, onBack }: Props) {
   // A status filter whose last row changed away shows everything again.
   const activeStatus = status && statuses.some(([s]) => s === status) ? status : null;
   const needle = query.trim().toLowerCase();
-  const shown = (records ?? []).filter(
+  const sorted = useMemo(() => [...(records ?? [])].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)), [records]);
+  const shown = sorted.filter(
     (r) =>
-      (!activeStatus || r.status === activeStatus) &&
-      (!needle || `${r.title} ${r.key} ${shownFields(r).map(([, text]) => text).join(" ")}`.toLowerCase().includes(needle)),
+      added.has(r.id) ||
+      ((!activeStatus || r.status === activeStatus) &&
+        (!needle ||
+          `${r.title} ${r.key} ${r.url ?? ""} ${Object.values(r.fields)
+            .map((v) => cellText(v) ?? "")
+            .join(" ")}`
+            .toLowerCase()
+            .includes(needle))),
   );
 
-  async function save(record: AgentRecord, next: string | null) {
+  const put = (record: AgentRecord) => setRecords((all) => (all ?? []).map((r) => (r.id === record.id ? record : r)));
+
+  /** Shows the change at once and saves it; if it doesn't save, the cell goes back. */
+  async function save(record: AgentRecord, change: RecordChange & { status?: string | null }) {
+    setNotice(null);
+    put({ ...record, ...change });
+    // Only the latest save of a row decides what it shows, whichever answer comes back last.
+    const turn = (saving.current.get(record.id) ?? 0) + 1;
+    saving.current.set(record.id, turn);
+    try {
+      const { record: saved } = await api.updateRecord(record.id, change);
+      if (saving.current.get(record.id) === turn) put(saved);
+    } catch (error) {
+      if (saving.current.get(record.id) === turn) put(record);
+      setNotice(errorText(error));
+    }
+  }
+
+  async function add(title: string): Promise<boolean> {
     setNotice(null);
     try {
-      const { record: saved } = await api.updateRecord(record.id, { status: next });
-      setRecords((all) => (all ?? []).map((r) => (r.id === saved.id ? saved : r)));
+      const { record } = await api.createRecord({ collection, title, ...(activeStatus ? { status: activeStatus } : {}) });
+      setAdded((ids) => new Set(ids).add(record.id));
+      setRecords((all) => [record, ...(all ?? [])]);
+      return true;
     } catch (error) {
       setNotice(errorText(error));
+      return false;
     }
   }
 
@@ -97,7 +130,7 @@ export function TrackerPage({ collection, onBack }: Props) {
           <h1 className="font-display text-[28px] leading-tight tracking-[-0.015em] text-fg md:text-[32px]">{name}</h1>
           {records ? (
             <p className="mt-1 text-[14px] text-fg-3">
-              {records.length} {records.length === 1 ? "row" : "rows"}. I add to this as I work, and keep it current when you change a status.
+              {records.length} {records.length === 1 ? "row" : "rows"}. I add to this as I work. Click any cell to change it.
             </p>
           ) : null}
         </div>
@@ -168,11 +201,18 @@ export function TrackerPage({ collection, onBack }: Props) {
             </div>
 
             <div className="@container mt-3 overflow-hidden rounded-2xl border border-line bg-surface">
-              {shown.length > 0 ? (
-                <TrackerTable rows={shown} statuses={statuses.map(([s]) => s)} onSave={save} onRemove={remove} details />
-              ) : (
-                <p className="py-4 text-center text-[13px] text-fg-3">Nothing matches.</p>
-              )}
+              <div className="scroll-quiet overflow-x-auto">
+                <TrackerSheet
+                  rows={shown}
+                  all={sorted}
+                  statuses={statuses.map(([s]) => s)}
+                  onChange={save}
+                  onStatus={(record, status) => save(record, { status })}
+                  onRemove={remove}
+                  onAdd={add}
+                />
+              </div>
+              {shown.length === 0 ? <p className="py-4 text-center text-[13px] text-fg-3">Nothing matches.</p> : null}
             </div>
           </div>
         )}
