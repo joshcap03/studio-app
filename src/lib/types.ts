@@ -355,9 +355,8 @@ export interface Companion {
   voice: VoiceKey | null;
   look: CompanionLook;
   /**
-   * While it's still getting to know the member, what's left before it introduces itself, in its
-   * words ("I'll introduce myself after two more messages and another day together, …"). Only on
-   * the agent they're in.
+   * While it's still getting to know the member, what they do to meet it, in its words ("Send two
+   * more messages and come back another day, and I'll come to life …"). Only on the agent they're in.
    */
   toMeet?: string;
 }
