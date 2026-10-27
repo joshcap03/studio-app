@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { buildTurnDeps } from "@/lib/chat/run";
+import { startTurn } from "@/lib/chat/turn";
 import { requestStop } from "@/lib/tasks";
 import { runClaimedTask } from "@/lib/tasks/run-task";
 import { resolveTenant, sessionFor, type Tenant } from "@/lib/tenant-core";
@@ -107,5 +109,67 @@ describe("running a claimed task", () => {
     await alice.client.from("agent_task_runs").update({ status: "running" }).eq("id", claimed.runId);
     await requestStop(tenant, conversation);
     expect((await runRow(claimed.runId)).cancel_requested_at).toBeTruthy();
+  });
+
+  it("asks for a change the first time, and approves it on later runs once the member said not to ask again", async () => {
+    const first = await claimedTask({ instructions: "Label my inbox." });
+    expect(await runClaimedTask(tenant, first)).toEqual({ status: "running", reason: "waiting_on_you" });
+    const { data: task } = await alice.client.from("agent_tasks").select("conversation_id").eq("id", first.taskId).single();
+    const conversationId = task!.conversation_id as string;
+    const asked = async () =>
+      (await alice.client.from("approvals").select("id, status, standing, decided_via").eq("conversation_id", conversationId).order("created_at")).data!;
+    const [request] = await asked();
+    expect(request).toMatchObject({ status: "pending", standing: "gmail_labels" });
+
+    // The member taps Approve with "Don't ask again on this task".
+    let finished!: () => void;
+    const done = new Promise<void>((resolve) => (finished = resolve));
+    const { deps, request: turn } = await buildTurnDeps(tenant, {
+      conversationId,
+      input: { kind: "decide", approvalId: request.id, decision: "approve", standing: "grant" },
+      onFinished: () => finished(),
+    });
+    await new Response(await startTurn(deps, turn)).text();
+    await done;
+    const { data: granted } = await alice.client.from("agent_tasks").select("allowed_actions").eq("id", first.taskId).single();
+    expect(granted!.allowed_actions).toEqual(["gmail_labels"]);
+    expect((await asked())[0]).toMatchObject({ status: "approved", decided_via: "tap" });
+    // The run it waited on is over once the reply it continued is.
+    expect(await runRow(first.runId)).toMatchObject({ status: "done", reason: null });
+
+    // The next run asks for the same kind of change and approves it under that OK, without waiting.
+    await alice.client.from("agent_tasks").update({ next_run_at: new Date(Date.now() - 60_000).toISOString() }).eq("id", first.taskId);
+    const next = ((await admin.rpc("worker_claim_due_tasks", { p_limit: 500 })).data as { run_id: string; task_id: string }[]).find(
+      (r) => r.task_id === first.taskId,
+    )!;
+    expect(await runClaimedTask(tenant, { taskId: first.taskId, runId: next.run_id })).toEqual({ status: "done", reason: null });
+    expect((await asked())[1]).toMatchObject({ status: "approved", standing: "gmail_labels", decided_via: "standing" });
+
+    // Taken back, the run after asks again.
+    await alice.client.from("agent_tasks").update({ allowed_actions: [], next_run_at: new Date(Date.now() - 60_000).toISOString() }).eq("id", first.taskId);
+    const third = ((await admin.rpc("worker_claim_due_tasks", { p_limit: 500 })).data as { run_id: string; task_id: string }[]).find(
+      (r) => r.task_id === first.taskId,
+    )!;
+    expect(await runClaimedTask(tenant, { taskId: first.taskId, runId: third.run_id })).toEqual({ status: "running", reason: "waiting_on_you" });
+    expect((await asked())[2]).toMatchObject({ status: "pending" });
+  });
+
+  it("won't let a member mark a request as decided by a standing OK it doesn't qualify for", async () => {
+    const conversation = crypto.randomUUID();
+    await alice.client.from("conversations").insert({ id: conversation, workspace_id: tenant.workspace.id, title: "Forged" });
+    const { data: message } = await alice.client
+      .from("messages")
+      .insert({ conversation_id: conversation, workspace_id: tenant.workspace.id, role: "assistant", content: "", status: "awaiting" })
+      .select("id")
+      .single();
+    const { data: approval } = await alice.client
+      .from("approvals")
+      .insert({ workspace_id: tenant.workspace.id, conversation_id: conversation, message_id: message!.id, summary: "Send it", provider: "mock" })
+      .select("id")
+      .single();
+    const { error } = await alice.client.from("approvals").update({ status: "approved", decided_via: "standing" }).eq("id", approval!.id);
+    expect(error).not.toBeNull();
+    const { error: kind } = await alice.client.from("agent_tasks").insert({ workspace_id: tenant.workspace.id, title: "x", instructions: "", allowed_actions: ["send_email"] });
+    expect(kind).not.toBeNull();
   });
 });

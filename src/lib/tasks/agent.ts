@@ -43,7 +43,15 @@ export async function taskContextFor(
       : Promise.resolve(null),
   ]);
   return {
-    task: task ? { title: task.title, instructions: task.instructions, goal: task.goal, plan: contextSteps(task.plan) } : null,
+    task: task
+      ? {
+          title: task.title,
+          instructions: task.instructions,
+          goal: task.goal,
+          plan: contextSteps(task.plan),
+          ...(task.allowedActions.length ? { allowed: task.allowedActions } : {}),
+        }
+      : null,
     plan: !task && own?.steps.length ? { goal: own.goal, steps: contextSteps(own.steps) } : null,
     tracker: records.slice(0, TRACKER_ROWS).map((r) => ({ collection: r.collection, key: r.key, title: r.title, status: r.status })),
     trackerFields: fieldsByCollection(records),

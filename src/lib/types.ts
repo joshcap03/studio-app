@@ -2,6 +2,7 @@
 // free of runtime dependencies on either side.
 
 import type { VoiceKey } from "@/lib/voice/voices";
+import type { StandingKind } from "@/lib/approvals/standing";
 
 export type MessageRole = "user" | "assistant";
 
@@ -120,8 +121,16 @@ export interface Approval {
    * (src/lib/approvals/spoken.ts). Absent on requests from before spoken approvals: a tap.
    */
   spoken?: { ok: true; readBack: string } | { ok: false; reason: TapOnlyReason };
-  /** How it was decided: by hand (a tap, or words typed) or by the member's spoken words. */
-  decidedVia?: "tap" | "voice";
+  /**
+   * The kind of change it is, when it's one the member may OK once for this task, so the task's
+   * later runs don't ask again (src/lib/approvals/standing.ts). Absent for anything else.
+   */
+  standing?: StandingKind;
+  /**
+   * How it was decided: by hand (a tap, or words typed), by the member's spoken words, or by the
+   * standing OK they gave on this task for its kind.
+   */
+  decidedVia?: "tap" | "voice" | "standing";
   /** What the member said, as the speech-to-text heard it, when it was decided by voice. */
   decidedWords?: string;
   /** The member said a spoken approval wasn't what they said. */

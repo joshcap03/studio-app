@@ -73,10 +73,13 @@ const body = z.discriminatedUnion("kind", [
       via: z.enum(["tap", "voice"]).optional(),
       heard: z.string().trim().min(1).max(500).optional(),
       voiceSessionId: z.uuid().optional(),
+      // A tap on "Approve, and don't ask again on this task": only an approval, only by hand.
+      always: z.literal(true).optional(),
       offers,
       secrets,
       handoffs,
     })
+    .refine((b) => !b.always || (b.decision === "approve" && b.via !== "voice"), "Only a tapped approval can be kept for this task.")
     .refine((b) => (b.via === "voice") === (b.heard !== undefined && b.voiceSessionId !== undefined), "A spoken decision needs the words heard and the call."),
 ]);
 
@@ -100,7 +103,8 @@ export async function POST(request: NextRequest, { params }: Context) {
     const settled = new Promise<void>((resolve) => (settle = resolve));
     const { deps, request: turn } = await buildTurnDeps(tenant, {
       conversationId: conversationId.data,
-      input,
+      // The browser can only grant a standing OK (with its tap); a task's run alone uses one.
+      input: input.kind === "decide" ? { ...input, standing: input.always ? "grant" : undefined } : input,
       onFinished: () => settle(),
     });
 

@@ -1,3 +1,4 @@
+import type { StandingKind } from "@/lib/approvals/standing";
 import type { TaskSchedule } from "./schedule";
 import type { RUN_STATUSES, STEP_STATUSES, TASK_STATUSES } from "./schema";
 
@@ -29,6 +30,11 @@ export interface AgentTask {
   nextRunAt: number | null;
   lastRunAt: number | null;
   templateTaskId: string | null;
+  /**
+   * Kinds of change the member has OK'd for good on this task, so its runs don't ask for them
+   * again (src/lib/approvals/standing.ts). Given with a tap on a real request, taken back here.
+   */
+  allowedActions: StandingKind[];
   createdAt: number;
   updatedAt: number;
 }

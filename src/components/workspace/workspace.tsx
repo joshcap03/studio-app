@@ -877,9 +877,10 @@ function WorkspaceShell({
    * Answers the agent's pending request in `conversationId` (the open one, or a call's) and
    * continues the same reply. `spoken`: said on a call, with the words the member was heard to
    * say; the server checks them and refuses what doesn't hold up (the request comes back).
+   * `always`: a tapped approval that also OKs its kind for good on this conversation's task.
    */
   const decide = useCallback(
-    (conversationId: string, approvalId: string, decision: "approve" | "reject", spoken?: SpokenDecision) => {
+    (conversationId: string, approvalId: string, decision: "approve" | "reject", spoken?: SpokenDecision, always?: boolean) => {
       if (running.has(conversationId)) return;
       const reply = threadsRef.current[conversationId]?.messages.find((m) => m.approvals?.some((a) => a.id === approvalId));
       if (!reply) return;
@@ -893,7 +894,10 @@ function WorkspaceShell({
             : a,
         ),
       }));
-      void runTurn(conversationId, spoken ? { kind: "decide", approvalId, decision, ...spoken } : { kind: "decide", approvalId, decision }, { assistant: reply.id });
+      const body: TurnBody = spoken
+        ? { kind: "decide", approvalId, decision, ...spoken }
+        : { kind: "decide", approvalId, decision, ...(always && decision === "approve" ? { always: true as const } : {}) };
+      void runTurn(conversationId, body, { assistant: reply.id });
     },
     [patchMessage, runTurn, running],
   );
@@ -1023,7 +1027,10 @@ function WorkspaceShell({
   }, []);
 
   // The open conversation's own handlers, for the thread and its message box.
-  const decideHere = useCallback((approvalId: string, decision: "approve" | "reject") => activeId && decide(activeId, approvalId, decision), [activeId, decide]);
+  const decideHere = useCallback(
+    (approvalId: string, decision: "approve" | "reject", always?: boolean) => activeId && decide(activeId, approvalId, decision, undefined, always),
+    [activeId, decide],
+  );
   const recordHere = useCallback(
     (messageId: string, blockId: string, response: UiResponse) => activeId && recordUiResponse(activeId, messageId, blockId, response),
     [activeId, recordUiResponse],

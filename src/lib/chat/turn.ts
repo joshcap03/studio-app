@@ -14,6 +14,7 @@ import { buildVisual, withVisual } from "./visuals";
 import { describeLink } from "@/lib/library";
 import { voiceNoteFor } from "@/lib/voice/notes";
 import { spokenApprovalFor } from "@/lib/approvals/spoken";
+import { standingKindFor, type StandingKind } from "@/lib/approvals/standing";
 import {
   ARTIFACT_KINDS,
   MAX_MEMORY_LENGTH,
@@ -80,9 +81,11 @@ export type TurnRequest = { conversationId: string } & (
   /**
    * Answer the conversation's pending approval and let the agent continue. `spoken`: the member
    * said it on a call (their words as the speech-to-text heard them, and the call), which counts
-   * only once allowSpokenDecision says so; otherwise it's a tap.
+   * only once allowSpokenDecision says so; otherwise it's a tap. `standing`: "grant", the member
+   * tapped Approve and asked not to be asked again on this task for its kind; "auto", the task's
+   * run approving it under the standing OK they gave (never the member's browser).
    */
-  | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; spoken?: SpokenDecision }
+  | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; spoken?: SpokenDecision; standing?: "grant" | "auto" }
 );
 
 /** A decision the member said on a call. */
@@ -122,6 +125,12 @@ export interface TurnDeps {
    * Returns why not, or null to go ahead. Without it, no spoken decision is taken.
    */
   allowSpokenDecision?: (approval: StoredApproval, decision: "approve" | "reject", spoken: SpokenDecision) => Promise<string | null>;
+  /**
+   * In a task's conversation: the kinds of change its member has OK'd for good on it, and how to
+   * add one (on their tap). Requests of a kind that qualifies are marked so their card can offer
+   * it. Without it (any other conversation), nothing is marked and no standing decision is taken.
+   */
+  standing?: { allowed: StandingKind[]; grant: (kind: StandingKind) => Promise<boolean> };
   /**
    * Saves what the agent reported about the work here, under the caller's session: a rewritten
    * plan with what done looks like (on the conversation's task, the setup checklist, or the
@@ -375,6 +384,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         : "Spoken decisions aren't available here. Tap instead.";
       if (refusal) throw new TurnError(403, refusal);
     }
+    // A standing OK covers only a request of a kind that qualifies, in a task's conversation: given
+    // with a tap that approves it, or used by the task's run when the member already gave it.
+    if (request.standing) {
+      const kind = pending.standing;
+      if (!kind || !deps.standing || request.decision !== "approve" || request.spoken) {
+        throw new TurnError(409, "This one can't be allowed for good. Approve it on its own.");
+      }
+      if (request.standing === "auto" && !deps.standing.allowed.includes(kind)) {
+        throw new TurnError(403, "This task doesn't have your OK for that.");
+      }
+    }
   } else if (pending && request.kind === "send") {
     // A new message waits for the pending decision.
     throw new TurnError(409, "Approve or decline the agent's request first.");
@@ -390,11 +410,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     const to = request.decision === "approve" ? "approved" : "declined";
     const how = request.spoken
       ? ({ via: "voice", words: request.spoken.heard, call: request.spoken.voiceSessionId } as const)
-      : ({ via: "tap" } as const);
+      : request.standing === "auto"
+        ? ({ via: "standing" } as const)
+        : ({ via: "tap" } as const);
     if (!(await store.settleApproval(approval.id, "pending", to, how))) {
       throw new TurnError(409, request.spoken ? "That couldn't be answered by voice: it was already answered, or the call has ended. It's on screen." : "This request was already answered.");
     }
     decided = { ...approval, status: to, decidedAt: Date.now(), decidedVia: how.via, ...(how.via === "voice" ? { decidedWords: how.words } : {}) };
+    // The approval stands either way; a grant that didn't save just means the next run asks again.
+    if (request.standing === "grant") {
+      await deps.standing!.grant(approval.standing!).catch((e) => console.error("[turn] couldn't save a standing OK", e));
+    }
     resume = { decision: request.decision, state: approval.providerState };
   }
 
@@ -857,6 +883,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               // Whether a call may approve it by voice, decided now from what it would run; the
               // raw arguments aren't kept.
               const spoken = spokenApprovalFor({ actions: event.actions, summary });
+              // Whether its member may OK its kind for good on this task, decided from what it would run.
+              const standing = deps.standing ? standingKindFor(event.actions) : null;
               const stored = await store.createApproval({
                 conversationId,
                 messageId: assistant.id,
@@ -867,6 +895,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                 providerState: event.state,
                 spoken: spoken.voiceOk ? { ok: true, readBack: spoken.readBack } : { ok: false, reason: spoken.tapOnly },
                 tools: spoken.tools,
+                ...(standing ? { standing } : {}),
               });
               const approval = publicApproval(stored);
               approvals.push(approval);
@@ -1037,6 +1066,7 @@ function publicApproval(a: StoredApproval | Approval): Approval {
     ...(a.decidedVia ? { decidedVia: a.decidedVia } : {}),
     ...(a.decidedWords ? { decidedWords: a.decidedWords } : {}),
     ...(a.reported ? { reported: true } : {}),
+    ...(a.standing ? { standing: a.standing } : {}),
   };
 }
 

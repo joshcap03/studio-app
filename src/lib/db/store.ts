@@ -1,5 +1,6 @@
 import type { Ask, LastMessage } from "@/lib/chat/move";
 import { fitTools } from "@/lib/approvals/spoken";
+import { isStandingKind } from "@/lib/approvals/standing";
 import type { Db } from "@/lib/supabase/db";
 import type { PlanStep } from "@/lib/tasks/types";
 import type {
@@ -69,7 +70,7 @@ export type NewApproval = Omit<StoredApproval, "id" | "status" | "createdAt" | "
  * How a decision was made: a tap (or typed words), or said on a call, with the member's words
  * and the call they were said on (the database checks it's their own open call).
  */
-export type ApprovalDecision = { via: "tap" } | { via: "voice"; words: string; call: string };
+export type ApprovalDecision = { via: "tap" } | { via: "voice"; words: string; call: string } | { via: "standing" };
 
 /** An attachment with where its bytes live. Server-side only. */
 export interface StoredAttachment extends Attachment {
@@ -210,7 +211,8 @@ interface ApprovalRow {
   voice_ok?: boolean | null;
   tap_only?: TapOnlyReason | null;
   read_back?: string | null;
-  decided_via?: "tap" | "voice" | null;
+  decided_via?: "tap" | "voice" | "standing" | null;
+  standing?: string | null;
   decided_words?: string | null;
   reported_at?: string | null;
 }
@@ -251,10 +253,10 @@ const PLAN_COLUMNS = "plan, goal, plan_updated_at";
 // go to the browser.
 const MESSAGE_COLUMNS =
   "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, error, skill, origin, created_at, updated_at, " +
-  "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at), " +
+  "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at, standing), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS =
-  "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at, tools, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at";
+  "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at, tools, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at, standing";
 const ATTACHMENT_COLUMNS = "id, name, mime_type, size, storage_path";
 
 const toApproval = (r: Omit<ApprovalRow, "provider" | "provider_state">): Approval => ({
@@ -270,6 +272,7 @@ const toApproval = (r: Omit<ApprovalRow, "provider" | "provider_state">): Approv
   ...(r.decided_via ? { decidedVia: r.decided_via } : {}),
   ...(r.decided_via === "voice" && r.decided_words ? { decidedWords: r.decided_words } : {}),
   ...(r.reported_at ? { reported: true } : {}),
+  ...(isStandingKind(r.standing) ? { standing: r.standing } : {}),
 });
 
 const toStoredApproval = (r: ApprovalRow): StoredApproval => ({
@@ -717,6 +720,7 @@ export function createStore(db: Db, scope: Scope): Store {
             voice_ok: a.spoken?.ok === true,
             tap_only: a.spoken && !a.spoken.ok ? a.spoken.reason : null,
             read_back: a.spoken?.ok ? a.spoken.readBack : null,
+            standing: a.standing ?? null,
           })
           .select(APPROVAL_COLUMNS)
           .single(),
