@@ -926,14 +926,23 @@ export function opensWork(text: string): boolean {
   return trimmed.length > 0 && trimmed.length <= OPENING_LINE_MAX && !trimmed.includes("\n\n");
 }
 
+const CUT_SHORT = /^Tool \S+ ran out of this reply's time/;
+const SKIPPED = /^Tool \S+ didn't run: this reply is out of time/;
+
+/** Whether a gateway result says the reply's time ran out: a tool cut short, or one it skipped. */
+export function ranOutOfTime(text: string): boolean {
+  const value = text.trim().replace(/^"|"$/g, "");
+  return CUT_SHORT.test(value) || SKIPPED.test(value);
+}
+
 /** A gateway's plain-text failure report, reduced to the reason a person needs. */
 export function gatewayFailure(text: string): string | undefined {
   const value = text.trim().replace(/^"|"$/g, "");
   const failed = /^Tool \S+ failed: (?:\w+: )?([\s\S]*?)(?:\. Do not blindly retry writes\.)?\s*$/.exec(value);
   if (failed) return humanReason(errorMessage(failed[1]) ?? failed[1]);
   // The gateway keeps the end of a reply's time for the answer: it cuts a tool short, or skips it.
-  if (/^Tool \S+ ran out of this reply's time/.test(value)) return "Stopped so the reply could finish in time.";
-  if (/^Tool \S+ didn't run: this reply is out of time/.test(value)) return "Didn't run: the reply was out of time.";
+  if (CUT_SHORT.test(value)) return "Stopped so the reply could finish in time.";
+  if (SKIPPED.test(value)) return "Didn't run: the reply was out of time.";
   const timedOut = /^Tool \S+ timed out after (\d+)s/.exec(value);
   if (timedOut) return `The service didn't respond within ${timedOut[1]} seconds.`;
   const unknown = /^Unknown tool '([^']+)'/.exec(value);

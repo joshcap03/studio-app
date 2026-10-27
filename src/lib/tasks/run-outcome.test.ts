@@ -8,6 +8,8 @@ describe("runOutcome", () => {
     expect(runOutcome({ status: "complete", keepGoing: "label the rest" }, { outcome: "update" })).toEqual({ status: "running", reason: "keep_going" });
     expect(runOutcome({ status: "complete" }, { outcome: "update" })).toEqual({ status: "done", reason: "update" });
     expect(runOutcome({ status: "awaiting", keepGoing: "x" })).toEqual({ status: "running", reason: "waiting_on_you" });
-    expect(runOutcome({ status: "error", keepGoing: "x" })).toEqual({ status: "failed", reason: "error" });
+    // Cut off by the request's time limit, it carries on too; any other error ends it.
+    expect(runOutcome({ status: "error", keepGoing: "x" })).toEqual({ status: "running", reason: "keep_going" });
+    expect(runOutcome({ status: "error" })).toEqual({ status: "failed", reason: "error" });
   });
 });

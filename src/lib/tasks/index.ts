@@ -285,7 +285,8 @@ export function runOutcome(
   message: { status: string; keepGoing?: string },
   report?: { outcome?: string | null } | null,
 ): { status: TaskRun["status"]; reason: string | null } {
-  return message.status === "complete" && message.keepGoing
+  // A reply carries the job on when it says so: finished, or cut off by the request's time limit.
+  return (message.status === "complete" || message.status === "error") && message.keepGoing
     ? { status: "running", reason: KEEP_GOING }
     : message.status === "complete"
     ? { status: "done", reason: report?.outcome ?? null }

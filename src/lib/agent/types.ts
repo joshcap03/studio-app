@@ -233,7 +233,9 @@ export type AgentEvent =
   /** How a task's run went (nothing new, an update, or needs the member), unvalidated. */
   | { type: "run-report"; report: unknown }
   /** The agent's keep_going: out of time with the job unfinished, the rest needing nothing from the member. */
-  | { type: "keep-going"; remaining: unknown };
+  | { type: "keep-going"; remaining: unknown }
+  /** The gateway cut a tool short, or skipped one, because the reply's time ran out. */
+  | { type: "out-of-time" };
 
 /**
  * One thing approving a request would run: the tool as the provider names it (a Composio slug
