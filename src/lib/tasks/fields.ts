@@ -63,11 +63,10 @@ export function shownFields(row: Row): [key: string, text: string][] {
 }
 
 /**
- * The fields a collection's details line shows, the same ones on every row: the short ones most
- * rows have (a long one, like notes, is read with the row open). Two fit on the line beside a
- * row's status without cutting off.
+ * The fields a collection's table shows as columns, the same ones on every row: the short ones
+ * most rows have (a long one, like notes, is read with the row open).
  */
-export function detailColumns(rows: Row[], max = 2): string[] {
+export function detailColumns(rows: Row[], max = 3): string[] {
   const counts = new Map<string, { short: number; long: number }>();
   for (const row of rows) {
     for (const [key, text] of shownFields(row)) {
@@ -84,16 +83,10 @@ export function detailColumns(rows: Row[], max = 2): string[] {
     .map(([key]) => key);
 }
 
-/**
- * One row's details line: its values for the collection's columns, in their order. A row with
- * none of them shows its own first short fields instead (a score), rather than nothing.
- */
-export function detailLine(row: Row, columns: string[]): string {
-  const shown = shownFields(row);
-  const byKey = new Map(shown);
-  const own = columns.filter((key) => byKey.has(key));
-  const keys = own.length ? own : shown.filter(([, text]) => text.length <= SHORT_FIELD).slice(0, columns.length || 2).map(([key]) => key);
-  return keys.map((key) => `${fieldLabel(key)}: ${byKey.get(key)}`).join(" · ");
+/** One row's values for the collection's columns, in their order ("" where it has none). */
+export function detailCells(row: Row, columns: string[]): string[] {
+  const byKey = new Map(shownFields(row));
+  return columns.map((key) => byKey.get(key) ?? "");
 }
 
 /** Each collection's field names, most used first, so the agent saves new rows the same way. */

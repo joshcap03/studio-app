@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detailColumns, detailLine, fieldsByCollection, isBlankValue, shownFields, withoutBlanks } from "./fields";
+import { detailCells, detailColumns, fieldsByCollection, isBlankValue, shownFields, withoutBlanks } from "./fields";
 
 const row = (title: string, fields: Record<string, unknown>, status: string | null = "discovered") => ({ title, status, fields });
 
@@ -42,16 +42,15 @@ describe("detailColumns", () => {
       row("PM - Epsilon", { score: 4, verdict: "kept", notes: long }),
       row("PM - Zeta", { notes: long }),
     ];
-    const columns = detailColumns(rows);
+    const columns = detailColumns(rows, 2);
     expect(columns).toEqual(["pay", "location"]);
-    expect(rows.map((r) => detailLine(r, columns))).toEqual([
-      "pay: $150K · location: Remote",
-      "pay: $160K · location: NYC",
-      "pay: $170K",
-      "pay: $140K",
-      // Without any of the columns, a row shows its own short fields rather than nothing.
-      "score: 4 · verdict: kept",
-      "",
+    expect(rows.map((r) => detailCells(r, columns))).toEqual([
+      ["$150K", "Remote"],
+      ["$160K", "NYC"],
+      ["$170K", ""],
+      ["$140K", ""],
+      ["", ""],
+      ["", ""],
     ]);
   });
 });

@@ -80,7 +80,7 @@ export function TrackerPage({ collection, onBack }: Props) {
 
   return (
     <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-4 md:px-8">
-      <div className="mx-auto w-full max-w-[46rem] pt-6 pb-[max(24px,env(safe-area-inset-bottom))] md:pt-[6vh]">
+      <div className="mx-auto w-full max-w-[64rem] pt-6 pb-[max(24px,env(safe-area-inset-bottom))] md:pt-[6vh]">
         <a
           href="/library"
           onClick={(e) => {
@@ -167,9 +167,9 @@ export function TrackerPage({ collection, onBack }: Props) {
               ) : null}
             </div>
 
-            <div className="mt-3 rounded-2xl border border-line bg-surface px-3 py-1">
+            <div className="@container mt-3 overflow-hidden rounded-2xl border border-line bg-surface">
               {shown.length > 0 ? (
-                <TrackerTable rows={shown} onSave={save} onRemove={remove} details />
+                <TrackerTable rows={shown} statuses={statuses.map(([s]) => s)} onSave={save} onRemove={remove} details />
               ) : (
                 <p className="py-4 text-center text-[13px] text-fg-3">Nothing matches.</p>
               )}
