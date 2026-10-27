@@ -9,6 +9,7 @@ import {
   FolderInput,
   FolderMinus,
   FolderOpen,
+  LayoutGrid,
   LibraryBig,
   ListChecks,
   LogOut,
@@ -29,8 +30,9 @@ import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Companion, companionHint } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
+import { MoveMark } from "@/components/ui/move-mark";
 import { useCallLive } from "@/components/voice/player";
-import { MOVE_LABEL, type MarkedMove } from "@/lib/chat/move";
+import { type MarkedMove } from "@/lib/chat/move";
 import { api } from "@/lib/client/api";
 import {
   MAX_PROJECT_NAME_LENGTH,
@@ -463,21 +465,6 @@ function projectMove(marks: (MarkedMove | undefined)[]): MarkedMove | undefined 
   return (["your_call", "working", "stuck"] as const).find((m) => marks.includes(m));
 }
 
-/**
- * Whose move it is in a chat (or a project's chats) at a glance: the agent working on it, the
- * member's call (held still), or stuck. Nothing for done: there's no "unread" to show.
- */
-function MoveMark({ move }: { move?: MarkedMove }) {
-  if (!move) return null;
-  if (move === "working") return <span className="spinner shrink-0" aria-label="Working" />;
-  return (
-    <span className="flex size-4 shrink-0 items-center justify-center">
-      <span className={`size-1.5 rounded-full ${move === "stuck" ? "bg-danger" : "bg-accent"}`} aria-hidden="true" />
-      <span className="sr-only">{MOVE_LABEL[move]}</span>
-    </span>
-  );
-}
-
 function ProjectItem({
   project,
   active,
@@ -814,6 +801,10 @@ function AgentMenu({
         >
           {email ? <div className="truncate px-2.5 pt-1.5 pb-1 text-[12px] text-fg-3">{email}</div> : null}
           <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Agents</DropdownMenu.Label>
+          <DropdownMenu.Item onSelect={() => openPage("/home", onCall)} className={`${menuItem} text-fg-2`}>
+            <LayoutGrid size={14} className="text-fg-3" />
+            All agents
+          </DropdownMenu.Item>
           {workspaces.map((w) => (
             <DropdownMenu.Item key={w.id} onSelect={() => void switchTo(w.id)} className={menuItem}>
               {companions?.[w.id] ? <Companion stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}

@@ -10,10 +10,10 @@ export const metadata: Metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; mode?: string; error?: string }> }) {
-  if (await getSession()) redirect("/");
+  if (await getSession()) redirect("/home");
   const { next, mode, error } = await searchParams;
   // Only same-site relative paths are allowed as a post-login destination.
-  const destination = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  const destination = next && next.startsWith("/") && !next.startsWith("//") ? next : "/home";
 
   return (
     <main className="flex min-h-dvh items-center justify-center px-6 py-12">
