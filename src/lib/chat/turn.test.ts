@@ -1709,7 +1709,10 @@ describe("keep going", () => {
     const long = deps(more);
     const chain = crypto.randomUUID();
     await collect(startTurn(long, { conversationId: chain, kind: "send", text: "Tag my inbox" }));
-    for (let i = 0; i < MAX_KEEP_GOING; i++) await collect(startTurn(long, { conversationId: chain, kind: "continue" }));
+    for (let i = 0; i < MAX_KEEP_GOING - 1; i++) await collect(startTurn(long, { conversationId: chain, kind: "continue" }));
+    // The last reply allowed in a row doesn't say it carries on, so nothing waits on it.
+    const last = (await collect(startTurn(long, { conversationId: chain, kind: "continue" }))).at(-1);
+    expect(last?.type === "end" && last.message.keepGoing).toBeUndefined();
     await expect(startTurn(long, { conversationId: chain, kind: "continue" })).rejects.toMatchObject({ status: 409 });
   });
 

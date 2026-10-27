@@ -122,7 +122,10 @@ raw/technical text.
   left, saved on its reply (`messages.keep_going`); while that reply is the latest, the member's
   page starts the next one by itself (a `continue` turn, no message of theirs, a new request with
   its own time), up to `MAX_KEEP_GOING` in a row (`src/lib/chat/turn.ts`). Anything they send or
-  stop ends it. A task's run doesn't carry on this way yet.
+  stop ends it. A task's run stays running (reason `keep_going`, `runOutcome`) and the worker
+  calls its route again with `?continue=1` (`continueClaimedTask`), so it carries on with no one
+  watching; the member is notified once, when it ends. Carried on from the page instead, the run
+  settles with that reply (`settleKeptRun`).
 - `src/lib/chat/move.ts`: whose move it is in a conversation (working, the member's call, done, stuck,
   idle), from real state only. The one signal for the reply's mark, the composer hint, the call's orb,
   the rail, the sidebar's marks (`conversation_moves`, `GET /api/conversations/moves`), and push copy.

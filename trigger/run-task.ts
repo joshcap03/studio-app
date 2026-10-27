@@ -6,6 +6,7 @@ import { asMember, MemberUnavailable, settleUnstartedRun, SignInRateLimited } fr
 // the app runs the task (POST /api/tasks/<id>/runs/<run>), as them under RLS and with its own
 // settings and keys, exactly like "Run now". So the worker needs no agent or app keys. A run
 // that pauses for the member's approval ends here; they approve in the app, which continues it.
+// One whose reply ran out of time with more to do is carried on by this task again at once.
 // A run that can't be started is settled as such, so the member sees it on the task instead of
 // a run queued forever. A watch's run the app isn't starting yet comes back with when to ask
 // again, and is put back.
@@ -17,6 +18,8 @@ export interface RunTaskPayload {
   userId: string;
   /** Times this run was put back because sign-in was rate limited. */
   deferred?: number;
+  /** How many replies have carried this run on so far (0: start it). */
+  continues?: number;
 }
 
 const MAX_DEFERRALS = 5;
@@ -47,9 +50,21 @@ export const runTask = task({
   run: async (payload: RunTaskPayload) => {
     try {
       // The session stays open until the app answers, so the run's queries keep a live sign-in.
+      const continues = payload.continues ?? 0;
       const outcome = await asMember(payload.userId, (accessToken) =>
-        startRunInApp(appUrl(), payload, accessToken, { timeoutMs: APP_TIMEOUT_MS }),
+        startRunInApp(appUrl(), { ...payload, continues: continues > 0 }, accessToken, { timeoutMs: APP_TIMEOUT_MS }),
       );
+      // The reply ran out of time with more to do and nothing needing the member: the next one
+      // carries it on, in a request of its own (the app caps how many in a row).
+      if (outcome.status === "running" && outcome.reason === "keep_going") {
+        const next = continues + 1;
+        await runTask.trigger(
+          { ...payload, deferred: 0, continues: next },
+          { delay: "2s", idempotencyKey: `${payload.runId}:continue:${next}`, idempotencyKeyTTL: "1d" },
+        );
+        logger.info("run carries on", { runId: payload.runId, continues: next });
+        return outcome;
+      }
       // A watch's run that's waiting (for more events, or for its conversation) says when to ask again.
       if (outcome.status === "queued" && typeof outcome.retryAt === "number" && Number.isFinite(outcome.retryAt)) {
         const at = new Date(Math.max(outcome.retryAt, Date.now() + 5_000));

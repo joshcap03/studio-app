@@ -4,13 +4,13 @@ import { z } from "zod";
 import { errorResponse } from "@/lib/api";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/supabase/db";
-import { runClaimedTask } from "@/lib/tasks/run-task";
+import { continueClaimedTask, runClaimedTask } from "@/lib/tasks/run-task";
 import { jsonError, resolveTenant, sessionFor } from "@/lib/tenant";
 
 // Starts a run the scheduler already queued, for the background worker (trigger/run-task.ts).
 // The worker signs in as the task's member and sends that session's access token; this is the
 // only route that takes one in a header, and all it can do is start one of that member's own
-// queued runs. The run then happens here, with the app's own settings and keys, exactly like
+// queued runs, or carry on one of theirs that ran out of time with more to do. The run then happens here, with the app's own settings and keys, exactly like
 // "Run now": as the member, under RLS. Answers with how the run ended.
 
 export const dynamic = "force-dynamic";
@@ -41,7 +41,9 @@ export async function POST(request: NextRequest, { params }: Context) {
   if (!tenant || tenant.workspace.id !== workspace.data) return jsonError(404, "Run not found.");
 
   try {
-    const outcome = await runClaimedTask(tenant, { taskId: ids.data.id, runId: ids.data.runId });
+    // ?continue=1: carry on a run whose latest reply ran out of time with more to do.
+    const claimed = { taskId: ids.data.id, runId: ids.data.runId };
+    const outcome = request.nextUrl.searchParams.get("continue") === "1" ? await continueClaimedTask(tenant, claimed) : await runClaimedTask(tenant, claimed);
     return NextResponse.json(outcome);
   } catch (e) {
     return errorResponse(e);

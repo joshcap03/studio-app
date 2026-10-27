@@ -76,6 +76,33 @@ describe("starting a queued run for the worker", () => {
     }
   }, 60_000);
 
+  it("keeps a run going whose reply ran out of time with more to do, and carries it on once", async () => {
+    const run = await queuedRun("Tag my mail and keep going.");
+    const auth = { Authorization: `Bearer ${alice.token}` };
+    const carryOn = () => fetch(`${APP}/api/tasks/${run.taskId}/runs/${run.runId}?workspace=${alice.workspaceId}&continue=1`, { method: "POST", headers: auth });
+    try {
+      // Carrying on a run that hasn't said there's more does nothing.
+      expect(await (await carryOn()).json()).toEqual({ status: "queued", reason: null });
+      expect(await (await start(run, alice.workspaceId, auth)).json()).toEqual({ status: "running", reason: "keep_going" });
+      const first = await alice.db.from("agent_task_runs").select("message_id").eq("id", run.runId).single();
+      const res = await carryOn();
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect(await res.json()).toEqual({ status: "done", reason: null });
+      const { data } = await alice.db.from("agent_task_runs").select("status, message_id").eq("id", run.runId).single();
+      expect(data!.status).toBe("done");
+      expect(data!.message_id).not.toBe(first.data!.message_id);
+      // Once is all: it's done now.
+      expect(await (await carryOn()).json()).toEqual({ status: "done", reason: null });
+      // Bob can't carry Alice's run on, naming her workspace or his own.
+      const as = (workspaceId: string) =>
+        fetch(`${APP}/api/tasks/${run.taskId}/runs/${run.runId}?workspace=${workspaceId}&continue=1`, { method: "POST", headers: { Authorization: `Bearer ${bob.token}` } });
+      expect((await as(alice.workspaceId)).status).toBe(404);
+      expect(((await (await as(bob.workspaceId)).json()) as { reason: string }).reason).toBe("gone");
+    } finally {
+      await alice.db.from("agent_tasks").delete().eq("id", run.taskId);
+    }
+  }, 60_000);
+
   it("refuses without a member's token, and never runs another member's run", async () => {
     const run = await queuedRun();
     try {
