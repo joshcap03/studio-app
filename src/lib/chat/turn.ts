@@ -988,8 +988,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const callEnded = callId && deps.callEnded ? await deps.callEnded(callId).catch(() => false) : false;
       const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier, callEnded }) : null;
       const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
-      // A reply carries on by itself only when it finished with nothing asked of the member.
-      const going = keepGoing && status === "complete" && !questions?.length ? { keepGoing } : {};
+      // A reply carries on by itself only when it finished with nothing asked of the member, and
+      // only so many in a row: past that, the member says when to go on.
+      const inRow = keepGoingRun(existing.some((m) => m.id === assistant.id) ? existing : [...existing, assistant]);
+      const going = keepGoing && status === "complete" && !questions?.length && inRow < MAX_KEEP_GOING ? { keepGoing } : {};
       let updated = summary;
       try {
         await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted, ...going });

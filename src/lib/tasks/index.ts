@@ -277,9 +277,17 @@ export async function settleRun(
   );
 }
 
-/** Where a run is once its reply's final state is saved: done, still waiting on the member's approval, or failed. */
-export function runOutcome(message: { status: string }, report?: { outcome?: string | null } | null): { status: TaskRun["status"]; reason: string | null } {
-  return message.status === "complete"
+/**
+ * Where a run is once its reply's final state is saved: done, still going (its next reply carries
+ * the job on: keep_going), still waiting on the member's approval, or failed.
+ */
+export function runOutcome(
+  message: { status: string; keepGoing?: string },
+  report?: { outcome?: string | null } | null,
+): { status: TaskRun["status"]; reason: string | null } {
+  return message.status === "complete" && message.keepGoing
+    ? { status: "running", reason: KEEP_GOING }
+    : message.status === "complete"
     ? { status: "done", reason: report?.outcome ?? null }
     : message.status === "awaiting"
       ? { status: "running", reason: "waiting_on_you" }
@@ -304,6 +312,47 @@ export async function settleWaitingRun(
       .eq("message_id", message.id)
       .eq("status", "running")
       .eq("reason", "waiting_on_you")
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId),
+  );
+}
+
+/** A run whose reply ran out of time with more to do, which its next reply carries on. */
+export const KEEP_GOING = "keep_going";
+/** A run whose next reply has been claimed to carry it on. */
+const CONTINUING = "continuing";
+
+/** Takes a run waiting to carry on for its next reply, once. False if it isn't waiting (or someone else took it). */
+export async function claimKeptRun(tenant: Tenant, runId: string): Promise<boolean> {
+  const rows = check(
+    await runs(tenant)
+      .update({ reason: CONTINUING, updated_at: new Date().toISOString() })
+      .eq("id", runId)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .eq("status", "running")
+      .eq("reason", KEEP_GOING)
+      .select("id"),
+  ) as { id: string }[];
+  return rows.length > 0;
+}
+
+/**
+ * Records where a task's run is once a reply that carried it on from the member's page ends: the
+ * run that was waiting to carry on (or had been taken to), with that reply as its latest.
+ */
+export async function settleKeptRun(
+  tenant: Tenant,
+  taskId: string,
+  message: { id: string; status: string; keepGoing?: string },
+  report?: { outcome?: string | null } | null,
+): Promise<void> {
+  check(
+    await runs(tenant)
+      .update({ ...runOutcome(message, report), message_id: message.id, updated_at: new Date().toISOString() })
+      .eq("task_id", taskId)
+      .eq("status", "running")
+      .in("reason", [KEEP_GOING, CONTINUING])
       .eq("workspace_id", tenant.workspace.id)
       .eq("user_id", tenant.userId),
   );

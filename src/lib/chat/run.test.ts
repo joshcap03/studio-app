@@ -25,7 +25,13 @@ vi.mock("@/lib/push", () => ({ notificationFor: vi.fn(), notify: vi.fn(), pushEn
 vi.mock("@/lib/skills", () => ({
   getSkill: vi.fn(async (_t: unknown, id: string, options: unknown) => (seen.skills.push(options), { id, name: "Skill", instructions: "Do it." })),
 }));
-vi.mock("@/lib/tasks", () => ({ getTask: vi.fn(), getTaskForConversation: vi.fn(async () => null), settleWaitingRun: vi.fn() }));
+const tasks = vi.hoisted(() => ({ forConversation: null as unknown, settledKept: [] as unknown[] }));
+vi.mock("@/lib/tasks", () => ({
+  getTask: vi.fn(),
+  getTaskForConversation: vi.fn(async () => tasks.forConversation),
+  settleWaitingRun: vi.fn(),
+  settleKeptRun: vi.fn(async (_t: unknown, taskId: string, message: { id: string }) => tasks.settledKept.push([taskId, message.id])),
+}));
 vi.mock("@/lib/account", () => ({
   getAllowedActions: vi.fn(async () => seen.allowed),
   setAllowedAction: vi.fn(async (_t: unknown, kind: string) => (seen.allowed = [...new Set([...seen.allowed, kind])])),
@@ -250,5 +256,21 @@ describe("standing OKs", () => {
     expect(await standingCarryOn(tenant, covered.id, covered.reply, { standingLeft: MAX_STANDING, deadline: Date.now() + 30_000 })).toBe(false);
     expect(await standingCarryOn(tenant, covered.id, { ...covered.reply, status: "complete" }, { standingLeft: MAX_STANDING, deadline: time() })).toBe(false);
     expect(seen.started).toEqual([]);
+  });
+});
+
+describe("a task's run carried on from the member's page", () => {
+  it("goes on, or ends, with the reply that carried it on, and says nothing while it carries on", async () => {
+    tasks.forConversation = { id: "t1", allowedActions: [] };
+    tasks.settledKept = [];
+    try {
+      const id = await conversationWith({ kind: "task", taskId: "t1", title: "Sort mail", runId: null });
+      const { deps } = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "continue" } });
+      const reply = { id: "m-next", conversationId: id, role: "assistant" as const, content: "Done.", status: "complete" as const, activity: [], artifacts: [], createdAt: 0 };
+      await deps.onFinished!(reply, { id, title: "Sort mail", projectId: null, createdAt: 0, updatedAt: 0 }, { watched: false, report: null });
+      expect(tasks.settledKept).toEqual([["t1", "m-next"]]);
+    } finally {
+      tasks.forConversation = null;
+    }
   });
 });

@@ -7,6 +7,8 @@ export interface RunInApp {
   runId: string;
   taskId: string;
   workspaceId: string;
+  /** Carry on a run whose latest reply ran out of time with more to do, rather than start it. */
+  continues?: boolean;
 }
 
 export interface RunOutcome {
@@ -26,7 +28,7 @@ export async function startRunInApp(
   options: { fetch?: typeof fetch; timeoutMs: number },
 ): Promise<RunOutcome> {
   const base = appUrl.trim().replace(/\/+$/, "");
-  const url = `${base}/api/tasks/${run.taskId}/runs/${run.runId}?workspace=${run.workspaceId}`;
+  const url = `${base}/api/tasks/${run.taskId}/runs/${run.runId}?workspace=${run.workspaceId}${run.continues ? "&continue=1" : ""}`;
   const res = await (options.fetch ?? fetch)(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}` },
