@@ -720,6 +720,11 @@ WRAP_UP = ("Don't call more tools except keep_going. If the rest of the job need
            "Studio starts your next reply at once to carry on, so never ask them to say carry on. If the rest "
            "needs them (a decision, an answer, an approval), answer now with what you have and ask for just "
            "that. Don't explain how you got it: no fetches, pages, counts of what you pulled, or running out of time.")
+# After a step that used up the reply: the next reply has no more time, so the same step whole
+# would run out again.
+TOO_BIG = ("Your next reply gets no more time than this one, so that step won't fit whole there either: in "
+           "keep_going's remaining, say to do it in smaller pieces (a shorter date range or fewer items per call), "
+           "keeping what each piece finds.")
 # Seconds left in a run's budget when the agent is told to wrap up the step it's on.
 TIME_NOTICE_SECONDS = 50
 TIME_NOTICE = ("Under a minute is left in this reply. Finish the step you're on; if the job won't be done by "
@@ -978,7 +983,8 @@ class ToolGatewayComponent(Component):
                     if attempt + 1 < attempts:
                         continue
                     if cut:
-                        return f"Tool {tool_name} ran out of this reply's time after {limit}s. It may or may not have finished. {WRAP_UP}"
+                        return (f"Tool {tool_name} ran out of this reply's time after {limit}s. It may or may not have "
+                                f"finished. {WRAP_UP} {TOO_BIG}")
                     tried = " (tried twice)" if attempts > 1 else ""
                     hint = ("The service didn't respond; try another approach or tell the user." if lookup else
                             "It may or may not have finished; check before retrying, and tell the user.")
