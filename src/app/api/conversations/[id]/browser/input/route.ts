@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { parseBody } from "@/lib/api";
-import { DRIVE_KEYS, driveBrowser } from "@/lib/browser-fill";
+import { driveBrowser } from "@/lib/browser-fill";
+import { DRIVE_KEYS } from "@/lib/types";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 
 // Taking over the agent's browser in one of the caller's conversations: each click, key, scroll,
