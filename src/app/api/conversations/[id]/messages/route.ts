@@ -16,8 +16,8 @@ import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH, MODALITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 // The run streams inside this request, and keeps going (via after()) if the member closes
-// the app. On Vercel this is the most the Hobby plan allows; raise it (up to 800) on Pro. A
-// run cut off here shows as interrupted, with a retry.
+// the app. On Vercel this is the most the Hobby plan allows; raise it (up to 800) on Pro, with
+// REQUEST_LIMIT_MS (src/lib/chat/run.ts), which stops the run in time to say it ran out.
 export const maxDuration = 300;
 
 type Context = { params: Promise<{ id: string }> };

@@ -270,6 +270,33 @@ describe("startTurn", () => {
     expect(end?.type === "end" && end.message.error).toMatch(/stopped responding/);
   });
 
+  it("stops at the deadline and says it ran out of time, failing the step still going", async () => {
+    const store = createMemoryStore(scopeA);
+    let stopped = false;
+    const slow: AgentAdapter = {
+      ...scripted([]),
+      async *run({ signal }) {
+        signal.addEventListener("abort", () => (stopped = true));
+        yield { type: "activity", id: "s1", label: "Pulling 90 days of Gmail", status: "running" };
+        await new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+      },
+    };
+    const events = await collect(
+      startTurn(
+        { store, adapter: slow, context: context(scopeA), idleTimeoutMs: 5000, deadline: Date.now() + 30 },
+        { conversationId: crypto.randomUUID(), kind: "send", text: "go" },
+      ),
+    );
+    const end = events.at(-1);
+    if (end?.type !== "end") throw new Error("no end");
+    expect(end.message.status).toBe("error");
+    expect(end.message.error).toMatch(/ran past the time one reply can take/);
+    expect(end.message.activity[0]).toMatchObject({ status: "failed", detail: "Stopped when the reply ran out of time." });
+    expect(stopped).toBe(true);
+    const saved = (await store.listMessages(end.conversation.id)).at(-1);
+    expect(saved?.status).toBe("error");
+  });
+
   it("stops only when asked, keeping partial text", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();

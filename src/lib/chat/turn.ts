@@ -187,6 +187,11 @@ export interface TurnDeps {
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
   heartbeatMs?: number;
   /**
+   * When the run must be over (epoch ms): the request it streams in ends soon after. At this
+   * time the run stops and the reply says it ran out of time, rather than being cut off.
+   */
+  deadline?: number;
+  /**
    * Asked on each heartbeat while the run streams; resolving true stops it, as `stopRun` does.
    * For a stop requested from another process (e.g. a task running in the background worker).
    */
@@ -554,6 +559,15 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           .catch((e) => console.error("[turn] couldn't check for a stop", e))
           .finally(() => (asking = false));
       }, Math.min(deps.heartbeatMs ?? 15_000, STALE_STREAM_MS / 4));
+      // Stopped while the request can still save the reply and say why, rather than cut off with it.
+      let outOfTime = false;
+      const deadline =
+        deps.deadline === undefined
+          ? undefined
+          : setTimeout(() => {
+              outOfTime = true;
+              controller.abort(new AgentError(OUT_OF_TIME));
+            }, Math.max(0, deps.deadline - Date.now()));
 
       send({ type: "start", conversation: summary, userMessage, assistantMessage: assistant });
 
@@ -852,8 +866,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         }
       } finally {
         clearInterval(heartbeat);
+        clearTimeout(deadline);
         if (!controller.signal.aborted) controller.abort();
         activeRuns.delete(runKey);
+      }
+
+      // A step still going when time ran out was stopped with the run.
+      if (outOfTime) {
+        const at = Date.now();
+        activity.forEach((s, i) => {
+          if (s.status === "running") activity[i] = { ...s, status: "failed", detail: s.detail ?? "Stopped when the reply ran out of time.", endedAt: at };
+        });
       }
 
       // A step from before the pause that the continued run never reported again can't still be
@@ -995,6 +1018,8 @@ function sameStep(a: ActivityStep, b: ActivityStep): boolean {
     JSON.stringify(a.preview) === JSON.stringify(b.preview)
   );
 }
+
+const OUT_OF_TIME = "This ran past the time one reply can take, so it stopped here. Try asking for a smaller piece of it.";
 
 /** Fails the run if the agent goes quiet for longer than `ms`, and stops on abort. */
 async function* withIdleTimeout<T>(source: AsyncIterable<T>, ms: number, signal: AbortSignal): AsyncGenerator<T> {

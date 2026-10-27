@@ -62,6 +62,14 @@ export interface RunOptions {
 }
 
 /**
+ * How long one request that runs a turn may live: the routes' `maxDuration` (300 seconds, the
+ * most Vercel's Hobby plan allows). Raise both together.
+ */
+export const REQUEST_LIMIT_MS = 300_000;
+/** Kept back at the end of the request to save the reply and say it ran out of time. */
+const SAVE_MARGIN_MS = 20_000;
+
+/**
  * The deps and request for `startTurn`. Throws a TurnError (404) when the skill or project
  * isn't one of the member's.
  */
@@ -69,6 +77,7 @@ export async function buildTurnDeps(
   tenant: Tenant,
   { conversationId, input: asked, onFinished, shouldStop }: RunOptions,
 ): Promise<{ deps: TurnDeps; request: TurnRequest }> {
+  const deadline = Date.now() + REQUEST_LIMIT_MS - SAVE_MARGIN_MS;
   // Whether the member has voice: without it nothing about the run is spoken, whatever the
   // browser sends or an older message from when it was on says.
   const voiceOn = Boolean(voiceStatus(tenant));
@@ -213,6 +222,7 @@ export async function buildTurnDeps(
       : undefined,
     resolveMerge: memoryEnabled() ? (raw) => resolveMergeProposal(tenant, raw) : undefined,
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
+    deadline,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
     claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
     allowSpokenDecision: (approval, decision, spoken) => checkSpokenDecision(tenant, approval, decision, spoken),
