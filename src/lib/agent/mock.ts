@@ -33,7 +33,7 @@ type Step =
   | { kind: "text"; text: string }
   | { kind: "error"; message: string }
   /** `actions`: what approving it would run, as a real provider reports it, for deciding whether it may be approved by voice. */
-  | { kind: "approval"; summary: string; app: string; details: [string, string][]; actions?: ApprovalAction[]; after?: "payment" }
+  | { kind: "approval"; summary: string; app: string; details: [string, string][]; actions?: ApprovalAction[]; after?: "payment" | "labels" }
   | { kind: "remember"; content: string }
   | { kind: "timeline"; timeline: unknown }
   | { kind: "visual"; visual: unknown }
@@ -536,6 +536,21 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // Sorting the inbox with labels: a change a member may OK for good on a task.
+    match: /\blabel (?:my )?(?:inbox|mail|email)\b/i,
+    steps: [
+      { kind: "activity", id: "inbox", running: "Reading new mail in Gmail", done: "Read new mail in Gmail", ms: 600, app: "gmail", action: "read" },
+      {
+        kind: "approval",
+        summary: "Label 3 new threads Priority in Gmail (demo)",
+        app: "gmail",
+        details: [["Label", "Priority"]],
+        actions: [{ tool: "GMAIL_BATCH_MODIFY_MESSAGES", arguments: { messageIds: ["mock-1", "mock-2", "mock-3"], addLabelIds: ["Label_mock"] } }],
+        after: "labels",
+      },
+    ],
+  },
+  {
     // A task's run that turns up nothing: reported quietly, so no notification.
     match: /nothing new/i,
     steps: [
@@ -874,6 +889,11 @@ const AFTER_APPROVAL: Step[] = [
   { kind: "text", text: "Sent (mock — nothing actually left your account). I'll watch for Casting Co's answer." },
 ];
 
+const AFTER_LABELS: Step[] = [
+  { kind: "activity", id: "label", running: "Labeling threads in Gmail", done: "Labeled 3 threads in Gmail", ms: 700, app: "gmail", action: "write" },
+  { kind: "text", text: "Labeled 3 threads Priority (mock — nothing changed in your inbox)." },
+];
+
 const AFTER_PAYMENT: Step[] = [
   { kind: "activity", id: "pay", running: "Paying the invoice in QuickBooks", done: "Paid the invoice in QuickBooks", ms: 900, app: "quickbooks", action: "write" },
   { kind: "text", text: "Paid (mock — no money moved). Casting Co's invoice #4471 is settled." },
@@ -954,8 +974,8 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
 
       let steps: Step[];
       if (input.resume) {
-        const paying = (input.resume.state as { after?: string } | null)?.after === "payment";
-        steps = input.resume.decision === "approve" ? (paying ? AFTER_PAYMENT : AFTER_APPROVAL) : AFTER_DECLINE;
+        const after = (input.resume.state as { after?: string } | null)?.after;
+        steps = input.resume.decision !== "approve" ? AFTER_DECLINE : after === "payment" ? AFTER_PAYMENT : after === "labels" ? AFTER_LABELS : AFTER_APPROVAL;
       } else {
         steps = tidySteps(input.message) ?? SCENARIOS.find((s) => s.match.test(input.message))?.steps ?? FALLBACK;
         if (input.attachments.length > 0) steps = [...(await readAttachments(input)), ...(steps === FALLBACK ? ATTACHMENTS_ONLY : steps)];

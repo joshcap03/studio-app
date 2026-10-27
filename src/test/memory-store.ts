@@ -220,6 +220,8 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
         if (from !== "pending" || (to !== "approved" && to !== "declined")) throw new Error("A spoken decision answers a pending request.");
         if (!how.call || (to === "approved" && !a.spoken?.ok)) return false;
       }
+      // approvals_standing_decision: only a request of a kind that qualifies is decided by a standing OK.
+      if (how?.via === "standing" && !a.standing) throw new Error("violates check constraint");
       a.status = to;
       a.decidedAt = Date.now();
       if (how) {

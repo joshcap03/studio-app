@@ -33,7 +33,7 @@ const scope = { workspaceId: "ws-a", userId: "user-a" };
 const owner = { workspace: { id: scope.workspaceId, role: "owner" }, userId: scope.userId } as Tenant;
 const member = { workspace: { id: scope.workspaceId, role: "member" }, userId: scope.userId } as Tenant;
 const task = (patch: Partial<AgentTask> = {}): AgentTask =>
-  ({ id: "t1", title: "Job hunt", instructions: "", plan: [], goal: null, conversationId: "c-task", updatedAt: 1, ...patch }) as AgentTask;
+  ({ id: "t1", title: "Job hunt", instructions: "", plan: [], goal: null, conversationId: "c-task", allowedActions: [], updatedAt: 1, ...patch }) as AgentTask;
 
 let store: Store;
 let chat: string;

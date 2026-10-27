@@ -3,6 +3,7 @@
 import { ArrowLeft, Check, MessageSquare, Pause, Play, Plus, Trash2, Zap } from "lucide-react";
 import { AlertDialog, Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
+import { STANDING_LABELS } from "@/lib/approvals/standing";
 import { ApiError, api } from "@/lib/client/api";
 import { MAX_PLAN_STEPS, MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
 import { useInlineEdit } from "@/components/ui/inline-edit";
@@ -270,6 +271,27 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
               <dd className="text-fg-2">{skill ? skill.name : task.skillId ? "A skill that's no longer here" : "None"}</dd>
               <dt className="text-fg-3">Schedule</dt>
               <dd className="text-fg-2">{scheduleText(task)}</dd>
+              {task.allowedActions.length ? (
+                <>
+                  <dt className="text-fg-3">Without asking</dt>
+                  <dd className="text-fg-2">
+                    <ul className="space-y-1">
+                      {task.allowedActions.map((kind) => (
+                        <li key={kind} className="flex flex-wrap items-baseline gap-x-2">
+                          <span>{STANDING_LABELS[kind]}</span>
+                          <button
+                            type="button"
+                            className="text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline"
+                            onClick={() => void patch({ disallow: kind })}
+                          >
+                            Ask me again
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </dd>
+                </>
+              ) : null}
             </dl>
           </section>
 

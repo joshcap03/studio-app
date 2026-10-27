@@ -25,7 +25,7 @@ vi.mock("@/lib/push", () => ({ notificationFor: vi.fn(), notify: vi.fn(), pushEn
 vi.mock("@/lib/skills", () => ({
   getSkill: vi.fn(async (_t: unknown, id: string, options: unknown) => (seen.skills.push(options), { id, name: "Skill", instructions: "Do it." })),
 }));
-vi.mock("@/lib/tasks", () => ({ getTask: vi.fn() }));
+vi.mock("@/lib/tasks", () => ({ getTask: vi.fn(), getTaskForConversation: vi.fn(async () => null), setTaskAllowed: vi.fn(), settleWaitingRun: vi.fn() }));
 vi.mock("@/lib/tasks/agent", () => ({ savePlanFromAgent: vi.fn(), saveRecordFromAgent: vi.fn() }));
 vi.mock("@/lib/voice/persona", () => ({ resolvePersona: vi.fn() }));
 // Only "mine" is the member's own call in this agent, still going or just hung up on.

@@ -812,6 +812,82 @@ describe("approvals", () => {
     ).rejects.toMatchObject({ status: 404 });
     expect(await storeB.getApproval(approval.id)).toBeNull();
   });
+
+  describe("a standing OK on a task", () => {
+    const labels = {
+      type: "approval",
+      summary: "Label 3 threads Priority",
+      app: "gmail",
+      details: [],
+      actions: [{ tool: "GMAIL_BATCH_MODIFY_MESSAGES", arguments: { messageIds: ["m1", "m2", "m3"], addLabelIds: ["Label_1"] } }],
+      state: { jobId: "job-2" },
+    } as AgentEvent;
+    const sending = { ...labels, summary: "Send it", actions: [{ tool: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "jo@acme.example" } }] } as AgentEvent;
+
+    async function pauseOn(event: AgentEvent, standing?: { allowed: string[] }) {
+      const store = createMemoryStore(scopeA);
+      const granted: string[] = [];
+      const adapter: AgentAdapter = {
+        ...scripted([]),
+        discard: async () => {},
+        async *run(input) {
+          if (input.resume) yield { type: "text-delta", text: "Done." };
+          else yield event;
+        },
+      };
+      const deps = {
+        store,
+        adapter,
+        context: context(scopeA),
+        idleTimeoutMs: 1000,
+        ...(standing ? { standing: { allowed: standing.allowed as "gmail_labels"[], grant: async (k: string) => Boolean(granted.push(k)) } } : {}),
+      };
+      const id = crypto.randomUUID();
+      const events = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "Sort my mail" }));
+      const found = events.find((e) => e.type === "approval");
+      if (found?.type !== "approval") throw new Error("no approval");
+      return { id, deps, store, granted, approval: found.approval };
+    }
+
+    it("marks only requests of a kind that qualifies, and only in a task's conversation", async () => {
+      expect((await pauseOn(labels, { allowed: [] })).approval.standing).toBe("gmail_labels");
+      expect((await pauseOn(sending, { allowed: [] })).approval.standing).toBeUndefined();
+      expect((await pauseOn(labels)).approval.standing).toBeUndefined();
+    });
+
+    it("saves the OK when the member taps Approve with it, and approves this one as a tap", async () => {
+      const { id, deps, store, granted, approval } = await pauseOn(labels, { allowed: [] });
+      await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", standing: "grant" }));
+      expect(granted).toEqual(["gmail_labels"]);
+      expect(await store.getApproval(approval.id)).toMatchObject({ status: "approved", decidedVia: "tap" });
+    });
+
+    it("lets a task's run approve a request the member already OK'd, and records it as theirs", async () => {
+      const { id, deps, store, approval } = await pauseOn(labels, { allowed: ["gmail_labels"] });
+      const events = await collect(startTurn(deps, { conversationId: id, kind: "decide", approvalId: approval.id, decision: "approve", standing: "auto" }));
+      const end = events.at(-1);
+      expect(end?.type === "end" && end.message.approvals?.[0]).toMatchObject({ status: "approved", decidedVia: "standing" });
+      expect(await store.getApproval(approval.id)).toMatchObject({ status: "approved", decidedVia: "standing" });
+    });
+
+    it("never approves without the OK, for another kind, or outside a task", async () => {
+      const notYet = await pauseOn(labels, { allowed: [] });
+      await expect(
+        startTurn(notYet.deps, { conversationId: notYet.id, kind: "decide", approvalId: notYet.approval.id, decision: "approve", standing: "auto" }),
+      ).rejects.toMatchObject({ status: 403 });
+      const send = await pauseOn(sending, { allowed: ["gmail_labels"] });
+      for (const standing of ["auto", "grant"] as const) {
+        await expect(
+          startTurn(send.deps, { conversationId: send.id, kind: "decide", approvalId: send.approval.id, decision: "approve", standing }),
+        ).rejects.toMatchObject({ status: 409 });
+      }
+      const elsewhere = await pauseOn(labels);
+      await expect(
+        startTurn(elsewhere.deps, { conversationId: elsewhere.id, kind: "decide", approvalId: elsewhere.approval.id, decision: "approve", standing: "grant" }),
+      ).rejects.toMatchObject({ status: 409 });
+      for (const t of [notYet, send, elsewhere]) expect(await t.store.getApproval(t.approval.id)).toMatchObject({ status: "pending" });
+    });
+  });
 });
 
 describe("edits, files, and memory suggestions", () => {

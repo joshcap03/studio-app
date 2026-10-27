@@ -184,7 +184,10 @@ export const api = {
   listTasks: (signal?: AbortSignal) => request<{ tasks: AgentTask[] }>("/api/tasks", { signal }),
   getTask: (id: string, signal?: AbortSignal) => request<{ task: AgentTask; score?: string | null }>(`/api/tasks/${id}`, { signal }),
   createTask: (draft: TaskFields) => request<{ task: AgentTask }>("/api/tasks", { method: "POST", body: JSON.stringify(draft) }),
-  updateTask: (id: string, patch: Partial<TaskFields> & { status?: AgentTask["status"]; plan?: PlanStep[]; goal?: string | null }) =>
+  updateTask: (
+    id: string,
+    patch: Partial<TaskFields> & { status?: AgentTask["status"]; plan?: PlanStep[]; goal?: string | null; disallow?: AgentTask["allowedActions"][number] },
+  ) =>
     request<{ task: AgentTask }>(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
   listTaskRuns: (id: string, signal?: AbortSignal) => request<{ runs: TaskRun[] }>(`/api/tasks/${id}/runs`, { signal }),
@@ -240,7 +243,7 @@ export type TurnBody =
   | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
-  | ({ kind: "decide"; approvalId: string; decision: "approve" | "reject" } & ({ via?: "tap" } | SpokenDecision));
+  | ({ kind: "decide"; approvalId: string; decision: "approve" | "reject" } & ({ via?: "tap"; always?: true } | SpokenDecision));
 
 /** A decision said on a call: what the member was heard to say, and the call. The server checks both. */
 export interface SpokenDecision {

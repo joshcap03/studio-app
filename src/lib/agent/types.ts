@@ -1,6 +1,7 @@
 import type { ActivityStatus, Artifact, MemoryCategory, StepAction, StepPreview } from "@/lib/types";
 import type { Evidence } from "@/lib/agent/tools/evidence";
 import type { VoiceKey } from "@/lib/voice/voices";
+import type { StandingKind } from "@/lib/approvals/standing";
 
 // The contract between this application and any agent provider (Langflow today; LangGraph,
 // Deep Agents, or others later). Adapters translate their provider's protocol into these
@@ -27,7 +28,14 @@ export interface AgentTenantContext {
   /** The newest facts the member may change, with ids, so the agent updates one rather than saving it again. */
   recentMemories?: { id: string; content: string }[];
   /** The member's task this conversation works on, if any: its brief, what done looks like, and current plan. */
-  task?: { title: string; instructions: string; goal?: string | null; plan: { text: string; status: string; note: string | null }[] } | null;
+  task?: {
+    title: string;
+    instructions: string;
+    goal?: string | null;
+    plan: { text: string; status: string; note: string | null }[];
+    /** Kinds of change the member has OK'd for good on this task (src/lib/approvals/standing.ts). */
+    allowed?: StandingKind[];
+  } | null;
   /**
    * In a conversation that's neither a task's nor the setup interview, the plan the agent keeps
    * for the work in it (update_plan), and what done looks like. Absent while it has none.

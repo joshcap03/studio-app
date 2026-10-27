@@ -1,10 +1,11 @@
 import { agentEnabledFor } from "@/lib/agent";
-import { buildTurnDeps } from "@/lib/chat/run";
+import { buildTurnDeps, type RunOptions } from "@/lib/chat/run";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import type { Tenant } from "@/lib/tenant-core";
-import { appendRun, beginRun, deferRun, getRun, getTask, markTaskRan, runStopRequested, settleRun, updateTask } from "./index";
+import { appendRun, beginRun, deferRun, getRun, getTask, markTaskRan, runOutcome, runStopRequested, settleRun, updateTask } from "./index";
 import { getWatch } from "./watches";
+import type { ChatMessage } from "@/lib/types";
 import type { AgentTask, RunStatus } from "./types";
 
 // Runs one of a member's tasks as that member: its brief goes to the agent in the task's own
@@ -25,6 +26,9 @@ export interface RunOutcome {
   /** For a watch's run that isn't starting yet: when to ask again (epoch ms). */
   retryAt?: number;
 }
+
+/** Requests one run approves itself under the member's standing OK before it waits on them anyway. */
+const MAX_STANDING = 20;
 
 // A watch's run carries events that would be lost if it were skipped, so while its conversation
 // is busy or waiting on the member it waits, folding in events that arrive meanwhile, and is
@@ -53,28 +57,46 @@ export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { r
     let settle!: (outcome: RunOutcome) => void;
     const settled = new Promise<RunOutcome>((resolve) => (settle = resolve));
     const id = runId;
+    const convo = conversationId;
+    // A stop can come from any server (the member's browser talks to the app, not the worker).
+    const shouldStop = id ? () => runStopRequested(tenant, id) : undefined;
+    const onFinished: RunOptions["onFinished"] = async (message, _conversation, { report }) => {
+      // A run waiting on the member's approval isn't over: approving continues it.
+      const outcome: RunOutcome = runOutcome(message, report);
+      try {
+        if (id) await settleRun(tenant, id, { ...outcome, messageId: message.id });
+        await markTaskRan(tenant, task.id);
+      } catch (e) {
+        console.error("[tasks] couldn't record the run's outcome", e);
+      } finally {
+        settle(outcome);
+      }
+    };
+    // A request of a kind the member OK'd for good on this task is approved here, as the task's
+    // run, and the run carries on without waking them; anything else waits for them. Read fresh
+    // each time, so an OK taken back mid-run stops the next one. At most MAX_STANDING a run.
+    let standingLeft = MAX_STANDING;
+    const carryOn = async (message: ChatMessage): Promise<boolean> => {
+      if (message.status !== "awaiting" || standingLeft <= 0) return false;
+      const [pending, current] = await Promise.all([storeFor(tenant).pendingApproval(convo), getTask(tenant, task.id)]);
+      if (!pending?.standing || !current?.allowedActions.includes(pending.standing)) return false;
+      standingLeft--;
+      const next = await buildTurnDeps(tenant, {
+        conversationId: convo,
+        input: { kind: "decide", approvalId: pending.id, decision: "approve", standing: "auto" },
+        shouldStop,
+        onFinished,
+        carryOn,
+      });
+      void (await startTurn(next.deps, next.request)).cancel();
+      return true;
+    };
     const { deps, request } = await buildTurnDeps(tenant, {
       conversationId,
       input: { kind: "task", taskId: task.id, runId: id },
-      // A stop can come from any server (the member's browser talks to the app, not the worker).
-      shouldStop: id ? () => runStopRequested(tenant, id) : undefined,
-      onFinished: async (message, _conversation, { report }) => {
-        // A run waiting on the member's approval isn't over: approving continues it.
-        const outcome: RunOutcome =
-          message.status === "complete"
-            ? { status: "done", reason: report?.outcome ?? null }
-            : message.status === "awaiting"
-              ? { status: "running", reason: "waiting_on_you" }
-              : { status: "failed", reason: message.status };
-        try {
-          if (id) await settleRun(tenant, id, { ...outcome, messageId: message.id });
-          await markTaskRan(tenant, task.id);
-        } catch (e) {
-          console.error("[tasks] couldn't record the run's outcome", e);
-        } finally {
-          settle(outcome);
-        }
-      },
+      shouldStop,
+      onFinished,
+      carryOn,
     });
     const stream = await startTurn(deps, request);
     // No one reads this stream: the member follows the run in its conversation.
