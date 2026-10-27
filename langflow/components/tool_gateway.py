@@ -54,7 +54,11 @@ class MemoryArgs(BaseModel):
 PLAN_STEP_SCHEMA = {
     "type": "object",
     "properties": {
-        "text": {"type": "string", "description": "The step, in a short plain sentence."},
+        "text": {"type": "string", "description": ("The step, in a short plain sentence the owner would say: what "
+                                                     "gets done for them ('Read the last 90 days of email'), never how. "
+                                                     "No tools, apps' APIs, or cards ('Find Gmail read tools', 'Show "
+                                                     "results in a verdict form'), and no step for getting your own "
+                                                     "tools ready.")},
         "status": {"type": "string", "description": "todo, doing, done, blocked, or needs_you (waiting on the owner)."},
         "note": {"type": "string", "description": "Optional: what happened or what's blocking it, in one line."},
     },
@@ -68,7 +72,7 @@ class PlanArgs(BaseModel):
                               json_schema_extra={"items": PLAN_STEP_SCHEMA})
     goal: str = Field(default="", description=("What done looks like, in one line the owner would agree with: the words you "
                                                "said after 'Done means', e.g. 'three caterers under $40 a head, with a quote "
-                                               "request ready for you'. Leave it empty to keep the current one for the same "
+                                               "request ready for you'. What they get, never the card or tool that shows it. Leave it empty to keep the current one for the same "
                                                "work (a task's stays until the owner asks to change it)."))
 
 
@@ -200,7 +204,9 @@ QUESTION_SCHEMA = {
                 "required": ["label"],
             },
         },
-        "multi_select": {"type": "boolean", "description": "True when more than one choice can apply."},
+        "multi_select": {"type": "boolean", "description": ("True when more than one choice could be true at once "
+                                                           "(what counts, which ones, what matters). False only "
+                                                           "when the choices rule each other out.")},
     },
     "required": ["question", "options"],
 }
@@ -215,7 +221,10 @@ FORM_FIELD_SCHEMA = {
     "type": "object",
     "properties": {
         "kind": {"type": "string", "enum": ["choice", "multi_choice", "rank", "scale", "verdict", "text", "long_text", "file", "list", "connect"],
-                 "description": ("choice or multi_choice (2-8 options), rank (the owner puts 2-8 options in order, "
+                 "description": ("choice (2-8 options, they pick one: only when the options rule each other out, "
+                                 "e.g. 'How often?') or multi_choice (2-8 options, they pick any number: whenever "
+                                 "more than one could be true, e.g. what counts, which ones, what matters; if unsure, "
+                                 "multi_choice), rank (the owner puts 2-8 options in order, "
                                  "most important first), scale (one point between two labelled ends, e.g. 'Ask me "
                                  "first' to 'Just do it'), verdict (results you found or drafted for the owner to "
                                  "keep or pass on, a pass with a reason), text (one line), long_text (a paragraph), "
