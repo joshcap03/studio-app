@@ -208,13 +208,13 @@ function Eyes({ shape, mood, size }: { shape: CompanionLook["shape"]; mood: Comp
   );
 }
 
-/** What the mark means, said in words (a title, a screen reader label), with what's left before it introduces itself when known. */
+/** What the mark means, said in words (a title, a screen reader label), with what to do to meet it when known. */
 export function companionHint(stage: CompanionStage, name: string | null, toMeet?: string): string {
   switch (stage) {
     case "sketch":
-      return toMeet ? "I'm still getting to know you. " + toMeet : "Still getting to know you";
+      return toMeet ? "That's me, still taking shape as I get to know you. " + toMeet : "Still getting to know you";
     case "drawn":
-      return toMeet ? "I'm getting to know you. " + toMeet : "Getting to know you";
+      return toMeet ? "That's me, still taking shape as I get to know you. " + toMeet : "Getting to know you";
     case "ready":
       return "Ready to introduce itself";
     case "arrived":

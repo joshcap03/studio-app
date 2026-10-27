@@ -26,7 +26,8 @@ gitignored and stays out of the repo.
 - `npm run test:integration`: needs local Supabase; API tests also need `qa:serve`;
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
   with those, `job-search.eval.test.ts` evals the Job search template and `tidy.eval.test.ts`
-  the Brain's "Tidy up" on the real model, and `library.eval.test.ts` filing a link with `file_link`.
+  the Brain's "Tidy up" on the real model, `library.eval.test.ts` filing a link with `file_link`, and
+  `revise.eval.test.ts` rewriting a task's result in the form the member asks for over the brief's.
   `behavior.eval.test.ts` is the set to tune the agent's instructions by: long-horizon work (a task's
   runs, a project over several turns) and everyday behavior, scored into a scorecard
   (`BEHAVIOR_EVAL_RUNS`, `BEHAVIOR_EVAL_LOG`, `BEHAVIOR_EVAL_BASELINE` to compare; see its header).
@@ -80,7 +81,7 @@ raw/technical text.
   it really knows and suggests a name with `propose_agent` (identity), which the member keeps or changes.
   Its name and manner then ride in every run's context, on calls and in push titles. Members never read
   the stage words, but they know someone is on the way: until it's ready, the new-chat screen, the
-  agent page and the mark's title say what's left before it introduces itself (`toMeet`, from the same signals).
+  agent page and the mark's title say the mark is their agent and what to do to meet it (`toMeet`, from the same signals).
 - `src/lib/delete-agent.ts`: deleting an agent its owner picks (Settings → Agents, up to `MAX_AGENTS`
   per person, held again by `create_workspace`). The row's delete cascades its data; the owner's watch
   triggers, its memory namespaces, and their files go after it, best effort.
