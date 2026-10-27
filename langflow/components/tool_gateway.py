@@ -703,6 +703,9 @@ def watch_needs_approval(name, arguments):
 # Seconds a run's tools may take in all (see run_budget). The app's request lasts 300: this leaves
 # time for the run to start, for the agent to write its answer, and for the app to save it.
 RUN_BUDGET = 210
+# How many of the agent's tool calls go by with plan steps left before it's reminded to move the
+# plan on, so the owner sees the work go step by step rather than stay on the first.
+PLAN_NUDGE_CALLS = 4
 # A tool isn't started with less time than this left in the budget.
 MIN_TOOL_SECONDS = 15
 WRAP_UP = ("Don't call more tools: answer now with what you have for the owner, say in a sentence what's "
@@ -913,7 +916,7 @@ class ToolGatewayComponent(Component):
                     "now with the same tool_name and arguments plus a one-sentence summary; don't reply first.")
 
         async def execute_async(tool_name: str, arguments=None, config: RunnableConfig = None) -> str:
-            return await run_async(tool_name, arguments, config, approved=False)
+            return with_reminder(await run_async(tool_name, arguments, config, approved=False), config)
 
         refused = "Approvals aren't available in this run, so nothing was changed. Tell the owner what you would have done."
 
@@ -926,7 +929,7 @@ class ToolGatewayComponent(Component):
             # Reaching this body with approvals active means the owner approved the call.
             if not approvals_active(config):
                 return refused
-            return await run_async(tool_name, arguments, config, approved=True)
+            return with_reminder(await run_async(tool_name, arguments, config, approved=True), config)
 
         async def run_async(tool_name, arguments, config, approved):
             tool_name, arguments = route(tool_name, arguments)
@@ -979,12 +982,12 @@ class ToolGatewayComponent(Component):
                 return f"Tool {tool_name} failed: {type(exc).__name__}: {exc}. Do not blindly retry writes."
 
         def execute_sync(tool_name: str, arguments=None, config: RunnableConfig = None) -> str:
-            return run_sync(tool_name, arguments, config, approved=False)
+            return with_reminder(run_sync(tool_name, arguments, config, approved=False), config)
 
         def action_sync(tool_name: str, arguments=None, summary: str = "", config: RunnableConfig = None) -> str:
             if not approvals_active(config):
                 return refused
-            return run_sync(tool_name, arguments, config, approved=True)
+            return with_reminder(run_sync(tool_name, arguments, config, approved=True), config)
 
         async def discover_async(query: str) -> str:
             return discover(query)
@@ -1013,9 +1016,45 @@ class ToolGatewayComponent(Component):
         async def remember_async(content: str, scope: str = "workspace", category: str = "other", replaces: list[str] | None = None) -> str:
             return remember(content, scope, category, replaces)
 
-        # The last plan each run's thread gave, so report_run can catch one left with steps still
-        # to do or under way: the owner would see the work stuck on its first step after it's done.
+        # The last plan each run's thread gave, and the calls since: the agent is reminded to move
+        # it on as it works, and report_run catches one left with steps still to do or under way,
+        # or the owner would see the work stuck on its first step after it's done.
         plans = {}
+        since_plan = {}
+
+        def open_steps(thread):
+            return [r for r in plans.get(thread, []) if r["status"].lower() in ("", "todo", "doing")]
+
+        def plan_reminder(config):
+            # Every PLAN_NUDGE_CALLS calls since the plan last changed, while steps are left: where
+            # the plan says the work is, so the agent moves it on once it's past that step.
+            thread = thread_of(config)
+            left = open_steps(thread)
+            if not left:
+                return ""
+            since_plan[thread] = since_plan.get(thread, 0) + 1
+            if since_plan[thread] < PLAN_NUDGE_CALLS:
+                return ""
+            since_plan[thread] = 0
+            at = next((r for r in left if r["status"].lower() == "doing"), left[0])
+            return (f"Your plan still shows '{at['text']}' as {at['status'] or 'todo'}. If you've finished it or moved "
+                    "on, call update_plan now with the whole plan (done steps done, the one you're on doing) so the "
+                    "owner sees where the work is.")
+
+        def with_reminder(result, config):
+            # Into a structured result's note, or after a plain one; anything else structured is
+            # left exactly as it is, since the app reads it.
+            reminder = plan_reminder(config)
+            if not reminder or not isinstance(result, str):
+                return result
+            try:
+                parsed = json.loads(result)
+            except ValueError:
+                return f"{result}\n[{reminder}]"
+            if isinstance(parsed, dict) and isinstance(parsed.get("note"), str):
+                parsed["note"] = f"{parsed['note']} {reminder}"
+                return json.dumps(parsed)
+            return result
 
         def update_plan(steps: list, goal: str = "", config: RunnableConfig = None) -> str:
             # Like remember, this changes nothing here: the app checks the plan and saves it where
@@ -1029,6 +1068,7 @@ class ToolGatewayComponent(Component):
             if not rows:
                 return "No plan to save: give at least one step with text."
             plans[thread_of(config)] = rows
+            since_plan[thread_of(config)] = 0
             update = {"steps": rows}
             goal = " ".join(str(goal or "").split())[:200]
             if goal:
@@ -1039,7 +1079,8 @@ class ToolGatewayComponent(Component):
         async def update_plan_async(steps: list, goal: str = "", config: RunnableConfig = None) -> str:
             return update_plan(steps, goal, config)
 
-        def save_record(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
+        def save_record(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None,
+                        config: RunnableConfig = None) -> str:
             # The app upserts this into the owner's own tracker (by collection and key). Nothing
             # is stored here and no outside account changes, so it needs no approval.
             collection = "-".join(str(collection or "").lower().split())[:40]
@@ -1050,16 +1091,17 @@ class ToolGatewayComponent(Component):
             record = {"collection": collection, "key": key, "title": " ".join(str(title or "").split())[:200],
                       "status": " ".join(str(status or "").split())[:40], "url": str(url or "").strip()[:2000],
                       "fields": {str(k)[:60]: v for k, v in list(extra.items())[:30]}}
-            return json.dumps({"record": record, "note": (
+            return with_reminder(json.dumps({"record": record, "note": (
                 "Saved to the owner's tracker. If it's a new result you found for them (a role, a lead, an "
                 "option), not their own entry or a status change: once all of this reply's results are saved, "
                 "end with show_form and one verdict field holding them (each with its record, link, and a line "
-                "on why), so they keep or pass each, rather than listing them in your text.")})
+                "on why), so they keep or pass each, rather than listing them in your text.")}), config)
 
-        async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
-            return save_record(collection, key, title, status, url, fields)
+        async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None,
+                                    config: RunnableConfig = None) -> str:
+            return save_record(collection, key, title, status, url, fields, config)
 
-        def file_link(url: str, title: str, kind: str = "") -> str:
+        def file_link(url: str, title: str, kind: str = "", config: RunnableConfig = None) -> str:
             # The app files this in the owner's own Library (it knows whose; this flow doesn't).
             # Nothing is stored here and no outside account changes, so it needs no approval.
             url = str(url or "").strip()
@@ -1072,19 +1114,19 @@ class ToolGatewayComponent(Component):
             kind = str(kind or "").strip().lower()
             if kind in LIBRARY_KINDS:
                 item["kind"] = kind
-            return json.dumps({"library_item": item,
-                               "note": "Saved to the owner's Library. Say so in a few words; they can open it there."})
+            return with_reminder(json.dumps({"library_item": item,
+                                             "note": "Saved to the owner's Library. Say so in a few words; they can open it there."}), config)
 
-        async def file_link_async(url: str, title: str, kind: str = "") -> str:
-            return file_link(url, title, kind)
+        async def file_link_async(url: str, title: str, kind: str = "", config: RunnableConfig = None) -> str:
+            return file_link(url, title, kind, config)
 
         def report_run(outcome: str, summary: str = "", config: RunnableConfig = None) -> str:
             # The app reads this to decide whether to notify the owner; it changes nothing.
             outcome = outcome if outcome in ("nothing_new", "update", "needs_you") else "update"
             note = "Reported. Finish your reply briefly."
-            open_steps = [r for r in plans.get(thread_of(config), []) if r["status"].lower() in ("", "todo", "doing")]
-            if open_steps:
-                listed = "; ".join(f"'{r['text']}' ({r['status'] or 'todo'})" for r in open_steps[:6])
+            left = open_steps(thread_of(config))
+            if left:
+                listed = "; ".join(f"'{r['text']}' ({r['status'] or 'todo'})" for r in left[:6])
                 note = (f"Reported. Your plan still shows {listed}. Call update_plan now with the whole plan as it "
                         "ended (each step done, blocked, or needs_you, with a note when it isn't done), then finish "
                         "your reply briefly.")

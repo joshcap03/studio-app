@@ -35,6 +35,8 @@ export interface AgentTask {
    * again (src/lib/approvals/standing.ts). Given with a tap on a real request, taken back here.
    */
   allowedActions: StandingKind[];
+  /** When its plan last changed; null on a task saved before this was kept (updatedAt stands in). */
+  planUpdatedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }

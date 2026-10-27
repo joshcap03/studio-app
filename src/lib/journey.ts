@@ -15,8 +15,8 @@ import type { AgentSetup, Journey, JourneyStep } from "@/lib/types";
 const toStep = ({ text, status, note }: PlanStep | JourneyStep): JourneyStep => ({ text, status, ...(note ? { note } : {}) });
 
 /** A task's plan as a journey; null while it has no steps. */
-export function taskJourney(task: Pick<AgentTask, "plan" | "goal" | "updatedAt">): Journey | null {
-  return task.plan.length ? { kind: "task", goal: task.goal, steps: task.plan.map(toStep), updatedAt: task.updatedAt } : null;
+export function taskJourney(task: Pick<AgentTask, "plan" | "goal" | "updatedAt"> & { planUpdatedAt?: number | null }): Journey | null {
+  return task.plan.length ? { kind: "task", goal: task.goal, steps: task.plan.map(toStep), updatedAt: task.planUpdatedAt ?? task.updatedAt } : null;
 }
 
 /**
