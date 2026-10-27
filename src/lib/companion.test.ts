@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KNOWS_YOU, companionLook, companionName, companionStage, nameProblem, stageRank } from "./companion";
+import { KNOWS_YOU, companionLook, companionName, companionStage, nameProblem, stageRank, toMeet } from "./companion";
 
 const knowsYou = { runs: KNOWS_YOU.readyRuns, days: KNOWS_YOU.readyDays, conversations: KNOWS_YOU.readyConversations, setupSettled: true };
 
@@ -28,6 +28,25 @@ describe("companionStage", () => {
     expect(stageRank("sketch")).toBeLessThan(stageRank("drawn"));
     expect(stageRank("drawn")).toBeLessThan(stageRank("ready"));
     expect(stageRank("ready")).toBeLessThan(stageRank("arrived"));
+  });
+});
+
+describe("toMeet", () => {
+  it("tells a new member someone is on the way, and what's left", () => {
+    expect(toMeet({ runs: 0, days: 0, conversations: 0, setupSettled: true })).toBe(
+      "I'll introduce myself after ten more messages, three more conversations and two days together, and you'll choose what to call me.",
+    );
+  });
+
+  it("names only what's still left, counting down with real use", () => {
+    expect(toMeet({ ...knowsYou, runs: KNOWS_YOU.readyRuns - 1, days: 1 })).toBe(
+      "I'll introduce myself after one more message and another day together, and you'll choose what to call me.",
+    );
+    expect(toMeet({ ...knowsYou, setupSettled: false })).toBe("I'll introduce myself after setup, and you'll choose what to call me.");
+  });
+
+  it("says soon once nothing is left", () => {
+    expect(toMeet(knowsYou)).toBe("I'll introduce myself soon, and you'll choose what to call me.");
   });
 });
 

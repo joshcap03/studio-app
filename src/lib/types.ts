@@ -354,6 +354,12 @@ export interface Companion {
   /** The voice the member chose for it (src/lib/voice/voices.ts); null keeps its template's. */
   voice: VoiceKey | null;
   look: CompanionLook;
+  /**
+   * While it's still getting to know the member, what's left before it introduces itself, in its
+   * words ("I'll introduce myself after two more messages and another day together, …"). Only on
+   * the agent they're in.
+   */
+  toMeet?: string;
 }
 
 export interface WorkspaceSettings {

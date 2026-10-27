@@ -6,7 +6,7 @@ import { getAgentAdapter } from "@/lib/agent";
 import { listAgentFiles } from "@/lib/agent-files";
 import { requirePageTenant } from "@/lib/tenant";
 import { brainMemories, listPromotions } from "@/lib/brain";
-import { getCompanion } from "@/lib/companion";
+import { getCompanion, withToMeet } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { listMemories, memoryEnabled } from "@/lib/memory";
 import { barScore, describeScore } from "@/lib/verdicts";
@@ -40,6 +40,7 @@ export default async function AgentPage() {
     barScore(tenant).then(describeScore, () => null),
     companion,
   ]);
+  const met = named && initialCompanion ? await withToMeet(tenant, initialCompanion, settings.setup).catch(() => initialCompanion) : null;
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
@@ -61,7 +62,7 @@ export default async function AgentPage() {
           initialFiles={files}
           allowFiles={getAgentAdapter().capabilities.attachments}
           score={score}
-          initialCompanion={named ? initialCompanion : null}
+          initialCompanion={met}
           voice={
             voice && initialCompanion
               ? { status: voice, start: defaultPersona(settings.templateId), keptName: named ? initialCompanion.name : null, voice: initialCompanion.voice, manner: initialCompanion.manner }
