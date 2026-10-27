@@ -44,6 +44,11 @@ describe("setupSkill", () => {
       expect(call).toContain("just your first open question");
       expect(call.slice(call.indexOf("- Go step by step"))).toBe(skill.slice(skill.indexOf("- Go step by step")).replace(` ${template.setup.intro}`, "").replace("Your first reply opens with your greeting (see above). ", "Your first reply is just your first question (see above). "));
       expect(skill).toMatch(/Trial run[\s\S]*verdict field/);
+      // The trial changes nothing, but the tasks do the job as agreed: a task that sorts their
+      // inbox applies the labels (with approval), and only results to choose from end in a verdict.
+      expect(skill).toContain("the trial's alone");
+      expect(skill).toContain(`never write a task as read-only or "change nothing" unless they asked for that`);
+      expect(skill).toContain("A task that brings them results to choose from");
       expect(skill).toMatch(/rank field/);
       expect(skill).toContain("Do the first one now");
       expect(skill).toContain("What success means");
