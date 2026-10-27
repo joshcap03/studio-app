@@ -33,6 +33,24 @@ const DEFAULT_TWEAKS: Record<string, unknown> = {
   "MemberApps-studio": { member_id: "{{composio_user_id}}", toolkits: "{{composio_toolkits}}" },
 };
 
+let flowConfig: Promise<LangflowConfig> | undefined;
+
+/** The test flow's adapter config, its tweaks including the flow's Chat Input for files. Read once. */
+export function testFlowConfig(): Promise<LangflowConfig> {
+  flowConfig ??= (async () => ({ baseUrl: baseUrl!, apiKey: apiKey!, flowId: flowId!, stream: true, tweaks: await tweaks() }))();
+  return flowConfig;
+}
+
+async function tweaks(): Promise<unknown> {
+  if (process.env.LANGFLOW_TEST_TWEAKS) return JSON.parse(process.env.LANGFLOW_TEST_TWEAKS) as unknown;
+  const res = await fetch(`${baseUrl!.replace(/\/$/, "")}/api/v1/flows/${flowId}`, { headers: { "x-api-key": apiKey! } });
+  if (!res.ok) throw new Error(`couldn't read the test flow (${res.status})`);
+  const flow = (await res.json()) as { data: { nodes: { data: { id: string; type?: string } }[] } };
+  const chatInput = flow.data.nodes.find((n) => n.data.type === "ChatInput");
+  if (!chatInput) throw new Error("the test flow has no Chat Input");
+  return { ...DEFAULT_TWEAKS, [chatInput.data.id]: { files: "{{files}}" } };
+}
+
 /** Someone setting up an agent, scripted. Made up: no real people or businesses. */
 export interface ScriptedMember {
   templateId: string;
@@ -197,19 +215,9 @@ export function setupSession(member: ScriptedMember) {
     read: async () => new Blob([member.file!.content], { type: member.file!.mimeType }),
   });
 
-  async function tweaks(): Promise<unknown> {
-    if (process.env.LANGFLOW_TEST_TWEAKS) return JSON.parse(process.env.LANGFLOW_TEST_TWEAKS) as unknown;
-    const res = await fetch(`${baseUrl!.replace(/\/$/, "")}/api/v1/flows/${flowId}`, { headers: { "x-api-key": apiKey! } });
-    if (!res.ok) throw new Error(`couldn't read the test flow (${res.status})`);
-    const flow = (await res.json()) as { data: { nodes: { data: { id: string; type?: string } }[] } };
-    const chatInput = flow.data.nodes.find((n) => n.data.type === "ChatInput");
-    if (!chatInput) throw new Error("the test flow has no Chat Input");
-    return { ...DEFAULT_TWEAKS, [chatInput.data.id]: { files: "{{files}}" } };
-  }
-
   /** One turn, with the context updated afterwards the way the app would. */
   async function send(message: string, withFile = false): Promise<Turn> {
-    config ??= { baseUrl: baseUrl!, apiKey: apiKey!, flowId: flowId!, stream: true, tweaks: await tweaks() };
+    config ??= await testFlowConfig();
     if (withFile && member.file && !tenant.agentFiles!.includes(member.file.name)) tenant.agentFiles!.push(member.file.name);
     const events: AgentEvent[] = [];
     const eventMs: number[] = [];
