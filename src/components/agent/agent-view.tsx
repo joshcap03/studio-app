@@ -10,7 +10,7 @@ import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "@/com
 import { PreviewNote, VoicePreviews, VoiceTile } from "@/components/voice/voice-preview";
 import { appName } from "@/lib/apps";
 import { ApiError, api, uploadAgentFile } from "@/lib/client/api";
-import { TEMPLATES, templateById } from "@/lib/templates";
+import { DEFAULT_TEMPLATE_ID, templateById, templateChoices } from "@/lib/templates";
 import {
   ATTACHMENT_TYPES,
   MAX_AGENT_FILES,
@@ -655,7 +655,7 @@ function SetupInterview({ setup }: { setup: WorkspaceSettings["setup"] }) {
 }
 
 function TemplatePicker({ current, onApplied }: { current: string | null; onApplied: (settings: WorkspaceSettings) => void }) {
-  const [choice, setChoice] = useState(current ?? TEMPLATES[0].id);
+  const [choice, setChoice] = useState(current ?? DEFAULT_TEMPLATE_ID);
   const [status, setStatus] = useState<"idle" | "applying" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
   const chosen = templateById(choice);
@@ -698,7 +698,7 @@ function TemplatePicker({ current, onApplied }: { current: string | null; onAppl
           }}
           className="h-8 rounded-lg border border-line bg-surface px-2 text-[13.5px] text-fg outline-none focus:border-line-strong"
         >
-          {TEMPLATES.map((t) => (
+          {templateChoices(current).map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
               {t.id === current ? " (current)" : ""}

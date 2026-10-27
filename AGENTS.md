@@ -56,7 +56,8 @@ raw/technical text.
 - `src/lib/db/store.ts`: conversation persistence, scoped to one workspace + user.
 - `src/lib/workspace.ts`: settings (the agent profile, "what this agent is for", is stored in
   `workspace_settings.business_context`), usage/limits, and the per-run agent context.
-- `src/lib/templates/`: built-in starting points (Job search, Small business, Sales pipeline, Inbox & calendar, Content & social, Blank). Applying
+- `src/lib/templates/`: built-in starting points (Small business, Sales pipeline, Inbox & calendar, Content & social, Blank;
+  Job search is `unlisted`: no longer offered, kept for agents already made from it). Applying
   one (`apply.ts`) copies instructions and library skills into the workspace without
   overwriting anything, and (with the "tasks" preview) gives the member the template's tasks,
   paused; suggested apps are shown, never connected automatically. Every template ships a

@@ -44,8 +44,8 @@ export interface AgentTemplate {
    * just in tasks, e.g. interview stories. Kept small: a few rows of reference material.
    */
   contextCollections?: string[];
-  /** Offered only once the person has an agent, never as their first one. */
-  notFirst?: boolean;
+  /** Not offered in any picker; agents already made from it keep it. */
+  unlisted?: boolean;
 }
 
 export interface TemplateSetup {
@@ -159,7 +159,7 @@ export const TEMPLATES: AgentTemplate[] = [
     id: "job-search",
     name: "Job search",
     namePlaceholder: "Job search",
-    notFirst: true,
+    unlisted: true,
     persona: { name: "Rowan", voice: "steady" },
     description: "Finds roles that fit, tailors applications, drafts outreach, and preps you for interviews.",
     profilePrompt:
@@ -482,9 +482,9 @@ export const TEMPLATES: AgentTemplate[] = [
 
 export const DEFAULT_TEMPLATE_ID = "blank";
 
-/** The templates to pick from: a person's first agent starts from a narrower list. */
-export function templatesFor(first: boolean): AgentTemplate[] {
-  return first ? TEMPLATES.filter((t) => !t.notFirst) : TEMPLATES;
+/** The templates to pick from, plus the agent's own (`current`) if it's no longer offered. */
+export function templateChoices(current?: string | null): AgentTemplate[] {
+  return TEMPLATES.filter((t) => !t.unlisted || t.id === current);
 }
 
 export function templateById(id: string | null | undefined): AgentTemplate | undefined {
