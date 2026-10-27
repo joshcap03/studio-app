@@ -18,9 +18,12 @@ const body = z
   })
   .refine((b) => b.name !== undefined || b.manner !== undefined || b.voice !== undefined, "Nothing to change.");
 
-/** Who the agent the member is in is to them (null where it isn't shown), as it moves along. */
+/**
+ * Who the agent the member is in is to them (null where it isn't shown), as it moves along.
+ * It may move their companion forward (withToMeet), so it's a write.
+ */
 export async function GET(request: NextRequest) {
-  const auth = await authorizeTenant(request);
+  const auth = await authorizeTenant(request, { writes: true });
   if (!auth.ok) return auth.response;
   if (!previewEnabled(auth.value, "companion")) return NextResponse.json({ companion: null });
   try {
