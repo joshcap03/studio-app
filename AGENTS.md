@@ -98,8 +98,8 @@ raw/technical text.
   their runs (`index.ts`), the agent's tracker of records per collection (`records.ts`), and
   request validation (`schema.ts`). The member reads each collection as a list in the Library, so
   `fields.ts` keeps it one list: the agent's placeholders ("None", "n/a") are dropped on save, saving
-  a row again adds to its fields rather than replacing them, each collection's rows show the same
-  detail fields (the rest open from the row), and every run is told the collections and field names
+  a row again adds to its fields rather than replacing them, each collection's fields are the
+  same columns on every row, and every run is told the collections and field names
   already in use so it reuses them instead of starting a second list for the same thing. Private to each member; the API is the "tasks" preview.
   `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike, and carries
   it on past a request the member OK'd for good on that task (see Rules: standing approvals).
@@ -132,7 +132,8 @@ raw/technical text.
   filed from its tools' own artifact results as each reply streams (one row per link), links the agent
   files when the member asks it to keep one (`file_link`), and links the member pastes. Each run's
   context lists it so the agent reopens what it made. The page
-  (`src/components/library/`) lists each tracker collection in brief, opening to its own page (`/library/<collection>`), and the member's agent files.
+  (`src/components/library/`) lists each tracker collection in brief, opening to its own page (`/library/<collection>`): a sheet
+  the member edits cell by cell and adds rows (`POST /api/records`) and columns to (`tracker-sheet.tsx`), and the member's agent files.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
