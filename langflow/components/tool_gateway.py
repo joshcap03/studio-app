@@ -1013,7 +1013,11 @@ class ToolGatewayComponent(Component):
         async def remember_async(content: str, scope: str = "workspace", category: str = "other", replaces: list[str] | None = None) -> str:
             return remember(content, scope, category, replaces)
 
-        def update_plan(steps: list, goal: str = "") -> str:
+        # The last plan each run's thread gave, so report_run can catch one left with steps still
+        # to do or under way: the owner would see the work stuck on its first step after it's done.
+        plans = {}
+
+        def update_plan(steps: list, goal: str = "", config: RunnableConfig = None) -> str:
             # Like remember, this changes nothing here: the app checks the plan and saves it where
             # the work in this conversation keeps it (its task, the setup checklist, or the
             # conversation), where the owner sees it above the chat.
@@ -1024,6 +1028,7 @@ class ToolGatewayComponent(Component):
             rows = [r for r in rows if r["text"]]
             if not rows:
                 return "No plan to save: give at least one step with text."
+            plans[thread_of(config)] = rows
             update = {"steps": rows}
             goal = " ".join(str(goal or "").split())[:200]
             if goal:
@@ -1031,8 +1036,8 @@ class ToolGatewayComponent(Component):
             return json.dumps({"plan_update": update,
                                "note": "The owner sees it above the chat; no need to mention it."})
 
-        async def update_plan_async(steps: list, goal: str = "") -> str:
-            return update_plan(steps, goal)
+        async def update_plan_async(steps: list, goal: str = "", config: RunnableConfig = None) -> str:
+            return update_plan(steps, goal, config)
 
         def save_record(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
             # The app upserts this into the owner's own tracker (by collection and key). Nothing
@@ -1073,14 +1078,21 @@ class ToolGatewayComponent(Component):
         async def file_link_async(url: str, title: str, kind: str = "") -> str:
             return file_link(url, title, kind)
 
-        def report_run(outcome: str, summary: str = "") -> str:
+        def report_run(outcome: str, summary: str = "", config: RunnableConfig = None) -> str:
             # The app reads this to decide whether to notify the owner; it changes nothing.
             outcome = outcome if outcome in ("nothing_new", "update", "needs_you") else "update"
+            note = "Reported. Finish your reply briefly."
+            open_steps = [r for r in plans.get(thread_of(config), []) if r["status"].lower() in ("", "todo", "doing")]
+            if open_steps:
+                listed = "; ".join(f"'{r['text']}' ({r['status'] or 'todo'})" for r in open_steps[:6])
+                note = (f"Reported. Your plan still shows {listed}. Call update_plan now with the whole plan as it "
+                        "ended (each step done, blocked, or needs_you, with a note when it isn't done), then finish "
+                        "your reply briefly.")
             return json.dumps({"run_report": {"outcome": outcome, "summary": " ".join(str(summary or "").split())[:300]},
-                               "note": "Reported. Finish your reply briefly."})
+                               "note": note})
 
-        async def report_run_async(outcome: str, summary: str = "") -> str:
-            return report_run(outcome, summary)
+        async def report_run_async(outcome: str, summary: str = "", config: RunnableConfig = None) -> str:
+            return report_run(outcome, summary, config)
 
         def report_timeline(question: str, entries: list, causes: list | None = None) -> str:
             # Like remember, this changes nothing: the app reads the structured result, checks
