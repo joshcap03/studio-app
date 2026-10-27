@@ -317,7 +317,7 @@ describe("startTurn", () => {
     expect(assistant.content.length).toBeGreaterThan(0);
   });
 
-  it("stops when a stop is requested from elsewhere, checked on the heartbeat", async () => {
+  it("stops when a stop is requested from elsewhere, checked every few seconds", async () => {
     const store = createMemoryStore(scopeA);
     const id = crypto.randomUUID();
     let requested = false;
@@ -328,7 +328,7 @@ describe("startTurn", () => {
         adapter: createMockAdapter({ streaming: true, pace: 1 }),
         context: context(scopeA),
         idleTimeoutMs: 5000,
-        heartbeatMs: 10,
+        stopCheckMs: 10,
         shouldStop: async () => (asked++, requested),
       },
       { conversationId: id, kind: "send", text: "help with operations" },
@@ -339,6 +339,89 @@ describe("startTurn", () => {
     requested = true;
     for (let i = 0; i < 100 && (await store.listMessages(id))[1]?.status === "streaming"; i++) await new Promise((r) => setTimeout(r, 20));
     expect((await store.listMessages(id))[1].status).toBe("stopped");
+  });
+
+  it("stops when Stop reaches another server: the reply's flag, which the run checks", async () => {
+    const db = createMemoryDb();
+    const store = createMemoryStore(scopeA, db);
+    const id = crypto.randomUUID();
+    const reader = (
+      await startTurn(
+        { store, adapter: createMockAdapter({ streaming: true, pace: 1 }), context: context(scopeA), idleTimeoutMs: 5000, stopCheckMs: 10, checkpointMs: 0 },
+        { conversationId: id, kind: "send", text: "help with operations" },
+      )
+    ).getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+    while (!seen.includes('"type":"text"')) seen += decoder.decode((await reader.read()).value);
+    // Another member can't stop it; the member can, from a request this server never sees.
+    expect(await createMemoryStore(scopeB, db).requestStop(id)).toBe(false);
+    expect(await createMemoryStore(scopeA, db).requestStop(id)).toBe(true);
+    let streamed = seen;
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) streamed += decoder.decode(chunk.value);
+    expect(streamed).toContain('"status":"stopped"');
+    const assistant = (await store.listMessages(id))[1];
+    expect(assistant.status).toBe("stopped");
+    expect(assistant.content.length).toBeGreaterThan(0);
+    expect(await store.requestStop(id)).toBe(false); // nothing left streaming
+  });
+
+  it("forgets an earlier stop once the reply streams again", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    await store.createConversation({ id, title: "t" });
+    const reply = await store.insertMessage({ id: crypto.randomUUID(), conversationId: id, role: "assistant", content: "", status: "streaming", activity: [], artifacts: [] });
+    await store.requestStop(id);
+    expect(await store.stopRequested(reply.id)).toBe(true);
+    await store.updateMessage(reply.id, { status: "awaiting" });
+    await store.updateMessage(reply.id, { status: "streaming" });
+    expect(await store.stopRequested(reply.id)).toBe(false);
+  });
+
+  it("redirects a run on another server: asks it to stop, waits, then answers", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const seen: AgentRunInput[] = [];
+    await store.createConversation({ id, title: "find receipts" });
+    await store.insertMessage({ id: crypto.randomUUID(), conversationId: id, role: "user", content: "find receipts", status: "complete", activity: [], artifacts: [] });
+    const remote = await store.insertMessage({
+      id: crypto.randomUUID(),
+      conversationId: id,
+      role: "assistant",
+      content: "Looking at receipts",
+      status: "streaming",
+      activity: [],
+      artifacts: [],
+    });
+    // The other server's run, which stops on its next check.
+    const other = (async () => {
+      while (!(await store.stopRequested(remote.id))) await new Promise((r) => setTimeout(r, 5));
+      await store.updateMessage(remote.id, { status: "stopped" });
+    })();
+    const deps = { store, adapter: scripted([{ type: "message", text: "Switching to invoices." }], undefined, seen), context: context(scopeA), idleTimeoutMs: 1000 };
+
+    await expect(startTurn(deps, { conversationId: id, kind: "send", text: "actually invoices" })).rejects.toMatchObject({ status: 409 });
+    const events = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "actually invoices", steer: true }));
+    await other;
+    expect(events.at(-1)).toMatchObject({ type: "end", message: { status: "complete" } });
+    expect((await store.listMessages(id)).map((m) => [m.role, m.status])).toEqual([
+      ["user", "complete"],
+      ["assistant", "stopped"],
+      ["user", "complete"],
+      ["assistant", "complete"],
+    ]);
+    expect(seen[0].message).toContain("Looking at receipts");
+    expect(seen[0].message.endsWith("actually invoices")).toBe(true);
+  });
+
+  it("refuses to redirect a run on another server that doesn't stop in time", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    await store.createConversation({ id, title: "t" });
+    await store.insertMessage({ id: crypto.randomUUID(), conversationId: id, role: "assistant", content: "", status: "streaming", activity: [], artifacts: [] });
+    const deps = { store, adapter: scripted([]), context: context(scopeA), idleTimeoutMs: 1000, steerWaitMs: 40 };
+    await expect(startTurn(deps, { conversationId: id, kind: "send", text: "stop", steer: true })).rejects.toMatchObject({ status: 409 });
+    expect((await store.listMessages(id)).map((m) => m.role)).toEqual(["assistant"]); // nothing sent
   });
 
   it("keeps working after the browser disconnects, and saves the full reply", async () => {

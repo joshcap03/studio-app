@@ -119,6 +119,13 @@ export interface Store {
   getMessage(conversationId: string, id: string): Promise<ChatMessage | null>;
   insertMessage(message: Omit<ChatMessage, "createdAt">): Promise<ChatMessage>;
   updateMessage(id: string, patch: MessagePatch): Promise<void>;
+  /**
+   * Asks the conversation's reply still streaming to stop, wherever it's running: the run checks
+   * `stopRequested` every few seconds. False when nothing in the conversation is streaming.
+   */
+  requestStop(conversationId: string): Promise<boolean>;
+  /** Whether the member asked this reply to stop since it last started streaming. */
+  stopRequested(messageId: string): Promise<boolean>;
   /** Records the member's rating of one of their replies (null clears it). False if no such reply. */
   setFeedback(conversationId: string, id: string, feedback: MessageFeedback | null): Promise<boolean>;
   /** Records the provider's trace id for the run that wrote a reply (server-side only). */
@@ -601,7 +608,31 @@ export function createStore(db: Db, scope: Scope): Store {
       if (patch.uiResponse !== undefined) values.ui_response = patch.uiResponse;
       if (patch.voiceNote !== undefined) values.voice_note = patch.voiceNote;
       if (patch.error !== undefined) values.error = patch.error;
+      // A reply that starts streaming again (after an approval) starts without a stop asked of it.
+      if (patch.status === "streaming") values.stop_requested_at = null;
       check(await messages().update(values).eq("id", id).eq("workspace_id", workspaceId).eq("user_id", userId));
+    },
+
+    async requestStop(conversationId) {
+      // Not a content change, so updated_at stays put: the run's own checkpoints keep it alive.
+      const rows = check(
+        await messages()
+          .update({ stop_requested_at: new Date().toISOString() })
+          .eq("conversation_id", conversationId)
+          .eq("role", "assistant")
+          .eq("status", "streaming")
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .select("id"),
+      ) as { id: string }[];
+      return rows.length > 0;
+    },
+
+    async stopRequested(messageId) {
+      const row = check(
+        await messages().select("stop_requested_at").eq("id", messageId).eq("workspace_id", workspaceId).eq("user_id", userId).maybeSingle(),
+      ) as { stop_requested_at: string | null } | null;
+      return row?.stop_requested_at != null;
     },
 
     async setFeedback(conversationId, id, feedback) {
