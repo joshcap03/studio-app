@@ -49,6 +49,8 @@ import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
 export type RunInput = (
   | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
   | { kind: "retry" }
+  /** Carry on the job the latest reply said wasn't finished (keep_going). */
+  | { kind: "continue" }
   | { kind: "edit"; messageId: string; text: string }
   | {
       kind: "decide";
@@ -165,8 +167,8 @@ export async function buildTurnDeps(
     : input.kind === "send"
       ? input.modality
       : modalityOf((await earlier)?.findLast((m) => m.role === "user")?.origin);
-  // A retry or a decision carries on a watch's run under the same rules.
-  if (asked.kind === "retry" || asked.kind === "decide") {
+  // A retry, a decision, or carrying on continues a watch's run under the same rules.
+  if (asked.kind === "retry" || asked.kind === "decide" || asked.kind === "continue") {
     const answered = (await earlier)?.findLast((m) => m.role === "user")?.origin;
     watchRun = answered?.kind === "task" && Boolean(answered.cause);
   }

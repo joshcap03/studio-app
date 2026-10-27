@@ -62,6 +62,8 @@ const body = z.discriminatedUnion("kind", [
     })
     .refine((b) => b.text.length > 0 || b.skillId, "Write a message."),
   z.object({ kind: z.literal("retry"), offers, secrets, handoffs }),
+  // Carry on the job the latest reply said wasn't finished: the page sends it by itself.
+  z.object({ kind: z.literal("continue"), offers, secrets, handoffs }),
   z.object({ kind: z.literal("edit"), messageId: z.uuid(), text, offers, secrets, handoffs }),
   z
     .object({

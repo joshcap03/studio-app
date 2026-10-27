@@ -117,6 +117,12 @@ raw/technical text.
   argument, never from the reply's text; a task's goal (which the member can set on the task) stays
   until the agent gives a new one. The member edits a task's plan and goal on the task, and clears a
   conversation's own from its rail (`PATCH /api/conversations/<id>` with `plan: null`).
+- Keep going: one reply has about three and a half minutes for its tools. When a job won't fit and
+  the rest needs nothing from the member, the agent calls the gateway's `keep_going` with what's
+  left, saved on its reply (`messages.keep_going`); while that reply is the latest, the member's
+  page starts the next one by itself (a `continue` turn, no message of theirs, a new request with
+  its own time), up to `MAX_KEEP_GOING` in a row (`src/lib/chat/turn.ts`). Anything they send or
+  stop ends it. A task's run doesn't carry on this way yet.
 - `src/lib/chat/move.ts`: whose move it is in a conversation (working, the member's call, done, stuck,
   idle), from real state only. The one signal for the reply's mark, the composer hint, the call's orb,
   the rail, the sidebar's marks (`conversation_moves`, `GET /api/conversations/moves`), and push copy.

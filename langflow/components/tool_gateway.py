@@ -97,6 +97,11 @@ class LibraryArgs(BaseModel):
                                                "link. Left out, it's guessed from the link."))
 
 
+class KeepGoingArgs(BaseModel):
+    remaining: str = Field(description=("What's left of the job, in a line, so your next reply picks it up, e.g. "
+                                        "'label the remaining 400 threads, then list what waits on a reply'."))
+
+
 class RunReportArgs(BaseModel):
     outcome: str = Field(description=("nothing_new if this run found nothing worth the owner's attention, update if "
                                       "there's something for them to read, needs_you if they must decide or act."))
@@ -710,9 +715,15 @@ RUN_BUDGET = 210
 PLAN_NUDGE_CALLS = 4
 # A tool isn't started with less time than this left in the budget.
 MIN_TOOL_SECONDS = 15
-WRAP_UP = ("Don't call more tools: answer now with what you have for the owner, say in a sentence what's "
-           "still to do in terms of their job, and offer to carry on. Don't explain how you got it: no "
-           "fetches, pages, counts of what you pulled, or running out of time.")
+WRAP_UP = ("Don't call more tools except keep_going. If the rest of the job needs nothing from the owner, "
+           "call keep_going with what's left, then end this reply with a line or two on what's done so far: "
+           "Studio starts your next reply at once to carry on, so never ask them to say carry on. If the rest "
+           "needs them (a decision, an answer, an approval), answer now with what you have and ask for just "
+           "that. Don't explain how you got it: no fetches, pages, counts of what you pulled, or running out of time.")
+# Seconds left in a run's budget when the agent is told to wrap up the step it's on.
+TIME_NOTICE_SECONDS = 50
+TIME_NOTICE = ("Under a minute is left in this reply. Finish the step you're on; if the job won't be done by "
+               "then and the rest needs nothing from the owner, call keep_going with what's left.")
 
 
 class ToolGatewayComponent(Component):
@@ -1050,10 +1061,22 @@ class ToolGatewayComponent(Component):
                     "on, call update_plan now with the whole plan (done steps done, the one you're on doing) so the "
                     "owner sees where the work is.")
 
+        noticed = set()
+
+        def time_notice(config):
+            # Once a run, when its budget is nearly spent: the agent wraps up the step it's on and
+            # hands the rest to its next reply rather than being cut off mid-way.
+            left = time_left()
+            thread = thread_of(config)
+            if left is None or left > TIME_NOTICE_SECONDS or thread in noticed:
+                return ""
+            noticed.add(thread)
+            return TIME_NOTICE
+
         def with_reminder(result, config):
             # Into a structured result's note, or after a plain one; anything else structured is
             # left exactly as it is, since the app reads it.
-            reminder = plan_reminder(config)
+            reminder = " ".join(r for r in (plan_reminder(config), time_notice(config)) if r)
             if not reminder or not isinstance(result, str):
                 return result
             try:
@@ -1128,6 +1151,16 @@ class ToolGatewayComponent(Component):
 
         async def file_link_async(url: str, title: str, kind: str = "", config: RunnableConfig = None) -> str:
             return file_link(url, title, kind, config)
+
+        def keep_going(remaining: str) -> str:
+            # The app reads this and starts the agent's next reply to carry the job on; it changes nothing.
+            remaining = re.sub(r"\s+", " ", str(remaining or "")).strip()[:300] or "the rest of the job"
+            return json.dumps({"keep_going": {"remaining": remaining},
+                               "note": ("Studio starts your next reply right after this one to carry on. End this reply "
+                                        "now with a line or two on what's done so far; don't ask the owner to say carry on.")})
+
+        async def keep_going_async(remaining: str) -> str:
+            return keep_going(remaining)
 
         def report_run(outcome: str, summary: str = "", config: RunnableConfig = None) -> str:
             # The app reads this to decide whether to notify the owner; it changes nothing.
@@ -1446,7 +1479,7 @@ class ToolGatewayComponent(Component):
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, read_result, remember, file_link, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, read_result, remember, file_link, keep_going, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1515,6 +1548,14 @@ class ToolGatewayComponent(Component):
                              "doc to my library'), such as a doc they share or one you found. Only a link they gave you "
                              "or a tool returned, never one you made up; docs your tools create are filed on their own. "
                              "Saved for the owner; changes nothing in their accounts."),
+            ),
+            StructuredTool.from_function(
+                func=keep_going, coroutine=keep_going_async, name="keep_going",
+                args_schema=KeepGoingArgs,
+                description=("When this reply is running out of time (a tool says so) and the job isn't done, but the "
+                             "rest needs nothing from the owner: call it last, with what's left, and Studio starts your "
+                             "next reply right away to carry on. Use it instead of asking them to say carry on. Not "
+                             "when you need their decision, answer, or approval. Changes nothing."),
             ),
             StructuredTool.from_function(
                 func=report_run, coroutine=report_run_async, name="report_run",

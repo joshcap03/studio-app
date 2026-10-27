@@ -294,6 +294,12 @@ export interface ChatMessage {
   feedback?: MessageFeedback | null;
   /** Assistant messages only: what the agent's voice says about this reply, when it has a voice note. */
   voiceNote?: VoiceNote | null;
+  /**
+   * Assistant messages only: the job isn't done and the rest needs nothing from the member, so
+   * the next reply carries it on by itself (what's left, in the agent's words) while this one is
+   * the latest. Set only from the agent's keep_going tool.
+   */
+  keepGoing?: string;
   createdAt: number;
 }
 

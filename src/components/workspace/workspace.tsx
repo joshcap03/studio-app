@@ -1042,6 +1042,41 @@ function WorkspaceShell({
     [patchMessages, runTurn, running, sendTo],
   );
 
+  // A reply that ran out of time with the job unfinished, and nothing asked of the member, says
+  // so (keepGoing): while it's the latest message here, the next reply starts by itself, as a
+  // new request with its own time. Each reply once per tab; the server caps how many in a row,
+  // and anything the member sends or stops ends it.
+  const continuedFrom = useRef(new Set<string>());
+  useEffect(() => {
+    if (document.visibilityState !== "visible") return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const [conversationId, thread] of Object.entries(threads)) {
+      const last = thread.status === "ready" ? thread.messages.at(-1) : undefined;
+      if (!last?.keepGoing || last.status !== "complete" || last.role !== "assistant") continue;
+      if (running.has(conversationId) || controllers.current.has(conversationId) || continuedFrom.current.has(last.id)) continue;
+      timers.push(
+        setTimeout(() => {
+          if (threadsRef.current[conversationId]?.messages.at(-1)?.id !== last.id || controllers.current.has(conversationId)) return;
+          continuedFrom.current.add(last.id);
+          const now = Date.now();
+          const assistant: ChatMessage = {
+            id: `pending-assistant-${now}`,
+            conversationId,
+            role: "assistant",
+            content: "",
+            status: "streaming",
+            activity: [],
+            artifacts: [],
+            createdAt: now,
+          };
+          patchMessages(conversationId, (messages) => [...messages, assistant]);
+          void runTurn(conversationId, { kind: "continue" }, { assistant: assistant.id });
+        }, 800),
+      );
+    }
+    return () => timers.forEach(clearTimeout);
+  }, [threads, running, patchMessages, runTurn]);
+
   // Stopping is a request to the server: closing the tab doesn't stop the agent, Stop does.
   const stop = useCallback((conversationId: string) => {
     api.stopRun(conversationId).catch(() => controllers.current.get(conversationId)?.abort());

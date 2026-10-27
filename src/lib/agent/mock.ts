@@ -43,6 +43,8 @@ type Step =
   | { kind: "citations"; citations: unknown }
   | { kind: "plan"; plan: unknown; goal?: string }
   | { kind: "record"; record: unknown }
+  /** Out of time with the job unfinished: the next reply carries it on (keep_going). */
+  | { kind: "keep-going"; remaining: string }
   | { kind: "report"; report: unknown };
 
 interface Scenario {
@@ -54,6 +56,23 @@ const CITE_PAGE = "https://reviews.example/acme-atelier";
 const CITE_JOBS = "https://acme-atelier.example/careers";
 
 const SCENARIOS: Scenario[] = [
+  {
+    // The next reply, carrying on a job the last one ran out of time for.
+    match: /^\[Carry on with the job/,
+    steps: [
+      { kind: "activity", id: "rest", running: "Labeling the rest of the threads", done: "Labeled the rest of the threads", ms: 700, app: "gmail", action: "write" },
+      { kind: "text", text: "Done: the rest of the threads are labeled too (demo)." },
+    ],
+  },
+  {
+    // A long job that doesn't fit in one reply: the first piece, then the next reply carries on.
+    match: /\bkeep going\b/i,
+    steps: [
+      { kind: "activity", id: "first", running: "Labeling the first threads", done: "Labeled the first threads", ms: 700, app: "gmail", action: "write" },
+      { kind: "keep-going", remaining: "label the remaining threads (demo)" },
+      { kind: "text", text: "Labeled the first 200 threads (demo). Carrying on with the rest." },
+    ],
+  },
   {
     // A setup form with every kind of field; the answers arrive as the member's next message.
     // First: the setup skill's own instructions mention sources and a trial run.
@@ -1034,6 +1053,8 @@ export function createMockAdapter(options: MockOptions): AgentAdapter {
           yield { type: "record", record: step.record };
         } else if (step.kind === "report") {
           yield { type: "run-report", report: step.report };
+        } else if (step.kind === "keep-going") {
+          yield { type: "keep-going", remaining: step.remaining };
         } else if (step.kind === "remember") {
           yield { type: "memory-proposal", content: step.content, scope: "workspace", category: "suppliers" };
         } else if (!streaming) {
