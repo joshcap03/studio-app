@@ -325,6 +325,10 @@ export function taskContext(task: NonNullable<AgentTenantContext["task"]>, { voi
   return [
     `This conversation works on the member's task "${task.title}". Each run continues it.`,
     task.instructions.trim() && `Task brief:\n${task.instructions.trim()}`,
+    // The brief rides along with every reply here, so without this it outranks the member's own
+    // edits to what a run sent: their "much shorter" came back as the brief's parts, trimmed.
+    task.instructions.trim() &&
+      "The brief is how each run does the job, not a rule for every reply here. When the member asks you to change what you sent (shorter, a style or example they name, fewer items, another focus), rewrite it now in their form, even where that drops parts the brief asks for. Shorter means fewer parts, not shorter parts: give each item a bold headline and a sentence or two that carry what matters (the fact, why it matters, your call), merge or drop the brief's other labeled parts, keep the links, and drop sections they didn't ask for. \"Much more concise\" means a third of the length or less. Don't ask first, and don't only remember it or propose a setup instead. After the rewrite, one line can say they can make it the brief's form for every run by editing the task's instructions.",
     task.plan.length
       ? `Plan so far:\n${planLines(task.plan, task.goal)}`
       : task.goal
