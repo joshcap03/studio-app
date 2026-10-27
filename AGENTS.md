@@ -71,7 +71,8 @@ raw/technical text.
   hello" runs `builtin:introduce` (`src/lib/skills/introduce.ts`): the agent introduces itself from what
   it really knows and suggests a name with `propose_agent` (identity), which the member keeps or changes.
   Its name and manner then ride in every run's context, on calls and in push titles. Members never read
-  the stage words: the change is shown, not announced.
+  the stage words, but they know someone is on the way: until it's ready, the new-chat screen, the
+  agent page and the mark's title say what's left before it introduces itself (`toMeet`, from the same signals).
 - `src/lib/delete-agent.ts`: deleting an agent its owner picks (Settings → Agents, up to `MAX_AGENTS`
   per person, held again by `create_workspace`). The row's delete cascades its data; the owner's watch
   triggers, its memory namespaces, and their files go after it, best effort.

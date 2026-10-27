@@ -166,7 +166,7 @@ function CompanionPanel({ initial, withManner, onNamed }: { initial: CompanionIn
       <div className="mt-6 flex items-center gap-4">
         {mark}
         <div className="min-w-0">
-          <p className="text-[14px] text-fg-2">{companion.stage === "ready" ? "I think I know you well enough to introduce myself." : `${companionHint(companion.stage, null)}.`}</p>
+          <p className="text-[14px] text-fg-2">{companion.stage === "ready" ? "I think I know you well enough to introduce myself." : companion.toMeet ? companionHint(companion.stage, null, companion.toMeet) : `${companionHint(companion.stage, null)}.`}</p>
           {companion.stage === "ready" ? (
             <a
               href="/?hello=1"

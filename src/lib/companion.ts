@@ -6,7 +6,8 @@ import { isVoiceKey, type VoiceKey } from "@/lib/voice/voices";
 // they work together, and is ready to introduce itself once it knows them: real conversations,
 // on more than one day, with setup settled. It arrives when the member keeps the name it
 // suggests. The stage only shapes how the agent looks and talks; it never gates what it can
-// do. Members never read the stage names: the change is shown, not announced. How it sounds
+// do. Members never read the stage names, but they're told it's on the way and what's left
+// before it introduces itself (toMeet). How it sounds
 // (its voice and manner) is the member's to choose at any stage; only the name waits.
 
 export const COMPANION_STAGES = ["sketch", "drawn", "ready", "arrived"] as const satisfies readonly CompanionStage[];
@@ -37,6 +38,25 @@ export function companionStage({ runs, days, conversations, setupSettled }: Comp
     return "ready";
   }
   return runs >= KNOWS_YOU.drawnRuns ? "drawn" : "sketch";
+}
+
+const COUNT = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const more = (n: number, thing: string) => `${COUNT[n] ?? n} more ${thing}${n === 1 ? "" : "s"}`;
+
+/**
+ * What's left before it introduces itself, said by the agent, so members know someone is on
+ * the way and roughly when (from the same signals as companionStage, never made up).
+ */
+export function toMeet({ runs, days, conversations, setupSettled }: CompanionSignals): string {
+  const left = [
+    setupSettled ? null : "setup",
+    runs < KNOWS_YOU.readyRuns ? more(KNOWS_YOU.readyRuns - runs, "message") : null,
+    conversations < KNOWS_YOU.readyConversations ? more(KNOWS_YOU.readyConversations - conversations, "conversation") : null,
+    days < KNOWS_YOU.readyDays ? (KNOWS_YOU.readyDays - days === 1 ? "another day together" : `${COUNT[KNOWS_YOU.readyDays - days]} days together`) : null,
+  ].filter((part): part is string => part !== null);
+  if (!left.length) return "I'll introduce myself soon, and you'll choose what to call me.";
+  const list = left.length === 1 ? left[0] : `${left.slice(0, -1).join(", ")} and ${left.at(-1)}`;
+  return `I'll introduce myself after ${list}, and you'll choose what to call me.`;
 }
 
 export const MAX_COMPANION_NAME = 40;
@@ -176,6 +196,12 @@ export async function companionSignals(tenant: Tenant, setup: AgentSetup | null)
     conversations: conversations.count ?? 0,
     setupSettled: setup?.status !== "in_progress",
   };
+}
+
+/** The companion with what's left before it introduces itself, while it's still getting to know them. */
+export async function withToMeet(tenant: Tenant, companion: Companion, setup: AgentSetup | null): Promise<Companion> {
+  if (stageRank(companion.stage) >= stageRank("ready")) return companion;
+  return { ...companion, toMeet: toMeet(await companionSignals(tenant, setup)) };
 }
 
 /**

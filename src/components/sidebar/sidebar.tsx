@@ -792,7 +792,7 @@ function AgentMenu({
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger
-        title={companion ? companionHint(companion.stage, companion.name) : undefined}
+        title={companion ? companionHint(companion.stage, companion.name, companion.toMeet) : undefined}
         className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg pr-2 pl-2 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover"
       >
         {companion ? (

@@ -6,7 +6,7 @@ import { getAgentStatus } from "@/lib/agent";
 import { marksOf } from "@/lib/chat/move";
 import { storeFor } from "@/lib/chat/store-for";
 import { MAX_MOVES } from "@/lib/db/store";
-import { getCompanions } from "@/lib/companion";
+import { getCompanions, withToMeet } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { journeyOrNone } from "@/lib/journey";
 import { getProject, listProjects } from "@/lib/projects";
@@ -66,7 +66,13 @@ export default async function WorkspacePage({
     projectId ? getProject(tenant, projectId) : null,
     getSettings(tenant),
   ]);
-  const own = await companions;
+  const all = await companions;
+  // What's left before the agent they're in introduces itself (best effort: the mark shows anyway).
+  const here = all?.[tenant.workspace.id];
+  const own =
+    all && here
+      ? { ...all, [here.workspaceId]: await withToMeet(tenant, here, settings.setup).catch(() => here) }
+      : all;
   const initialProject: InitialProject | null = projectId ? { id: projectId, project } : null;
   const skills = [...builtinSkills(tenant), ...workspaceSkills];
   const requested = (await searchParams).skill;

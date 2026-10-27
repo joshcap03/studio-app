@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, parseBody } from "@/lib/api";
-import { MAX_MANNER, getCompanion, nameCompanion, setCompanionSound } from "@/lib/companion";
+import { MAX_MANNER, getCompanion, nameCompanion, setCompanionSound, withToMeet } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import { firstName } from "@/lib/setup-words";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { voiceStatus } from "@/lib/voice/status";
 import { VOICE_KEYS } from "@/lib/voice/voices";
+import { getSettings } from "@/lib/workspace";
 
 const body = z
   .strictObject({
@@ -23,7 +24,8 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) return auth.response;
   if (!previewEnabled(auth.value, "companion")) return NextResponse.json({ companion: null });
   try {
-    return NextResponse.json({ companion: await getCompanion(auth.value) });
+    const [companion, settings] = await Promise.all([getCompanion(auth.value), getSettings(auth.value)]);
+    return NextResponse.json({ companion: await withToMeet(auth.value, companion, settings.setup) });
   } catch (error) {
     return errorResponse(error);
   }

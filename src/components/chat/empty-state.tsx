@@ -109,6 +109,9 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
     start();
   };
 
+  // Someone's on the way: what's left before it introduces itself (not while setup is the one next move).
+  const meet = companion?.toMeet && !(setup && onSetup) ? companionHint(companion.stage, null, companion.toMeet) : null;
+
   // Why the companion couldn't call, and the way to talk to it anyway.
   const fallback = tapped === "call" && talkNotice ? (canDictate ? "I can't take a call right now." : talkNotice) : null;
 
@@ -136,8 +139,8 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
           <button
             type="button"
             onClick={tapCompanion}
-            aria-label={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name)}
-            title={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name)}
+            aria-label={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name, companion.toMeet)}
+            title={ring ? (call?.label ?? "Talk it through") : companionHint(companion.stage, companion.name, companion.toMeet)}
             aria-busy={ringing || undefined}
             className="animate-fade-up rounded-full transition-transform duration-150 hover:scale-105 active:scale-95"
           >
@@ -158,6 +161,7 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
         <h1 className="animate-fade-up text-center font-display text-[30px] leading-tight tracking-[-0.015em] text-fg md:text-[36px]">
           {greeting ? `Hey${member ? ` ${member}` : ""}!` : "What should we work on?"}
         </h1>
+        {meet ? <p className="max-w-[32rem] text-center text-[14px] leading-[1.5] text-fg-3 animate-fade-up [animation-delay:40ms]">{meet}</p> : null}
       </div>
 
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
