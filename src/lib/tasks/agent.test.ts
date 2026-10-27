@@ -121,6 +121,14 @@ describe("savePlanFromAgent", () => {
     expect(state.task.goal).toBe("three interviews booked");
   });
 
+  it("saves no plan on a scheduled task, whose every run would rewrite it", async () => {
+    const { updateTask } = await import("./index");
+    vi.mocked(updateTask).mockClear();
+    state.task = task({ schedule: { every: "weekdays", at: "08:00" } });
+    expect(await savePlanFromAgent(owner, "c-task", [{ text: "Search career pages", status: "doing" }], "3 new roles")).toBeNull();
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+
   it("saves the owner's setup checklist and goal to the setup, shown as far as their bar", async () => {
     state.setup = { status: "in_progress", conversationId: chat, plan: [], updatedAt: 0 };
     const saved = await savePlanFromAgent(owner, chat, [
@@ -189,6 +197,11 @@ describe("taskContextFor", () => {
     const withTask = await taskContextFor(owner, chat);
     expect(withTask.task).toMatchObject({ title: "Job hunt", goal: "two roles" });
     expect(withTask.plan).toBeNull();
+  });
+
+  it("gives a scheduled task's runs no plan to keep, however stale the one it has", async () => {
+    state.task = task({ schedule: { every: "weekdays", at: "08:00" }, goal: "3 new roles", plan: [{ id: "s1", text: "Show keep/pass form", status: "doing" }] });
+    expect((await taskContextFor(owner, chat)).task).toMatchObject({ goal: "3 new roles", plan: [], repeats: true });
   });
 });
 

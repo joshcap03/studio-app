@@ -5,6 +5,7 @@ import { AlertDialog, Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { STANDING_LABELS } from "@/lib/approvals/standing";
 import { ApiError, api } from "@/lib/client/api";
+import { repeats } from "@/lib/tasks/schedule";
 import { MAX_PLAN_STEPS, MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
 import { useInlineEdit } from "@/components/ui/inline-edit";
 import { JourneyBar } from "@/components/ui/journey";
@@ -252,7 +253,11 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
         </div>
 
         <div className="mt-6 space-y-3 animate-fade-up [animation-delay:60ms]">
-          <PlanCard plan={task.plan} goal={task.goal} onSave={(plan) => patch({ plan })} onGoal={(goal) => patch({ goal })} />
+          {repeats(task) ? (
+            <EachRunCard goal={task.goal} onGoal={(goal) => patch({ goal })} />
+          ) : (
+            <PlanCard plan={task.plan} goal={task.goal} onSave={(plan) => patch({ plan })} onGoal={(goal) => patch({ goal })} />
+          )}
 
           <section className={card} aria-labelledby="task-settings">
             <div className="flex items-center gap-2">
@@ -434,6 +439,19 @@ function PlanCard({
           ) : null}
         </form>
       ) : null}
+    </section>
+  );
+}
+
+/** A scheduled task keeps no plan (each run does the job afresh): just what done means for each run. */
+function EachRunCard({ goal, onGoal }: { goal: string | null; onGoal: (goal: string | null) => Promise<AgentTask | null> }) {
+  return (
+    <section className={card} aria-labelledby="task-each-run">
+      <h2 id="task-each-run" className="text-[13.5px] font-medium text-fg">
+        Each run
+      </h2>
+      <GoalLine goal={goal} onSave={onGoal} />
+      <p className="mt-1 pl-1.5 text-[13px] text-fg-3">Each run follows the instructions below. Its reply in the conversation says what it did.</p>
     </section>
   );
 }
