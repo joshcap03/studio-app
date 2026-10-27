@@ -58,7 +58,8 @@ const schema = z.object({
 
   LIMIT_RUNS_PER_MINUTE: z.coerce.number().int().positive().default(10),
   LIMIT_RUNS_PER_WORKSPACE_PER_DAY: z.coerce.number().int().positive().default(200),
-  LIMIT_CONCURRENT_RUNS: z.coerce.number().int().positive().default(2),
+  // Replies running at once per person, across all their agents; task runs are counted apart.
+  LIMIT_CONCURRENT_RUNS: z.coerce.number().int().positive().default(5),
   // Task runs (scheduled or "Run now") per workspace per day, counted apart from chat.
   LIMIT_TASK_RUNS_PER_WORKSPACE_PER_DAY: z.coerce.number().int().positive().default(50),
   // Agent runs per day across every workspace. Unset means no service-wide cap.

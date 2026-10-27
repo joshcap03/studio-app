@@ -136,7 +136,7 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
     case null:
       return null;
     case "concurrent":
-      return task ? "Your other tasks are still running. This one will wait for its next time." : "You already have tasks running. Wait for one to finish.";
+      return task ? "Your other tasks are still running. This one will wait for its next time." : "You have several chats working already. Wait for one to finish, then try again.";
     case "per_minute":
       return task ? "Too many tasks started at once. Try again in a minute." : "You're sending messages too quickly. Try again in a minute.";
     case "workspace_day":
