@@ -192,10 +192,14 @@ export interface TurnDeps {
    */
   deadline?: number;
   /**
-   * Asked on each heartbeat while the run streams; resolving true stops it, as `stopRun` does.
+   * Asked with each stop check while the run streams; resolving true stops it, as `stopRun` does.
    * For a stop requested from another process (e.g. a task running in the background worker).
    */
   shouldStop?: () => Promise<boolean>;
+  /** How often the run checks whether a stop was asked for elsewhere (the reply's flag, `shouldStop`). */
+  stopCheckMs?: number;
+  /** How long redirecting waits for a run on another server to stop. */
+  steerWaitMs?: number;
   /**
    * Called once the reply's final state is saved. `watched` is whether the browser was still
    * listening when the run ended (so the member already saw the result). Errors are logged.
@@ -268,6 +272,27 @@ const MAX_RECORDS_PER_RUN = 25;
 /** Artifacts one run may file in the Library; the rest stay on the reply only. */
 const MAX_FILED_PER_RUN = 10;
 const noop = () => undefined;
+/**
+ * How often a run checks for a stop asked of it elsewhere. Each request may land on another
+ * server than the one running the reply, so Stop is a flag on the reply that the run reads.
+ */
+const STOP_CHECK_MS = 2_000;
+/** How long redirecting waits for a run on another server to stop: a few of its checks. */
+const STEER_WAIT_MS = 15_000;
+
+/**
+ * Asks the reply streaming on another server (or the worker) to stop, and waits until it has.
+ * False when it's still going after `waitMs`.
+ */
+async function stopElsewhere(store: Store, conversationId: string, messageId: string, waitMs: number): Promise<boolean> {
+  await store.requestStop(conversationId);
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, Math.min(500, waitMs / 4)));
+    if ((await store.getMessage(conversationId, messageId))?.status !== "streaming") return true;
+  }
+  return false;
+}
 
 /**
  * Stops a run in progress. Runs are not tied to the browser connection: closing or reloading
@@ -301,11 +326,15 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
 
   let conversation = await store.getConversation(conversationId);
   let existing: ChatMessage[] = conversation ? await store.listMessages(conversationId) : [];
-  // Another server instance may be running this conversation.
-  if (existing.at(-1)?.status === "streaming") {
-    throw new TurnError(409, "The agent is still working in this conversation.");
+  // Another server instance may be running this conversation: redirecting stops it there, as Stop does.
+  const elsewhere = existing.at(-1)?.status === "streaming" ? existing.at(-1)! : null;
+  if (elsewhere) {
+    if (!steering || !(await stopElsewhere(store, conversationId, elsewhere.id, deps.steerWaitMs ?? STEER_WAIT_MS))) {
+      throw new TurnError(409, "The agent is still working in this conversation.");
+    }
+    existing = await store.listMessages(conversationId);
   }
-  if (running && existing.at(-1)?.role === "assistant") interrupted = existing.at(-1)!;
+  if ((running || elsewhere) && existing.at(-1)?.role === "assistant") interrupted = existing.at(-1)!;
   let pending = conversation ? await store.pendingApproval(conversationId) : null;
   if (pending && steering) {
     // Writing instead of answering declines the request, and the agent hears why.
@@ -548,17 +577,23 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui }))
           .catch((e) => console.error("[turn] checkpoint failed", e));
       };
-      let asking = false;
       const heartbeat = setInterval(() => {
         if (Date.now() - lastCheckpoint >= (deps.heartbeatMs ?? 15_000)) checkpoint();
-        if (!deps.shouldStop || asking) return;
-        asking = true;
-        deps
-          .shouldStop()
-          .then((stop) => stop && controller.abort())
-          .catch((e) => console.error("[turn] couldn't check for a stop", e))
-          .finally(() => (asking = false));
       }, Math.min(deps.heartbeatMs ?? 15_000, STALE_STREAM_MS / 4));
+      // A stop may be asked for on another server, or for a task's run: the run checks for one.
+      let asking = false;
+      const asked = (check: () => Promise<boolean>) =>
+        check().catch((e) => {
+          console.error("[turn] couldn't check for a stop", e);
+          return false;
+        });
+      const stopCheck = setInterval(() => {
+        if (asking) return;
+        asking = true;
+        void Promise.all([asked(() => store.stopRequested(assistant.id)), deps.shouldStop ? asked(deps.shouldStop) : false])
+          .then((stops) => stops.some(Boolean) && controller.abort())
+          .finally(() => (asking = false));
+      }, deps.stopCheckMs ?? STOP_CHECK_MS);
       // Stopped while the request can still save the reply and say why, rather than cut off with it.
       let outOfTime = false;
       const deadline =
@@ -866,6 +901,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         }
       } finally {
         clearInterval(heartbeat);
+        clearInterval(stopCheck);
         clearTimeout(deadline);
         if (!controller.signal.aborted) controller.abort();
         activeRuns.delete(runKey);

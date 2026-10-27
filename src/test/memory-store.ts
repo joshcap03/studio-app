@@ -136,6 +136,19 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
     async updateMessage(id, patch: MessagePatch) {
       const m = shared.messages.find((x) => x.id === id);
       if (m) Object.assign(m, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
+      if (m && patch.status === "streaming") shared.stops.delete(id);
+    },
+    async requestStop(conversationId) {
+      const c = shared.conversations.get(conversationId);
+      if (!c || !owns(c)) return false;
+      const streaming = shared.messages.filter((m) => m.conversationId === conversationId && m.role === "assistant" && m.status === "streaming");
+      for (const m of streaming) shared.stops.add(m.id);
+      return streaming.length > 0;
+    },
+    async stopRequested(messageId) {
+      const m = shared.messages.find((x) => x.id === messageId);
+      const c = m && shared.conversations.get(m.conversationId);
+      return Boolean(c && owns(c) && shared.stops.has(messageId));
     },
     async setFeedback(conversationId, id, feedback) {
       const c = shared.conversations.get(conversationId);
@@ -252,8 +265,18 @@ export interface MemoryDb {
   traces: Map<string, string>;
   /** Conversations' own plans, by conversation id, kept apart like the columns left out of summaries. */
   plans: Map<string, ConversationPlan>;
+  /** Replies the member asked to stop, kept apart like the column no one reads back. */
+  stops: Set<string>;
 }
-export const createMemoryDb = (): MemoryDb => ({ conversations: new Map(), messages: [], approvals: [], attachments: [], traces: new Map(), plans: new Map() });
+export const createMemoryDb = (): MemoryDb => ({
+  conversations: new Map(),
+  messages: [],
+  approvals: [],
+  attachments: [],
+  traces: new Map(),
+  plans: new Map(),
+  stops: new Set(),
+});
 const stripScope = ({ workspaceId: _w, userId: _u, ...a }: StoredApproval & Scope): StoredApproval => ({ ...a });
 const summary = ({ id, title, projectId, createdAt, updatedAt }: Row) => ({ id, title, projectId, createdAt, updatedAt });
 const strip = ({ workspaceId: _w, userId: _u, ...c }: Row): Conversation => ({ ...c });
