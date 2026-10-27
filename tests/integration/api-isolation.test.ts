@@ -379,14 +379,13 @@ describe("API limits", () => {
   it("caps concurrent runs per user", async () => {
     const dave = await signUp("dave");
     await dave.json("/api/workspaces", "POST", { name: "Dave Deli" });
-    // Long mock runs: start two, then a third must be refused while they run.
-    const first = dave.send(crypto.randomUUID(), "run a long reconciliation");
-    const second = dave.send(crypto.randomUUID(), "run a long reconciliation");
+    // Long mock runs: start as many as the default limit (5), then one more must be refused while they run.
+    const running = Array.from({ length: 5 }, () => dave.send(crypto.randomUUID(), "run a long reconciliation"));
     await new Promise((r) => setTimeout(r, 1500));
-    const third = await dave.send(crypto.randomUUID(), "run a long reconciliation");
-    expect(third.res.status).toBe(429);
-    expect(third.body).toContain("tasks running");
-    await Promise.all([first, second]);
+    const extra = await dave.send(crypto.randomUUID(), "run a long reconciliation");
+    expect(extra.res.status).toBe(429);
+    expect(extra.body).toContain("chats working already");
+    await Promise.all(running);
   }, 60_000);
 
   it("caps runs per minute per user", async () => {
