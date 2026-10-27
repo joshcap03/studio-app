@@ -5,7 +5,7 @@ import { taskScheduleSchema } from "@/lib/tasks/schedule";
 import { MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
 import { companionName } from "@/lib/companion";
 import { isVoiceKey } from "@/lib/voice/voices";
-import { DEFAULT_TEMPLATE_ID, PLAN_STEP, TEMPLATES, setupSteps, templateById, templatesFor } from "./index";
+import { DEFAULT_TEMPLATE_ID, PLAN_STEP, TEMPLATES, setupSteps, templateById, templateChoices } from "./index";
 
 describe("templates", () => {
   it("have unique ids and only reference library skills that exist", () => {
@@ -94,11 +94,12 @@ describe("templates", () => {
     });
   });
 
-  it("leave Job search out of a first agent's choices but offer it later", () => {
-    const first = templatesFor(true).map((t) => t.id);
-    expect(first).not.toContain("job-search");
-    expect(first).toContain(DEFAULT_TEMPLATE_ID);
-    expect(templatesFor(false).map((t) => t.id)).toContain("job-search");
+  it("leave Job search out of the choices but keep it for agents made from it", () => {
+    const choices = templateChoices().map((t) => t.id);
+    expect(choices).not.toContain("job-search");
+    expect(choices).toContain(DEFAULT_TEMPLATE_ID);
+    expect(templateChoices("job-search").map((t) => t.id)).toContain("job-search");
+    expect(templateById("job-search")).toBeDefined();
   });
 
   it("include the default and look up by id", () => {

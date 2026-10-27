@@ -6,7 +6,7 @@ import { ConnectionsList } from "@/components/settings/connections-list";
 import { appName } from "@/lib/apps";
 import { api } from "@/lib/client/api";
 import type { AccountProfile } from "@/lib/tenant-core";
-import { DEFAULT_TEMPLATE_ID, TEMPLATES, templateById, templatesFor } from "@/lib/templates";
+import { DEFAULT_TEMPLATE_ID, templateById, templateChoices } from "@/lib/templates";
 
 type Step = "you" | "workspace" | "connect";
 
@@ -88,8 +88,8 @@ export function Onboarding({ initialStep, account, workspaceName, canCancel, can
   }
 
   const current = steps.findIndex((s) => s.id === step);
-  const choices = templatesFor(!canCancel);
-  const template = templateById(templateId) ?? TEMPLATES[0];
+  const choices = templateChoices();
+  const template = templateById(templateId) ?? templateById(DEFAULT_TEMPLATE_ID)!;
   const suggested = created && step === "connect" ? template.apps : [];
 
   return (
