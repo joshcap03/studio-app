@@ -15,7 +15,7 @@ import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { getSkill } from "@/lib/skills";
 import { SETUP_SKILL_ID } from "@/lib/skills/setup";
-import { getRun, getTask, getTaskForConversation, settleWaitingRun } from "@/lib/tasks";
+import { getRun, getTask, getTaskForConversation, settleKeptRun, settleWaitingRun } from "@/lib/tasks";
 import type { AgentTask } from "@/lib/tasks/types";
 import { getAllowedActions, setAllowedAction } from "@/lib/account";
 import type { StandingKind } from "@/lib/approvals/standing";
@@ -249,7 +249,8 @@ export async function buildTurnDeps(
             return null;
           })
         : null;
-      const notifying = !info.watched && pushEnabled();
+      // A task's reply that carries on in the next one says nothing yet: the last one does.
+      const notifying = !info.watched && pushEnabled() && !(task && message.keepGoing);
       const from =
         notifying && voiceStatus(tenant)
           ? await resolvePersona(tenant, self ? { companion: self } : {}).then(
@@ -262,6 +263,10 @@ export async function buildTurnDeps(
       // The member answered a task's run's request here: the run it continues is over, or waits again.
       if (task && asked.kind === "decide" && !carryOn) {
         await settleWaitingRun(tenant, task.id, message, info.report).catch((e) => console.error("[tasks] couldn't record the run's outcome", e));
+      }
+      // The member's page carried a task's run on: that run goes on, or ends, with this reply.
+      if (task && asked.kind === "continue" && !carryOn) {
+        await settleKeptRun(tenant, task.id, message, info.report).catch((e) => console.error("[tasks] couldn't record the run's outcome", e));
       }
     } finally {
       await onFinished?.(message, conversation, info);

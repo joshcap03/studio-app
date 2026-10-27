@@ -3,7 +3,7 @@ import { MAX_STANDING, REQUEST_LIMIT_MS, SAVE_MARGIN_MS, buildTurnDeps, standing
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import type { Tenant } from "@/lib/tenant-core";
-import { appendRun, beginRun, deferRun, getRun, getTask, markTaskRan, runOutcome, runStopRequested, settleRun, updateTask } from "./index";
+import { KEEP_GOING, appendRun, beginRun, claimKeptRun, deferRun, getRun, getTask, markTaskRan, runOutcome, runStopRequested, settleRun, updateTask } from "./index";
 import { getWatch } from "./watches";
 import type { ChatMessage } from "@/lib/types";
 import type { AgentTask, RunStatus } from "./types";
@@ -38,9 +38,11 @@ const WAIT = {
 /**
  * Starts a run of `task`. With `runId` (a run the scheduler recorded and `beginRun` moved to
  * running) that run is used; otherwise one is recorded for now. Throws a TurnError when the run can't start (the
- * run is recorded as skipped or failed first).
+ * run is recorded as skipped or failed first). `continues`: carry on that run's job, which its
+ * latest reply ran out of time for (keep_going), in a reply of its own; a refusal leaves the run
+ * as it is.
  */
-export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { runId?: string } = {}): Promise<StartedTaskRun> {
+export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { runId?: string; continues?: boolean } = {}): Promise<StartedTaskRun> {
   let runId: string | null = options.runId ?? null;
   try {
     let conversationId = task.conversationId;
@@ -85,7 +87,7 @@ export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { r
     };
     const { deps, request } = await buildTurnDeps(tenant, {
       conversationId,
-      input: { kind: "task", taskId: task.id, runId: id },
+      input: options.continues ? { kind: "continue" } : { kind: "task", taskId: task.id, runId: id },
       deadline,
       shouldStop,
       onFinished,
@@ -96,11 +98,40 @@ export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { r
     void stream.cancel();
     return { conversationId, runId, settled };
   } catch (error) {
-    if (runId) {
+    if (runId && !options.continues) {
       const reason = error instanceof TurnError ? error.message : "The run couldn't start.";
       const status = error instanceof TurnError && error.status === 429 ? "skipped" : "failed";
       await settleRun(tenant, runId, { status, reason }).catch(() => undefined);
     }
+    throw error;
+  }
+}
+
+/**
+ * Carries on a run whose latest reply ran out of time with more to do (keep_going), for the
+ * worker, in a request of its own, and resolves with how it ended (still going again, done,
+ * waiting on the member, or failed). Nothing happens when the run isn't waiting to carry on, the
+ * task was paused, or the member's page carried it on first.
+ */
+export async function continueClaimedTask(tenant: Tenant, claimed: { taskId: string; runId: string }): Promise<RunOutcome> {
+  const run = await getRun(tenant, claimed.runId);
+  if (!run || run.taskId !== claimed.taskId) return { status: "skipped", reason: "gone" };
+  if (run.status !== "running" || run.reason !== KEEP_GOING) return { status: run.status, reason: run.reason };
+  const task = await getTask(tenant, claimed.taskId);
+  const done = async (reason: string): Promise<RunOutcome> => {
+    await settleRun(tenant, run.id, { status: "done", reason });
+    return { status: "done", reason };
+  };
+  if (!task) return { status: "skipped", reason: "gone" };
+  if (run.cancelRequestedAt) return done("stopped");
+  if (task.status !== "active") return done(task.status);
+  if (!agentEnabledFor(tenant.workspace.id)) return done("agent_unavailable");
+  if (!(await claimKeptRun(tenant, run.id))) return { status: "running", reason: "continued_elsewhere" };
+  try {
+    return await (await startTaskRun(tenant, task, { runId: run.id, continues: true })).settled;
+  } catch (error) {
+    // The member's page carried it on first (or wrote meanwhile): that reply settles the run.
+    if (error instanceof TurnError) return { status: "running", reason: "continued_elsewhere" };
     throw error;
   }
 }

@@ -125,7 +125,10 @@ raw/technical text.
   its own time), up to `MAX_KEEP_GOING` in a row (`src/lib/chat/turn.ts`). A reply whose time ran out
   (the gateway cut a tool short, or the request's own limit) carries on the same way even when the
   agent didn't call it, unless it asked the member something. Anything they send or stop ends it.
-  A task's run doesn't carry on this way yet.
+  A task's run stays running (reason `keep_going`, `runOutcome`) and the worker calls its route
+  again with `?continue=1` (`continueClaimedTask`), so it carries on with no one watching; the
+  member is notified once, when it ends. Carried on from the page instead, the run settles with
+  that reply (`settleKeptRun`).
 - `src/lib/chat/move.ts`: whose move it is in a conversation (working, the member's call, done, stuck,
   idle), from real state only. The one signal for the reply's mark, the composer hint, the call's orb,
   the rail, the sidebar's marks (`conversation_moves`, `GET /api/conversations/moves`), and push copy.

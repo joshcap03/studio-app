@@ -995,11 +995,13 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
       // A reply carries on by itself only when it ended with nothing asked of the member: when the
       // agent said so, and also when its time ran out (a tool cut short, or the request's own
-      // limit) and the agent didn't, so a long job never waits on the member to say carry on.
+      // limit) and the agent didn't, so a long job never waits on the member to say carry on. Only
+      // so many in a row: past that, the member says when to go on.
       const cutOff = (ranOut && status === "complete") || (outOfTime && status === "error");
       const asks = Boolean(questions?.length || ui?.length);
       const left = keepGoing ?? (cutOff ? UNFINISHED : null);
-      const going = left && (status === "complete" || cutOff) && !asks ? { keepGoing: left } : {};
+      const inRow = keepGoingRun(existing.some((m) => m.id === assistant.id) ? existing : [...existing, assistant]);
+      const going = left && (status === "complete" || cutOff) && !asks && inRow < MAX_KEEP_GOING ? { keepGoing: left } : {};
       if (going.keepGoing && outOfTime && status === "error") error = CARRIED_ON;
       let updated = summary;
       try {

@@ -21,6 +21,12 @@ describe("startRunInApp", () => {
     expect(init).toMatchObject({ method: "POST", headers: { Authorization: "Bearer token" }, redirect: "manual" });
   });
 
+  it("asks to carry a run on, rather than start it, once its reply said there's more", async () => {
+    const fetch = answering(Response.json({ status: "running", reason: "keep_going" }));
+    await startRunInApp("https://app.example.test", { ...run, continues: true }, "token", { fetch, timeoutMs: 1000 });
+    expect(fetch.mock.calls[0][0]).toBe(`https://app.example.test/api/tasks/${run.taskId}/runs/${run.runId}?workspace=${run.workspaceId}&continue=1`);
+  });
+
   it("says where APP_URL redirects instead of failing on the app's 401", async () => {
     const fetch = answering(new Response("Redirecting...", { status: 308, headers: { location: "https://new.example.test/api/tasks/x" } }));
     const started = startRunInApp("https://old.example.test", run, "token", { fetch, timeoutMs: 1000 });
