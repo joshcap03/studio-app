@@ -82,8 +82,8 @@ export type TurnRequest = { conversationId: string } & (
    * Answer the conversation's pending approval and let the agent continue. `spoken`: the member
    * said it on a call (their words as the speech-to-text heard them, and the call), which counts
    * only once allowSpokenDecision says so; otherwise it's a tap. `standing`: "grant", the member
-   * tapped Approve and asked not to be asked again on this task for its kind; "auto", the task's
-   * run approving it under the standing OK they gave (never the member's browser).
+   * tapped Approve and asked not to be asked again for its kind; "auto", the run itself
+   * approving it under the standing OK they gave (never the member's browser).
    */
   | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; spoken?: SpokenDecision; standing?: "grant" | "auto" }
 );
@@ -126,9 +126,10 @@ export interface TurnDeps {
    */
   allowSpokenDecision?: (approval: StoredApproval, decision: "approve" | "reject", spoken: SpokenDecision) => Promise<string | null>;
   /**
-   * In a task's conversation: the kinds of change its member has OK'd for good on it, and how to
+   * The kinds of change the member has OK'd for good (src/lib/approvals/standing.ts), and how to
    * add one (on their tap). Requests of a kind that qualifies are marked so their card can offer
-   * it. Without it (any other conversation), nothing is marked and no standing decision is taken.
+   * it, and ones already covered are marked `auto` (the run approves them itself). Without it,
+   * nothing is marked and no standing decision is taken.
    */
   standing?: { allowed: StandingKind[]; grant: (kind: StandingKind) => Promise<boolean> };
   /**
@@ -384,15 +385,15 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         : "Spoken decisions aren't available here. Tap instead.";
       if (refusal) throw new TurnError(403, refusal);
     }
-    // A standing OK covers only a request of a kind that qualifies, in a task's conversation: given
-    // with a tap that approves it, or used by the task's run when the member already gave it.
+    // A standing OK covers only a request of a kind that qualifies: given with a tap that approves
+    // it, or used by the run itself when the member already gave it.
     if (request.standing) {
       const kind = pending.standing;
       if (!kind || !deps.standing || request.decision !== "approve" || request.spoken) {
         throw new TurnError(409, "This one can't be allowed for good. Approve it on its own.");
       }
       if (request.standing === "auto" && !deps.standing.allowed.includes(kind)) {
-        throw new TurnError(403, "This task doesn't have your OK for that.");
+        throw new TurnError(403, "You haven't OK'd that for good.");
       }
     }
   } else if (pending && request.kind === "send") {
@@ -883,8 +884,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               // Whether a call may approve it by voice, decided now from what it would run; the
               // raw arguments aren't kept.
               const spoken = spokenApprovalFor({ actions: event.actions, summary });
-              // Whether its member may OK its kind for good on this task, decided from what it would run.
+              // Whether its member may OK its kind for good, decided from what it would run, and whether
+              // they already have: then the run approves it itself once this reply is saved.
               const standing = deps.standing ? standingKindFor(event.actions) : null;
+              const auto = Boolean(standing && deps.standing!.allowed.includes(standing));
               const stored = await store.createApproval({
                 conversationId,
                 messageId: assistant.id,
@@ -897,7 +900,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                 tools: spoken.tools,
                 ...(standing ? { standing } : {}),
               });
-              const approval = publicApproval(stored);
+              const approval: Approval = { ...publicApproval(stored), ...(auto ? { auto: true as const } : {}) };
               approvals.push(approval);
               paused = true;
               send({ type: "approval", approval });

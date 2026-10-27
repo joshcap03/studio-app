@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { STANDING_LABELS, type StandingKind } from "@/lib/approvals/standing";
 import { api } from "@/lib/client/api";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
 import type { AccountProfile } from "@/lib/tenant-core";
@@ -46,6 +47,7 @@ export function SettingsView({ email, guardrail, account, agents, current }: Pro
       <Section title="Saved logins & cards" description="Your agents use these in their browser only when you pick one. They never see them.">
         <SavedCredentials />
       </Section>
+      <WithoutAskingSection />
       <SignInsSection />
       <NotificationsSection />
       <Section title="Account">
@@ -61,6 +63,56 @@ export function SettingsView({ email, guardrail, account, agents, current }: Pro
         </div>
       </Section>
     </div>
+  );
+}
+
+/**
+ * Changes the person OK'd for good with "Don't ask again" on a request, which none of their agents
+ * asks about anymore. Hidden while there are none.
+ */
+function WithoutAskingSection() {
+  const [allowed, setAllowed] = useState<StandingKind[]>([]);
+  const [busy, setBusy] = useState<StandingKind | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void api.allowedActions().then(
+      (r) => setAllowed(r.allowed),
+      () => setAllowed([]),
+    );
+  }, []);
+
+  async function askAgain(kind: StandingKind) {
+    setBusy(kind);
+    setError(null);
+    try {
+      setAllowed((await api.disallowAction(kind)).allowed);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't change that. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (allowed.length === 0) return null;
+  return (
+    <Section title="Done without asking" description="You said not to ask about these again. Every one of your agents does them when the job calls for it. Sending, deleting, and archiving still wait for you.">
+      <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
+        {allowed.map((kind) => (
+          <li key={kind} className="flex items-center justify-between gap-4 px-4 py-3">
+            <span className="text-[13.5px] text-fg-2">{STANDING_LABELS[kind]}</span>
+            <button
+              type="button"
+              onClick={() => void askAgain(kind)}
+              disabled={busy !== null}
+              className="shrink-0 text-[13.5px] font-medium text-fg-2 hover:text-fg disabled:opacity-60"
+            >
+              {busy === kind ? "Changing…" : "Ask me again"}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {error ? <p className="mt-2 text-[12.5px] text-danger">{error}</p> : null}
+    </Section>
   );
 }
 

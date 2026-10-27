@@ -59,6 +59,25 @@ import type { RecapCall } from "@/lib/voice/recap";
 import { waitsOnMember } from "@/lib/voice/relay";
 import { SETUP_JOURNEY_TITLE, type CallPurpose, type CallScreen, type ScreenAction, type ScreenView, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
 
+/** How long a reply waiting on a request the member's standing OK covers is followed for the run to carry on. */
+const GOING_AHEAD_MS = 20_000;
+/** When each such request was first seen here, by id. */
+const goingAheadSince = new Map<string, number>();
+
+/**
+ * Whether the latest reply waits on a request the member's standing OK covers (`auto`): the run
+ * approves it itself and carries on in a moment, so the page follows it rather than stopping.
+ * Only for a while: should the run not carry on, the request is theirs to answer.
+ */
+function goingAhead(messages: ChatMessage[]): boolean {
+  const last = messages.at(-1);
+  const covered = last?.status === "awaiting" ? last.approvals?.find((a) => a.status === "pending" && a.auto) : undefined;
+  if (!covered) return false;
+  const since = goingAheadSince.get(covered.id) ?? Date.now();
+  goingAheadSince.set(covered.id, since);
+  return Date.now() - since < GOING_AHEAD_MS;
+}
+
 /** What the composer says while the reply above waits on the member (src/lib/chat/move.ts). */
 function composerHint(move: WhoseMove | null): string | undefined {
   if (move?.move !== "your_call") return undefined;
@@ -1085,7 +1104,7 @@ function WorkspaceShell({
             const before = threadsRef.current[id]?.messages ?? [];
             setThreads((all) => ({ ...all, [id]: loaded(latest) }));
             tellFollowed(id, before, latest.messages, latest.conversation);
-            if (!latest.messages.some((m) => m.status === "streaming")) {
+            if (!latest.messages.some((m) => m.status === "streaming") && !goingAhead(latest.messages)) {
               upsertConversation(latest.conversation);
               return;
             }
@@ -1106,7 +1125,12 @@ function WorkspaceShell({
     [setRunState, tellFollowed, upsertConversation],
   );
   const remotelyRunning = (thread: ThreadState | undefined, id: string | null | undefined) =>
-    Boolean(id && thread?.status === "ready" && thread.messages.some((m) => m.status === "streaming") && !controllers.current.has(id));
+    Boolean(
+      id &&
+        thread?.status === "ready" &&
+        (thread.messages.some((m) => m.status === "streaming") || goingAhead(thread.messages)) &&
+        !controllers.current.has(id),
+    );
   const followingRemote = remotelyRunning(activeThread, activeId);
   useEffect(() => {
     if (!activeId || !followingRemote) return;

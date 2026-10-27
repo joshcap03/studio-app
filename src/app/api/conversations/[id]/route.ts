@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getAgentAdapter } from "@/lib/agent";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { removeAttachmentFiles } from "@/lib/attachments";
+import { markCovered } from "@/lib/chat/run";
 import { storeFor } from "@/lib/chat/store-for";
 import { unknownCards, withoutCards } from "@/lib/chat/ui";
 import type { Conversation } from "@/lib/db/store";
@@ -46,7 +47,10 @@ export async function GET(request: NextRequest, { params }: Context) {
     // The plan of the work here comes with it, so a run followed from elsewhere fills in the rail
     // too, and so do the calls its messages were said on (for their recaps).
     const [listed, journey] = await Promise.all([store.listMessages(conversation.id), journeyOrNone(auth.value, conversation.id)]);
-    const { messages, calls } = await messagesWithCalls(auth.value, listed);
+    const withCalls = await messagesWithCalls(auth.value, listed);
+    const { calls } = withCalls;
+    // A request the member's standing OK covers is being approved by the run itself.
+    const messages = await markCovered(auth.value, conversation.id, withCalls.messages);
     // Offers to call (?offers=1), requests for a login or card (?secrets=1), and the browser
     // handed over (?handoffs=1) only go to pages that know them: a tab still on older code breaks on one.
     const params = request.nextUrl.searchParams;

@@ -67,6 +67,17 @@ describe("accounts", () => {
     expect((await alice.client.from("accounts").update({ browser_context: null }).eq("user_id", alice.userId)).error).toBeNull();
   });
 
+  it("let the owner keep standing OKs of known kinds, seen and changed by no one else", async () => {
+    const own = await alice.client.from("accounts").update({ allowed_actions: ["gmail_labels"] }).eq("user_id", alice.userId).select("allowed_actions").single();
+    expect(own.data?.allowed_actions).toEqual(["gmail_labels"]);
+    for (const other of [teammate, bob]) {
+      expect((await other.client.from("accounts").update({ allowed_actions: [] }).eq("user_id", alice.userId).select("user_id")).data ?? []).toEqual([]);
+      expect((await other.client.from("accounts").select("allowed_actions").eq("user_id", alice.userId)).data).toEqual([]);
+    }
+    expect((await alice.client.from("accounts").update({ allowed_actions: ["send_email"] }).eq("user_id", alice.userId)).error).not.toBeNull();
+    expect((await alice.client.from("accounts").update({ allowed_actions: [] }).eq("user_id", alice.userId)).error).toBeNull();
+  });
+
   it("can't be changed, created, or removed by anyone else", async () => {
     for (const other of [teammate, bob]) {
       const update = await other.client.from("accounts").update({ display_name: "Mallory" }).eq("user_id", alice.userId).select("user_id");

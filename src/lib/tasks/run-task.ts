@@ -1,5 +1,5 @@
 import { agentEnabledFor } from "@/lib/agent";
-import { buildTurnDeps, type RunOptions } from "@/lib/chat/run";
+import { MAX_STANDING, REQUEST_LIMIT_MS, SAVE_MARGIN_MS, buildTurnDeps, standingCarryOn, type RunOptions } from "@/lib/chat/run";
 import { storeFor } from "@/lib/chat/store-for";
 import { TurnError, startTurn } from "@/lib/chat/turn";
 import type { Tenant } from "@/lib/tenant-core";
@@ -26,9 +26,6 @@ export interface RunOutcome {
   /** For a watch's run that isn't starting yet: when to ask again (epoch ms). */
   retryAt?: number;
 }
-
-/** Requests one run approves itself under the member's standing OK before it waits on them anyway. */
-const MAX_STANDING = 20;
 
 // A watch's run carries events that would be lost if it were skipped, so while its conversation
 // is busy or waiting on the member it waits, folding in events that arrive meanwhile, and is
@@ -72,28 +69,24 @@ export async function startTaskRun(tenant: Tenant, task: AgentTask, options: { r
         settle(outcome);
       }
     };
-    // A request of a kind the member OK'd for good on this task is approved here, as the task's
-    // run, and the run carries on without waking them; anything else waits for them. Read fresh
-    // each time, so an OK taken back mid-run stops the next one. At most MAX_STANDING a run.
+    // A request of a kind the member OK'd for good (for all their agents, or on this task) is
+    // approved here, as the task's run, and the run carries on without waking them; anything else
+    // waits for them. Read fresh each time, so an OK taken back mid-run stops the next one. At
+    // most MAX_STANDING a run.
     let standingLeft = MAX_STANDING;
+    // Carried-on runs share the request this run started in, and its time.
+    const deadline = Date.now() + REQUEST_LIMIT_MS - SAVE_MARGIN_MS;
     const carryOn = async (message: ChatMessage): Promise<boolean> => {
       if (message.status !== "awaiting" || standingLeft <= 0) return false;
-      const [pending, current] = await Promise.all([storeFor(tenant).pendingApproval(convo), getTask(tenant, task.id)]);
-      if (!pending?.standing || !current?.allowedActions.includes(pending.standing)) return false;
-      standingLeft--;
-      const next = await buildTurnDeps(tenant, {
-        conversationId: convo,
-        input: { kind: "decide", approvalId: pending.id, decision: "approve", standing: "auto" },
-        shouldStop,
-        onFinished,
-        carryOn,
-      });
-      void (await startTurn(next.deps, next.request)).cancel();
-      return true;
+      const current = await getTask(tenant, task.id);
+      const carried = await standingCarryOn(tenant, convo, message, { onFinished, shouldStop, carryOn, standingLeft, deadline, task: current });
+      if (carried) standingLeft--;
+      return carried;
     };
     const { deps, request } = await buildTurnDeps(tenant, {
       conversationId,
       input: { kind: "task", taskId: task.id, runId: id },
+      deadline,
       shouldStop,
       onFinished,
       carryOn,

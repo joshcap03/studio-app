@@ -130,6 +130,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.profile.trim() && `What this agent is for:\n${tenant.profile.trim()}`,
     tenant.agentFiles?.length && `Your files (the member's, attached to every message with this agent): ${tenant.agentFiles.join(", ")}`,
     project && projectContext(project),
+    tenant.allowed?.length && standingContext(tenant.allowed),
     tenant.task && taskContext(tenant.task, { voiceNotes: tenant.voiceNotes === true }),
     tenant.setup && setupContext(tenant.setup),
     tenant.plan && planContext(tenant.plan),
@@ -160,6 +161,11 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     browser_context: tenant.browserContext ?? "",
     run_cause: tenant.runCause ?? "",
   };
+}
+
+/** The changes the member OK'd for good: still asked through take_action, approved without waking them. */
+export function standingContext(allowed: NonNullable<AgentTenantContext["allowed"]>): string {
+  return `The member has OK'd these for good, so do them when the job calls for it without asking them first in chat; they still go through take_action, which approves them without waiting on the member: ${allowed.map((k) => STANDING_GUIDES[k]).join("; ")}. Anything else still waits for their approval.`;
 }
 
 /**
@@ -364,11 +370,9 @@ function repeatingTaskContext(task: NonNullable<AgentTenantContext["task"]>, { v
     .join("\n\n");
 }
 
-/** What every run of a task is told about its standing approvals and its report. */
+/** What every run of a task is told about its report. */
 function taskRunLines(task: NonNullable<AgentTenantContext["task"]>, voiceNotes: boolean): (string | false | undefined)[] {
   return [
-    !!task.allowed?.length &&
-      `The member has OK'd these for good on this task, so they still go through take_action but are approved without asking them: ${task.allowed.map((k) => STANDING_GUIDES[k]).join("; ")}. Anything else still waits for their approval.`,
     "When this run's work is done, call report_run once: nothing_new if you found nothing worth their attention, update if there's something to read, needs_you if they must decide or act. They're only notified for update and needs_you.",
     voiceNotes &&
       "For update and needs_you, they hear your report_run summary as a voice note: write it to be heard, in two or three short spoken sentences with the best result first, with no symbols, lists, or links, in 300 characters at most.",

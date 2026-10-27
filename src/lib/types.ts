@@ -122,13 +122,18 @@ export interface Approval {
    */
   spoken?: { ok: true; readBack: string } | { ok: false; reason: TapOnlyReason };
   /**
-   * The kind of change it is, when it's one the member may OK once for this task, so the task's
-   * later runs don't ask again (src/lib/approvals/standing.ts). Absent for anything else.
+   * The kind of change it is, when it's one the member may OK once so that no run of any of
+   * their agents asks again (src/lib/approvals/standing.ts). Absent for anything else.
    */
   standing?: StandingKind;
   /**
+   * While pending: the member's standing OK already covers it, so the run is approving it itself
+   * and carrying on (their page follows it rather than asking). Never stored.
+   */
+  auto?: true;
+  /**
    * How it was decided: by hand (a tap, or words typed), by the member's spoken words, or by the
-   * standing OK they gave on this task for its kind.
+   * standing OK they gave for its kind.
    */
   decidedVia?: "tap" | "voice" | "standing";
   /** What the member said, as the speech-to-text heard it, when it was decided by voice. */

@@ -1,3 +1,4 @@
+import type { StandingKind } from "@/lib/approvals/standing";
 import type { MarkedMove } from "@/lib/chat/move";
 import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSummary } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
@@ -146,6 +147,9 @@ export const api = {
   takeBrowser: (conversationId: string) =>
     request<{ url: string }>(`/api/conversations/${conversationId}/browser/control`, { method: "POST" }),
   browserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser"),
+  allowedActions: () => request<{ allowed: StandingKind[] }>("/api/account/allowed"),
+  disallowAction: (kind: StandingKind) =>
+    request<{ allowed: StandingKind[] }>("/api/account/allowed", { method: "PATCH", body: JSON.stringify({ disallow: kind }) }),
   /** Deletes one of the member's agents; `next` is the agent to open now, null when none is left. */
   deleteAgent: (id: string) => request<{ next: string | null }>(`/api/workspaces/${id}`, { method: "DELETE" }),
   listAgents: () => request<{ workspaces: WorkspaceSummary[]; active: string | null }>("/api/workspaces"),
