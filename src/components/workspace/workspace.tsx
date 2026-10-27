@@ -80,16 +80,18 @@ function composerHint(move: WhoseMove | null): string | undefined {
 }
 
 /**
- * The journey to show over a thread: the plan of the work in it, unless that's a conversation's
- * own plan that finished before the member wrote again (they've moved on; a new plan shows
- * again). The setup interview's is shown from the setup's own summary instead.
+ * The journey to show over a thread: the plan of the work in it while it's the work in front of
+ * the member. Once they've written since it last changed, a conversation's own finished plan is
+ * done with, and any other goes when the reply leaves it as it was (it no longer says what's
+ * happening, however its steps read); while that reply runs it may carry the plan on, and a plan
+ * it changes shows again. The setup interview's is shown from the setup's own summary instead.
  */
-function shownJourney(thread: ThreadState | undefined): JourneyInfo | null {
+function shownJourney(thread: ThreadState | undefined, running: boolean): JourneyInfo | null {
   const journey = thread?.status === "ready" ? (thread.journey ?? null) : null;
   if (!journey || journey.kind === "setup") return null;
+  if (!thread!.messages.some((m) => m.role === "user" && m.createdAt > journey.updatedAt)) return journey;
   const finished = journey.steps.every((s) => s.status === "done");
-  if (journey.kind === "conversation" && finished && thread!.messages.some((m) => m.role === "user" && m.createdAt > journey.updatedAt)) return null;
-  return journey;
+  return running && !(journey.kind === "conversation" && finished) ? journey : null;
 }
 
 /** The setup summary as a journey, for a call about it. */
@@ -877,9 +879,10 @@ function WorkspaceShell({
    * Answers the agent's pending request in `conversationId` (the open one, or a call's) and
    * continues the same reply. `spoken`: said on a call, with the words the member was heard to
    * say; the server checks them and refuses what doesn't hold up (the request comes back).
+   * `always`: a tapped approval that also OKs its kind for good on this conversation's task.
    */
   const decide = useCallback(
-    (conversationId: string, approvalId: string, decision: "approve" | "reject", spoken?: SpokenDecision) => {
+    (conversationId: string, approvalId: string, decision: "approve" | "reject", spoken?: SpokenDecision, always?: boolean) => {
       if (running.has(conversationId)) return;
       const reply = threadsRef.current[conversationId]?.messages.find((m) => m.approvals?.some((a) => a.id === approvalId));
       if (!reply) return;
@@ -893,7 +896,10 @@ function WorkspaceShell({
             : a,
         ),
       }));
-      void runTurn(conversationId, spoken ? { kind: "decide", approvalId, decision, ...spoken } : { kind: "decide", approvalId, decision }, { assistant: reply.id });
+      const body: TurnBody = spoken
+        ? { kind: "decide", approvalId, decision, ...spoken }
+        : { kind: "decide", approvalId, decision, ...(always && decision === "approve" ? { always: true as const } : {}) };
+      void runTurn(conversationId, body, { assistant: reply.id });
     },
     [patchMessage, runTurn, running],
   );
@@ -1023,7 +1029,10 @@ function WorkspaceShell({
   }, []);
 
   // The open conversation's own handlers, for the thread and its message box.
-  const decideHere = useCallback((approvalId: string, decision: "approve" | "reject") => activeId && decide(activeId, approvalId, decision), [activeId, decide]);
+  const decideHere = useCallback(
+    (approvalId: string, decision: "approve" | "reject", always?: boolean) => activeId && decide(activeId, approvalId, decision, undefined, always),
+    [activeId, decide],
+  );
   const recordHere = useCallback(
     (messageId: string, blockId: string, response: UiResponse) => activeId && recordUiResponse(activeId, messageId, blockId, response),
     [activeId, recordUiResponse],
@@ -1738,7 +1747,7 @@ function WorkspaceShell({
   const setupHere = Boolean(
     setup && activeId === setup.conversationId && (setup.status === "in_progress" || (setup.status === "done" && activeThread?.status === "ready" && !ownJourney)),
   );
-  const journey = setupHere ? null : shownJourney(activeThread);
+  const journey = setupHere ? null : shownJourney(activeThread, isRunning);
   // A call about the setup (started as the interview's, or in its conversation while it holds
   // there) follows the setup's rail, live; any other follows its own conversation's, and one
   // that followed a task's run there, the task's.
@@ -1750,7 +1759,11 @@ function WorkspaceShell({
       (call.setup ||
         (call.conversationId === setup.conversationId && (setup.status === "in_progress" || (setup.status === "done" && callThread?.status === "ready" && !callOwnJourney)))),
   );
-  const callJourney = useMemo(() => (!call ? null : setupCall && setup ? setupAsJourney(setup) : shownJourney(callThread)), [call, setup, setupCall, callThread]);
+  const callRunning = call ? running.has(call.conversationId) : false;
+  const callJourney = useMemo(
+    () => (!call ? null : setupCall && setup ? setupAsJourney(setup) : shownJourney(callThread, callRunning)),
+    [call, setup, setupCall, callThread, callRunning],
+  );
   const callPurpose: CallPurpose = setupCall
     ? "setup"
     : callThread?.journey?.kind === "task" || callThread?.messages.some((m) => m.origin?.kind === "task")

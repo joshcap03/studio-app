@@ -1,3 +1,4 @@
+import { isStandingKind, type StandingKind } from "@/lib/approvals/standing";
 import type { Tenant } from "@/lib/tenant-core";
 import { check, fail, time } from "./db";
 import { nextRun, type TaskSchedule } from "./schedule";
@@ -22,6 +23,8 @@ interface TaskRow {
   next_run_at: string | null;
   last_run_at: string | null;
   template_task_id: string | null;
+  allowed_actions?: string[] | null;
+  plan_updated_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -42,7 +45,7 @@ interface RunRow {
 }
 
 const COLUMNS =
-  "id, title, instructions, skill_id, schedule, timezone, status, plan, goal, conversation_id, next_run_at, last_run_at, template_task_id, created_at, updated_at";
+  "id, title, instructions, skill_id, schedule, timezone, status, plan, goal, conversation_id, next_run_at, last_run_at, template_task_id, allowed_actions, plan_updated_at, created_at, updated_at";
 const RUN_COLUMNS = "id, task_id, scheduled_for, status, reason, message_id, cancel_requested_at, events, more_events, not_before, created_at, updated_at";
 const MISSING_LINK = "That skill or conversation doesn't exist.";
 
@@ -60,6 +63,8 @@ const toTask = (r: TaskRow): AgentTask => ({
   nextRunAt: time(r.next_run_at),
   lastRunAt: time(r.last_run_at),
   templateTaskId: r.template_task_id,
+  allowedActions: (r.allowed_actions ?? []).filter(isStandingKind),
+  planUpdatedAt: time(r.plan_updated_at ?? null),
   createdAt: Date.parse(r.created_at),
   updatedAt: Date.parse(r.updated_at),
 });
@@ -155,14 +160,15 @@ export async function createTask(
 }
 
 export async function updateTask(tenant: Tenant, id: string, patch: TaskPatch): Promise<AgentTask | null> {
-  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const row: Record<string, unknown> = { updated_at: now };
   if (patch.title !== undefined) row.title = patch.title;
   if (patch.instructions !== undefined) row.instructions = patch.instructions;
   if (patch.skillId !== undefined) row.skill_id = patch.skillId;
   if (patch.schedule !== undefined) row.schedule = patch.schedule;
   if (patch.timezone !== undefined) row.timezone = patch.timezone;
   if (patch.status !== undefined) row.status = patch.status;
-  if (patch.plan !== undefined) row.plan = patch.plan;
+  if (patch.plan !== undefined) Object.assign(row, { plan: patch.plan, plan_updated_at: now });
   if (patch.goal !== undefined) row.goal = patch.goal;
   if (patch.conversationId !== undefined) row.conversation_id = patch.conversationId;
   // A new schedule, zone, or status moves the next run; anything else leaves it alone.
@@ -183,6 +189,27 @@ export async function updateTask(tenant: Tenant, id: string, patch: TaskPatch): 
       .eq("user_id", tenant.userId)
       .select(COLUMNS),
     MISSING_LINK,
+  ) as TaskRow[];
+  return rows[0] ? toTask(rows[0]) : null;
+}
+
+/**
+ * Gives (or, with `allowed` false, takes back) the member's standing OK on one of their tasks for
+ * one kind of change (src/lib/approvals/standing.ts). Given only from their tap on a request of
+ * that kind in the task's conversation; taken back on the task's page. Null if the task is gone.
+ */
+export async function setTaskAllowed(tenant: Tenant, id: string, kind: StandingKind, allowed: boolean): Promise<AgentTask | null> {
+  const current = await getTask(tenant, id);
+  if (!current) return null;
+  const next = allowed ? [...new Set([...current.allowedActions, kind])] : current.allowedActions.filter((k) => k !== kind);
+  if (next.length === current.allowedActions.length && next.every((k) => current.allowedActions.includes(k))) return current;
+  const rows = check(
+    await tasks(tenant)
+      .update({ allowed_actions: next, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId)
+      .select(COLUMNS),
   ) as TaskRow[];
   return rows[0] ? toTask(rows[0]) : null;
 }
@@ -247,6 +274,38 @@ export async function settleRun(
       .eq("workspace_id", tenant.workspace.id)
       .eq("user_id", tenant.userId),
     "That reply doesn't exist.",
+  );
+}
+
+/** Where a run is once its reply's final state is saved: done, still waiting on the member's approval, or failed. */
+export function runOutcome(message: { status: string }, report?: { outcome?: string | null } | null): { status: TaskRun["status"]; reason: string | null } {
+  return message.status === "complete"
+    ? { status: "done", reason: report?.outcome ?? null }
+    : message.status === "awaiting"
+      ? { status: "running", reason: "waiting_on_you" }
+      : { status: "failed", reason: message.status };
+}
+
+/**
+ * Records where a task's run is once the member answered the request it waited on and the reply
+ * it continues ends: the run that wrote that reply and was waiting on them. Nothing else changes.
+ */
+export async function settleWaitingRun(
+  tenant: Tenant,
+  taskId: string,
+  message: { id: string; status: string },
+  report?: { outcome?: string | null } | null,
+): Promise<void> {
+  const outcome = runOutcome(message, report);
+  check(
+    await runs(tenant)
+      .update({ ...outcome, updated_at: new Date().toISOString() })
+      .eq("task_id", taskId)
+      .eq("message_id", message.id)
+      .eq("status", "running")
+      .eq("reason", "waiting_on_you")
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId),
   );
 }
 

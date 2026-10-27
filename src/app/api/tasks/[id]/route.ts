@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
-import { deleteTask, getTask, updateTask } from "@/lib/tasks";
+import { deleteTask, getTask, setTaskAllowed, updateTask } from "@/lib/tasks";
 import { patchTaskBody } from "@/lib/tasks/schema";
 import { followTask, unwatchTask } from "@/lib/tasks/watches";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
@@ -33,7 +33,9 @@ export async function PATCH(request: NextRequest, { params }: Context) {
   const patch = await parseBody(request, patchTaskBody);
   if (patch instanceof NextResponse) return patch;
   try {
-    const task = await updateTask(auth.value, id.data, patch);
+    const { disallow, ...fields } = patch;
+    let task = Object.keys(fields).length ? await updateTask(auth.value, id.data, fields) : await getTask(auth.value, id.data);
+    if (task && disallow) task = await setTaskAllowed(auth.value, id.data, disallow, false);
     if (!task) return jsonError(404, "Task not found.");
     // A task's watch is on only while the task is active.
     if (patch.status !== undefined) await followTask(auth.value, task).catch((e) => console.error("[watches] couldn't follow the task", e));

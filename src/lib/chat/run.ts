@@ -15,7 +15,8 @@ import { projectForRun } from "@/lib/projects";
 import { notificationFor, notify, pushEnabled } from "@/lib/push";
 import { getSkill } from "@/lib/skills";
 import { SETUP_SKILL_ID } from "@/lib/skills/setup";
-import { getRun, getTask } from "@/lib/tasks";
+import { getRun, getTask, getTaskForConversation, setTaskAllowed, settleWaitingRun } from "@/lib/tasks";
+import type { StandingKind } from "@/lib/approvals/standing";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import { eventsCause, eventsMessage, getWatch } from "@/lib/tasks/watches";
 import { appName } from "@/lib/integrations/composio";
@@ -47,7 +48,16 @@ export type RunInput = (
   | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
   | { kind: "retry" }
   | { kind: "edit"; messageId: string; text: string }
-  | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; via?: "tap" | "voice"; heard?: string; voiceSessionId?: string }
+  | {
+      kind: "decide";
+      approvalId: string;
+      decision: "approve" | "reject";
+      via?: "tap" | "voice";
+      heard?: string;
+      voiceSessionId?: string;
+      /** "grant": approve, and don't ask again on this task for its kind; "auto": the task's run, under that OK. */
+      standing?: "grant" | "auto";
+    }
 ) & { offers?: boolean; secrets?: boolean; handoffs?: boolean }
   /** Run one of the member's tasks: its brief (and skill) is sent as a message no one typed. */
   | { kind: "task"; taskId: string; runId: string | null };
@@ -59,7 +69,21 @@ export interface RunOptions {
   onFinished?: NonNullable<TurnDeps["onFinished"]>;
   /** Asked while the run streams; resolving true stops it (a stop requested from another process). */
   shouldStop?: TurnDeps["shouldStop"];
+  /**
+   * Asked first when the reply's final state is saved: whether something carries the run on at
+   * once (a task's run approving a request under the member's standing OK). True skips the
+   * notification and onFinished; the run carried on reports instead.
+   */
+  carryOn?: (message: ChatMessage) => Promise<boolean>;
 }
+
+/**
+ * How long one request that runs a turn may live: the routes' `maxDuration` (300 seconds, the
+ * most Vercel's Hobby plan allows). Raise both together.
+ */
+export const REQUEST_LIMIT_MS = 300_000;
+/** Kept back at the end of the request to save the reply and say it ran out of time. */
+const SAVE_MARGIN_MS = 20_000;
 
 /**
  * The deps and request for `startTurn`. Throws a TurnError (404) when the skill or project
@@ -67,8 +91,9 @@ export interface RunOptions {
  */
 export async function buildTurnDeps(
   tenant: Tenant,
-  { conversationId, input: asked, onFinished, shouldStop }: RunOptions,
+  { conversationId, input: asked, onFinished, shouldStop, carryOn }: RunOptions,
 ): Promise<{ deps: TurnDeps; request: TurnRequest }> {
+  const deadline = Date.now() + REQUEST_LIMIT_MS - SAVE_MARGIN_MS;
   // Whether the member has voice: without it nothing about the run is spoken, whatever the
   // browser sends or an older message from when it was on says.
   const voiceOn = Boolean(voiceStatus(tenant));
@@ -144,7 +169,7 @@ export async function buildTurnDeps(
     const projectId = conversation ? conversation.projectId : input.kind === "send" ? input.projectId : undefined;
     return projectId ? projectForRun(tenant, projectId, adapter.capabilities.attachments) : undefined;
   };
-  const [skill, project, agentFiles, browserContext, screen] = await Promise.all([
+  const [skill, project, agentFiles, browserContext, screen, task] = await Promise.all([
     input.kind === "send" && input.skillId ? loadSkill(input.skillId) : Promise.resolve(undefined),
     loadProject(),
     agentFilesForRun(tenant, adapter.capabilities.attachments),
@@ -154,6 +179,8 @@ export async function buildTurnDeps(
       return null;
     }),
     input.kind === "send" && input.screen && voiceOn ? onScreen(tenant, input.screen).catch(() => null) : Promise.resolve(null),
+    // In a task's conversation, the member's standing OKs on it (src/lib/approvals/standing.ts).
+    getTaskForConversation(tenant, conversationId).catch(() => null),
   ]);
   if (skill === null) throw new TurnError(404, "Skill not found.");
   if (project === null) throw new TurnError(404, "Project not found.");
@@ -168,6 +195,13 @@ export async function buildTurnDeps(
   // companion along (best-effort).
   const companion = previewEnabled(tenant, "companion");
   const finished: NonNullable<TurnDeps["onFinished"]> = async (message, conversation, info) => {
+    const carried = carryOn
+      ? await carryOn(message).catch((error) => {
+          console.error("[run] couldn't carry the run on", error);
+          return false;
+        })
+      : false;
+    if (carried) return;
     try {
       const self = companion
         ? await (asked.kind === "task" ? getCompanion(tenant) : getSettings(tenant).then((s) => refreshCompanion(tenant, s.setup))).catch((error) => {
@@ -185,6 +219,10 @@ export async function buildTurnDeps(
           : self?.name;
       const notification = notifying ? notificationFor(message, conversation, info.report, from) : null;
       if (notification) await notify(tenant, notification);
+      // The member answered a task's run's request here: the run it continues is over, or waits again.
+      if (task && asked.kind === "decide" && !carryOn) {
+        await settleWaitingRun(tenant, task.id, message, info.report).catch((e) => console.error("[tasks] couldn't record the run's outcome", e));
+      }
     } finally {
       await onFinished?.(message, conversation, info);
     }
@@ -213,9 +251,18 @@ export async function buildTurnDeps(
       : undefined,
     resolveMerge: memoryEnabled() ? (raw) => resolveMergeProposal(tenant, raw) : undefined,
     idleTimeoutMs: getConfig().agent.idleTimeoutMs,
+    deadline,
     // Checks the limits and records the run in one step, so a burst can't slip under them.
     claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
     allowSpokenDecision: (approval, decision, spoken) => checkSpokenDecision(tenant, approval, decision, spoken),
+    ...(task
+      ? {
+          standing: {
+            allowed: task.allowedActions,
+            grant: async (kind: StandingKind) => Boolean(await setTaskAllowed(tenant, task.id, kind, true)),
+          },
+        }
+      : {}),
     timelines: previewEnabled(tenant, "why"),
     // Replies to a voice message, and a task run's news, come back as voice notes for members with speech.
     voiceNotes: Boolean(voiceStatus(tenant)?.speech.tts),
@@ -262,6 +309,7 @@ export async function buildTurnDeps(
             decision: input.decision,
             // Said, not tapped: checked as said even with words or a call missing (and refused then).
             ...(input.via === "voice" ? { spoken: { heard: input.heard ?? "", voiceSessionId: input.voiceSessionId ?? "" } } : {}),
+            ...(input.standing ? { standing: input.standing } : {}),
           }
         : { conversationId, ...input };
   return { deps, request };

@@ -436,6 +436,15 @@ describe("Langflow request", () => {
     expect(templateValues({ ...tenantA, voiceNotes: true }).system_context).not.toContain("report_run summary");
   });
 
+  it("puts the member's edits to what a run sent ahead of the task's brief", () => {
+    const task = { title: "Market brief", instructions: "Each item: facts; my read; so-what.", plan: [] };
+    const context = templateValues({ ...tenantA, task }).system_context;
+    expect(context).toContain("The brief is how each run does the job, not a rule for every reply here.");
+    expect(context.indexOf("Each item: facts")).toBeLessThan(context.indexOf("rewrite it now in their form"));
+    // No brief, nothing to put behind them.
+    expect(templateValues({ ...tenantA, task: { ...task, instructions: " " } }).system_context).not.toContain("rewrite it now");
+  });
+
   it("gives the Member Apps node this member's id and the offered apps, nobody else's", () => {
     const tweaks = { "MemberApps-studio": { member_id: "{{composio_user_id}}", toolkits: "{{composio_toolkits}}" } };
     const tenant = { ...tenantA, composioToolkits: { gmail: "ac_gmail" } };

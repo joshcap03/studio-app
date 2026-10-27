@@ -1,5 +1,6 @@
 import type { Ask, LastMessage } from "@/lib/chat/move";
 import { fitTools } from "@/lib/approvals/spoken";
+import { isStandingKind } from "@/lib/approvals/standing";
 import type { Db } from "@/lib/supabase/db";
 import type { PlanStep } from "@/lib/tasks/types";
 import type {
@@ -69,7 +70,7 @@ export type NewApproval = Omit<StoredApproval, "id" | "status" | "createdAt" | "
  * How a decision was made: a tap (or typed words), or said on a call, with the member's words
  * and the call they were said on (the database checks it's their own open call).
  */
-export type ApprovalDecision = { via: "tap" } | { via: "voice"; words: string; call: string };
+export type ApprovalDecision = { via: "tap" } | { via: "voice"; words: string; call: string } | { via: "standing" };
 
 /** An attachment with where its bytes live. Server-side only. */
 export interface StoredAttachment extends Attachment {
@@ -119,6 +120,13 @@ export interface Store {
   getMessage(conversationId: string, id: string): Promise<ChatMessage | null>;
   insertMessage(message: Omit<ChatMessage, "createdAt">): Promise<ChatMessage>;
   updateMessage(id: string, patch: MessagePatch): Promise<void>;
+  /**
+   * Asks the conversation's reply still streaming to stop, wherever it's running: the run checks
+   * `stopRequested` every few seconds. False when nothing in the conversation is streaming.
+   */
+  requestStop(conversationId: string): Promise<boolean>;
+  /** Whether the member asked this reply to stop since it last started streaming. */
+  stopRequested(messageId: string): Promise<boolean>;
   /** Records the member's rating of one of their replies (null clears it). False if no such reply. */
   setFeedback(conversationId: string, id: string, feedback: MessageFeedback | null): Promise<boolean>;
   /** Records the provider's trace id for the run that wrote a reply (server-side only). */
@@ -203,7 +211,8 @@ interface ApprovalRow {
   voice_ok?: boolean | null;
   tap_only?: TapOnlyReason | null;
   read_back?: string | null;
-  decided_via?: "tap" | "voice" | null;
+  decided_via?: "tap" | "voice" | "standing" | null;
+  standing?: string | null;
   decided_words?: string | null;
   reported_at?: string | null;
 }
@@ -244,10 +253,10 @@ const PLAN_COLUMNS = "plan, goal, plan_updated_at";
 // go to the browser.
 const MESSAGE_COLUMNS =
   "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, error, skill, origin, created_at, updated_at, " +
-  "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at), " +
+  "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at, standing), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS =
-  "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at, tools, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at";
+  "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at, tools, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at, standing";
 const ATTACHMENT_COLUMNS = "id, name, mime_type, size, storage_path";
 
 const toApproval = (r: Omit<ApprovalRow, "provider" | "provider_state">): Approval => ({
@@ -263,6 +272,7 @@ const toApproval = (r: Omit<ApprovalRow, "provider" | "provider_state">): Approv
   ...(r.decided_via ? { decidedVia: r.decided_via } : {}),
   ...(r.decided_via === "voice" && r.decided_words ? { decidedWords: r.decided_words } : {}),
   ...(r.reported_at ? { reported: true } : {}),
+  ...(isStandingKind(r.standing) ? { standing: r.standing } : {}),
 });
 
 const toStoredApproval = (r: ApprovalRow): StoredApproval => ({
@@ -601,7 +611,31 @@ export function createStore(db: Db, scope: Scope): Store {
       if (patch.uiResponse !== undefined) values.ui_response = patch.uiResponse;
       if (patch.voiceNote !== undefined) values.voice_note = patch.voiceNote;
       if (patch.error !== undefined) values.error = patch.error;
+      // A reply that starts streaming again (after an approval) starts without a stop asked of it.
+      if (patch.status === "streaming") values.stop_requested_at = null;
       check(await messages().update(values).eq("id", id).eq("workspace_id", workspaceId).eq("user_id", userId));
+    },
+
+    async requestStop(conversationId) {
+      // Not a content change, so updated_at stays put: the run's own checkpoints keep it alive.
+      const rows = check(
+        await messages()
+          .update({ stop_requested_at: new Date().toISOString() })
+          .eq("conversation_id", conversationId)
+          .eq("role", "assistant")
+          .eq("status", "streaming")
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .select("id"),
+      ) as { id: string }[];
+      return rows.length > 0;
+    },
+
+    async stopRequested(messageId) {
+      const row = check(
+        await messages().select("stop_requested_at").eq("id", messageId).eq("workspace_id", workspaceId).eq("user_id", userId).maybeSingle(),
+      ) as { stop_requested_at: string | null } | null;
+      return row?.stop_requested_at != null;
     },
 
     async setFeedback(conversationId, id, feedback) {
@@ -686,6 +720,7 @@ export function createStore(db: Db, scope: Scope): Store {
             voice_ok: a.spoken?.ok === true,
             tap_only: a.spoken && !a.spoken.ok ? a.spoken.reason : null,
             read_back: a.spoken?.ok ? a.spoken.readBack : null,
+            standing: a.standing ?? null,
           })
           .select(APPROVAL_COLUMNS)
           .single(),

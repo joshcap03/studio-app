@@ -14,6 +14,7 @@ import { buildVisual, withVisual } from "./visuals";
 import { describeLink } from "@/lib/library";
 import { voiceNoteFor } from "@/lib/voice/notes";
 import { spokenApprovalFor } from "@/lib/approvals/spoken";
+import { standingKindFor, type StandingKind } from "@/lib/approvals/standing";
 import {
   ARTIFACT_KINDS,
   MAX_MEMORY_LENGTH,
@@ -80,9 +81,11 @@ export type TurnRequest = { conversationId: string } & (
   /**
    * Answer the conversation's pending approval and let the agent continue. `spoken`: the member
    * said it on a call (their words as the speech-to-text heard them, and the call), which counts
-   * only once allowSpokenDecision says so; otherwise it's a tap.
+   * only once allowSpokenDecision says so; otherwise it's a tap. `standing`: "grant", the member
+   * tapped Approve and asked not to be asked again on this task for its kind; "auto", the task's
+   * run approving it under the standing OK they gave (never the member's browser).
    */
-  | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; spoken?: SpokenDecision }
+  | { kind: "decide"; approvalId: string; decision: "approve" | "reject"; spoken?: SpokenDecision; standing?: "grant" | "auto" }
 );
 
 /** A decision the member said on a call. */
@@ -122,6 +125,12 @@ export interface TurnDeps {
    * Returns why not, or null to go ahead. Without it, no spoken decision is taken.
    */
   allowSpokenDecision?: (approval: StoredApproval, decision: "approve" | "reject", spoken: SpokenDecision) => Promise<string | null>;
+  /**
+   * In a task's conversation: the kinds of change its member has OK'd for good on it, and how to
+   * add one (on their tap). Requests of a kind that qualifies are marked so their card can offer
+   * it. Without it (any other conversation), nothing is marked and no standing decision is taken.
+   */
+  standing?: { allowed: StandingKind[]; grant: (kind: StandingKind) => Promise<boolean> };
   /**
    * Saves what the agent reported about the work here, under the caller's session: a rewritten
    * plan with what done looks like (on the conversation's task, the setup checklist, or the
@@ -187,10 +196,19 @@ export interface TurnDeps {
   /** Heartbeat that keeps a quiet-but-alive run from looking interrupted. */
   heartbeatMs?: number;
   /**
-   * Asked on each heartbeat while the run streams; resolving true stops it, as `stopRun` does.
+   * When the run must be over (epoch ms): the request it streams in ends soon after. At this
+   * time the run stops and the reply says it ran out of time, rather than being cut off.
+   */
+  deadline?: number;
+  /**
+   * Asked with each stop check while the run streams; resolving true stops it, as `stopRun` does.
    * For a stop requested from another process (e.g. a task running in the background worker).
    */
   shouldStop?: () => Promise<boolean>;
+  /** How often the run checks whether a stop was asked for elsewhere (the reply's flag, `shouldStop`). */
+  stopCheckMs?: number;
+  /** How long redirecting waits for a run on another server to stop. */
+  steerWaitMs?: number;
   /**
    * Called once the reply's final state is saved. `watched` is whether the browser was still
    * listening when the run ended (so the member already saw the result). Errors are logged.
@@ -263,6 +281,27 @@ const MAX_RECORDS_PER_RUN = 25;
 /** Artifacts one run may file in the Library; the rest stay on the reply only. */
 const MAX_FILED_PER_RUN = 10;
 const noop = () => undefined;
+/**
+ * How often a run checks for a stop asked of it elsewhere. Each request may land on another
+ * server than the one running the reply, so Stop is a flag on the reply that the run reads.
+ */
+const STOP_CHECK_MS = 2_000;
+/** How long redirecting waits for a run on another server to stop: a few of its checks. */
+const STEER_WAIT_MS = 15_000;
+
+/**
+ * Asks the reply streaming on another server (or the worker) to stop, and waits until it has.
+ * False when it's still going after `waitMs`.
+ */
+async function stopElsewhere(store: Store, conversationId: string, messageId: string, waitMs: number): Promise<boolean> {
+  await store.requestStop(conversationId);
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, Math.min(500, waitMs / 4)));
+    if ((await store.getMessage(conversationId, messageId))?.status !== "streaming") return true;
+  }
+  return false;
+}
 
 /**
  * Stops a run in progress. Runs are not tied to the browser connection: closing or reloading
@@ -296,11 +335,15 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
 
   let conversation = await store.getConversation(conversationId);
   let existing: ChatMessage[] = conversation ? await store.listMessages(conversationId) : [];
-  // Another server instance may be running this conversation.
-  if (existing.at(-1)?.status === "streaming") {
-    throw new TurnError(409, "The agent is still working in this conversation.");
+  // Another server instance may be running this conversation: redirecting stops it there, as Stop does.
+  const elsewhere = existing.at(-1)?.status === "streaming" ? existing.at(-1)! : null;
+  if (elsewhere) {
+    if (!steering || !(await stopElsewhere(store, conversationId, elsewhere.id, deps.steerWaitMs ?? STEER_WAIT_MS))) {
+      throw new TurnError(409, "The agent is still working in this conversation.");
+    }
+    existing = await store.listMessages(conversationId);
   }
-  if (running && existing.at(-1)?.role === "assistant") interrupted = existing.at(-1)!;
+  if ((running || elsewhere) && existing.at(-1)?.role === "assistant") interrupted = existing.at(-1)!;
   let pending = conversation ? await store.pendingApproval(conversationId) : null;
   if (pending && steering) {
     // Writing instead of answering declines the request, and the agent hears why.
@@ -341,6 +384,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         : "Spoken decisions aren't available here. Tap instead.";
       if (refusal) throw new TurnError(403, refusal);
     }
+    // A standing OK covers only a request of a kind that qualifies, in a task's conversation: given
+    // with a tap that approves it, or used by the task's run when the member already gave it.
+    if (request.standing) {
+      const kind = pending.standing;
+      if (!kind || !deps.standing || request.decision !== "approve" || request.spoken) {
+        throw new TurnError(409, "This one can't be allowed for good. Approve it on its own.");
+      }
+      if (request.standing === "auto" && !deps.standing.allowed.includes(kind)) {
+        throw new TurnError(403, "This task doesn't have your OK for that.");
+      }
+    }
   } else if (pending && request.kind === "send") {
     // A new message waits for the pending decision.
     throw new TurnError(409, "Approve or decline the agent's request first.");
@@ -356,11 +410,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     const to = request.decision === "approve" ? "approved" : "declined";
     const how = request.spoken
       ? ({ via: "voice", words: request.spoken.heard, call: request.spoken.voiceSessionId } as const)
-      : ({ via: "tap" } as const);
+      : request.standing === "auto"
+        ? ({ via: "standing" } as const)
+        : ({ via: "tap" } as const);
     if (!(await store.settleApproval(approval.id, "pending", to, how))) {
       throw new TurnError(409, request.spoken ? "That couldn't be answered by voice: it was already answered, or the call has ended. It's on screen." : "This request was already answered.");
     }
     decided = { ...approval, status: to, decidedAt: Date.now(), decidedVia: how.via, ...(how.via === "voice" ? { decidedWords: how.words } : {}) };
+    // The approval stands either way; a grant that didn't save just means the next run asks again.
+    if (request.standing === "grant") {
+      await deps.standing!.grant(approval.standing!).catch((e) => console.error("[turn] couldn't save a standing OK", e));
+    }
     resume = { decision: request.decision, state: approval.providerState };
   }
 
@@ -543,17 +603,32 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           .then(() => store.updateMessage(assistant.id, { content, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui }))
           .catch((e) => console.error("[turn] checkpoint failed", e));
       };
-      let asking = false;
       const heartbeat = setInterval(() => {
         if (Date.now() - lastCheckpoint >= (deps.heartbeatMs ?? 15_000)) checkpoint();
-        if (!deps.shouldStop || asking) return;
-        asking = true;
-        deps
-          .shouldStop()
-          .then((stop) => stop && controller.abort())
-          .catch((e) => console.error("[turn] couldn't check for a stop", e))
-          .finally(() => (asking = false));
       }, Math.min(deps.heartbeatMs ?? 15_000, STALE_STREAM_MS / 4));
+      // A stop may be asked for on another server, or for a task's run: the run checks for one.
+      let asking = false;
+      const asked = (check: () => Promise<boolean>) =>
+        check().catch((e) => {
+          console.error("[turn] couldn't check for a stop", e);
+          return false;
+        });
+      const stopCheck = setInterval(() => {
+        if (asking) return;
+        asking = true;
+        void Promise.all([asked(() => store.stopRequested(assistant.id)), deps.shouldStop ? asked(deps.shouldStop) : false])
+          .then((stops) => stops.some(Boolean) && controller.abort())
+          .finally(() => (asking = false));
+      }, deps.stopCheckMs ?? STOP_CHECK_MS);
+      // Stopped while the request can still save the reply and say why, rather than cut off with it.
+      let outOfTime = false;
+      const deadline =
+        deps.deadline === undefined
+          ? undefined
+          : setTimeout(() => {
+              outOfTime = true;
+              controller.abort(new AgentError(OUT_OF_TIME));
+            }, Math.max(0, deps.deadline - Date.now()));
 
       send({ type: "start", conversation: summary, userMessage, assistantMessage: assistant });
 
@@ -808,6 +883,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               // Whether a call may approve it by voice, decided now from what it would run; the
               // raw arguments aren't kept.
               const spoken = spokenApprovalFor({ actions: event.actions, summary });
+              // Whether its member may OK its kind for good on this task, decided from what it would run.
+              const standing = deps.standing ? standingKindFor(event.actions) : null;
               const stored = await store.createApproval({
                 conversationId,
                 messageId: assistant.id,
@@ -818,6 +895,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                 providerState: event.state,
                 spoken: spoken.voiceOk ? { ok: true, readBack: spoken.readBack } : { ok: false, reason: spoken.tapOnly },
                 tools: spoken.tools,
+                ...(standing ? { standing } : {}),
               });
               const approval = publicApproval(stored);
               approvals.push(approval);
@@ -852,8 +930,18 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
         }
       } finally {
         clearInterval(heartbeat);
+        clearInterval(stopCheck);
+        clearTimeout(deadline);
         if (!controller.signal.aborted) controller.abort();
         activeRuns.delete(runKey);
+      }
+
+      // A step still going when time ran out was stopped with the run.
+      if (outOfTime) {
+        const at = Date.now();
+        activity.forEach((s, i) => {
+          if (s.status === "running") activity[i] = { ...s, status: "failed", detail: s.detail ?? "Stopped when the reply ran out of time.", endedAt: at };
+        });
       }
 
       // A step from before the pause that the continued run never reported again can't still be
@@ -978,6 +1066,7 @@ function publicApproval(a: StoredApproval | Approval): Approval {
     ...(a.decidedVia ? { decidedVia: a.decidedVia } : {}),
     ...(a.decidedWords ? { decidedWords: a.decidedWords } : {}),
     ...(a.reported ? { reported: true } : {}),
+    ...(a.standing ? { standing: a.standing } : {}),
   };
 }
 
@@ -995,6 +1084,8 @@ function sameStep(a: ActivityStep, b: ActivityStep): boolean {
     JSON.stringify(a.preview) === JSON.stringify(b.preview)
   );
 }
+
+const OUT_OF_TIME = "This ran past the time one reply can take, so it stopped here. Try asking for a smaller piece of it.";
 
 /** Fails the run if the agent goes quiet for longer than `ms`, and stops on abort. */
 async function* withIdleTimeout<T>(source: AsyncIterable<T>, ms: number, signal: AbortSignal): AsyncGenerator<T> {

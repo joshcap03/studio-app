@@ -26,7 +26,8 @@ gitignored and stays out of the repo.
 - `npm run test:integration`: needs local Supabase; API tests also need `qa:serve`;
   Langflow tests need `LANGFLOW_TEST_BASE_URL`, `LANGFLOW_TEST_API_KEY`, `LANGFLOW_TEST_FLOW_ID`;
   with those, `job-search.eval.test.ts` evals the Job search template and `tidy.eval.test.ts`
-  the Brain's "Tidy up" on the real model, and `library.eval.test.ts` filing a link with `file_link`.
+  the Brain's "Tidy up" on the real model, `library.eval.test.ts` filing a link with `file_link`, and
+  `revise.eval.test.ts` rewriting a task's result in the form the member asks for over the brief's.
 - `npx trigger.dev dev`: runs the background worker locally (needs a Trigger.dev login and
   `TRIGGER_PROJECT_REF`); it deploys from GitHub Actions after each Vercel production deploy.
 
@@ -91,7 +92,8 @@ raw/technical text.
   a row again adds to its fields rather than replacing them, each collection's rows show the same
   detail fields (the rest open from the row), and every run is told the collections and field names
   already in use so it reuses them instead of starting a second list for the same thing. Private to each member; the API is the "tasks" preview.
-  `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike.
+  `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike, and carries
+  it on past a request the member OK'd for good on that task (see Rules: standing approvals).
   `watches.ts`: a task that runs when something happens in a connected app (the "watches" preview,
   docs/watches.md). Its Composio trigger is created under the member's own id and follows the task;
   Composio's events reach `/api/watches/composio`, the worker matches each to its watch and owner
@@ -225,7 +227,14 @@ raw/technical text.
   still needs approval.
 - Anything the agent does that changes a member's accounts must pause for their approval
   (`take_action` in the gateway). Don't add tools that write without it, and never approve on
-  the member's behalf. Provider resume state stays server-side.
+  the member's behalf. Provider resume state stays server-side. The one standing exception is
+  the member's own: on a task's request of a kind Studio can check from its arguments to be tidy,
+  undoable, and reaching no one (`src/lib/approvals/standing.ts`: labels on their own Gmail, never
+  trash, spam, archiving, sending, deleting, or money), their tap on "Don't ask again on this task"
+  OKs that kind on that task (`agent_tasks.allowed_actions`), and the task's later runs approve
+  such requests themselves (`run-task.ts`, recorded as `decided_via 'standing'`). Only a task's run
+  uses it, never chat or code; it's taken back on the task's page. Add a kind only with a check
+  that fails closed on its arguments.
 - Agent-rendered UI is built as reusable gateway tools any skill can call (`ask_user`,
   `show_form`, `propose_agent`, `merge_memories`, `offer_call`, `hand_browser`, `watch_me`; cards in `src/components/chat/ui-cards.tsx` and
   `requests.tsx`), never as UI for one flow or template. They change nothing: a form's

@@ -1,6 +1,6 @@
 import { attachToPage, browserConnection, defaultConnect, withCdp, type CdpCall, type SocketFactory } from "@/lib/browser-view";
 import type { Tenant } from "@/lib/tenant-core";
-import type { SecretField, ShownStep } from "@/lib/types";
+import type { DriveKey, SecretField, ShownStep } from "@/lib/types";
 
 // Filling a login, card, or one-time code into the agent's browser, so the agent never sees it. The member picks
 // or types it on the secure card (src/components/chat/secret-card.tsx); the server connects to the
@@ -209,9 +209,6 @@ export type DriveInput =
   | { type: "scroll"; x: number; y: number; dy: number }
   /** Nothing done: only where the page is, for a showing's start and end. */
   | { type: "look" };
-
-export const DRIVE_KEYS = ["Enter", "Tab", "Backspace", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] as const;
-export type DriveKey = (typeof DRIVE_KEYS)[number];
 
 const KEY_CODES: Record<DriveKey, number> = { Enter: 13, Tab: 9, Backspace: 8, Escape: 27, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39 };
 

@@ -14,6 +14,7 @@ import asyncio
 import difflib
 import json
 import re
+import time
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field, ValidationError
@@ -699,6 +700,19 @@ def watch_needs_approval(name, arguments):
     return name in CODE_TOOLS or name in BROWSER_TOOLS or has_link(arguments) or needs_approval(name, arguments)
 
 
+# Seconds a run's tools may take in all (see run_budget). The app's request lasts 300: this leaves
+# time for the run to start, for the agent to write its answer, and for the app to save it.
+RUN_BUDGET = 210
+# How many of the agent's tool calls go by with plan steps left before it's reminded to move the
+# plan on, so the owner sees the work go step by step rather than stay on the first.
+PLAN_NUDGE_CALLS = 4
+# A tool isn't started with less time than this left in the budget.
+MIN_TOOL_SECONDS = 15
+WRAP_UP = ("Don't call more tools: answer now with what you have for the owner, say in a sentence what's "
+           "still to do in terms of their job, and offer to carry on. Don't explain how you got it: no "
+           "fetches, pages, counts of what you pulled, or running out of time.")
+
+
 class ToolGatewayComponent(Component):
     display_name = "Tool Gateway"
     description = "Dynamic discovery and execution of connected tools with compact tool context."
@@ -713,6 +727,10 @@ class ToolGatewayComponent(Component):
                  info="Read-only lookups (tool search, schemas, memory, web search). Retried once on timeout."),
         IntInput(name="work_timeout", display_name="Work Timeout (seconds)", value=200, advanced=True,
                  info="Everything else (workbench, browser, app actions). Never retried automatically."),
+        IntInput(name="run_budget", display_name="Run Budget (seconds)", value=RUN_BUDGET, advanced=True,
+                 info=("How long this run's tools may take in all, from the start of the run (a resumed run "
+                       "starts again), so the agent still has time to answer before the app's request ends "
+                       "(5 minutes). Approved actions always run. 0 turns it off.")),
         MessageTextInput(name="run_cause", display_name="Run Cause", value="", advanced=True,
                          info=("Filled per run by the app ({{run_cause}}): 'watch' when an event in a connected app "
                                "started it, so code, the browser, and calls with links ask the owner first.")),
@@ -863,6 +881,19 @@ class ToolGatewayComponent(Component):
         lookup_timeout = int(getattr(self, "lookup_timeout", 45) or 45)
         work_timeout = int(getattr(self, "work_timeout", 200) or 200)
         watched = str(getattr(self, "run_cause", "") or "").strip() == "watch"
+        # One reply runs inside one app request, which ends after five minutes. Tools share the
+        # first part of that, from when this run started, so a slow one can't use it all up and
+        # the agent still has time to answer with what it has. Approved actions always run: the
+        # owner said yes to them, and a resumed run gets a new request.
+        budget = getattr(self, "run_budget", None)
+        budget = RUN_BUDGET if budget is None else int(budget)
+        started = time.monotonic()
+
+        def time_left():
+            return None if budget <= 0 else budget - (time.monotonic() - started)
+
+        def out_of_time(name):
+            return f"Tool {name} didn't run: this reply is out of time. {WRAP_UP}"
         asks = watch_needs_approval if watched else needs_approval
 
         def approval_hint(name, arguments=None):
@@ -885,7 +916,7 @@ class ToolGatewayComponent(Component):
                     "now with the same tool_name and arguments plus a one-sentence summary; don't reply first.")
 
         async def execute_async(tool_name: str, arguments=None, config: RunnableConfig = None) -> str:
-            return await run_async(tool_name, arguments, config, approved=False)
+            return with_reminder(await run_async(tool_name, arguments, config, approved=False), config)
 
         refused = "Approvals aren't available in this run, so nothing was changed. Tell the owner what you would have done."
 
@@ -898,7 +929,7 @@ class ToolGatewayComponent(Component):
             # Reaching this body with approvals active means the owner approved the call.
             if not approvals_active(config):
                 return refused
-            return await run_async(tool_name, arguments, config, approved=True)
+            return with_reminder(await run_async(tool_name, arguments, config, approved=True), config)
 
         async def run_async(tool_name, arguments, config, approved):
             tool_name, arguments = route(tool_name, arguments)
@@ -907,9 +938,15 @@ class ToolGatewayComponent(Component):
                 return error
             if not approved and asks(tool_name, params):
                 return approval_hint(tool_name, params)
+            left = None if approved else time_left()
+            if left is not None and left < MIN_TOOL_SECONDS:
+                return out_of_time(tool_name)
             lookup = tool_name in LOOKUP_TOOLS
             limit = lookup_timeout if lookup else work_timeout
             attempts = 2 if lookup else 1
+            cut = left is not None and left < limit * attempts
+            if cut:
+                limit, attempts = min(limit, int(left)), 1
             for attempt in range(attempts):
                 try:
                     try:
@@ -920,6 +957,8 @@ class ToolGatewayComponent(Component):
                 except asyncio.TimeoutError:
                     if attempt + 1 < attempts:
                         continue
+                    if cut:
+                        return f"Tool {tool_name} ran out of this reply's time after {limit}s. It may or may not have finished. {WRAP_UP}"
                     tried = " (tried twice)" if attempts > 1 else ""
                     hint = ("The service didn't respond; try another approach or tell the user." if lookup else
                             "It may or may not have finished; check before retrying, and tell the user.")
@@ -934,18 +973,21 @@ class ToolGatewayComponent(Component):
                 return error
             if not approved and asks(tool_name, params):
                 return approval_hint(tool_name, params)
+            left = None if approved else time_left()
+            if left is not None and left < MIN_TOOL_SECONDS:
+                return out_of_time(tool_name)
             try:
                 return compact_result(tool.invoke(params, config=config), max_chars, keeper(config))
             except Exception as exc:
                 return f"Tool {tool_name} failed: {type(exc).__name__}: {exc}. Do not blindly retry writes."
 
         def execute_sync(tool_name: str, arguments=None, config: RunnableConfig = None) -> str:
-            return run_sync(tool_name, arguments, config, approved=False)
+            return with_reminder(run_sync(tool_name, arguments, config, approved=False), config)
 
         def action_sync(tool_name: str, arguments=None, summary: str = "", config: RunnableConfig = None) -> str:
             if not approvals_active(config):
                 return refused
-            return run_sync(tool_name, arguments, config, approved=True)
+            return with_reminder(run_sync(tool_name, arguments, config, approved=True), config)
 
         async def discover_async(query: str) -> str:
             return discover(query)
@@ -974,7 +1016,47 @@ class ToolGatewayComponent(Component):
         async def remember_async(content: str, scope: str = "workspace", category: str = "other", replaces: list[str] | None = None) -> str:
             return remember(content, scope, category, replaces)
 
-        def update_plan(steps: list, goal: str = "") -> str:
+        # The last plan each run's thread gave, and the calls since: the agent is reminded to move
+        # it on as it works, and report_run catches one left with steps still to do or under way,
+        # or the owner would see the work stuck on its first step after it's done.
+        plans = {}
+        since_plan = {}
+
+        def open_steps(thread):
+            return [r for r in plans.get(thread, []) if r["status"].lower() in ("", "todo", "doing")]
+
+        def plan_reminder(config):
+            # Every PLAN_NUDGE_CALLS calls since the plan last changed, while steps are left: where
+            # the plan says the work is, so the agent moves it on once it's past that step.
+            thread = thread_of(config)
+            left = open_steps(thread)
+            if not left:
+                return ""
+            since_plan[thread] = since_plan.get(thread, 0) + 1
+            if since_plan[thread] < PLAN_NUDGE_CALLS:
+                return ""
+            since_plan[thread] = 0
+            at = next((r for r in left if r["status"].lower() == "doing"), left[0])
+            return (f"Your plan still shows '{at['text']}' as {at['status'] or 'todo'}. If you've finished it or moved "
+                    "on, call update_plan now with the whole plan (done steps done, the one you're on doing) so the "
+                    "owner sees where the work is.")
+
+        def with_reminder(result, config):
+            # Into a structured result's note, or after a plain one; anything else structured is
+            # left exactly as it is, since the app reads it.
+            reminder = plan_reminder(config)
+            if not reminder or not isinstance(result, str):
+                return result
+            try:
+                parsed = json.loads(result)
+            except ValueError:
+                return f"{result}\n[{reminder}]"
+            if isinstance(parsed, dict) and isinstance(parsed.get("note"), str):
+                parsed["note"] = f"{parsed['note']} {reminder}"
+                return json.dumps(parsed)
+            return result
+
+        def update_plan(steps: list, goal: str = "", config: RunnableConfig = None) -> str:
             # Like remember, this changes nothing here: the app checks the plan and saves it where
             # the work in this conversation keeps it (its task, the setup checklist, or the
             # conversation), where the owner sees it above the chat.
@@ -985,6 +1067,8 @@ class ToolGatewayComponent(Component):
             rows = [r for r in rows if r["text"]]
             if not rows:
                 return "No plan to save: give at least one step with text."
+            plans[thread_of(config)] = rows
+            since_plan[thread_of(config)] = 0
             update = {"steps": rows}
             goal = " ".join(str(goal or "").split())[:200]
             if goal:
@@ -992,10 +1076,11 @@ class ToolGatewayComponent(Component):
             return json.dumps({"plan_update": update,
                                "note": "The owner sees it above the chat; no need to mention it."})
 
-        async def update_plan_async(steps: list, goal: str = "") -> str:
-            return update_plan(steps, goal)
+        async def update_plan_async(steps: list, goal: str = "", config: RunnableConfig = None) -> str:
+            return update_plan(steps, goal, config)
 
-        def save_record(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
+        def save_record(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None,
+                        config: RunnableConfig = None) -> str:
             # The app upserts this into the owner's own tracker (by collection and key). Nothing
             # is stored here and no outside account changes, so it needs no approval.
             collection = "-".join(str(collection or "").lower().split())[:40]
@@ -1006,16 +1091,17 @@ class ToolGatewayComponent(Component):
             record = {"collection": collection, "key": key, "title": " ".join(str(title or "").split())[:200],
                       "status": " ".join(str(status or "").split())[:40], "url": str(url or "").strip()[:2000],
                       "fields": {str(k)[:60]: v for k, v in list(extra.items())[:30]}}
-            return json.dumps({"record": record, "note": (
+            return with_reminder(json.dumps({"record": record, "note": (
                 "Saved to the owner's tracker. If it's a new result you found for them (a role, a lead, an "
                 "option), not their own entry or a status change: once all of this reply's results are saved, "
                 "end with show_form and one verdict field holding them (each with its record, link, and a line "
-                "on why), so they keep or pass each, rather than listing them in your text.")})
+                "on why), so they keep or pass each, rather than listing them in your text.")}), config)
 
-        async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None) -> str:
-            return save_record(collection, key, title, status, url, fields)
+        async def save_record_async(collection: str, key: str, title: str = "", status: str = "", url: str = "", fields: dict | None = None,
+                                    config: RunnableConfig = None) -> str:
+            return save_record(collection, key, title, status, url, fields, config)
 
-        def file_link(url: str, title: str, kind: str = "") -> str:
+        def file_link(url: str, title: str, kind: str = "", config: RunnableConfig = None) -> str:
             # The app files this in the owner's own Library (it knows whose; this flow doesn't).
             # Nothing is stored here and no outside account changes, so it needs no approval.
             url = str(url or "").strip()
@@ -1028,20 +1114,27 @@ class ToolGatewayComponent(Component):
             kind = str(kind or "").strip().lower()
             if kind in LIBRARY_KINDS:
                 item["kind"] = kind
-            return json.dumps({"library_item": item,
-                               "note": "Saved to the owner's Library. Say so in a few words; they can open it there."})
+            return with_reminder(json.dumps({"library_item": item,
+                                             "note": "Saved to the owner's Library. Say so in a few words; they can open it there."}), config)
 
-        async def file_link_async(url: str, title: str, kind: str = "") -> str:
-            return file_link(url, title, kind)
+        async def file_link_async(url: str, title: str, kind: str = "", config: RunnableConfig = None) -> str:
+            return file_link(url, title, kind, config)
 
-        def report_run(outcome: str, summary: str = "") -> str:
+        def report_run(outcome: str, summary: str = "", config: RunnableConfig = None) -> str:
             # The app reads this to decide whether to notify the owner; it changes nothing.
             outcome = outcome if outcome in ("nothing_new", "update", "needs_you") else "update"
+            note = "Reported. Finish your reply briefly."
+            left = open_steps(thread_of(config))
+            if left:
+                listed = "; ".join(f"'{r['text']}' ({r['status'] or 'todo'})" for r in left[:6])
+                note = (f"Reported. Your plan still shows {listed}. Call update_plan now with the whole plan as it "
+                        "ended (each step done, blocked, or needs_you, with a note when it isn't done), then finish "
+                        "your reply briefly.")
             return json.dumps({"run_report": {"outcome": outcome, "summary": " ".join(str(summary or "").split())[:300]},
-                               "note": "Reported. Finish your reply briefly."})
+                               "note": note})
 
-        async def report_run_async(outcome: str, summary: str = "") -> str:
-            return report_run(outcome, summary)
+        async def report_run_async(outcome: str, summary: str = "", config: RunnableConfig = None) -> str:
+            return report_run(outcome, summary, config)
 
         def report_timeline(question: str, entries: list, causes: list | None = None) -> str:
             # Like remember, this changes nothing: the app reads the structured result, checks

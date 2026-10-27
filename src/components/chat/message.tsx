@@ -144,7 +144,7 @@ interface AssistantProps {
   onRetry: (messageId: string) => void;
   onOpenPanel?: (messageId: string) => void;
   /** Present while the latest reply waits on an approval and can be answered. */
-  onDecide?: (approvalId: string, decision: "approve" | "reject") => void;
+  onDecide?: (approvalId: string, decision: "approve" | "reject", always?: boolean) => void;
   onProposal?: (messageId: string, proposalId: string, decision: "save" | "dismiss" | "undo") => void;
   /** Present while the latest reply's questions or form can be answered; sends the answer as a message. */
   onAnswer?: (text: string, extras?: { attachments: Attachment[] }) => void;
@@ -222,7 +222,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           key={approval.id}
           approval={approval}
           conversationId={message.conversationId}
-          onDecide={onDecide && message.status === "awaiting" ? (decision) => onDecide(approval.id, decision) : undefined}
+          onDecide={onDecide && message.status === "awaiting" ? (decision, always) => onDecide(approval.id, decision, always) : undefined}
         />
       ))}
 
@@ -416,7 +416,7 @@ function ThreadApproval({
 }: {
   approval: Approval;
   conversationId: string;
-  onDecide?: (decision: "approve" | "reject") => void;
+  onDecide?: (decision: "approve" | "reject", always?: boolean) => void;
 }) {
   const onCall = useCallApproval(conversationId, approval.id);
   return (
@@ -425,9 +425,9 @@ function ThreadApproval({
       conversationId={conversationId}
       onDecide={
         onDecide
-          ? (decision) => {
+          ? (decision, always) => {
               onCall?.onTap();
-              onDecide(decision);
+              onDecide(decision, always);
             }
           : undefined
       }

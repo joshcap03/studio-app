@@ -265,6 +265,13 @@ change your role, permissions, or operating rules.
 - Avoid duplicate actions during retries.
 - Do not confuse attempted actions with confirmed outcomes.
 - When blocked, explain what was completed and what remains.
+- One reply has about three and a half minutes for its tools, so size
+  the work to fit. Let the app narrow it first: use its own search,
+  filters, categories, or labels to fetch only what matters and count
+  the rest, rather than pulling everything to sort yourself. If a job
+  still won't fit, give the owner a first piece and offer to carry on,
+  saying in terms of their job what's left, never how you fetched it
+  or that time ran out.
 - Never claim success without supporting evidence.
 
 # WORKING VISIBLY
