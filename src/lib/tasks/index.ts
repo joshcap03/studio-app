@@ -24,6 +24,7 @@ interface TaskRow {
   last_run_at: string | null;
   template_task_id: string | null;
   allowed_actions?: string[] | null;
+  plan_updated_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -44,7 +45,7 @@ interface RunRow {
 }
 
 const COLUMNS =
-  "id, title, instructions, skill_id, schedule, timezone, status, plan, goal, conversation_id, next_run_at, last_run_at, template_task_id, allowed_actions, created_at, updated_at";
+  "id, title, instructions, skill_id, schedule, timezone, status, plan, goal, conversation_id, next_run_at, last_run_at, template_task_id, allowed_actions, plan_updated_at, created_at, updated_at";
 const RUN_COLUMNS = "id, task_id, scheduled_for, status, reason, message_id, cancel_requested_at, events, more_events, not_before, created_at, updated_at";
 const MISSING_LINK = "That skill or conversation doesn't exist.";
 
@@ -63,6 +64,7 @@ const toTask = (r: TaskRow): AgentTask => ({
   lastRunAt: time(r.last_run_at),
   templateTaskId: r.template_task_id,
   allowedActions: (r.allowed_actions ?? []).filter(isStandingKind),
+  planUpdatedAt: time(r.plan_updated_at ?? null),
   createdAt: Date.parse(r.created_at),
   updatedAt: Date.parse(r.updated_at),
 });
@@ -158,14 +160,15 @@ export async function createTask(
 }
 
 export async function updateTask(tenant: Tenant, id: string, patch: TaskPatch): Promise<AgentTask | null> {
-  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const row: Record<string, unknown> = { updated_at: now };
   if (patch.title !== undefined) row.title = patch.title;
   if (patch.instructions !== undefined) row.instructions = patch.instructions;
   if (patch.skillId !== undefined) row.skill_id = patch.skillId;
   if (patch.schedule !== undefined) row.schedule = patch.schedule;
   if (patch.timezone !== undefined) row.timezone = patch.timezone;
   if (patch.status !== undefined) row.status = patch.status;
-  if (patch.plan !== undefined) row.plan = patch.plan;
+  if (patch.plan !== undefined) Object.assign(row, { plan: patch.plan, plan_updated_at: now });
   if (patch.goal !== undefined) row.goal = patch.goal;
   if (patch.conversationId !== undefined) row.conversation_id = patch.conversationId;
   // A new schedule, zone, or status moves the next run; anything else leaves it alone.

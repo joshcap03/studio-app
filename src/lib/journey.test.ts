@@ -66,4 +66,10 @@ describe("journeyFor", () => {
     expect(setupJourney({ plan: [], goal: "x", updatedAt: 1 })).toBeNull();
     expect(conversationJourney({ steps: [], goal: "x", updatedAt: 1 })).toBeNull();
   });
+
+  it("dates a task's plan by when the plan changed, not the task's other edits", () => {
+    const plan = [{ id: "s1", text: "Find roles", status: "doing" as const }];
+    expect(taskJourney({ plan, goal: null, updatedAt: 9, planUpdatedAt: 4 })?.updatedAt).toBe(4);
+    expect(taskJourney({ plan, goal: null, updatedAt: 9, planUpdatedAt: null })?.updatedAt).toBe(9);
+  });
 });
