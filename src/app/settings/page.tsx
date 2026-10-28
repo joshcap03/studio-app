@@ -3,14 +3,12 @@ import { ArrowLeft } from "lucide-react";
 import { SettingsView } from "@/components/settings/settings-view";
 import { TabAgent } from "@/components/tab-agent";
 import { requirePageTenant } from "@/lib/tenant";
-import { getGuardrail } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const tenant = await requirePageTenant();
-  const guardrail = await getGuardrail(tenant);
 
   return (
     <main className="min-h-dvh px-5 pt-6 pb-24 md:px-8 md:pt-10">
@@ -25,13 +23,12 @@ export default async function SettingsPage() {
         </a>
         <h1 className="mt-6 font-display text-[30px] leading-tight tracking-[-0.015em]">Settings</h1>
         <p className="mt-1 text-[14px] text-fg-3">
-          Yours, shared by all your agents. To change what {tenant.workspace.name} does, open{" "}
+          Shared by all your agents.{" "}
           <a href="/agent" className="text-fg-2 underline decoration-line-strong underline-offset-2 hover:text-fg">
-            agent setup
+            {tenant.workspace.name}&apos;s own settings
           </a>
-          .
         </p>
-        <SettingsView email={tenant.email} guardrail={guardrail} account={tenant.account} agents={tenant.workspaces} current={tenant.workspace.id} />
+        <SettingsView email={tenant.email} account={tenant.account} agents={tenant.workspaces} current={tenant.workspace.id} />
       </div>
     </main>
   );

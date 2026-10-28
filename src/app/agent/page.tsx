@@ -12,7 +12,7 @@ import { listMemories, memoryEnabled } from "@/lib/memory";
 import { barScore, describeScore } from "@/lib/verdicts";
 import { defaultPersona } from "@/lib/voice/persona";
 import { voiceStatus } from "@/lib/voice/status";
-import { getSettings, getUsage } from "@/lib/workspace";
+import { getSettings } from "@/lib/workspace";
 
 export const metadata: Metadata = { title: "Agent" };
 export const dynamic = "force-dynamic";
@@ -31,10 +31,9 @@ export default async function AgentPage() {
   const named = previewEnabled(tenant, "companion");
   const voice = voiceStatus(tenant);
   const companion = named || voice ? getCompanion(tenant).catch(() => null) : Promise.resolve(null);
-  const [settings, initialMemories, usage, initialPromotions, files, score, initialCompanion] = await Promise.all([
+  const [settings, initialMemories, initialPromotions, files, score, initialCompanion] = await Promise.all([
     getSettings(tenant),
     memories,
-    getUsage(tenant),
     promotions,
     listAgentFiles(tenant),
     barScore(tenant).then(describeScore, () => null),
@@ -57,7 +56,6 @@ export default async function AgentPage() {
           initialSettings={settings}
           initialMemories={initialMemories}
           initialPromotions={initialPromotions}
-          usage={usage}
           canEdit={tenant.workspace.role === "owner"}
           initialFiles={files}
           allowFiles={getAgentAdapter().capabilities.attachments}

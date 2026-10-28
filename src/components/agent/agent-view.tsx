@@ -8,9 +8,8 @@ import { JourneyList } from "@/components/ui/journey";
 import { BusinessBrain } from "@/components/settings/business-brain";
 import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "@/components/settings/section";
 import { PreviewNote, VoicePreviews, VoiceTile } from "@/components/voice/voice-preview";
-import { appName } from "@/lib/apps";
 import { ApiError, api, uploadAgentFile } from "@/lib/client/api";
-import { DEFAULT_TEMPLATE_ID, templateById, templateChoices } from "@/lib/templates";
+import { templateById } from "@/lib/templates";
 import {
   ATTACHMENT_TYPES,
   MAX_AGENT_FILES,
@@ -18,7 +17,6 @@ import {
   type Companion as CompanionInfo,
   type Memory,
   type MemoryPromotion,
-  type UsageSummary,
   type WorkspaceSettings,
 } from "@/lib/types";
 import type { VoiceStatus } from "@/lib/voice/types";
@@ -43,7 +41,6 @@ interface Props {
   initialMemories: Memory[] | null;
   /** Set (possibly empty) only when the Brain is on for this account. */
   initialPromotions: MemoryPromotion[] | null;
-  usage: UsageSummary;
   canEdit: boolean;
   /** The caller's own files for this agent. */
   initialFiles: Attachment[];
@@ -69,7 +66,7 @@ async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<Workspa
 }
 
 // Everything about the active agent: who it is, what it knows, and how much it's used.
-export function AgentView({ initialSettings, initialMemories, initialPromotions, usage, canEdit, initialFiles, allowFiles, score, initialCompanion, voice }: Props) {
+export function AgentView({ initialSettings, initialMemories, initialPromotions, canEdit, initialFiles, allowFiles, score, initialCompanion, voice }: Props) {
   const [settings, setSettings] = useState(initialSettings);
   // The name it goes by on calls follows a rename here.
   const [keptName, setKeptName] = useState(voice?.keptName ?? null);
@@ -104,26 +101,6 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
         ) : (
           <MemorySection initial={initialMemories} isOwner={canEdit} />
         )}
-        <Section title="Usage" description="Messages to this agent today.">
-          <div className="rounded-xl border border-line bg-surface px-4 py-4">
-            <div className="flex items-baseline justify-between text-[14px]">
-              <span className="text-fg-2">Today</span>
-              <span className="tabular-nums">
-                <span className="font-medium">{usage.runsToday}</span>
-                <span className="text-fg-3"> / {usage.runsPerDayLimit}</span>
-              </span>
-            </div>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-subtle">
-              <div
-                className="h-full rounded-full bg-fg-2 transition-[width]"
-                style={{ width: `${Math.min(100, (usage.runsToday / usage.runsPerDayLimit) * 100)}%` }}
-              />
-            </div>
-            <p className="mt-3 text-[12.5px] text-fg-3">
-              Up to {usage.runsPerMinuteLimit} messages a minute per person. Limits reset at midnight UTC.
-            </p>
-          </div>
-        </Section>
         <ChatHistorySection />
       </div>
     </>
@@ -541,13 +518,12 @@ function ChatHistorySection() {
   );
 }
 
-
 function AgentSection({ initial, canEdit, onSaved }: { initial: WorkspaceSettings; canEdit: boolean; onSaved: (settings: WorkspaceSettings) => void }) {
   const [saved, setSaved] = useState(initial);
   const [draft, setDraft] = useState(initial);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
-  const dirty = draft.profile !== saved.profile || draft.agentInstructions !== saved.agentInstructions;
+  const dirty = draft.profile !== saved.profile;
   const template = templateById(saved.templateId);
   useWarnUnsaved(canEdit && dirty);
 
@@ -557,8 +533,9 @@ function AgentSection({ initial, canEdit, onSaved }: { initial: WorkspaceSetting
     setStatus("saving");
     setError(null);
     try {
-      // The name is saved from the page title, so leave it out here.
-      const settings = await patchSettings({ profile: draft.profile, agentInstructions: draft.agentInstructions });
+      // The name is saved from the page title, and the agent's instructions (its templates')
+      // aren't shown, so only the profile goes.
+      const settings = await patchSettings({ profile: draft.profile });
       setSaved(settings);
       setDraft(settings);
       setStatus("saved");
@@ -572,17 +549,7 @@ function AgentSection({ initial, canEdit, onSaved }: { initial: WorkspaceSetting
   return (
     <Section title="Setup">
       {canEdit ? <SetupInterview setup={saved.setup} /> : null}
-      {canEdit ? (
-        <TemplatePicker
-          current={saved.templateId}
-          onApplied={(settings) => {
-            setSaved(settings);
-            // Keep unsaved edits; take the instructions the template filled in.
-            setDraft((d) => ({ ...d, templateId: settings.templateId, agentInstructions: d.agentInstructions || settings.agentInstructions }));
-          }}
-        />
-      ) : null}
-      <form onSubmit={save} onKeyDown={submitOnModEnter} className="mt-5 space-y-5">
+      <form onSubmit={save} onKeyDown={submitOnModEnter} className="space-y-5">
         <div>
           <label htmlFor="context" className="text-[13px] font-medium text-fg-2">
             What this agent is for
@@ -595,21 +562,6 @@ function AgentSection({ initial, canEdit, onSaved }: { initial: WorkspaceSetting
             value={draft.profile}
             onChange={(e) => setDraft({ ...draft, profile: e.target.value })}
             placeholder={template?.profilePrompt ?? "What you want this agent to help with, a few lines about you, and anything it should always keep in mind."}
-            className={`mt-1.5 resize-y py-3 leading-relaxed ${input}`}
-          />
-        </div>
-        <div>
-          <label htmlFor="instructions" className="text-[13px] font-medium text-fg-2">
-            Instructions for the agent
-          </label>
-          <textarea
-            id="instructions"
-            disabled={!canEdit}
-            rows={4}
-            maxLength={8000}
-            value={draft.agentInstructions}
-            onChange={(e) => setDraft({ ...draft, agentInstructions: e.target.value })}
-            placeholder="Tone, preferences, things to always or never do…"
             className={`mt-1.5 resize-y py-3 leading-relaxed ${input}`}
           />
         </div>
@@ -653,81 +605,6 @@ function SetupInterview({ setup }: { setup: WorkspaceSettings["setup"] }) {
     </div>
   );
 }
-
-function TemplatePicker({ current, onApplied }: { current: string | null; onApplied: (settings: WorkspaceSettings) => void }) {
-  const [choice, setChoice] = useState(current ?? DEFAULT_TEMPLATE_ID);
-  const [status, setStatus] = useState<"idle" | "applying" | "error">("idle");
-  const [message, setMessage] = useState<string | null>(null);
-  const chosen = templateById(choice);
-
-  async function apply() {
-    setStatus("applying");
-    setMessage(null);
-    const res = await fetch("/api/workspace/template", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...agentHeaders() },
-      body: JSON.stringify({ templateId: choice, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-    });
-    const body = (await res.json().catch(() => null)) as { settings?: WorkspaceSettings; addedSkills?: number; addedTasks?: number; error?: string } | null;
-    if (!res.ok || !body?.settings) {
-      setStatus("error");
-      setMessage(body?.error ?? "Couldn't apply the template. Try again.");
-      return;
-    }
-    onApplied(body.settings);
-    setStatus("idle");
-    const added = [
-      body.addedSkills ? `${body.addedSkills} skill${body.addedSkills === 1 ? "" : "s"}` : "",
-      body.addedTasks ? `${body.addedTasks} paused task${body.addedTasks === 1 ? "" : "s"}` : "",
-    ].filter(Boolean);
-    setMessage(added.length > 0 ? `Applied. Added ${added.join(" and ")}.` : "Applied. Nothing new to add.");
-  }
-
-  return (
-    <div className="rounded-xl border border-line bg-surface px-4 py-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <label htmlFor="template" className="text-[13px] font-medium text-fg-2">
-          Template
-        </label>
-        <select
-          id="template"
-          value={choice}
-          onChange={(e) => {
-            setChoice(e.target.value);
-            setMessage(null);
-          }}
-          className="h-8 rounded-lg border border-line bg-surface px-2 text-[13.5px] text-fg outline-none focus:border-line-strong"
-        >
-          {templateChoices(current).map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-              {t.id === current ? " (current)" : ""}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => void apply()}
-          disabled={status === "applying"}
-          className="h-8 rounded-lg border border-line px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover disabled:opacity-50"
-        >
-          {status === "applying" ? "Applying…" : "Apply"}
-        </button>
-        <span role="status" className={`text-[12.5px] ${status === "error" ? "text-danger" : "text-fg-3"}`}>
-          {message}
-        </span>
-      </div>
-      {chosen ? (
-        <p className="mt-2 text-[12.5px] leading-snug text-fg-3">
-          {chosen.description} Adds its skills and fills in instructions if they&apos;re empty; never overwrites what you wrote.
-          {chosen.apps.length > 0 ? ` Works best with ${chosen.apps.map(appName).join(", ")}.` : ""}
-          {chosen.optionalApps?.length ? ` Optional: ${chosen.optionalApps.map(appName).join(", ")}.` : ""}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 
 function MemorySection({ initial, isOwner }: { initial: Memory[] | null; isOwner: boolean }) {
   const [memories, setMemories] = useState(initial ?? []);

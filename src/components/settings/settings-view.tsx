@@ -13,8 +13,6 @@ import { SaveRow, Section, input, submitOnModEnter, useWarnUnsaved } from "./sec
 
 interface Props {
   email: string | null;
-  /** The member's personal guardrail, shown read-only; null when they don't have one. */
-  guardrail: string | null;
   /** The person's own profile, shared by all their agents. */
   account: AccountProfile;
   /** The member's agents, and the one this page was opened from. */
@@ -23,28 +21,17 @@ interface Props {
 }
 
 // What belongs to the person, shared by all their agents. Each agent's own setup lives at /agent.
-export function SettingsView({ email, guardrail, account, agents, current }: Props) {
+export function SettingsView({ email, account, agents, current }: Props) {
   return (
     <div className="mt-10 space-y-14">
-      {guardrail ? (
-        <Section
-          title="Personal guardrail"
-          description="On. The agent follows these rules for you everywhere, ahead of any other instructions. They can't be changed here."
-        >
-          <p className="rounded-xl border border-line bg-subtle/50 px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap text-fg-2">{guardrail}</p>
-        </Section>
-      ) : null}
       <YouSection initial={account} />
-      <Section id="agents" title="Agents" description="Each agent keeps its own chats, tasks, skills, and memory. They all share you, your connected apps, and your saved logins.">
+      <Section id="agents" title="Agents" description="Each keeps its own chats and memory.">
         <AgentsList initial={agents} current={current} />
       </Section>
-      <Section
-        title="Connected apps"
-        description="Apps your agents can use for you. Every one of your agents shares these. It asks before changing anything, and only you can use your connections."
-      >
+      <Section title="Connected apps" description="Shared by all your agents.">
         <ConnectionsList />
       </Section>
-      <Section title="Saved logins & cards" description="Your agents use these in their browser only when you pick one. They never see them.">
+      <Section title="Saved logins & cards" description="Filled in only when you pick one. Your agents never see them.">
         <SavedCredentials />
       </Section>
       <WithoutAskingSection />
@@ -95,7 +82,7 @@ function WithoutAskingSection() {
 
   if (allowed.length === 0) return null;
   return (
-    <Section title="Done without asking" description="Your agents only ask before moving money or deleting something for good, and only the first time. These you’ve approved, so they go ahead when the job calls for it.">
+    <Section title="Done without asking" description="You’ve approved these once, so your agents go ahead without asking.">
       <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
         {allowed.map((kind) => (
           <li key={kind} className="flex items-center justify-between gap-4 px-4 py-3">
@@ -145,12 +132,9 @@ function SignInsSection() {
 
   if (saved === undefined || saved === null) return null;
   return (
-    <Section
-      title="Sign-ins in your agents' browser"
-      description="When you sign in to a site in an agent's browser, the sign-in is kept so it can work there for you next time. It still asks before changing anything."
-    >
+    <Section title="Browser sign-ins">
       <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
-        <p className="text-[13.5px] text-fg-2">{saved ? "Sites you sign in to there stay signed in until you forget them." : "Nothing saved."}</p>
+        <p className="text-[13.5px] text-fg-2">{saved ? "Sites you sign in to in an agent’s browser stay signed in." : "Nothing saved."}</p>
         {saved ? (
           <button type="button" onClick={() => void forget()} disabled={busy} className="shrink-0 text-[13.5px] font-medium text-fg-2 hover:text-fg disabled:opacity-60">
             {busy ? "Forgetting…" : "Forget all"}
@@ -198,7 +182,7 @@ function NotificationsSection() {
 
   const switchable = state === "on" || state === "off";
   return (
-    <Section title="Notifications on this device">
+    <Section title="Notifications">
       <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
         <p className="text-[13.5px] text-fg-2">{state ? PUSH_NOTES[state] : "Checking…"}</p>
         {switchable ? (
@@ -247,7 +231,7 @@ function YouSection({ initial }: { initial: AccountProfile }) {
   }
 
   return (
-    <Section title="You" description="Every one of your agents reads this, so you only have to say it once.">
+    <Section title="You" description="All your agents read this.">
       <form onSubmit={save} onKeyDown={submitOnModEnter} className="space-y-5">
         <div>
           <label htmlFor="your-name" className="text-[13px] font-medium text-fg-2">
