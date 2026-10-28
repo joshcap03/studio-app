@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, type AgentTenantContext } from "@/lib/agent/types";
-import { STALE_STREAM_MS, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
+import { STALE_STREAM_MS, type Conversation, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
 import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
@@ -105,6 +105,13 @@ export interface TurnDeps {
   adapter: AgentAdapter;
   context: AgentTenantContext;
   idleTimeoutMs: number;
+  /**
+   * The conversation and its messages as the caller already read them (building the context
+   * reads them anyway), so the turn doesn't read them again. They're a moment old, so the turn
+   * checks the latest message is still the one here (one small read) and reads the list again
+   * only when it isn't. Without it, the turn reads both itself.
+   */
+  preloaded?: { conversation: Conversation | null; messages: ChatMessage[] };
   /** Loads an attachment's bytes for the agent (under the caller's session). */
   loadAttachment?: (attachment: StoredAttachment) => Promise<Blob>;
   /** The conversation's project files, given to the agent on every new run (not on a resumed one). */
@@ -354,8 +361,19 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     if (activeRuns.has(runKey)) throw new TurnError(409, "The agent is still working in this conversation.");
   }
 
-  let conversation = await store.getConversation(conversationId);
-  let existing: ChatMessage[] = conversation ? await store.listMessages(conversationId) : [];
+  let conversation: Conversation | null;
+  let existing: ChatMessage[];
+  if (deps.preloaded) {
+    ({ conversation, messages: existing } = deps.preloaded);
+    // A reply that started elsewhere since the list was read would be missed, so the latest
+    // message is checked, and the list read again only when it has moved on.
+    const latest = conversation ? await store.latestMessage(conversationId) : null;
+    const last = existing.at(-1);
+    if (latest?.id !== last?.id || latest?.status !== last?.status) existing = conversation ? await store.listMessages(conversationId) : [];
+  } else {
+    conversation = await store.getConversation(conversationId);
+    existing = conversation ? await store.listMessages(conversationId) : [];
+  }
   // Another server instance may be running this conversation: redirecting stops it there, as Stop does.
   const elsewhere = existing.at(-1)?.status === "streaming" ? existing.at(-1)! : null;
   if (elsewhere) {

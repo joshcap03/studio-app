@@ -162,7 +162,12 @@ export async function buildTurnDeps(
   // A run started with the setup skill is the setup interview's, from its context to its first plan.
   const setupRun = input.kind === "send" && input.skillId === SETUP_SKILL_ID;
   const store = storeFor(tenant);
-  const earlier = store.listMessages(conversationId).catch(() => null);
+  // Read once here, for the context and the turn alike (startTurn gets them as `preloaded`).
+  const loading = Promise.all([store.getConversation(conversationId), store.listMessages(conversationId)]);
+  const earlier = loading.then(([, messages]) => messages).catch(() => null);
+  // In a task's conversation, the task, with the member's standing OKs on it from before. Read
+  // once, for the context and the run alike.
+  const loadingTask = getTaskForConversation(tenant, conversationId).catch(() => null);
   // A new message says how it was sent. A retry, an edit, or a decision answers the member's
   // latest message again, so it's said the way that one was (spoken on a call, or a voice
   // message), whatever the browser sends.
@@ -192,13 +197,13 @@ export async function buildTurnDeps(
       const asks = (end < 0 ? messages : messages.slice(0, end)).filter((m) => m.role === "user").map((m) => m.content);
       return "text" in input ? [...asks, input.text] : asks;
     })
-    .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId, modality, { setupRun }));
+    .then((asks) => buildAgentContext(tenant, recallQuery(asks), conversationId, modality, { setupRun, task: loadingTask }));
   context.catch(() => undefined);
   const adapter = getAgentAdapter();
   const loadSkill = (id: string) => getSkill(tenant, id, { call: modality === "call" });
   // A conversation's project is the one it was started in (or moved to) by its member.
   const loadProject = async () => {
-    const conversation = await store.getConversation(conversationId);
+    const [conversation] = await loading;
     const projectId = conversation ? conversation.projectId : input.kind === "send" ? input.projectId : undefined;
     return projectId ? projectForRun(tenant, projectId, adapter.capabilities.attachments) : undefined;
   };
@@ -212,9 +217,9 @@ export async function buildTurnDeps(
       return null;
     }),
     input.kind === "send" && input.screen && voiceOn ? onScreen(tenant, input.screen).catch(() => null) : Promise.resolve(null),
-    // In a task's conversation, the task, with the member's standing OKs on it from before.
-    getTaskForConversation(tenant, conversationId).catch(() => null),
+    loadingTask,
   ]);
+  const [conversation, messages] = await loading;
   // A watch's run reads other people's words, so only the older tidy kinds cover it there, never
   // a payment the member OK'd elsewhere.
   const allowed = (await allowedHere(tenant, task)).filter((k) => !watchRun || k === "gmail_labels");
@@ -285,6 +290,7 @@ export async function buildTurnDeps(
   const deps: TurnDeps = {
     store,
     adapter,
+    preloaded: { conversation, messages },
     context: {
       ...(await context),
       agentFiles: named(agentFiles),

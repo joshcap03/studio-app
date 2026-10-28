@@ -198,11 +198,11 @@ describe("buildTurnDeps", () => {
     await setup.deps.savePlan?.([{ text: "x", status: "todo" }], "a setup you'd trust");
     expect(savePlanFromAgent).toHaveBeenLastCalledWith(tenant, id, [{ text: "x", status: "todo" }], "a setup you'd trust", { setup: true });
     // Its context is the setup's too, even before the setup is recorded as under way again.
-    expect(buildAgentContext).toHaveBeenLastCalledWith(tenant, "", id, undefined, { setupRun: true });
+    expect(buildAgentContext).toHaveBeenLastCalledWith(tenant, "", id, undefined, expect.objectContaining({ setupRun: true }));
     const plain = await buildTurnDeps(tenant, { conversationId: id, input: { kind: "send", text: "Find caterers" } });
     await plain.deps.savePlan?.([{ text: "y", status: "todo" }], undefined);
     expect(savePlanFromAgent).toHaveBeenLastCalledWith(tenant, id, [{ text: "y", status: "todo" }], undefined, { setup: false });
-    expect(buildAgentContext).toHaveBeenLastCalledWith(tenant, "", id, undefined, { setupRun: false });
+    expect(buildAgentContext).toHaveBeenLastCalledWith(tenant, "", id, undefined, expect.objectContaining({ setupRun: false }));
   });
 });
 

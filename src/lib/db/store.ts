@@ -117,6 +117,11 @@ export interface Store {
    */
   lastMessages(conversationIds: string[]): Promise<Record<string, LastMessage>>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
+  /**
+   * The conversation's latest message, as far as whether a turn may start there: its id and
+   * status (one small read, for checking a list loaded a moment ago is still current).
+   */
+  latestMessage(conversationId: string): Promise<{ id: string; status: MessageStatus } | null>;
   /** One message of the caller's in a conversation, or null when there's no such message. */
   getMessage(conversationId: string, id: string): Promise<ChatMessage | null>;
   insertMessage(message: Omit<ChatMessage, "createdAt">): Promise<ChatMessage>;
@@ -569,6 +574,20 @@ export function createStore(db: Db, scope: Scope): Store {
           .order("seq", { ascending: true }),
       ) as unknown as MessageRow[];
       return rows.map(toMessage);
+    },
+
+    async latestMessage(conversationId) {
+      const row = check(
+        await messages()
+          .select("id, status, updated_at")
+          .eq("conversation_id", conversationId)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .order("seq", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ) as { id: string; status: MessageStatus; updated_at: string } | null;
+      return row ? { id: row.id, status: liveStatus(row.status, row.updated_at) } : null;
     },
 
     async getMessage(conversationId, id) {

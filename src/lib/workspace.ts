@@ -10,6 +10,7 @@ import { taskContextFor } from "@/lib/tasks/agent";
 import { listRecords } from "@/lib/tasks/records";
 import { templateById } from "@/lib/templates";
 import type { Tenant } from "@/lib/tenant-core";
+import type { AgentTask } from "@/lib/tasks/types";
 import type { AgentSetup, Modality, UsageSummary, WorkspaceSettings } from "@/lib/types";
 import { setupHolds } from "@/lib/setup-state";
 import { setupSkill } from "@/lib/skills/setup";
@@ -156,13 +157,15 @@ export async function claimRun(tenant: Tenant, replyId?: string, kind: RunKind =
  * (the member's message) pulls in memories that match it. `conversationId` is the conversation
  * being answered, left out of the recent chats a guardrail run sees. `setupRun`: the run was
  * started with the setup skill, which picks the interview up again in its own conversation.
+ * `task`: the conversation's task as the caller already read it (null for none), so it isn't
+ * read again here.
  */
 export async function buildAgentContext(
   tenant: Tenant,
   query?: string,
   conversationId?: string,
   modality?: Modality,
-  { setupRun = false }: { setupRun?: boolean } = {},
+  { setupRun = false, task }: { setupRun?: boolean; task?: Promise<AgentTask | null> } = {},
 ): Promise<AgentTenantContext> {
   const loading = getSettings(tenant);
   const [settings, memories, recent, guardrail, tasks, bar, self, library, browserFiles] = await Promise.all([
@@ -171,7 +174,7 @@ export async function buildAgentContext(
     recentMemories(tenant),
     guardrailForRun(tenant, conversationId),
     // A run goes ahead without its task context rather than failing over it.
-    taskContextFor(tenant, conversationId).catch((e) => {
+    taskContextFor(tenant, conversationId, task).catch((e) => {
       console.error("[context] couldn't load the task and tracker", e);
       return {};
     }),

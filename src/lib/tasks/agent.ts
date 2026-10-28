@@ -9,7 +9,7 @@ import { fieldsByCollection, withoutBlanks } from "./fields";
 import { listRecords, upsertRecord } from "./records";
 import { repeats } from "./schedule";
 import { MAX_PLAN_STEPS, planSchema, STEP_STATUSES, upsertRecordInput } from "./schema";
-import type { PlanStep } from "./types";
+import type { AgentTask, PlanStep } from "./types";
 
 // The agent's side of tasks and plans: what it's told about the conversation's task (or its own
 // plan for the work here) and the member's tracker before a run, and checking what it reports
@@ -24,14 +24,16 @@ const contextSteps = (plan: PlanStep[]) => plan.map(({ text, status, note }) => 
 
 /**
  * The task this conversation belongs to (or, in any other conversation, the plan the agent keeps
- * for the work in it) and the member's tracker, for the agent's context.
+ * for the work in it) and the member's tracker, for the agent's context. `preloaded`: the task
+ * as the caller already read it (null for none), so it isn't read again.
  */
 export async function taskContextFor(
   tenant: Tenant,
   conversationId: string | undefined,
+  preloaded?: Promise<AgentTask | null>,
 ): Promise<Pick<AgentTenantContext, "task" | "plan" | "tracker" | "trackerFields">> {
   const [task, records, own] = await Promise.all([
-    conversationId ? getTaskForConversation(tenant, conversationId) : Promise.resolve(null),
+    preloaded ?? (conversationId ? getTaskForConversation(tenant, conversationId) : Promise.resolve(null)),
     listRecords(tenant),
     // Without its own plan the run still has its task and tracker.
     conversationId
