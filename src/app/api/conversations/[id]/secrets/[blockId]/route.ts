@@ -22,7 +22,7 @@ const ids = z.object({ id: z.uuid(), blockId: z.uuid() });
 const cvv = z.string().regex(/^[0-9]{3,4}$/, "Enter the 3 or 4 digit security code.");
 
 const body = z.discriminatedUnion("use", [
-  // A saved login (for this site) or card on file; a card needs its security code each time.
+  // A saved login (for this site) or card on file; a card saved without its security code needs it typed.
   z.strictObject({ use: z.literal("saved"), credentialId: z.uuid(), cvv: cvv.optional() }),
   z.strictObject({
     use: z.literal("login"),
@@ -157,9 +157,12 @@ export async function POST(request: NextRequest, { params }: Context) {
           // A saved login fills only on the exact site it was saved for.
           origin = saved.credential.origin;
         } else {
-          if (!input.cvv) return jsonError(400, "Enter the 3 or 4 digit security code.");
-          const { number, name, expMonth, expYear } = saved.card;
-          values = { card_name: name, card_number: number, card_expiry: `${expMonth}/${expYear}`, card_code: input.cvv };
+          const { number, name, expMonth, expYear, code } = saved.card;
+          const cardCode = input.cvv ?? code;
+          if (!cardCode) return jsonError(400, "Enter the 3 or 4 digit security code.");
+          values = { card_name: name, card_number: number, card_expiry: `${expMonth}/${expYear}`, card_code: cardCode };
+          // A card saved before its code was kept gets it now, so it isn't asked for again.
+          if (!code && credentialsEnabled()) save = () => saveCard(tenant, { number, name, expMonth, expYear, code: cardCode, label: saved.credential.label });
         }
       } else if (input.use === "code") {
         if (block.secret !== "code") return jsonError(400, `This card asks for ${ASKS[block.secret]}.`);
@@ -177,8 +180,8 @@ export async function POST(request: NextRequest, { params }: Context) {
         if (!exp) return jsonError(400, "Enter the expiry as MM/YY.");
         values = { card_name: input.name, card_number: number, card_expiry: `${exp.month}/${exp.year}`, card_code: input.cvv };
         label = `${cardBrand(number)} ending ${number.slice(-4)}`;
-        const name = input.name;
-        if (input.save && credentialsEnabled()) save = () => saveCard(tenant, { number, name, expMonth: exp.month, expYear: exp.year });
+        const { name, cvv: code } = input;
+        if (input.save && credentialsEnabled()) save = () => saveCard(tenant, { number, name, expMonth: exp.month, expYear: exp.year, code });
       }
 
       const result = await fillBrowser(tenant, parsed.data.id, values, origin ? { origin } : {});
