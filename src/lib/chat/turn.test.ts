@@ -1861,3 +1861,48 @@ describe("keep going", () => {
     expect(next.at(-1)).toMatchObject({ type: "end", message: { status: "complete" } });
   });
 });
+
+describe("startTurn with preloaded state", () => {
+  async function conversationWithReply(store: ReturnType<typeof createMemoryStore>) {
+    const id = crypto.randomUUID();
+    await store.createConversation({ id, title: "Roles" });
+    const base = { conversationId: id, status: "complete" as const, activity: [], artifacts: [] };
+    await store.insertMessage({ ...base, id: crypto.randomUUID(), role: "user", content: "Find roles" });
+    await store.insertMessage({ ...base, id: crypto.randomUUID(), role: "assistant", content: "Found two." });
+    return { id, preloaded: { conversation: await store.getConversation(id), messages: await store.listMessages(id) } };
+  }
+
+  it("uses the conversation and messages given, reading only the latest message's state", async () => {
+    const store = createMemoryStore(scopeA);
+    const { id, preloaded } = await conversationWithReply(store);
+    const list = vi.spyOn(store, "listMessages");
+    const get = vi.spyOn(store, "getConversation");
+    const latest = vi.spyOn(store, "latestMessage");
+    const seen: AgentRunInput[] = [];
+    const adapter = scripted([{ type: "text-delta", text: "Three now." }], undefined, seen);
+    const events = await collect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, preloaded }, { conversationId: id, kind: "send", text: "Any more?" }));
+    expect(events.at(-1)?.type).toBe("end");
+    expect(latest).toHaveBeenCalledTimes(1);
+    expect(get).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+    // The agent still gets the earlier exchange as history.
+    expect(seen[0].history).toEqual([
+      { role: "user", content: "Find roles" },
+      { role: "assistant", content: "Found two." },
+    ]);
+    expect((await store.listMessages(id)).map((m) => m.content)).toEqual(["Find roles", "Found two.", "Any more?", "Three now."]);
+  });
+
+  it("reads the list again when a reply started there since, and refuses the turn", async () => {
+    const store = createMemoryStore(scopeA);
+    const { id, preloaded } = await conversationWithReply(store);
+    // Another request's reply started streaming after the snapshot was taken.
+    await store.insertMessage({ id: crypto.randomUUID(), conversationId: id, role: "assistant", content: "", status: "streaming", activity: [], artifacts: [] });
+    const list = vi.spyOn(store, "listMessages");
+    const adapter = scripted([{ type: "text-delta", text: "never" }]);
+    await expect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, preloaded }, { conversationId: id, kind: "send", text: "Hi" })).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+});

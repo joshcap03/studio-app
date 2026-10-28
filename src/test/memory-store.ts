@@ -123,6 +123,13 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
           memoryProposals: m.memoryProposals ?? [],
         }));
     },
+    async latestMessage(conversationId) {
+      const c = shared.conversations.get(conversationId);
+      if (!c || !owns(c)) return null;
+      const last = shared.messages.filter((m) => m.conversationId === conversationId).at(-1);
+      return last ? { id: last.id, status: last.status } : null;
+    },
+
     async getMessage(conversationId, id) {
       return (await store.listMessages(conversationId)).find((m) => m.id === id) ?? null;
     },
