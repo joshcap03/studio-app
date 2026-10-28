@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { STANDING_LABELS, type StandingKind } from "@/lib/approvals/standing";
+import { standingLabel, type StandingKind } from "@/lib/approvals/standing";
 import { api } from "@/lib/client/api";
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/client/push";
 import type { AccountProfile } from "@/lib/tenant-core";
@@ -67,8 +67,8 @@ export function SettingsView({ email, guardrail, account, agents, current }: Pro
 }
 
 /**
- * Changes the person OK'd for good with "Don't ask again" on a request, which none of their agents
- * asks about anymore. Hidden while there are none.
+ * The kinds of payment or deletion the person has approved once, which none of their agents asks
+ * about anymore. Hidden while there are none.
  */
 function WithoutAskingSection() {
   const [allowed, setAllowed] = useState<StandingKind[]>([]);
@@ -95,11 +95,11 @@ function WithoutAskingSection() {
 
   if (allowed.length === 0) return null;
   return (
-    <Section title="Done without asking" description="You said not to ask about these again. Every one of your agents does them when the job calls for it. Sending, deleting, and archiving still wait for you.">
+    <Section title="Done without asking" description="Your agents only ask before moving money or deleting something for good, and only the first time. These you’ve approved, so they go ahead when the job calls for it.">
       <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
         {allowed.map((kind) => (
           <li key={kind} className="flex items-center justify-between gap-4 px-4 py-3">
-            <span className="text-[13.5px] text-fg-2">{STANDING_LABELS[kind]}</span>
+            <span className="text-[13.5px] text-fg-2">{standingLabel(kind)}</span>
             <button
               type="button"
               onClick={() => void askAgain(kind)}

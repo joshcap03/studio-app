@@ -956,8 +956,12 @@ export function gatewayFailure(text: string): string | undefined {
   return undefined;
 }
 
-/** The gateway held a call until it goes through approval (a change, or code that could make one); the next call asks. */
-export const NEEDS_APPROVAL = /^"?(This changes something in the owner's accounts, so it needs their approval|Running code needs the owner's approval)\b/;
+/**
+ * The gateway held a call until it goes through approval (money or a permanent delete, or code
+ * that could do one; before, any change); the next call asks.
+ */
+export const NEEDS_APPROVAL =
+  /^"?(This moves money or deletes something for good, so it needs the owner's OK|This code needs the owner's approval|This changes something in the owner's accounts, so it needs their approval|Running code needs the owner's approval)\b/;
 
 /**
  * Common technical failure reasons in plain words; anything else passes through, trimmed.

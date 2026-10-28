@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { STANDING_KINDS } from "@/lib/approvals/standing";
+import { isStandingKind, type StandingKind } from "@/lib/approvals/standing";
 import { MAX_GOAL_LENGTH } from "@/lib/types";
 import { taskScheduleSchema } from "./schedule";
 
@@ -78,7 +78,7 @@ export const createTaskBody = z.strictObject({
 
 export const patchTaskBody = z
   // `disallow` takes back a standing OK (src/lib/approvals/standing.ts); one is given only with a tap on a real request.
-  .strictObject({ ...taskFields, status: z.enum(TASK_STATUSES), goal: goalSchema, disallow: z.enum(STANDING_KINDS) })
+  .strictObject({ ...taskFields, status: z.enum(TASK_STATUSES), goal: goalSchema, disallow: z.string().refine((k): k is StandingKind => isStandingKind(k), "Unknown kind.") })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "Nothing to change.");
 

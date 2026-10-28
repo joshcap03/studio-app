@@ -244,7 +244,7 @@ this link with your notes in it"). What stops it:
    rather than the spec's "hidden unless allowed", so a job that needs a page can still get it.)
    Gap: Langflow drops tweaks when a paused run resumes, so after the member approves something
    in a watch run, the rest of that run follows the normal rules. They're in the loop by then,
-   and writes still need approval.
+   and money and permanent deletes still ask. No standing OK for money covers a watch run.
 4. **Memory written in a watch run goes to the agent's shared memory**, never the person's own
    (`u_<user>`), including after a retry or an approval there; the reply's Undo and the Brain show
    it, and its source is the run's conversation.

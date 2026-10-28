@@ -162,13 +162,15 @@ exchange from the session's stored messages.
    ```
    LANGFLOW_BASE_URL=… LANGFLOW_API_KEY=… python3 langflow/install.py <flow-id>
    ```
-   - The **Tool Gateway** (`langflow/components/tool_gateway.py`) refuses changes through
-     `execute_tool` and routes them to `take_action`, which carries Langflow's tool-approval
-     metadata, so the Agent pauses before it runs. Composio actions count as changes unless
-     their slug only reads (GET, LIST, FETCH, SEARCH, …); unknown verbs ask. Browser `act`
-     always asks. Workbench and bash code always asks, since code can build slugs or call any
-     API at runtime. Composio's own meta tools (connections, skills, feedback) ask unless
-     they're lookups (search, schemas, waiting for a connection). `take_action`
+   - The **Tool Gateway** (`langflow/components/tool_gateway.py`) runs everything through
+     `execute_tool` except what moves money or deletes for good, which it routes to
+     `take_action`, carrying Langflow's tool-approval metadata, so the Agent pauses before it
+     runs (`needs_approval`): a Composio slug that changes something and has a money or delete
+     verb (PAY, REFUND, TRANSFER, DELETE, …) or is in a money app (Stripe, Square, PayPal, …), a
+     browser `act` whose words pay, buy, or place an order, the shell, and workbench code that
+     calls such a slug or hides what it runs. The app OKs each kind for good on its first
+     approval (`src/lib/approvals/standing.ts`). In a watch's run, anything that changes the
+     member's accounts still asks, as do code, the browser, and links. `take_action`
      refuses to run at all if the Agent has no approval checkpoint (nothing paused).
      It also adds `remember`, whose structured result the app saves to the caller's memory,
      and the card tools (`ask_user`, `show_form`, `propose_agent`, `merge_memories`), which
@@ -331,4 +333,4 @@ The step-by-step version, with every env var and the background worker, is
 - Code runs in each member's Composio workbench. The shared flow has no in-process Python;
   the installer removes it unless the Langflow server has a sandbox backend.
 - Shared, stateless tools (web search, the hosted browser) use one service account for
-  everyone. Browser actions still need the member's approval.
+  everyone. A browser step that pays or places an order needs the member's approval, once per site.

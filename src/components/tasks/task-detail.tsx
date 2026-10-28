@@ -3,7 +3,7 @@
 import { ArrowLeft, Check, MessageSquare, Pause, Play, Plus, Trash2, Zap } from "lucide-react";
 import { AlertDialog, Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
-import { STANDING_LABELS } from "@/lib/approvals/standing";
+import { standingLabel } from "@/lib/approvals/standing";
 import { ApiError, api } from "@/lib/client/api";
 import { repeats } from "@/lib/tasks/schedule";
 import { MAX_PLAN_STEPS, MAX_TASK_INSTRUCTIONS_LENGTH, MAX_TASK_TITLE_LENGTH } from "@/lib/tasks/schema";
@@ -283,7 +283,7 @@ export function TaskDetail({ taskId, skills, onBack, onOpenConversation, onTitle
                     <ul className="space-y-1">
                       {task.allowedActions.map((kind) => (
                         <li key={kind} className="flex flex-wrap items-baseline gap-x-2">
-                          <span>{STANDING_LABELS[kind]}</span>
+                          <span>{standingLabel(kind)}</span>
                           <button
                             type="button"
                             className="text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline"

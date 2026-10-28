@@ -75,6 +75,13 @@ describe("accounts", () => {
       expect((await other.client.from("accounts").select("allowed_actions").eq("user_id", alice.userId)).data).toEqual([]);
     }
     expect((await alice.client.from("accounts").update({ allowed_actions: ["send_email"] }).eq("user_id", alice.userId)).error).not.toBeNull();
+    // A use case: one app tool, or paying on one site (src/lib/approvals/standing.ts).
+    const kinds = ["gmail_labels", "tool:STRIPE_CREATE_REFUND", "site:usps.com"];
+    const cases = await alice.client.from("accounts").update({ allowed_actions: kinds }).eq("user_id", alice.userId).select("allowed_actions").single();
+    expect(cases.data?.allowed_actions).toEqual(kinds);
+    for (const bad of ["tool:stripe_refund", "tool:STRIPE", "site:http://usps.com", "site:USPS.COM", "site:usps"]) {
+      expect((await alice.client.from("accounts").update({ allowed_actions: [bad] }).eq("user_id", alice.userId)).error).not.toBeNull();
+    }
     expect((await alice.client.from("accounts").update({ allowed_actions: [] }).eq("user_id", alice.userId)).error).toBeNull();
   });
 

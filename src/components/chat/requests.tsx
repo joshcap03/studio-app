@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { sendSpark, useWaitsOnMember } from "@/components/ui/presence";
 import { appName } from "@/lib/apps";
 import { api } from "@/lib/client/api";
-import { STANDING_LABELS } from "@/lib/approvals/standing";
+import { standingLabel } from "@/lib/approvals/standing";
 import type { Approval, MemoryProposal, Question } from "@/lib/types";
 import { TAP_REASON_LINE, tapReason } from "@/lib/voice/relay";
 import { AppGlyph } from "./app-glyph";
@@ -21,8 +21,8 @@ export { answerText } from "./card-drafts";
 interface ApprovalProps {
   approval: Approval;
   /**
-   * Present only while this request can still be answered. `always`: approve, and don't ask again
-   * for its kind (offered only on a request of a kind that qualifies).
+   * Present only while this request can still be answered. `always`: approving also OKs its kind
+   * for good (every tapped approval of a request with a kind does: each use case asks once).
    */
   onDecide?: (decision: "approve" | "reject", always?: boolean) => void;
   /** The conversation it's in, so an approval made by voice can be reported as not what they said. */
@@ -42,8 +42,7 @@ const AUTO_GRACE_MS = 20_000;
 export function ApprovalCard({ approval, onDecide, conversationId, call }: ApprovalProps) {
   const pending = approval.status === "pending";
   const [choice, setChoice] = useState<"approve" | "reject" | null>(null);
-  const [always, setAlways] = useState(false);
-  // A lasting OK is a tap: never offered on a call, where a spoken yes covers only this one.
+  // A lasting OK is a tap: never on a call, where a spoken yes covers only this one.
   const offerAlways = Boolean(approval.standing) && !call;
   const spent = call?.spent ? [approval.id] : [];
   const readBack = call && !tapReason(approval, call.spoken, spent) && approval.spoken?.ok ? approval.spoken.readBack : null;
@@ -61,7 +60,7 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
   function decide(decision: "approve" | "reject") {
     if (!onDecide || choice) return;
     setChoice(decision);
-    onDecide(decision, decision === "approve" && offerAlways && always);
+    onDecide(decision, decision === "approve" && offerAlways);
   }
 
   // On a call, how it can be answered there: by voice after its read-back, or why it's a tap.
@@ -120,21 +119,9 @@ export function ApprovalCard({ approval, onDecide, conversationId, call }: Appro
       ) : pending && onDecide ? (
         <>
         {offerAlways && approval.standing ? (
-          <label className="flex cursor-pointer items-start gap-2.5 border-t border-line px-4 py-2.5 text-[13px] leading-[1.45] text-fg-2">
-            <input
-              type="checkbox"
-              checked={always}
-              onChange={(e) => setAlways(e.target.checked)}
-              disabled={choice !== null}
-              className="mt-[3px] size-3.5 shrink-0 accent-accent"
-            />
-            <span>
-              <span className="text-fg">Don&apos;t ask again</span>
-              <span className="block text-fg-3">
-                {STANDING_LABELS[approval.standing]} without asking, in any chat or task. Sending, deleting, and archiving still wait for you. You can take it back in Settings.
-              </span>
-            </span>
-          </label>
+          <p className="border-t border-line px-4 py-2.5 text-[12.5px] leading-[1.45] text-fg-3">
+            Asked only this once. Once you approve, “{standingLabel(approval.standing)}” goes ahead without asking, in any chat or task. You can take it back in Settings.
+          </p>
         ) : null}
         <div className="flex items-center justify-end gap-2 border-t border-line px-3 py-2.5">
           <span className="mr-auto pl-1 text-[12px] text-fg-3">{hint}</span>

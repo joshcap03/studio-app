@@ -20,12 +20,13 @@ import { SETUP_SKILL_ID } from "@/lib/skills/setup";
 import { getRun, getTask, getTaskForConversation, settleKeptRun, settleWaitingRun } from "@/lib/tasks";
 import type { AgentTask } from "@/lib/tasks/types";
 import { getAllowedActions, setAllowedAction } from "@/lib/account";
-import type { StandingKind } from "@/lib/approvals/standing";
+import { siteOf, type StandingKind } from "@/lib/approvals/standing";
 import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import { eventsCause, eventsMessage, getWatch } from "@/lib/tasks/watches";
 import { appName } from "@/lib/integrations/composio";
 import { browserContextFor } from "@/lib/browser-signins";
 import { saveBrowserFile } from "@/lib/browser-files";
+import { browserSite } from "@/lib/browser-fill";
 import { saveBrowserSession } from "@/lib/browser-view";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentTenantContext } from "@/lib/agent/types";
@@ -214,7 +215,9 @@ export async function buildTurnDeps(
     // In a task's conversation, the task, with the member's standing OKs on it from before.
     getTaskForConversation(tenant, conversationId).catch(() => null),
   ]);
-  const allowed = await allowedHere(tenant, task);
+  // A watch's run reads other people's words, so only the older tidy kinds cover it there, never
+  // a payment the member OK'd elsewhere.
+  const allowed = (await allowedHere(tenant, task)).filter((k) => !watchRun || k === "gmail_labels");
   if (skill === null) throw new TurnError(404, "Skill not found.");
   if (project === null) throw new TurnError(404, "Project not found.");
   // Every run gets the member's files for this agent, then the project's, within the cap; the
@@ -307,11 +310,17 @@ export async function buildTurnDeps(
     // Checks the limits and records the run in one step, so a burst can't slip under them.
     claim: (replyId) => claimRun(tenant, replyId, asked.kind === "task" ? "task_run" : "agent_run"),
     allowSpokenDecision: (approval, decision, spoken) => checkSpokenDecision(tenant, approval, decision, spoken),
-    // The member's standing OKs (src/lib/approvals/standing.ts), and how their tap adds one: to
-    // the person, so every chat and task of every agent of theirs stops asking for that kind.
+    // The member's standing OKs (src/lib/approvals/standing.ts), and how their first approval of a
+    // kind adds one: to the person, so every chat and task of every agent of theirs stops asking.
+    // A browser step's kind is the site the conversation's browser is on, read from the browser.
     standing: {
       allowed,
       grant: async (kind: StandingKind) => (await setAllowedAction(tenant, kind, true)).includes(kind),
+      site: async () => {
+        const found = await browserSite(tenant, conversationId).catch(() => null);
+        return found?.ok ? siteOf(found.site) : null;
+      },
+      tidyOnly: watchRun,
     },
     timelines: previewEnabled(tenant, "why"),
     // Replies to a voice message, and a task run's news, come back as voice notes for members with speech.
