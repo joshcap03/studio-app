@@ -137,6 +137,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
     tenant.tracker && trackerContext(tenant.tracker, tenant.trackerFields ?? []),
     tenant.notes?.length && notesContext(tenant.notes),
     tenant.library?.length && libraryContext(tenant.library),
+    tenant.browserFiles?.length && browserFilesContext(tenant.browserFiles),
     tenant.bar && barContext(tenant.bar),
     memories && `What you remember (from past conversations; it may be out of date, and the owner's word wins):\n${memories}`,
     tenant.recentMemories?.length && recentMemoriesContext(tenant.recentMemories),
@@ -321,6 +322,20 @@ export function libraryContext(items: NonNullable<AgentTenantContext["library"]>
     lines.push(line);
   }
   return `The member's Library (docs you made for them and links they filed; title | kind | link; pinned first, then most recent). When they ask for something one of these already covers, open and update that one rather than making a new copy, and give them its link:\n${lines.join("\n")}`;
+}
+
+/**
+ * Files the agent's browser got for the member here (save_file), with what it needs to attach one
+ * to an email: Composio's key for it, passed as an email tool's attachment.
+ */
+export function browserFilesContext(files: NonNullable<AgentTenantContext["browserFiles"]>): string {
+  const lines = files.map((f) => {
+    const name = f.name.replace(/\s+/g, " ").trim();
+    return f.s3key
+      ? `- ${name} | attach with: ${JSON.stringify({ name, mimetype: f.mimeType, s3key: f.s3key })}`
+      : `- ${name} | can't be attached now; get it again with save_file if they need it emailed`;
+  });
+  return `Files you got from your browser for the member in this conversation (newest first; each is under the reply that got it, for them to download). To email one, pass its "attach with" value as the email tool's attachment (e.g. Gmail's attachment), with your usual approval for sending:\n${lines.join("\n")}`;
 }
 
 // The brief rides along with every reply here, so without this it outranks the member's own
@@ -769,8 +784,9 @@ export function toolQuestions(message: LangflowMessage): AgentEvent[] {
 }
 
 /**
- * Plan updates, tracker rows, Library links, and a reply's keep-going the agent reported through
- * update_plan, save_record, file_link, and keep_going (validated and saved by the turn, under the
+ * Plan updates, tracker rows, Library links, files from its browser, and a reply's keep-going the
+ * agent reported through update_plan, save_record, file_link, save_file, and keep_going (validated
+ * and saved by the turn, under the
  * member's session), and the gateway's word that the reply's time ran out.
  */
 export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
@@ -784,6 +800,7 @@ export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
     if (isRecord(result.plan_update)) events.push({ type: "plan-update", plan: result.plan_update.steps, goal: result.plan_update.goal });
     if (isRecord(result.record)) events.push({ type: "record", record: result.record });
     if (isRecord(result.library_item)) events.push({ type: "library-item", item: result.library_item });
+    if (isRecord(result.browser_file)) events.push({ type: "browser-file", file: result.browser_file });
     if (isRecord(result.run_report)) events.push({ type: "run-report", report: result.run_report });
     if (isRecord(result.keep_going)) events.push({ type: "keep-going", remaining: result.keep_going.remaining });
   }

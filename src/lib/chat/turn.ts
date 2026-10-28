@@ -21,6 +21,7 @@ import {
   type ActivityStep,
   type Approval,
   type Artifact,
+  type Attachment,
   type ChatMessage,
   type ConversationSummary,
   type Journey,
@@ -154,6 +155,12 @@ export interface TurnDeps {
    */
   fileArtifact?: (artifact: Artifact, source: { messageId: string }) => Promise<unknown>;
   /**
+   * Gets a file the agent asked for (save_file) from the conversation's browser and saves it on
+   * the reply (`messageId`), under the caller's session: the attachment, why it couldn't be had, or
+   * null when the request wasn't usable. Without it, such requests are dropped.
+   */
+  saveBrowserFile?: (file: unknown, source: { messageId: string }) => Promise<{ ok: true; attachment: Attachment } | { ok: false; name: string; why: string } | null>;
+  /**
    * Checks the agent's proposal to merge remembered facts against the member's memory (under
    * their session) and returns its card, or null when nothing in it holds up. Without it, such
    * proposals are dropped.
@@ -286,6 +293,8 @@ const MAX_PROPOSALS = 5;
 const MAX_RECORDS_PER_RUN = 25;
 /** Artifacts one run may file in the Library; the rest stay on the reply only. */
 const MAX_FILED_PER_RUN = 10;
+/** Files from the browser one reply may save (save_file). */
+const MAX_BROWSER_FILES = 5;
 const noop = () => undefined;
 /**
  * How often a run checks for a stop asked of it elsewhere. Each request may land on another
@@ -594,6 +603,12 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       let planning: Promise<void> = Promise.resolve();
       let records = 0;
       let filed = 0;
+      // Files from the browser saved on this reply, and the ones it couldn't get (said on the reply).
+      const files: Attachment[] = [...(assistant.attachments ?? [])];
+      const missed: string[] = [];
+      let fetching = 0;
+      // One at a time: each reads the browser's open page, in the order the agent asked.
+      let gettingFiles: Promise<void> = Promise.resolve();
       let report: RunReport | null = null;
       // What's left of the job, when the agent says the next reply should carry it on.
       let keepGoing: string | null = null;
@@ -756,6 +771,28 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               remembering.push(
                 deps.fileArtifact(artifact, { messageId: assistant.id }).then(noop, (e) => console.error("[turn] couldn't file a link", e)),
               );
+              break;
+            }
+            case "browser-file": {
+              if (!deps.saveBrowserFile || fetching >= MAX_BROWSER_FILES) break;
+              fetching += 1;
+              const save = deps.saveBrowserFile;
+              const { file } = event;
+              gettingFiles = gettingFiles
+                .then(() => save(file, { messageId: assistant.id }))
+                .then(
+                  (saved) => {
+                    if (!saved) return;
+                    if (!saved.ok) return void missed.push(`Couldn't get ${saved.name} from the browser: ${saved.why}.`);
+                    files.push(saved.attachment);
+                    send({ type: "file", attachment: saved.attachment });
+                  },
+                  (e) => {
+                    console.error("[turn] couldn't save a file from the browser", e);
+                    missed.push("Couldn't save a file from the browser. Ask again to try once more.");
+                  },
+                );
+              remembering.push(gettingFiles);
               break;
             }
             case "timeline": {
@@ -986,6 +1023,11 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       }
       await Promise.all(remembering);
       await saving;
+      // A file the agent said it was getting and couldn't is said on the reply, in Studio's words.
+      if (missed.length) {
+        content = `${content.trimEnd()}\n\n${missed.map((m) => `_${m}_`).join("\n")}`;
+        send({ type: "text-replace", text: content });
+      }
       // Saved with the final state, so the end event and the stored reply carry the same note. A
       // reply that never had one doesn't write it. A reply to words said on a call is a note only
       // when the call is over by now (the member hung up while it worked).
@@ -1012,7 +1054,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       }
       finished();
       const watched = open;
-      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted, ...(going.keepGoing ? { keepGoing: going.keepGoing } : {}) };
+      const final: ChatMessage = { ...assistant, content, status, activity, artifacts, approvals, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted, ...(going.keepGoing ? { keepGoing: going.keepGoing } : {}), ...(files.length ? { attachments: files } : {}) };
       send({ type: "end", message: final, conversation: updated });
       if (open) {
         try {

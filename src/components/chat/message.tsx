@@ -271,6 +271,12 @@ export const AssistantMessage = memo(function AssistantMessage({
         />
       ) : null}
 
+      {message.attachments?.length ? (
+        <div className="mt-4">
+          <AttachmentList attachments={message.attachments} align="start" />
+        </div>
+      ) : null}
+
       {message.artifacts.length > 0 ? (
         <div className="mt-4 flex flex-col gap-2">
           {message.artifacts.map((artifact) => (

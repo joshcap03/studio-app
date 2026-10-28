@@ -23,6 +23,7 @@ import { savePlanFromAgent, saveRecordFromAgent } from "@/lib/tasks/agent";
 import { eventsCause, eventsMessage, getWatch } from "@/lib/tasks/watches";
 import { appName } from "@/lib/integrations/composio";
 import { browserContextFor } from "@/lib/browser-signins";
+import { saveBrowserFile } from "@/lib/browser-files";
 import { saveBrowserSession } from "@/lib/browser-view";
 import type { Tenant } from "@/lib/tenant-core";
 import type { AgentTenantContext } from "@/lib/agent/types";
@@ -329,6 +330,8 @@ export async function buildTurnDeps(
       savePlanFromAgent(tenant, conversationId, plan, goal, { setup: setupRun }),
     saveRecord: (record: unknown, source: { messageId: string }) => saveRecordFromAgent(tenant, conversationId, record, source),
     saveBrowserSession: (sessionId: string | null) => saveBrowserSession(tenant, conversationId, sessionId),
+    // A file from the conversation's browser, saved on the reply that asked for it.
+    saveBrowserFile: (file: unknown, source: { messageId: string }) => saveBrowserFile(tenant, conversationId, source.messageId, file),
     fileArtifact: (artifact, source) => fileArtifact(tenant, artifact, { conversationId, messageId: source.messageId }),
     onFinished: finished,
     shouldStop,

@@ -323,6 +323,9 @@ function interpret(name: string, input: Record<string, unknown>, result: unknown
     case "request_secret":
       // A card under the reply where the member fills a login or card into the browser; the agent never sees it.
       return { labels: { running: "Asking you to sign in", done: "Asked you to fill in a sign-in or card" }, app: "browser", action: "note", hidden: true };
+    case "save_file":
+      // The file shows under the reply once Studio has it (or the reply says why it couldn't).
+      return { labels: { running: "Getting the file from the browser", done: "Got the file from the browser" }, app: "browser", action: "note", hidden: true };
     case "hand_browser":
       // The browser is handed over as a card under the reply; it's theirs only once they tap Take over.
       return { labels: { running: "Handing you the browser", done: "Handed you the browser", failed: "Couldn't hand you the browser" }, app: "agent", action: "note", hidden: true };

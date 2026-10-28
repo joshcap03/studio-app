@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalActions, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { approvalActions, browserFilesContext, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -362,6 +362,7 @@ describe("Langflow request", () => {
             { type: "tool_use", name: "file_link", output: JSON.stringify({ library_item: { url: "https://docs.google.com/document/d/1", title: "Plan" }, note: "Saved." }) },
             { type: "tool_use", name: "file_link", output: "Not saved: give it a title the owner will recognize." },
             { type: "tool_use", name: "file_link", output: { library_item: { url: "https://x.example", title: "X" } }, error: true },
+            { type: "tool_use", name: "save_file", output: JSON.stringify({ browser_file: { name: "Label.pdf", link: "/label/1.pdf" }, note: "Getting it." }) },
           ],
         },
       ],
@@ -376,7 +377,18 @@ describe("Langflow request", () => {
       { type: "out-of-time" },
       { type: "out-of-time" },
       { type: "library-item", item: { url: "https://docs.google.com/document/d/1", title: "Plan" } },
+      { type: "browser-file", file: { name: "Label.pdf", link: "/label/1.pdf" } },
     ]);
+  });
+
+  it("lists files from the browser with what attaching one to an email takes, or why it can't be now", () => {
+    const text = browserFilesContext([
+      { name: "Label  Jane.pdf", mimeType: "application/pdf", s3key: "project_scope/files/abc" },
+      { name: "Old.pdf", mimeType: "application/pdf" },
+    ]);
+    expect(text).toContain('- Label Jane.pdf | attach with: {"name":"Label Jane.pdf","mimetype":"application/pdf","s3key":"project_scope/files/abc"}');
+    expect(text).toContain("- Old.pdf | can't be attached now; get it again with save_file");
+    expect(text).toMatch(/approval for sending/);
   });
 
   it("describes the workspace by what the agent is for, not as a business", () => {

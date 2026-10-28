@@ -3,6 +3,7 @@ import { getCompanion } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
 import type { AgentTenantContext } from "@/lib/agent/types";
 import { getConfig } from "@/lib/config";
+import { browserFilesFor } from "@/lib/browser-files";
 import { libraryContextFor } from "@/lib/library";
 import { recall, recentMemories } from "@/lib/memory";
 import { taskContextFor } from "@/lib/tasks/agent";
@@ -164,7 +165,7 @@ export async function buildAgentContext(
   { setupRun = false }: { setupRun?: boolean } = {},
 ): Promise<AgentTenantContext> {
   const loading = getSettings(tenant);
-  const [settings, memories, recent, guardrail, tasks, bar, self, library] = await Promise.all([
+  const [settings, memories, recent, guardrail, tasks, bar, self, library, browserFiles] = await Promise.all([
     loading,
     recall(tenant, query, { pinned: previewEnabled(tenant, "brain") }),
     recentMemories(tenant),
@@ -177,6 +178,13 @@ export async function buildAgentContext(
     barFor(tenant, conversationId),
     selfFor(tenant, loading),
     libraryContextFor(tenant),
+    // A run goes ahead without the files its browser got here rather than failing over them.
+    conversationId
+      ? browserFilesFor(tenant, conversationId).catch((e) => {
+          console.error("[context] couldn't list the files from the browser", e);
+          return [];
+        })
+      : [],
   ]);
   // The interview's checklist is the plan here only while it's under way here (or picked up again
   // here); after it's applied or set aside, the agent keeps this conversation's own plan instead.
@@ -211,6 +219,7 @@ export async function buildAgentContext(
       : null,
     notes: await notesFor(tenant, settings.templateId),
     ...(library?.length ? { library } : {}),
+    ...(browserFiles.length ? { browserFiles } : {}),
     bar,
     ...(modality && modality !== "text" ? { modality } : {}),
     ...(voiceStatus(tenant)?.speech.tts ? { voiceNotes: true } : {}),

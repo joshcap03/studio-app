@@ -731,6 +731,11 @@ function WorkspaceShell({
           case "ui":
             patchMessage(conversationId, assistantId, (m) => ({ ...m, ui: event.ui }));
             break;
+          case "file":
+            patchMessage(conversationId, assistantId, (m) =>
+              (m.attachments ?? []).some((a) => a.id === event.attachment.id) ? m : { ...m, attachments: [...(m.attachments ?? []), event.attachment] },
+            );
+            break;
           case "journey": {
             const { journey } = event;
             setThreads((all) => (all[conversationId] ? { ...all, [conversationId]: { ...all[conversationId], journey } } : all));

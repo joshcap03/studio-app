@@ -505,6 +505,8 @@ export type StreamEvent =
   | { type: "journey"; journey: Journey }
   /** Something the agent saved in the member's Studio, once it's saved: a tracker row, by its collection. */
   | { type: "saved"; target: { kind: "record"; collection: string } }
+  /** A file the agent's browser got for the member, saved on the reply (download it from the reply). */
+  | { type: "file"; attachment: Attachment }
   | { type: "end"; message: ChatMessage; conversation: ConversationSummary };
 
 export const MAX_MESSAGE_LENGTH = 32_000;
