@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowUp, AudioLines, Paperclip, Sparkles, X } from "lucide-react";
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "radix-ui";
 import { TooltipContent } from "@/components/ui/icon-button";
 import { useMedia } from "@/components/ui/use-media";
@@ -21,7 +21,7 @@ import { draftSpoken, heldGoesTo, insertWords, type MicMode } from "@/lib/voice/
 import type { VoiceStatus } from "@/lib/voice/types";
 import { noteTyping } from "@/components/ui/presence";
 import { PendingFiles, type PendingFile } from "./attachments";
-import { MicButton, MicStatus, useMic } from "./mic";
+import { DictationContext, MicButton, MicStatus, useMic } from "./mic";
 
 export interface ComposerHandle {
   focus(): void;
@@ -57,7 +57,7 @@ interface Props {
   allowFiles?: boolean;
   /** Replaces the placeholder, e.g. while the agent waits for an approval. */
   hint?: string;
-  /** Voice for this member: with speech to text, the mic (hold for a voice message, tap to dictate). */
+  /** Voice for this member: with speech to text, holding the mic sends a voice message (dictation is DictationContext). */
   voice?: VoiceStatus | null;
   /**
    * Sending now would change the agent's course (a run going, or an approval waiting, which a
@@ -256,8 +256,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     update(next.value.slice(0, MAX_MESSAGE_LENGTH));
     focusAt(Math.min(next.caret, MAX_MESSAGE_LENGTH));
   };
-  const mic = useMic({ mock: voice ? !voice.live : false, onWords: (words, mode) => heard.current(words, mode) });
-  const hasMic = Boolean(voice?.speech.stt && mic);
+  // Every member can dictate (tap the mic); with voice on, holding it sends a voice message too.
+  const dictation = useContext(DictationContext);
+  const hold = Boolean(voice?.speech.stt);
+  const mic = useMic({ mock: voice ? !voice.live : Boolean(dictation?.mock), hold, onWords: (words, mode) => heard.current(words, mode) });
+  const hasMic = Boolean((hold || dictation) && mic);
 
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (menuOpen) {

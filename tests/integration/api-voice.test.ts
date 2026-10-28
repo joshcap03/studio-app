@@ -304,9 +304,10 @@ describe("voice notes over the API", () => {
 describe("the mic over the API", () => {
   const recording = new Uint8Array(4000).fill(7);
 
-  it("hears a recording only for members with voice, from the app's own pages", async () => {
-    const outsider = await member(`voice-outsider-${crypto.randomUUID().slice(0, 8)}@example.test`);
-    expect((await outsider.raw("/api/voice/transcribe", recording, "audio/webm")).status).toBe(404);
+  it("hears a recording for any member (dictation needs no voice preview), from the app's own pages", async () => {
+    const anyone = await member(`voice-outsider-${crypto.randomUUID().slice(0, 8)}@example.test`);
+    expect((await anyone.raw("/api/voice/transcribe", recording, "audio/webm")).status).toBe(200);
+    expect((await anyone.raw("/api/voice/transcribe", recording, "audio/webm", { Origin: "https://elsewhere.test" })).status).toBe(403);
     expect((await alice.raw("/api/voice/transcribe", recording, "audio/webm", { Origin: "https://elsewhere.test" })).status).toBe(403);
     // The mock hears nothing: the browser asks for typed words instead.
     const res = await alice.raw("/api/voice/transcribe", recording, "audio/webm;codecs=opus");
@@ -339,6 +340,6 @@ describe("the mic over the API", () => {
     }
     const refused = await spent.raw("/api/voice/transcribe", fresh, "audio/ogg");
     expect(refused.status).toBe(429);
-    expect(((await refused.json()) as { error: string }).error).toContain("You've used today's voice time");
+    expect(((await refused.json()) as { error: string }).error).toContain("You've used today's dictation time");
   });
 });

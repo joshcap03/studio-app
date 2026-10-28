@@ -1,7 +1,7 @@
 "use client";
 
-import { Mic, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, Mic, X } from "lucide-react";
+import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { Tooltip } from "radix-ui";
 import { TooltipContent } from "@/components/ui/icon-button";
 import { useCallLive, usePlayerControls } from "@/components/voice/player";
@@ -21,15 +21,19 @@ import {
   type MicMode,
   type MicState,
 } from "@/lib/voice/mic";
+import type { DictationStatus } from "@/lib/voice/types";
 
-// The message box's mic (src/lib/voice/mic.ts has the rules): hold to send a voice message, tap
-// to dictate into the draft. The recording goes to the server once, to be turned into words, and
-// isn't kept anywhere. Under the mock voice nothing is recorded: the mic opens a labeled box to
+// The message box's mic (src/lib/voice/mic.ts has the rules): tap to dictate into the draft, as in
+// other chat apps, and with voice on, hold to send a voice message. The recording goes to the
+// server once, to be turned into words, and isn't kept anywhere. Under the mock voice nothing is recorded: the mic opens a labeled box to
 // type what you'd say instead, so the whole path can be tried without a provider. While a call is
 // live the mic is the call's: this one stops, and waits until it ends.
 
 /** Sliding this far off the mic while holding it calls the message off. */
 const SLIDE_AWAY_PX = 56;
+
+/** Dictation for this member (every member, wherever there's speech to text), for each message box. */
+export const DictationContext = createContext<DictationStatus | null>(null);
 
 export interface MicControl {
   state: MicState;
@@ -37,12 +41,18 @@ export interface MicControl {
   held: boolean;
   /** Seconds recorded so far. */
   elapsed: number;
+  /** Whether holding the mic sends a voice message (voice on); otherwise every press is a tap. */
+  hold: boolean;
+  /** How loud the mic is right now, 0 to 1, for the waveform (0 when it can't tell). */
+  level: () => number;
   /** The mock's typed stand-in, open in this mode. */
   typing: MicMode | null;
   closeTyping: () => void;
   /** Words typed into the mock's stand-in. */
   typed: (words: string) => void;
   cancel: () => void;
+  /** Stops dictating, and the words go into the draft. */
+  done: () => void;
   dismiss: () => void;
   /** Starts dictating, as a tap on the mic would (nothing while it's already on or a call holds it). */
   dictate: () => void;
@@ -58,9 +68,10 @@ export interface MicControl {
 
 /**
  * The mic's state and handlers. `onWords` gets what the member said and how (held as a voice
- * message, or dictated); the composer decides where it goes. Null where the browser can't record.
+ * message, or dictated); the composer decides where it goes. Without `hold`, every press is a tap
+ * (dictation only). Null where the browser can't record.
  */
-export function useMic({ mock, onWords }: { mock: boolean; onWords: (words: string, mode: MicMode) => void }): MicControl | null {
+export function useMic({ mock, hold = true, onWords }: { mock: boolean; hold?: boolean; onWords: (words: string, mode: MicMode) => void }): MicControl | null {
   const player = usePlayerControls();
   const onCall = useCallLive();
   const held = useRef(onCall);
@@ -73,6 +84,8 @@ export function useMic({ mock, onWords }: { mock: boolean; onWords: (words: stri
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
+  // What the waveform reads: the mic's sound, measured on the device and never sent anywhere.
+  const meter = useRef<{ context: AudioContext; analyser: AnalyserNode; samples: Uint8Array<ArrayBuffer> } | null>(null);
   // Bumped whenever a recording is dropped, so its late callbacks change nothing.
   const session = useRef(0);
   const press = useRef<{ x: number; y: number; at: number } | null>(null);
@@ -88,6 +101,18 @@ export function useMic({ mock, onWords }: { mock: boolean; onWords: (words: stri
     for (const track of stream.current?.getTracks() ?? []) track.stop();
     stream.current = null;
     recorder.current = null;
+    void meter.current?.context.close().catch(() => undefined);
+    meter.current = null;
+  }, []);
+
+  const level = useCallback(() => {
+    const m = meter.current;
+    if (!m) return 0;
+    m.analyser.getByteTimeDomainData(m.samples);
+    let sum = 0;
+    for (const v of m.samples) sum += ((v - 128) / 128) ** 2;
+    // Speech sits well under full scale: the square root lifts quiet talk into view.
+    return Math.min(1, Math.sqrt(Math.sqrt(sum / m.samples.length)) * 1.6);
   }, []);
 
   /** Drops the recording under way, if any. */
@@ -143,6 +168,16 @@ export function useMic({ mock, onWords }: { mock: boolean; onWords: (words: stri
         };
         stream.current = media;
         recorder.current = rec;
+        try {
+          const context = new AudioContext();
+          const analyser = context.createAnalyser();
+          analyser.fftSize = 512;
+          context.createMediaStreamSource(media).connect(analyser);
+          void context.resume().catch(() => undefined);
+          meter.current = { context, analyser, samples: new Uint8Array(analyser.fftSize) };
+        } catch {
+          // No waveform, and the recording goes on.
+        }
         rec.start(1000);
         send({ type: "started", at: Date.now() });
       } catch (e) {
@@ -228,10 +263,21 @@ export function useMic({ mock, onWords }: { mock: boolean; onWords: (words: stri
   useEffect(() => () => discard(), [discard]);
 
   if (!supported) return null;
+  const tap = () => {
+    if (held.current) return;
+    if (mock) {
+      player?.stop();
+      setTyping((t) => (t ? null : "dictation"));
+    } else {
+      send({ type: "toggle", at: Date.now() });
+    }
+  };
   return {
     state,
     held: onCall,
     elapsed,
+    hold,
+    level,
     typing,
     closeTyping: () => setTyping(null),
     typed: (said: string) => {
@@ -240,62 +286,84 @@ export function useMic({ mock, onWords }: { mock: boolean; onWords: (words: stri
       if (mode && said.trim()) words.current(said, mode);
     },
     cancel: () => send({ type: "cancel" }),
+    done: () => {
+      const s = current.current;
+      if (s.phase === "recording" && !s.down && s.mode === "dictation") send({ type: "toggle", at: Date.now() });
+    },
     dismiss: () => send({ type: "dismiss" }),
     dictate: () => {
       if (held.current || listening(current.current)) return;
       if (mock) setTyping("dictation");
       else send({ type: "toggle", at: Date.now() });
     },
-    button: {
-      onPointerDown: (e) => {
-        if (e.button !== 0 || held.current) return;
-        // Keeps the caret in the draft (the mic never takes focus from a press), and the press
-        // from becoming a text selection or a long-press menu.
-        e.preventDefault();
-        try {
-          e.currentTarget.setPointerCapture(e.pointerId);
-        } catch {
-          // A pointer the browser no longer tracks: the press still counts.
+    button: !hold
+      ? {
+          // Every press is a tap: it starts dictating, or stops it. It starts at the press, so the
+          // first word isn't lost, and never takes focus (the caret stays in the draft).
+          onPointerDown: (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            tap();
+          },
+          onPointerMove: () => undefined,
+          onPointerUp: () => undefined,
+          onPointerCancel: () => undefined,
+          // The keyboard (Enter, Space) and assistive taps arrive as a click with no pointer press.
+          onClick: (e) => {
+            if (e.detail === 0) tap();
+          },
+          onContextMenu: (e) => e.preventDefault(),
         }
-        press.current = { x: e.clientX, y: e.clientY, at: Date.now() };
-        if (mock) {
-          player?.stop();
-          return;
-        }
-        send({ type: "press", at: Date.now() });
-      },
-      onPointerMove: (e) => {
-        const from = press.current;
-        if (!from || mock) return;
-        const s = current.current;
-        if (!listening(s) || !s.down) return;
-        if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > SLIDE_AWAY_PX) {
-          press.current = null;
-          send({ type: "cancel" });
-        }
-      },
-      onPointerUp: () => {
-        const from = press.current;
-        press.current = null;
-        if (held.current) return;
-        if (mock) {
-          if (from) setTyping(pressMode(from.at, Date.now()));
-          return;
-        }
-        send({ type: "release", at: Date.now() });
-      },
-      onPointerCancel: () => {
-        press.current = null;
-        if (!mock) send({ type: "interrupt" });
-      },
-      // The keyboard (Enter, Space) and assistive taps arrive as a click with no pointer press.
-      onClick: (e) => {
-        if (e.detail !== 0 || held.current) return;
-        if (mock) setTyping((t) => (t ? null : "dictation"));
-        else send({ type: "toggle", at: Date.now() });
-      },
-      onContextMenu: (e) => e.preventDefault(),
-    },
+      : {
+          onPointerDown: (e) => {
+            if (e.button !== 0 || held.current) return;
+            // Keeps the caret in the draft (the mic never takes focus from a press), and the press
+            // from becoming a text selection or a long-press menu.
+            e.preventDefault();
+            try {
+              e.currentTarget.setPointerCapture(e.pointerId);
+            } catch {
+              // A pointer the browser no longer tracks: the press still counts.
+            }
+            press.current = { x: e.clientX, y: e.clientY, at: Date.now() };
+            if (mock) {
+              player?.stop();
+              return;
+            }
+            send({ type: "press", at: Date.now() });
+          },
+          onPointerMove: (e) => {
+            const from = press.current;
+            if (!from || mock) return;
+            const s = current.current;
+            if (!listening(s) || !s.down) return;
+            if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > SLIDE_AWAY_PX) {
+              press.current = null;
+              send({ type: "cancel" });
+            }
+          },
+          onPointerUp: () => {
+            const from = press.current;
+            press.current = null;
+            if (held.current) return;
+            if (mock) {
+              if (from) setTyping(pressMode(from.at, Date.now()));
+              return;
+            }
+            send({ type: "release", at: Date.now() });
+          },
+          onPointerCancel: () => {
+            press.current = null;
+            if (!mock) send({ type: "interrupt" });
+          },
+          // The keyboard (Enter, Space) and assistive taps arrive as a click with no pointer press.
+          onClick: (e) => {
+            if (e.detail !== 0 || held.current) return;
+            if (mock) setTyping((t) => (t ? null : "dictation"));
+            else send({ type: "toggle", at: Date.now() });
+          },
+          onContextMenu: (e) => e.preventDefault(),
+        },
   };
 }
 
@@ -304,7 +372,8 @@ export function MicButton({ mic }: { mic: MicControl }) {
   const { state } = mic;
   const on = listening(state);
   const dictating = on && state.mode === "dictation";
-  const label = dictating ? "Stop dictating" : on ? "Recording a voice message" : "Voice: hold to send a voice message, or tap to dictate";
+  const idle = mic.hold ? "Hold to send a voice message, or tap to dictate" : "Dictate";
+  const label = dictating ? "Stop dictating" : on ? "Recording a voice message" : mic.hold ? `Voice: ${idle.toLowerCase()}` : idle;
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
@@ -321,7 +390,7 @@ export function MicButton({ mic }: { mic: MicControl }) {
           {state.phase === "hearing" ? <span className="spinner size-3.5" aria-hidden="true" /> : <Mic size={17} strokeWidth={1.75} />}
         </button>
       </Tooltip.Trigger>
-      <TooltipContent label={on ? (dictating ? "Tap to stop" : "Release to send") : "Hold to send a voice message, or tap to dictate"} side="top" />
+      <TooltipContent label={on ? (dictating ? "Tap to stop" : "Release to send") : idle} side="top" />
     </Tooltip.Root>
   );
 }
@@ -331,7 +400,7 @@ export function MicStatus({ mic, holdsToDraft }: { mic: MicControl; holdsToDraft
   const { state } = mic;
   if (mic.typing) return <MockSpeech mode={mic.typing} holdsToDraft={holdsToDraft} onSay={mic.typed} onClose={mic.closeTyping} />;
   if (state.phase === "idle") return null;
-  const row = "flex min-h-7 basis-full items-center gap-2 text-[13px] animate-fade-in";
+  const row = "flex min-h-7 min-w-0 basis-full items-center gap-2 text-[13px] animate-fade-in";
   if (state.phase === "problem") {
     return (
       <div role="alert" className={`${row} text-danger`}>
@@ -358,25 +427,77 @@ export function MicStatus({ mic, holdsToDraft }: { mic: MicControl; holdsToDraft
         ? holdsToDraft
           ? "Let go to add it to your message · slide away to cancel"
           : "Let go to send · slide away to cancel"
-        : "Listening · tap the mic to stop · Esc cancels";
+        : "Listening · tap ✓ when you're done · Esc cancels";
+  const round = "flex size-7 shrink-0 items-center justify-center rounded-full transition-[background-color,color,transform] duration-150 active:scale-90";
   // Only the hint is announced (it changes with what the mic is doing); the timer, ticking every
-  // second, stays out of the announcement, to be read when the member looks for it.
+  // second, stays out of the announcement, to be read when the member looks for it. While
+  // dictating, the waveform takes the hint's place on screen.
   return (
     <div className={`${row} text-fg-2`}>
       <span className={`size-2 shrink-0 rounded-full ${state.phase === "recording" ? "bg-danger breathe-soft" : "bg-fg-4"}`} aria-hidden="true" />
-      {state.phase === "recording" ? (
-        <span className="text-fg-3 tabular-nums">
-          {clock(mic.elapsed)} / {clock(MAX_RECORDING_SECONDS)}
-        </span>
-      ) : null}
-      <span role="status" className="min-w-0 flex-1 truncate">
+      {!held ? <Waveform level={mic.level} live={state.phase === "recording"} /> : null}
+      <span role="status" className={held ? "min-w-0 flex-1 truncate" : "sr-only"}>
         {hint}
       </span>
-      {!held ? (
-        <button type="button" onClick={mic.cancel} aria-label="Cancel" className="flex size-6 shrink-0 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg">
-          <X size={13} />
-        </button>
+      {state.phase === "recording" ? (
+        <span className="shrink-0 text-fg-3 tabular-nums">
+          {clock(mic.elapsed)}
+          {held ? ` / ${clock(MAX_RECORDING_SECONDS)}` : null}
+        </span>
       ) : null}
+      {!held ? (
+        <>
+          <button type="button" onClick={mic.cancel} aria-label="Cancel" className={`${round} text-fg-3 hover:bg-hover hover:text-fg`}>
+            <X size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={mic.done}
+            disabled={state.phase !== "recording"}
+            aria-label="Done: add the words to your message"
+            className={`${round} bg-inverse text-on-inverse disabled:bg-press disabled:text-fg-4`}
+          >
+            <Check size={14} strokeWidth={2.5} />
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** Bars this many wide, enough to fill a wide box: the newest on the right, the oldest slipping off the left. */
+const BARS = 128;
+/** A bar's height in silence, as a share of the row. */
+const QUIET = 0.1;
+
+/** The mic's sound as it's heard, drawn from `level` a few times a second; flat until it's live. */
+function Waveform({ level, live }: { level: () => number; live: boolean }) {
+  const bars = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = bars.current;
+    if (!el || !live) return;
+    const heard = new Array<number>(BARS).fill(0);
+    let frame = 0;
+    let last = 0;
+    const draw = (at: number) => {
+      frame = requestAnimationFrame(draw);
+      if (at - last < 60) return;
+      last = at;
+      heard.shift();
+      heard.push(level());
+      heard.forEach((v, i) => {
+        const bar = el.children[i] as HTMLElement | undefined;
+        if (bar) bar.style.transform = `scaleY(${Math.max(QUIET, v)})`;
+      });
+    };
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [level, live]);
+  return (
+    <div ref={bars} aria-hidden="true" className="flex h-6 min-w-0 flex-1 items-center justify-end gap-[3px] overflow-hidden">
+      {Array.from({ length: BARS }, (_, i) => (
+        <span key={i} style={{ transform: `scaleY(${QUIET})` }} className="h-full w-[2.5px] shrink-0 rounded-full bg-fg-3 transition-transform duration-75 motion-reduce:transition-none" />
+      ))}
     </div>
   );
 }

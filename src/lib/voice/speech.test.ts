@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const config = vi.hoisted(() => ({ voice: undefined as unknown }));
+const config = vi.hoisted(() => ({ voice: undefined as unknown, dictation: undefined as unknown }));
 vi.mock("@/lib/config", () => ({ getConfig: () => config }));
 
 const { mockTone, recordingSeconds, speak, speechSeconds, SpeechUnavailable, transcribe, MAX_SPEECH_CHARS } = await import("./speech");
@@ -10,7 +10,7 @@ const ELEVENLABS = { provider: "elevenlabs", elevenlabs: { apiKey: "xi_test", ag
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  config.voice = undefined;
+  config.voice = config.dictation = undefined;
 });
 
 describe("speech", () => {
@@ -25,7 +25,7 @@ describe("speech", () => {
   it("is off without voice, and refuses empty or overlong text before calling anyone", async () => {
     await expect(speak("Hello.", "steady")).rejects.toBeInstanceOf(SpeechUnavailable);
     await expect(transcribe(new Uint8Array(4), "audio/webm")).rejects.toBeInstanceOf(SpeechUnavailable);
-    config.voice = ELEVENLABS;
+    config.voice = config.dictation = ELEVENLABS;
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     await expect(speak("   ", "steady")).rejects.toBeInstanceOf(RangeError);
@@ -34,7 +34,7 @@ describe("speech", () => {
   });
 
   it("is a labeled tone under the mock, and hears nothing (the member types instead)", async () => {
-    config.voice = { provider: "mock" };
+    config.voice = config.dictation = { provider: "mock" };
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     const speech = await speak("Hello.", "warm");
@@ -56,7 +56,7 @@ describe("speech", () => {
   });
 
   it("asks ElevenLabs for the chosen voice's MP3 with the call agent's model, keeping the key server side", async () => {
-    config.voice = ELEVENLABS;
+    config.voice = config.dictation = ELEVENLABS;
     const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "Content-Type": "audio/mpeg" } }));
     vi.stubGlobal("fetch", fetch);
     const speech = await speak("  Hello there.  ", "casual");
@@ -69,7 +69,7 @@ describe("speech", () => {
   });
 
   it("says SpeechUnavailable when ElevenLabs refuses, fails, or sends nothing", async () => {
-    config.voice = ELEVENLABS;
+    config.voice = config.dictation = ELEVENLABS;
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 401 })));
     await expect(speak("Hello.", "steady")).rejects.toBeInstanceOf(SpeechUnavailable);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(0), { status: 200 })));
@@ -84,8 +84,15 @@ describe("speech", () => {
     await expect(transcribe(new Uint8Array(4), "audio/webm")).rejects.toBeInstanceOf(SpeechUnavailable);
   });
 
+  it("hears dictation with the rest of voice out", async () => {
+    config.dictation = { provider: "elevenlabs", elevenlabs: { apiKey: "xi_test" } };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ text: "Hi there", words: [], audio_duration_secs: 1.2 })));
+    expect(await transcribe(new Uint8Array(10), "audio/webm")).toEqual({ text: "Hi there", seconds: 2 });
+    await expect(speak("Hello.", "steady")).rejects.toBeInstanceOf(SpeechUnavailable);
+  });
+
   it("transcribes with Scribe, timing the recording by the length it measured, else the last thing it timed, else its size", async () => {
-    config.voice = ELEVENLABS;
+    config.voice = config.dictation = ELEVENLABS;
     const words = [
       { text: "Find", type: "word", start: 0.1, end: 0.4 },
       { text: " ", type: "spacing", start: 0.4, end: 0.5 },

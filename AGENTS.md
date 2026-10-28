@@ -164,8 +164,11 @@ raw/technical text.
   "open …" goes.
   A call can start in any conversation and follows a task's run there; `calls.ts` checks which call
   a message was said on, and `recap.ts` builds the card after a call from the records (nothing stored).
-  Outside calls: the message box's mic (`mic.ts`, `src/components/chat/mic.tsx`: hold to send a voice
-  message, tap to dictate; `/api/voice/transcribe`), and voice notes (`notes.ts` picks which replies
+  Outside calls: the message box's mic (`mic.ts`, `src/components/chat/mic.tsx`: tap to dictate,
+  with a live waveform, ✓ puts the words in the draft; with voice on, hold to send a voice message;
+  `/api/voice/transcribe`). Dictation alone is on for every member wherever there's speech to text
+  (`getConfig().dictation`: `ELEVENLABS_API_KEY`, `DICTATION=off` to turn it off), even with
+  `VOICE_ENABLED` off, under its own daily time (`LIMIT_DICTATION_SECONDS_PER_DAY`), and voice notes (`notes.ts` picks which replies
   get one and its words, saved as `messages.voice_note`; `clips.ts` says one on play through
   `…/messages/<id>/speech`). One clip plays at a time (`src/components/voice/player.tsx`).
   On a call the member can watch the agent's browser, view only: `src/lib/browser-view.ts` keeps the

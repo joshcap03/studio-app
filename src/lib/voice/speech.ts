@@ -63,10 +63,11 @@ export async function speak(text: string, voice: VoiceKey): Promise<Speech> {
   }
 }
 
-/** What the member said in `audio`. Throws SpeechUnavailable when voice is off or the provider fails. */
+/** What the member said in `audio`. Throws SpeechUnavailable when dictation is off or the provider fails. */
 export async function transcribe(audio: Uint8Array, mime: string): Promise<Transcript> {
-  const config = getConfig().voice;
-  if (!config) throw new SpeechUnavailable("Voice isn't set up.");
+  // Dictation's own settings: it's on with or without the rest of voice.
+  const config = getConfig().dictation;
+  if (!config) throw new SpeechUnavailable("Dictation isn't set up.");
   if (config.provider === "mock") return { text: "", seconds: 0, mock: true };
   try {
     const heard = await elevenLabsTranscribe(config.elevenlabs!.apiKey, new Blob([audio as BlobPart], { type: mime }));

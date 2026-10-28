@@ -13,10 +13,13 @@ function control(state: MicState, patch: Partial<MicControl> = {}): MicControl {
     state,
     held: false,
     elapsed: 0,
+    hold: true,
+    level: () => 0,
     typing: null,
     closeTyping: none,
     typed: none,
     cancel: none,
+    done: none,
     dismiss: none,
     dictate: none,
     button: { onPointerDown: none, onPointerMove: none, onPointerUp: none, onPointerCancel: none, onClick: none, onContextMenu: none },
@@ -38,6 +41,30 @@ describe("the mic while it records", () => {
     expect(announced(html)).toEqual(["Let go to send · slide away to cancel"]);
     const dictating = renderToStaticMarkup(<MicStatus mic={control({ ...RECORDING, down: false, mode: "dictation" }, { elapsed: 61 })} holdsToDraft={false} />);
     expect(announced(dictating).join(" ")).not.toMatch(/\d:\d\d/);
+  });
+
+  it("dictating, shows the waveform and the timer, with cancel and done", () => {
+    const html = renderToStaticMarkup(<MicStatus mic={control({ ...RECORDING, down: false, mode: "dictation" }, { elapsed: 61, hold: false })} holdsToDraft={false} />);
+    expect(html).toContain("1:01");
+    expect(html).not.toContain("/ 2:00");
+    expect(announced(html)).toEqual(["Listening · tap ✓ when you&#x27;re done · Esc cancels"]);
+    expect(html).toContain('aria-label="Cancel"');
+    const done = (markup: string) => markup.match(/<button[^>]*aria-label="Done: add the words to your message"[^>]*>/)?.[0] ?? "";
+    expect(done(html)).not.toBe("");
+    expect(done(html)).not.toContain('disabled=""');
+    // Still opening, nothing to be done with yet.
+    const opening = renderToStaticMarkup(<MicStatus mic={control({ phase: "starting", pressedAt: 0, down: false, mode: "dictation" }, { hold: false })} holdsToDraft={false} />);
+    expect(opening.match(/<button[^>]*Done: add the words[^>]*>/)?.[0]).toContain('disabled=""');
+  });
+
+  it("is plain dictation without voice: no hold to send", () => {
+    const html = renderToStaticMarkup(
+      <Tooltip.Provider>
+        <MicButton mic={control({ phase: "idle" }, { hold: false })} />
+      </Tooltip.Provider>,
+    );
+    expect(html).toContain('aria-label="Dictate"');
+    expect(html).not.toContain("voice message");
   });
 
   it("waits while a call has the mic", () => {

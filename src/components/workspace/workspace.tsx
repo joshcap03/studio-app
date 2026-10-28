@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CardDraftsProvider } from "@/components/chat/card-drafts";
 import { Composer, type ComposerHandle } from "@/components/chat/composer";
 import { EmptyState } from "@/components/chat/empty-state";
+import { DictationContext } from "@/components/chat/mic";
 import { Thread } from "@/components/chat/thread";
 import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { ProjectView } from "@/components/project/project-view";
@@ -57,7 +58,7 @@ import { MEMORY_CATEGORIES } from "@/lib/types";
 import { resolvePlace } from "@/lib/voice/places";
 import type { RecapCall } from "@/lib/voice/recap";
 import { waitsOnMember } from "@/lib/voice/relay";
-import { SETUP_JOURNEY_TITLE, type CallPurpose, type CallScreen, type ScreenAction, type ScreenView, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
+import { SETUP_JOURNEY_TITLE, type CallPurpose, type CallScreen, type ScreenAction, type ScreenView, type DictationStatus, type VoiceGrant, type VoiceStatus } from "@/lib/voice/types";
 
 /** How long a reply waiting on a request the member's standing OK covers is followed for the run to carry on. */
 const GOING_AHEAD_MS = 20_000;
@@ -201,8 +202,10 @@ interface Props {
   initialSkillId: string | null;
   /** The owner's setup interview for this agent; null for other members. */
   setup: SetupSummary | null;
-  /** Voice (a preview), when this member has it: the mic, voice notes, and calls. */
+  /** Voice (a preview), when this member has it: voice messages, voice notes, and calls. */
   voice: VoiceStatus | null;
+  /** Dictation into the message box (the mic), for every member wherever there's speech to text. */
+  dictation: DictationStatus | null;
   /** What the member goes by, for the agent's greeting. */
   member: string | null;
   /** The voice's name, when the member has calls ("it's Rowan"). */
@@ -264,7 +267,9 @@ export function Workspace(props: Props) {
     <CardDraftsProvider>
       <CompanionContext.Provider value={companions?.[props.workspace.id] ?? null}>
         <VoicePlayer voice={props.voice} onCall={onCall}>
-          <WorkspaceShell {...props} companions={companions} onCompanion={updateCompanion} onCallChange={setOnCall} />
+          <DictationContext.Provider value={props.dictation}>
+            <WorkspaceShell {...props} companions={companions} onCompanion={updateCompanion} onCallChange={setOnCall} />
+          </DictationContext.Provider>
         </VoicePlayer>
       </CompanionContext.Provider>
     </CardDraftsProvider>
