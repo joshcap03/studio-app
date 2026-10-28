@@ -170,7 +170,7 @@ export const TEMPLATES: AgentTemplate[] = [
 - When a one-off task has several steps, keep its plan current with update_plan.
 - To find people, use Apollo or Clay if connected, otherwise public web sources. Verify an email with Hunter or a source before using it; never guess one. Unify isn't available; offer these instead if I ask for it.
 - Only ever use facts about me from my profile, files, and memory. Never invent experience or numbers.
-- Submit applications, send emails and messages, and run Apollo sequences once they meet what success means. Anything that pays a fee or moves money asks me first.
+- Submit applications, send emails and messages, and run Apollo sequences once they meet what success means.
 - When you bring me roles or people you found, put them in a keep-or-pass card so I can judge each one, and ask me what's next with choices rather than a question in the text.
 - When something is ambiguous about what I want, ask me one short question rather than guessing.`,
     skills: ["find-roles", "research-company", "tailor-application", "outreach-drafts", "interview-prep"],
@@ -261,7 +261,7 @@ export const TEMPLATES: AgentTemplate[] = [
     profilePrompt: "What you sell, who buys it, how you work, and the tools you run on (e.g. Shopify, QuickBooks, Gmail).",
     instructions: `You help me run my business day to day.
 - Check the connected apps for real numbers before answering questions about sales, stock, or money.
-- Answer routine customer and supplier messages in my voice, and flag the unusual ones. Anything that moves money asks me first.`,
+- Answer routine customer and supplier messages in my voice, and flag the unusual ones.`,
     skills: ["business-snapshot", "inbox-triage", "customer-email-replies", "weekly-sales-report"],
     apps: ["gmail", "shopify", "sheets", "quickbooks"],
     tasks: [],
@@ -307,7 +307,7 @@ export const TEMPLATES: AgentTemplate[] = [
 - When a one-off task has several steps, keep its plan current with update_plan.
 - To find people, use Apollo or Clay if connected, otherwise public web sources. Verify an email with Hunter or a source before using it; never guess one.
 - Only ever use facts about my product, customers, and results from my profile, files, and memory. Never invent case studies, customer names, or numbers.
-- Send emails and messages, and run Apollo sequences, once they're ready. Anything that costs money asks me first.
+- Send emails and messages, and run Apollo sequences, once they're ready.
 - Never contact anyone who has asked not to be contacted, and stop following up with anyone who says no.
 - When something is ambiguous about what I want, ask me one short question rather than guessing.`,
     skills: ["meeting-follow-up", "inbox-triage"],

@@ -4,12 +4,14 @@ import { describeTurn, liveFlow, setupSession, type ScriptedMember } from "./set
 // A short eval of the setup interview against a live flow with a real model (LANGFLOW_TEST_* env;
 // see setup-harness.ts), to the agent's advice only: someone whose time goes to a job they do by
 // hand on a website, paying at checkout each time. The agent's browser can do that job with them
-// (sign-ins and cards through the secure card, each change on their OK), so its advice offers to,
+// (sign-ins and cards through the secure card; paying asks them once), so its advice offers to,
 // rather than saying it can't use the site. The seller and their shop are made up.
 
 const ADVICE = /\b(recommend|suggest|i'd start|start with|help (you )?most|where i (can|could) help|here's my read|i think i (can|could)|i'd leave)\b/i;
 const OFFERS_SITE = /\b(browser|(?:i|i'd|i could|i can) (?:\w+ ){0,4}(?:buy|purchase|check ?out|pay for|make|create|fill)\b[^.]{0,80}\b(?:labels?|site|website|form)|(?:on|through|in) (?:the|their|your) (?:carrier'?s? )?(?:site|website))/i;
 const REFUSES_SITE = /\b(?:can't|cannot|can not|unable to|not able to) (?:\w+ ){0,3}(?:click|log ?in|sign in|use|go into|get into|reach|access|operate|work in)\b[^.]{0,40}\b(?:site|website|carrier|shipping|label|for you)/i;
+/** Telling the member they said a rule they never said (an approval rule from its own instructions). */
+const PUTS_WORDS = /\byou(?:'ve| have)? (?:said|told me|asked|want(?:ed)?)\b[^.]{0,80}\b(?:ok|okay|approv\w*|sign[- ]off|asks? you|check with you)\b/i;
 const plain = (s: string) => s.replace(/[‘’]/g, "'");
 
 const SELLER: ScriptedMember = {
@@ -40,5 +42,6 @@ describe.skipIf(!liveFlow)("Setup interview for a job done by hand on a website,
     const said = turns.slice(1).map((x) => plain(x.reply)).join("\n---\n");
     expect(said, turns.map(describeTurn).join("\n---\n")).toMatch(OFFERS_SITE);
     expect(said, turns.map(describeTurn).join("\n---\n")).not.toMatch(REFUSES_SITE);
+    expect(said, "told the member they said an approval rule").not.toMatch(PUTS_WORDS);
   });
 });
