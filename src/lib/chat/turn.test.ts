@@ -1755,6 +1755,27 @@ describe("keep going", () => {
     await expect(startTurn(long, { conversationId: chain, kind: "continue" })).rejects.toMatchObject({ status: 409 });
   });
 
+  it("carries a reply on once when the page and the worker both try", async () => {
+    const seen: AgentRunInput[] = [];
+    const db = createMemoryDb();
+    const id = crypto.randomUUID();
+    // The page and the worker reach different server instances, sharing only the database.
+    const page = { ...deps(more, seen), store: createMemoryStore(scopeA, db) };
+    const worker = { ...deps(more, seen), store: createMemoryStore(scopeA, db) };
+    await collect(startTurn(page, { conversationId: id, kind: "send", text: "Tag my inbox" }));
+
+    const tries = await Promise.allSettled([page, worker].map((d) => collect(startTurn(d, { conversationId: id, kind: "continue" }))));
+    expect(tries.filter((t) => t.status === "fulfilled")).toHaveLength(1);
+    expect(tries.find((t) => t.status === "rejected")).toMatchObject({ reason: { status: 409 } });
+    expect((await page.store.listMessages(id)).map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
+    expect(seen.filter((s) => s.message === renderContinueMessage("label the other 400"))).toHaveLength(1);
+
+    // A reply already taken elsewhere (by the worker, or ended by the member's Stop) isn't carried on again.
+    expect(await worker.store.claimKeepGoing(id)).toBe(true);
+    await expect(startTurn(page, { conversationId: id, kind: "continue" })).rejects.toMatchObject({ status: 409 });
+    expect((await page.store.listMessages(id)).at(-1)?.keepGoing).toBeUndefined();
+  });
+
   it("doesn't carry on a reply that asked the member something", async () => {
     const asking = deps([...more, { type: "questions", questions: [{ id: "q1", question: "Which label?", options: ["A", "B"] }] }] as AgentEvent[]);
     const id = crypto.randomUUID();

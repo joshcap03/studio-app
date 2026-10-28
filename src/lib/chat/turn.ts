@@ -417,6 +417,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       throw new TurnError(409, "There's nothing to carry on here.");
     }
     if (keepGoingRun(existing) >= MAX_KEEP_GOING) throw new TurnError(409, "That's as far as it goes on its own. Tell it to carry on.");
+    // The member's page, the background worker, and a task's run may all try: only one carries it on.
+    if (!(await store.claimKeepGoing(conversationId, last.id))) throw new TurnError(409, "This was already carried on.");
   } else if (pending && request.kind === "send") {
     // A new message waits for the pending decision.
     throw new TurnError(409, "Approve or decline the agent's request first.");

@@ -145,6 +145,14 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
       for (const m of streaming) shared.stops.add(m.id);
       return streaming.length > 0;
     },
+    async claimKeepGoing(conversationId, messageId) {
+      const c = shared.conversations.get(conversationId);
+      if (!c || !owns(c)) return false;
+      // Like the Supabase store, a taken reply no longer reads as carrying on.
+      const waiting = shared.messages.filter((m) => m.conversationId === conversationId && m.role === "assistant" && m.keepGoing && (!messageId || m.id === messageId));
+      for (const m of waiting) delete m.keepGoing;
+      return waiting.length > 0;
+    },
     async stopRequested(messageId) {
       const m = shared.messages.find((x) => x.id === messageId);
       const c = m && shared.conversations.get(m.conversationId);

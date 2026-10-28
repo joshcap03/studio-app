@@ -1,7 +1,9 @@
-import { getAgentAdapter } from "@/lib/agent";
+import { agentEnabledFor, getAgentAdapter } from "@/lib/agent";
 import { agentFilesForRun, runFiles } from "@/lib/agent-files";
 import { readAttachment } from "@/lib/attachments";
 import { modalityOf, originFor } from "@/lib/chat/modality";
+import type { KeptOutcome } from "@/lib/chat/continue-in-app";
+import { handKeepGoingToWorker } from "@/lib/chat/keep-going";
 import { storeFor } from "@/lib/chat/store-for";
 import type { AgentAttachment } from "@/lib/agent/types";
 import { TurnError, startTurn, type TurnDeps, type TurnRequest } from "@/lib/chat/turn";
@@ -250,8 +252,11 @@ export async function buildTurnDeps(
             return null;
           })
         : null;
-      // A task's reply that carries on in the next one says nothing yet: the last one does.
-      const notifying = !info.watched && pushEnabled() && !(task && message.keepGoing);
+      // A reply that carries the job on goes to the worker too, so it goes on with no page open
+      // (a task's run the worker drives, with carryOn, is carried on by that run instead).
+      const handed = message.keepGoing && !carryOn ? await handKeepGoingToWorker(tenant, conversationId, message.id) : false;
+      // A reply that carries on in the next one says nothing yet: the one that ends the job does.
+      const notifying = !info.watched && pushEnabled() && !(message.keepGoing && (task || handed));
       const from =
         notifying && voiceStatus(tenant)
           ? await resolvePersona(tenant, self ? { companion: self } : {}).then(
@@ -413,6 +418,35 @@ export async function standingCarryOn(
   // No one reads this stream: the member's page follows the reply from its saved state.
   void (await startTurn(next.deps, next.request)).cancel();
   return true;
+}
+
+/**
+ * Carries on a chat reply's job (keep_going) for the background worker, with no page open, in a
+ * request of its own, and resolves once the next reply ends (a request it pauses on and the member's
+ * standing OK covers is carried on first). That reply hands itself on again if it carries the job on
+ * (the cap is the turn's). Nothing happens when the reply isn't the conversation's latest, still
+ * carrying the job on: the member wrote, stopped it, or their page carried it on first.
+ */
+export async function continueKeptReply(tenant: Tenant, conversationId: string, replyId: string): Promise<KeptOutcome> {
+  const last = (await storeFor(tenant).listMessages(conversationId)).at(-1);
+  if (last?.id !== replyId || !last.keepGoing) return { status: "taken" };
+  if (!agentEnabledFor(tenant.workspace.id)) return { status: "refused", reason: "agent_unavailable" };
+  let settle!: (outcome: KeptOutcome) => void;
+  const settled = new Promise<KeptOutcome>((resolve) => (settle = resolve));
+  try {
+    const { deps, request } = await buildTurnDeps(tenant, {
+      conversationId,
+      // No page reads this reply; the member's page loads it with every card it can show.
+      input: { kind: "continue", offers: true, secrets: true, handoffs: true },
+      onFinished: async (message) => settle({ status: "carried_on", reply: message.status, keepGoing: Boolean(message.keepGoing) }),
+    });
+    void (await startTurn(deps, request)).cancel();
+  } catch (error) {
+    // Carried on elsewhere first (409), or past the member's limits (429).
+    if (error instanceof TurnError) return { status: error.status === 409 ? "taken" : "refused", reason: error.message };
+    throw error;
+  }
+  return settled;
 }
 
 /** Whether the member said Not now to an offer to call under this message. */
