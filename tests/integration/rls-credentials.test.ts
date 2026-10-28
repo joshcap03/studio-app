@@ -53,6 +53,20 @@ describe("saved credentials", () => {
     expect((await ada.client.rpc("reveal_credential", { p_id: login })).data).toBe("v1.new-login");
   });
 
+  it("replace a card saved with the same brand, last four, and expiry, saying when it keeps its code", async () => {
+    const flag = async () => ((await ada.client.from("credentials").select("card_code_saved").eq("id", card).single()).data as { card_code_saved: boolean }).card_code_saved;
+    expect(await flag()).toBe(false);
+    const args = { p_kind: "card", p_label: "Visa ending 4242", p_card_brand: "Visa", p_card_last4: "4242", p_card_exp: "04/27" };
+    const again = await save(ada, { ...args, p_sealed: "v1.card-with-code", p_card_code_saved: true });
+    expect(again.data).toBe(card);
+    expect(await flag()).toBe(true);
+    expect((await ada.client.rpc("reveal_credential", { p_id: card })).data).toBe("v1.card-with-code");
+    // Another person's card with the same digits is their own.
+    const bobs = await save(bob, { ...args, p_sealed: "v1.bobs-card" });
+    expect(bobs.data).not.toBe(card);
+    expect((await ada.client.rpc("reveal_credential", { p_id: card })).data).toBe("v1.card-with-code");
+  });
+
   it("refuse a login for a site that isn't https, or a card with a security code's worth of nothing", async () => {
     expect((await save(ada, { p_kind: "login", p_label: "Plain", p_sealed: "v1.x", p_origin: "http://acme.example" })).error).not.toBeNull();
     expect((await save(ada, { p_kind: "card", p_label: "Bad", p_sealed: "v1.x", p_card_last4: "42" , p_card_exp: "04/27" })).error).not.toBeNull();

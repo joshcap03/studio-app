@@ -17,6 +17,13 @@ describe("sealing a saved login or card", () => {
     expect(unseal(KEY, ADA, "card", sealed)).toBeNull();
     expect(unseal(randomBytes(32), ADA, "login", sealed)).toBeNull();
   });
+  it("keeps a card's security code sealed with the rest of it", () => {
+    const card = { number: "4242424242424242", name: "Ada", expMonth: "04", expYear: "27", code: "123" };
+    const sealed = seal(KEY, ADA, "card", card);
+    expect(sealed).not.toContain("123");
+    expect(unseal(KEY, ADA, "card", sealed)).toEqual(card);
+  });
+
   it("refuses anything tampered with", () => {
     const [v, iv, tag, body] = seal(KEY, ADA, "card", { number: "4242424242424242", name: "Ada", expMonth: "04", expYear: "27" }).split(".");
     const flipped = Buffer.from(body, "base64url");

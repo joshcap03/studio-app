@@ -106,6 +106,8 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
   // It was open and isn't now (or never was): the agent can open the page again from a tap.
   const closed = lookup !== null && (lookup.browser === "ended" || lookup.browser === "none");
   const savedPick = lookup?.saved.find((c) => c.id === picked) ?? null;
+  // A card saved before its security code was kept asks for it once; after that it's on file.
+  const askCode = Boolean(savedPick && isCard && !savedPick.codeSaved);
 
   async function send(body: Parameters<typeof api.fillSecret>[2]) {
     setBusy(true);
@@ -131,7 +133,7 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
 
   function fill() {
     if (isCode) return void send({ use: "code", code });
-    if (savedPick) return void send({ use: "saved", credentialId: savedPick.id, ...(isCard ? { cvv } : {}) });
+    if (savedPick) return void send({ use: "saved", credentialId: savedPick.id, ...(isCard && askCode ? { cvv } : {}) });
     if (isCard) return void send({ use: "card", number, name, expiry, cvv, save: save && Boolean(lookup?.canSave) });
     return void send({ use: "login", username, password, save: save && Boolean(lookup?.canSave) });
   }
@@ -139,7 +141,7 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
   const ready = isCode
     ? /^[A-Za-z0-9]{3,12}$/.test(code.replace(/[\s-]/g, ""))
     : savedPick
-      ? !isCard || /^[0-9]{3,4}$/.test(cvv)
+      ? !isCard || !askCode || /^[0-9]{3,4}$/.test(cvv)
       : isCard
         ? Boolean(number && name && expiry && cvv)
         : Boolean(password);
@@ -198,7 +200,7 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
                 </div>
               ) : null}
 
-              {savedPick && isCard ? (
+              {askCode ? (
                 <SecretInput label="Security code" value={cvv} onChange={setCvv} autoComplete="off" inputMode="numeric" maxLength={4} masked />
               ) : null}
 
@@ -221,7 +223,7 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
               {!savedPick && lookup.canSave ? (
                 <label className="flex items-center gap-2 text-[13px] text-fg-2">
                   <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} className="accent-current" />
-                  {isCard ? "Save card on file (not the security code)" : "Save for next time"}
+                  {isCard ? "Save card on file" : "Save for next time"}
                 </label>
               ) : null}
               {insecure ? <p className="text-[12.5px] text-danger">This page isn&apos;t secure (https), so nothing can be filled in here.</p> : null}

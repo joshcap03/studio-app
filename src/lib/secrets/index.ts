@@ -8,7 +8,7 @@ import { cardBrand } from "./card";
 // app's own key (AES-256-GCM, bound to the person and the kind) and then kept in Supabase Vault,
 // all under the member's own session (supabase/migrations/20261107000000_credentials.sql). Nothing
 // here logs, returns to the page, or sends to the agent a secret's value: callers get it only to
-// type it into the browser. A card's security code is never saved.
+// type it into the browser. A card keeps its security code too, sealed with the rest of it.
 //
 // Free of next/*.
 
@@ -24,6 +24,8 @@ export interface CardSecret {
   expMonth: string;
   /** Two digits: "27". */
   expYear: string;
+  /** The security code, when it was saved with the card (cards saved before that have none). */
+  code?: string;
 }
 
 /** What the member sees of a saved credential: never its secret. */
@@ -38,6 +40,8 @@ export interface CredentialSummary {
   last4?: string;
   /** "MM/YY" */
   exp?: string;
+  /** A card's security code is saved with it, so filling it needs nothing typed. */
+  codeSaved?: boolean;
   lastUsedAt: number | null;
 }
 
@@ -50,10 +54,11 @@ interface Row {
   card_brand: string | null;
   card_last4: string | null;
   card_exp: string | null;
+  card_code_saved: boolean | null;
   last_used_at: string | null;
 }
 
-const COLUMNS = "id, kind, label, origin, username, card_brand, card_last4, card_exp, last_used_at";
+const COLUMNS = "id, kind, label, origin, username, card_brand, card_last4, card_exp, card_code_saved, last_used_at";
 
 function summary(row: Row): CredentialSummary {
   return {
@@ -65,6 +70,7 @@ function summary(row: Row): CredentialSummary {
     ...(row.card_brand ? { brand: row.card_brand } : {}),
     ...(row.card_last4 ? { last4: row.card_last4 } : {}),
     ...(row.card_exp ? { exp: row.card_exp } : {}),
+    ...(row.kind === "card" ? { codeSaved: row.card_code_saved === true } : {}),
     lastUsedAt: row.last_used_at ? Date.parse(row.last_used_at) : null,
   };
 }
@@ -130,17 +136,27 @@ export async function saveLogin(session: Session, login: { origin: string; usern
   return data as string;
 }
 
-/** Saves a card on file (never its security code). `card.number` is digits only, already checked. */
+/**
+ * Saves a card on file, with its security code when given, replacing one already saved with the
+ * same brand, last four, and expiry. `card.number` is digits only, already checked.
+ */
 export async function saveCard(session: Session, card: CardSecret & { label?: string }): Promise<string> {
   const brand = cardBrand(card.number);
   const last4 = card.number.slice(-4);
   const { data, error } = await session.db.rpc("save_credential", {
     p_kind: "card",
     p_label: (card.label?.trim() || `${brand} ending ${last4}`).slice(0, 80),
-    p_sealed: seal(key(), session.userId, "card", { number: card.number, name: card.name, expMonth: card.expMonth, expYear: card.expYear }),
+    p_sealed: seal(key(), session.userId, "card", {
+      number: card.number,
+      name: card.name,
+      expMonth: card.expMonth,
+      expYear: card.expYear,
+      ...(card.code ? { code: card.code } : {}),
+    }),
     p_card_brand: brand,
     p_card_last4: last4,
     p_card_exp: `${card.expMonth}/${card.expYear}`,
+    p_card_code_saved: Boolean(card.code),
   });
   if (error) throw new Error(error.message);
   return data as string;

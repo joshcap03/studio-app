@@ -180,7 +180,8 @@ raw/technical text.
   (`/api/conversations/<id>/secrets/<block>`): an https page only, a saved login only on its own site.
   "Do it myself" takes the browser over (clicks, keys, and typing relayed by `…/browser/input`).
   Saved ones (`credentials`, the person's, shared by their agents) are sealed with `CREDENTIALS_KEY`
-  and kept in Supabase Vault; a card's security code is never saved. Settings → Saved logins & cards
+  and kept in Supabase Vault; a saved card keeps its security code too (the owner's call), so checkout
+  doesn't ask for it again. Settings → Saved logins & cards
   lists and removes them.
 - Handing over the agent's browser, for a CAPTCHA or a page only the member can use (a Google
   sign-in button, a passkey): the agent calls `hand_browser` and the member gets a "Take over" card
