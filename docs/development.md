@@ -197,7 +197,10 @@ exchange from the session's stored messages.
      A conversation's browser takes one call at a time (the agent's parallel page actions would
      each open a browser, or fill one page over each other), and a failed action keeps it, page
      and all: only the server saying the session is gone, or `MAX_STRIKES` failures in a row,
-     bring a fresh one, the old one released.
+     bring a fresh one, the old one released. Its "Residential Proxies" input (off by default,
+     kept across reinstalls) opens each browser behind Browserbase's residential proxies, for
+     sites whose bot protection serves a datacenter browser "service unavailable" once signed
+     in (USPS Click-N-Ship); Browserbase bills them per GB.
      Card numbers (13–19 digits that pass Luhn) in its results are cut to their last four.
      At a sign-in or payment form the agent calls the gateway's `request_secret`, and the app
      fills the member's login or card into the page itself (`src/lib/browser-fill.ts`); the app

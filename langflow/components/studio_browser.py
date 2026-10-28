@@ -28,6 +28,11 @@ per person), and the browser opens with it (persisted, so a site the member sign
 stays signed in once that browser closes). Tweaks are dropped when a paused run resumes, so the
 member's context is also kept in the process cache under their id from the session id.
 
+Residential proxies (the `proxies` input, off by default; install.py carries it over): some sites' bot
+protection lets a datacenter browser sign in and then serves it empty pages or "service unavailable"
+(USPS Click-N-Ship did). With it on, each browser opens behind Browserbase's residential proxies,
+billed per GB; a plan that refuses them gets the browser without.
+
 Downloads: Browserbase keeps a file the browser downloads only while a CDP connection has turned
 downloads on, and Stagehand doesn't. So act and navigate take expect_download: with it, this node
 turns downloads on over its own connection to the conversation's browser, held open while the
@@ -62,7 +67,7 @@ from langchain_core.tools import StructuredTool
 from lfx.base.agents.utils import safe_cache_get, safe_cache_set
 from lfx.base.mcp.util import MCPStreamableHttpClient, update_tools
 from lfx.custom.custom_component.component_with_cache import ComponentWithCache
-from lfx.io import MessageTextInput, Output, SecretStrInput
+from lfx.io import BoolInput, MessageTextInput, Output, SecretStrInput
 from pydantic import Field, create_model
 
 # Header that gives each conversation its own MCP connection (and so its own browser). The
@@ -340,6 +345,10 @@ class StudioBrowserComponent(ComponentWithCache):
         MessageTextInput(name="url", display_name="Browserbase MCP URL", value="https://mcp.browserbase.com/mcp", advanced=True),
         MessageTextInput(name="context_id", display_name="Saved Sign-ins", value="", advanced=True,
                          info="Filled per run by the Studio app: the member's Browserbase context. Leave empty here."),
+        BoolInput(name="proxies", display_name="Residential Proxies", value=False, advanced=True,
+                  info=("Open each browser behind Browserbase's residential proxies (billed per GB by Browserbase). "
+                        "For sites whose bot protection serves a datacenter browser blank pages or 'service "
+                        "unavailable' once signed in. If the plan refuses it, the browser opens without.")),
     ]
     outputs = [Output(display_name="Tools", name="tools", method="build_tools", types=["Tool"])]
 
@@ -511,8 +520,10 @@ class StudioBrowserComponent(ComponentWithCache):
             body = {"keepAlive": True, "timeout": BROWSER_TIMEOUT_S}
             if context:
                 body["browserSettings"] = {"context": {"id": context, "persist": True}}
+            if bool(getattr(self, "proxies", False)):
+                body["proxies"] = True
             made_room = False
-            for _ in range(3):
+            for _ in range(4):
                 try:
                     async with httpx.AsyncClient(timeout=20) as client:
                         res = await client.post(f"{BROWSERBASE_API}/sessions", json=body,
@@ -522,6 +533,8 @@ class StudioBrowserComponent(ComponentWithCache):
                 if res.status_code == 429 and not made_room and await make_room():
                     made_room = True
                     continue
+                if res.status_code in (400, 402, 403) and body.pop("proxies", None):
+                    continue  # A plan without proxies: open the browser without them.
                 if res.status_code in (400, 403) and body.pop("keepAlive", None):
                     continue  # A plan without keep-alive: open one that lives while it's connected.
                 if res.status_code >= 300:
