@@ -241,7 +241,10 @@ export type AgentEvent =
   | { type: "run-report"; report: unknown }
   /** The agent's keep_going: out of time with the job unfinished, the rest needing nothing from the member. */
   | { type: "keep-going"; remaining: unknown }
-  /** The gateway cut a tool short, or skipped one, because the reply's time ran out. */
+  /**
+   * The reply was cut off mid-job: the gateway cut a tool short, or skipped one, because the
+   * reply's time ran out, or the provider stopped the run at its own cap on model calls.
+   */
   | { type: "out-of-time" };
 
 /**

@@ -194,6 +194,10 @@ exchange from the session's stored messages.
      drops the signed `cdpUrl` from results. It sends the same credential header and Langflow
      global variable the shared node used. If the plan's concurrent browsers are all in use,
      `start` ends this process's longest-idle browser (a minute or more) and tries once more.
+     A conversation's browser takes one call at a time (the agent's parallel page actions would
+     each open a browser, or fill one page over each other), and a failed action keeps it, page
+     and all: only the server saying the session is gone, or `MAX_STRIKES` failures in a row,
+     bring a fresh one, the old one released.
      Card numbers (13–19 digits that pass Luhn) in its results are cut to their last four.
      At a sign-in or payment form the agent calls the gateway's `request_secret`, and the app
      fills the member's login or card into the page itself (`src/lib/browser-fill.ts`); the app

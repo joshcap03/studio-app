@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalActions, browserFilesContext, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, type LangflowConfig } from "./langflow";
+import { approvalActions, browserFilesContext, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, withoutCallLimit, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -381,6 +381,14 @@ describe("Langflow request", () => {
     ]);
   });
 
+  it("reads Langflow's cap on model calls as the reply being cut off, and keeps its line out of the answer", () => {
+    const cap = "Model call limits exceeded: run limit (25/25)";
+    expect(toolTaskUpdates({ text: `I'll check it against USPS now.${cap}`, content_blocks: [] } as never)).toEqual([{ type: "out-of-time" }]);
+    expect(toolTaskUpdates({ text: "Both addresses are good.", content_blocks: [] } as never)).toEqual([]);
+    expect(withoutCallLimit(`I'll check it against USPS now.\n\n${cap}`)).toBe("I'll check it against USPS now.");
+    expect(withoutCallLimit("Both addresses are good.")).toBe("Both addresses are good.");
+  });
+
   it("lists files from the browser with what attaching one to an email takes, or why it can't be now", () => {
     const text = browserFilesContext([
       { name: "Label  Jane.pdf", mimeType: "application/pdf", s3key: "project_scope/files/abc" },
@@ -614,6 +622,27 @@ describe("Langflow streaming", () => {
       .join("");
     expect(text).toBe(answer);
     expect(events.some((e) => e.type === "message")).toBe(false);
+  });
+
+  it("reports a run Langflow's cap on model calls ended as cut off, with nothing of its line shown (recorded shape)", async () => {
+    const intro = "Got it, 133 W 22nd St for Eliza Cohen. I'll check it against USPS now.";
+    const cap = "Model call limits exceeded: run limit (25/25)";
+    const act = { type: "tool_use", name: "execute_tool", tool_input: { tool_name: "act", arguments: { action: "Click Find" } }, output: { content: '{"success":true}' }, error: null };
+    const textLeaf = (text: string) => ({ type: "text", text });
+    const { events, error } = await run(
+      base,
+      streamResponse([
+        frame("add_message", user("133 w 22nd st 11B NYNY 10011")),
+        frame("add_message", bot(intro, [textLeaf(intro)])),
+        frame("add_message", bot(intro, [textLeaf(intro), act])),
+        frame("add_message", bot(intro + cap, [textLeaf(intro), act, textLeaf(cap), textLeaf(intro + cap)])),
+        frame("end", end(intro + cap)),
+      ]),
+    );
+    expect(error).toBeUndefined();
+    expect(events.filter((e) => e.type === "out-of-time")).toEqual([{ type: "out-of-time" }]);
+    expect(events.filter((e) => e.type === "note")).toEqual([{ type: "note", text: intro }]);
+    expect(JSON.stringify(events)).not.toContain("Model call limits");
   });
 
   const deltas = (events: AgentEvent[]) =>
