@@ -335,7 +335,7 @@ export function browserFilesContext(files: NonNullable<AgentTenantContext["brows
       ? `- ${name} | attach with: ${JSON.stringify({ name, mimetype: f.mimeType, s3key: f.s3key })}`
       : `- ${name} | can't be attached now; get it again with save_file if they need it emailed`;
   });
-  return `Files you got from your browser for the member in this conversation (newest first; each is under the reply that got it, for them to download). To email one, pass its "attach with" value as the email tool's attachment (e.g. Gmail's attachment), with your usual approval for sending:\n${lines.join("\n")}`;
+  return `Files you got from your browser for the member in this conversation (newest first; each is under the reply that got it, for them to download). To email one, pass its "attach with" value as the email tool's attachment (Gmail's or Outlook's send, draft, or reply), with your usual approval for sending:\n${lines.join("\n")}`;
 }
 
 // The brief rides along with every reply here, so without this it outranks the member's own

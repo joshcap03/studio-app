@@ -183,13 +183,19 @@ raw/technical text.
   and kept in Supabase Vault; a saved card keeps its security code too (the owner's call), so checkout
   doesn't ask for it again. Settings → Saved logins & cards
   lists and removes them.
-- Files from the agent's browser (a shipping label, a receipt): the agent's `save_file` names one and
-  gives its link as the page has it (`src/lib/browser-files.ts`). The server fetches it from that
-  conversation's browser over CDP with the page's own cookies (`Network.loadNetworkResource`; https or
-  the page's own `blob:` links only), or with no link prints the open page to a PDF, and saves it as
-  an attachment on the reply under the member's session (`attachments.browser_md5` marks it), shown
-  there to download. Later runs there list those files (`browserFilesFor`), each staged in Composio's
-  file store so the agent can attach it to an email (Gmail's `attachment.s3key`); sending still asks.
+- Files from the agent's browser (a shipping label, a receipt, a statement or export): the agent's
+  `save_file` names one and gives its link as the page has it, or the name of a file a click
+  downloaded (`src/lib/browser-files.ts`). The server fetches a link from that conversation's browser
+  over CDP with the page's own cookies (`Network.loadNetworkResource`; https or the page's own `blob:`
+  links only), takes a download from Browserbase's store, or with neither prints the open page to a
+  PDF. Browserbase keeps downloads only while a CDP connection has them on, so Studio Browser's `act`
+  and `navigate` take `expect_download` and hold their own connection open around that one action
+  until the file finishes. A file's type comes from its bytes (the site's word only for text, or which
+  Office file a zip is), never the agent's name for it; PDFs, pictures, text, Word, Excel, and zips
+  are kept. It's saved as an attachment on the reply under the member's session
+  (`attachments.browser_md5` marks it), shown there to download. Later runs there list those files
+  (`browserFilesFor`), each staged in Composio's file store so the agent can attach it to an email
+  (Gmail's or Outlook's `attachment.s3key`); sending still asks.
 - Handing over the agent's browser, for a CAPTCHA or a page only the member can use (a Google
   sign-in button, a passkey): the agent calls `hand_browser` and the member gets a "Take over" card
   (`src/components/chat/browser-handoff.tsx`). Their tap fetches a short-lived Browserbase live view

@@ -86,8 +86,14 @@ export async function browserConnection(tenant: Tenant, conversationId: string):
 
 type Running = { ok: true; apiKey: string; sessionId: string; connectUrl: unknown } | { ok: false; reason: "off" | "none" | "ended" | "failed" };
 
-/** The conversation's browser, if it's this member's and still running. */
-async function runningSession(tenant: Tenant, conversationId: string): Promise<Running> {
+/**
+ * The conversation's browser as recorded for this member, running or not (what it downloaded
+ * outlives it), with the app's Browserbase key, server-side only.
+ */
+export async function recordedSession(
+  tenant: Tenant,
+  conversationId: string,
+): Promise<{ ok: true; apiKey: string; sessionId: string } | { ok: false; reason: "off" | "none" }> {
   const browser = getConfig().browser;
   if (!browser) return { ok: false, reason: "off" };
   const { data, error } = await tenant.db
@@ -99,11 +105,18 @@ async function runningSession(tenant: Tenant, conversationId: string): Promise<R
     .maybeSingle();
   if (error) throw new Error(error.message);
   const sessionId = openSession(browser.apiKey, conversationId, tenant.userId, (data as { browser_session?: string | null } | null)?.browser_session);
-  if (!sessionId) return { ok: false, reason: "none" };
+  return sessionId ? { ok: true, apiKey: browser.apiKey, sessionId } : { ok: false, reason: "none" };
+}
+
+/** The conversation's browser, if it's this member's and still running. */
+async function runningSession(tenant: Tenant, conversationId: string): Promise<Running> {
+  const recorded = await recordedSession(tenant, conversationId);
+  if (!recorded.ok) return recorded;
+  const { sessionId, apiKey } = recorded;
 
   let session: { status?: unknown; connectUrl?: unknown };
   try {
-    const res = await fetch(`${API}/sessions/${sessionId}`, { headers: { "X-BB-API-Key": browser.apiKey }, cache: "no-store", signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${API}/sessions/${sessionId}`, { headers: { "X-BB-API-Key": apiKey }, cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (res.status === 404) return { ok: false, reason: "ended" };
     if (!res.ok) return { ok: false, reason: "failed" };
     session = (await res.json()) as typeof session;
@@ -111,7 +124,7 @@ async function runningSession(tenant: Tenant, conversationId: string): Promise<R
     return { ok: false, reason: "failed" };
   }
   if (session.status !== "RUNNING") return { ok: false, reason: "ended" };
-  return { ok: true, apiKey: browser.apiKey, sessionId, connectUrl: session.connectUrl };
+  return { ok: true, apiKey, sessionId, connectUrl: session.connectUrl };
 }
 
 export type Control = { ok: true; url: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" };
