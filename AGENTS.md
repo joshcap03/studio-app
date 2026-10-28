@@ -125,7 +125,13 @@ raw/technical text.
   its own time), up to `MAX_KEEP_GOING` in a row (`src/lib/chat/turn.ts`). A reply whose time ran out
   (the gateway cut a tool short, or the request's own limit) carries on the same way even when the
   agent didn't call it, unless it asked the member something. Anything they send or stop ends it.
-  A task's run stays running (reason `keep_going`, `runOutcome`) and the worker calls its route
+  With no page open, the worker carries a chat's job on: each such reply is handed to it
+  (`handKeepGoingToWorker`, `src/lib/chat/keep-going.ts`, with `TRIGGER_SECRET_KEY`), and after a short
+  wait `trigger/continue-chat.ts` signs in as the member and calls `POST
+  /api/conversations/<id>/keep-going` (`continueKeptReply`), unless the reply was already taken
+  (`worker_reply_waiting`). Every carry-on, page, worker, or task, first claims the reply
+  (`messages.continued_at`, `claimKeepGoing`), so only one starts it; Stop claims it too. A reply that
+  carries on sends no notification; the one that ends the job does. A task's run stays running (reason `keep_going`, `runOutcome`) and the worker calls its route
   again with `?continue=1` (`continueClaimedTask`), so it carries on with no one watching; the
   member is notified once, when it ends. Carried on from the page instead, the run settles with
   that reply (`settleKeptRun`).
@@ -219,8 +225,9 @@ raw/technical text.
 - `trigger/`: the background worker (Trigger.dev, `trigger.config.ts`). `dispatch.ts` claims due
   tasks every two minutes; `watch-event.ts` takes a watch's events as the webhook hands them over;
   `run-task.ts` signs in as each task's member and asks the app to run
-  it (`POST /api/tasks/<id>/runs/<run>`), so runs use the app's own settings and keys and the
-  worker holds only the Supabase keys and `APP_URL`. `lib/elevated.ts` is the only code with
+  it (`POST /api/tasks/<id>/runs/<run>`), and `continue-chat.ts` carries on a chat's job with no
+  page open (`POST /api/conversations/<id>/keep-going`), so runs use the app's own settings and keys
+  and the worker holds only the Supabase keys and `APP_URL`. `lib/elevated.ts` is the only code with
   the Supabase secret key.
 - `langflow/`: Langflow components the flow needs (Tool Gateway with approvals, Workspace
   Context, Member Apps for per-member Composio tools, Studio Browser for a Browserbase browser per
@@ -240,11 +247,14 @@ raw/technical text.
   service-role client to request paths. Every new table gets RLS policies and an isolation test.
   The one exception is the background worker: `trigger/lib/elevated.ts`, and nothing else, holds
   `SUPABASE_SECRET_KEY`, only to call the service_role-only `worker_*` functions and to open a
-  short-lived session as a task's member (magic link + verify, checked to be that member, signed
-  out with local scope). The admin client never touches tables; everything after runs as the
-  member under RLS. `src/lib/elevated-guard.test.ts` enforces this. That session's access token
-  goes only to `POST /api/tasks/<id>/runs/<run>`, the one route that accepts a bearer token
-  (verified with Supabase Auth; `src/proxy.ts` lets only that route through without a cookie).
+  short-lived session as a task's (or a chat's) member (magic link + verify, checked to be that
+  member, signed out with local scope). The admin client never touches tables; everything after runs
+  as the member under RLS. `src/lib/elevated-guard.test.ts` enforces this. That session's access
+  token goes only to the two routes that accept a bearer token: `POST /api/tasks/<id>/runs/<run>`
+  (start or carry on that member's task run) and `POST /api/conversations/<id>/keep-going` (carry on
+  that member's chat reply that's still waiting to, within `MAX_KEEP_GOING`). Both verify it with
+  Supabase Auth and the agent's membership (`authorizeWorker` in `src/lib/tenant.ts`), and
+  `src/proxy.ts` lets only those two through without a cookie.
   The other cookieless routes are the voice front (`/api/voice/llm/v1/chat/completions`), which
   checks the voice provider's key and the call's sealed context and touches no data, and the
   watch webhook (`/api/watches/composio`), which checks Composio's signature, reads and writes no

@@ -128,6 +128,12 @@ export interface Store {
   requestStop(conversationId: string): Promise<boolean>;
   /** Whether the member asked this reply to stop since it last started streaming. */
   stopRequested(messageId: string): Promise<boolean>;
+  /**
+   * Takes a reply that carries a job on (keep_going) so only one next reply carries it on: the
+   * member's page, the background worker, or a task's run. Without `messageId`, ends any waiting in
+   * the conversation (the member's Stop). False when there was none to take (or someone else took it).
+   */
+  claimKeepGoing(conversationId: string, messageId?: string): Promise<boolean>;
   /** Records the member's rating of one of their replies (null clears it). False if no such reply. */
   setFeedback(conversationId: string, id: string, feedback: MessageFeedback | null): Promise<boolean>;
   /** Records the provider's trace id for the run that wrote a reply (server-side only). */
@@ -188,6 +194,7 @@ interface MessageRow {
   feedback: MessageFeedback | null;
   voice_note: VoiceNote | null;
   keep_going: string | null;
+  continued_at: string | null;
   error: string | null;
   skill: MessageSkill | null;
   origin: MessageOrigin | null;
@@ -254,7 +261,7 @@ const PLAN_COLUMNS = "plan, goal, plan_updated_at";
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
 const MESSAGE_COLUMNS =
-  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, keep_going, error, skill, origin, created_at, updated_at, " +
+  "id, conversation_id, role, content, status, activity, artifacts, memory_proposals, timeline, citations, questions, ui, ui_response, feedback, voice_note, keep_going, continued_at, error, skill, origin, created_at, updated_at, " +
   "approvals(id, conversation_id, message_id, summary, app, details, status, created_at, decided_at, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at, standing), " +
   "attachments(id, name, mime_type, size)";
 const APPROVAL_COLUMNS =
@@ -332,7 +339,8 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   uiResponse: r.ui_response ?? null,
   feedback: r.feedback ?? null,
   voiceNote: r.voice_note ?? null,
-  ...(r.keep_going ? { keepGoing: r.keep_going } : {}),
+  // Only while it's still waiting to be carried on: once taken (or stopped) it's history.
+  ...(r.keep_going && !r.continued_at ? { keepGoing: r.keep_going } : {}),
   attachments: (r.attachments ?? []).map(toAttachment),
   error: r.error,
   skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
@@ -632,6 +640,21 @@ export function createStore(db: Db, scope: Scope): Store {
           .eq("user_id", userId)
           .select("id"),
       ) as { id: string }[];
+      return rows.length > 0;
+    },
+
+    async claimKeepGoing(conversationId, messageId) {
+      // Not a content change, so updated_at stays put.
+      let query = messages()
+        .update({ continued_at: new Date().toISOString() })
+        .eq("conversation_id", conversationId)
+        .eq("role", "assistant")
+        .not("keep_going", "is", null)
+        .is("continued_at", null)
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", userId);
+      if (messageId) query = query.eq("id", messageId);
+      const rows = check(await query.select("id")) as { id: string }[];
       return rows.length > 0;
     },
 

@@ -179,15 +179,19 @@ if (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
   warn("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY", "not set; members can't turn on notifications (npx web-push generate-vapid-keys)");
 }
 
-// Watches (docs/watches.md): Composio's webhook secret and the Trigger.dev key the webhook hands
-// events to the worker with. Both or neither.
-if (env.COMPOSIO_WEBHOOK_SECRET && env.TRIGGER_SECRET_KEY) {
-  if (env.TRIGGER_SECRET_KEY.startsWith("tr_prod_")) pass("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY");
-  else fail("TRIGGER_SECRET_KEY", "must be the worker project's production secret key (tr_prod_…)");
-} else if (env.COMPOSIO_WEBHOOK_SECRET || env.TRIGGER_SECRET_KEY) {
-  fail("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY", "set both or neither; watches need both");
+// The Trigger.dev key the app hands work to the worker with: a watch's events (with Composio's
+// webhook secret, docs/watches.md) and a chat's long job carried on with no page open.
+if (env.TRIGGER_SECRET_KEY && !env.TRIGGER_SECRET_KEY.startsWith("tr_prod_")) {
+  fail("TRIGGER_SECRET_KEY", "must be the worker project's production secret key (tr_prod_…)");
+} else if (env.COMPOSIO_WEBHOOK_SECRET && env.TRIGGER_SECRET_KEY) {
+  pass("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY");
+} else if (env.COMPOSIO_WEBHOOK_SECRET) {
+  fail("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY", "watches need TRIGGER_SECRET_KEY too");
+} else if (env.TRIGGER_SECRET_KEY) {
+  pass("TRIGGER_SECRET_KEY", "chats carry on with no page open");
+  warn("COMPOSIO_WEBHOOK_SECRET", "not set; watches never fire (scripts/composio-webhook.mjs)");
 } else {
-  warn("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY", "not set; watches never fire (scripts/composio-webhook.mjs)");
+  warn("COMPOSIO_WEBHOOK_SECRET / TRIGGER_SECRET_KEY", "not set; watches never fire, and a chat's long job carries on only while its page is open");
 }
 
 // Saved logins and cards for the agent's browser (src/lib/secrets).

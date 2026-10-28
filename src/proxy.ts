@@ -34,13 +34,18 @@ export async function proxy(request: NextRequest) {
   return NextResponse.redirect(login);
 }
 
-// The background worker starting a queued task run carries the member's access token instead
-// of a cookie. Only that one route takes a token, and it verifies it with Supabase Auth itself
-// (src/app/api/tasks/[id]/runs/[runId]/route.ts); nothing else gets past without a session.
-const WORKER_RUN_START = /^\/api\/tasks\/[0-9a-f-]{36}\/runs\/[0-9a-f-]{36}$/i;
+// The background worker starting a queued task run, or carrying on a chat reply's job, carries the
+// member's access token instead of a cookie. Only those two routes take a token, and they verify it
+// with Supabase Auth themselves (authorizeWorker in src/lib/tenant.ts); nothing else gets past
+// without a session.
+const WORKER_ROUTES = [/^\/api\/tasks\/[0-9a-f-]{36}\/runs\/[0-9a-f-]{36}$/i, /^\/api\/conversations\/[0-9a-f-]{36}\/keep-going$/i];
 
 function isWorkerRunStart(request: NextRequest): boolean {
-  return request.method === "POST" && WORKER_RUN_START.test(request.nextUrl.pathname) && /^Bearer\s+\S+$/i.test(request.headers.get("authorization") ?? "");
+  return (
+    request.method === "POST" &&
+    WORKER_ROUTES.some((route) => route.test(request.nextUrl.pathname)) &&
+    /^Bearer\s+\S+$/i.test(request.headers.get("authorization") ?? "")
+  );
 }
 
 // The voice provider calling the voice front for a call's next line carries its custom-LLM key

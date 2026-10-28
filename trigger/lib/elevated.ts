@@ -85,6 +85,21 @@ export async function settleUnstartedRun(runId: string, status: "skipped" | "fai
 }
 
 /**
+ * Whether a chat reply is still waiting to be carried on (its conversation's latest, the member's
+ * own, with keep_going and not yet taken), asked before signing in as the member, so a reply their
+ * page already carried on costs no sign-in.
+ */
+export async function replyWaiting(reply: { replyId: string; conversationId: string; userId: string }): Promise<boolean> {
+  const { data, error } = await adminClient().rpc("worker_reply_waiting", {
+    p_reply: reply.replyId,
+    p_conversation: reply.conversationId,
+    p_user: reply.userId,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
+/**
  * The run an event joined, and whether to start it: a new run, or one a repeat of this event
  * finds still queued (starting it again is a no-op per run). An event folded into a run already
  * waiting doesn't start it.

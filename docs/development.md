@@ -43,7 +43,7 @@ browser ── Supabase session cookie ──▶ Next.js app ── tenant conte
                                          │  │  └── Supermemory (namespaced per agent / person)
                                          │  └── Supabase Postgres + Auth + Storage (RLS everywhere)
                                          │
-Trigger.dev worker ── member's session ──┘   (POST /api/tasks/<id>/runs/<run>)
+Trigger.dev worker ── member's session ──┘   (POST /api/tasks/<id>/runs/<run>, /api/conversations/<id>/keep-going)
 ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/completions
 ```
 
@@ -120,7 +120,9 @@ ElevenLabs voice ── sealed call context ──▶ /api/voice/llm/v1/chat/com
   worker both start a run through `run-task.ts`, as the member.
 - **Background worker** (`trigger/`). Every two minutes `dispatch.ts` claims due tasks and
   `run-task.ts` signs in as each task's member and asks the app to run it (`POST
-  /api/tasks/<id>/runs/<run>`), so runs use the app's settings and keys. The worker holds only
+  /api/tasks/<id>/runs/<run>`), so runs use the app's settings and keys. A chat reply that carries a
+  job on (`keep_going`) is handed to it too: `continue-chat.ts` carries it on with no page open
+  (`POST /api/conversations/<id>/keep-going`), unless the member's page took it first. The worker holds only
   the Supabase keys and `APP_URL`; `trigger/lib/elevated.ts` is the only code with the
   Supabase secret key, and `src/lib/elevated-guard.test.ts` keeps it that way. It deploys
   from GitHub Actions after each Vercel production deploy.

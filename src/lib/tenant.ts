@@ -1,8 +1,11 @@
+import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
 import { AGENT_HEADER } from "@/lib/client/tab-agent";
+import { getConfig } from "@/lib/config";
 import { isCrossSite, isSameOrigin } from "@/lib/same-origin";
+import type { Db } from "@/lib/supabase/db";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { resolveTenant, sessionFor, type Session, type Tenant } from "@/lib/tenant-core";
 
@@ -74,4 +77,26 @@ export async function authorizeTenant(request: NextRequest, options: Options = {
 
 function isReadOnly(request: NextRequest): boolean {
   return request.method === "GET" || request.method === "HEAD";
+}
+
+/**
+ * For the background worker's two routes (a task's run, a chat reply's job carried on): the
+ * member's access token in the Authorization header, the worker's short-lived sign-in as them,
+ * instead of a cookie. The token is checked with Supabase Auth, and the client acts as that member
+ * (anon key plus their own token), so Row Level Security applies to everything after. The
+ * workspace is honored only if they're still a member of it (`notFound` otherwise).
+ */
+export async function authorizeWorker(request: NextRequest, workspaceId: string, notFound: string): Promise<Authorized<Tenant>> {
+  const token = request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
+  if (!token) return { ok: false, response: jsonError(401, "Not signed in.") };
+  const { supabase } = getConfig();
+  const db = createClient(supabase.url, supabase.anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  }) as unknown as Db;
+  const { data, error } = await db.auth.getUser(token);
+  if (error || !data.user) return { ok: false, response: jsonError(401, "Not signed in.") };
+  const tenant = await resolveTenant(sessionFor(db, data.user), workspaceId);
+  if (!tenant || tenant.workspace.id !== workspaceId) return { ok: false, response: jsonError(404, notFound) };
+  return { ok: true, value: tenant };
 }
