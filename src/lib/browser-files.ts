@@ -27,6 +27,8 @@ const CHUNK = 1024 * 1024;
 const LISTED = 5;
 /** How long after it was saved a file is staged for the agent to attach. */
 const STAGED_FOR_MS = 7 * 24 * 3600 * 1000;
+/** How long a key from Composio's file store is reused before it's asked for again (Composio keeps a staged file for a day). */
+const COMPOSIO_KEY_FRESH_MS = 60 * 60 * 1000;
 const COMPOSIO_API = "https://backend.composio.dev/api/v3";
 const BROWSERBASE_API = "https://api.browserbase.com/v1";
 /** How long to wait for a file the browser downloaded to reach Browserbase's store. */
@@ -350,7 +352,7 @@ export interface BrowserFileContext {
 export async function browserFilesFor(tenant: Tenant, conversationId: string): Promise<BrowserFileContext[]> {
   const { data, error } = await tenant.db
     .from("attachments")
-    .select("name, mime_type, storage_path, browser_md5, created_at, messages!inner(conversation_id)")
+    .select("id, name, mime_type, storage_path, browser_md5, created_at, composio_key, composio_key_at, messages!inner(conversation_id)")
     .eq("messages.conversation_id", conversationId)
     .not("browser_md5", "is", null)
     .eq("workspace_id", tenant.workspace.id)
@@ -358,18 +360,48 @@ export async function browserFilesFor(tenant: Tenant, conversationId: string): P
     .order("created_at", { ascending: false })
     .limit(LISTED);
   if (error) throw new Error(error.message);
-  const rows = data as { name: string; mime_type: string; storage_path: string; browser_md5: string; created_at: string }[];
+  const rows = data as BrowserFileRow[];
   const fresh = Date.now() - STAGED_FOR_MS;
   return Promise.all(
     rows.map(async (row) => {
-      // Composio keeps no copy by digest, so each run stages again; only files from the last week.
-      const s3key = Date.parse(row.created_at) < fresh ? null : await composioFileFor(tenant, row).catch((e) => {
+      // Only files from the last week; a key from the last hour is reused, the rest staged again.
+      const s3key = Date.parse(row.created_at) < fresh ? null : await composioKeyFor(tenant, row).catch((e) => {
         console.error("[browser-files] couldn't stage a file for the agent", e instanceof Error ? e.message : e);
         return null;
       });
       return { name: row.name, mimeType: row.mime_type, ...(s3key ? { s3key } : {}) };
     }),
   );
+}
+
+interface BrowserFileRow {
+  id: string;
+  name: string;
+  mime_type: string;
+  storage_path: string;
+  browser_md5: string;
+  created_at: string;
+  composio_key: string | null;
+  composio_key_at: string | null;
+}
+
+/**
+ * Composio's key for one stored file: the one kept with the row while it's fresh, else a new one
+ * from Composio, kept with the row for the next run (best effort).
+ */
+async function composioKeyFor(tenant: Tenant, row: BrowserFileRow): Promise<string | null> {
+  if (row.composio_key && row.composio_key_at && Date.now() - Date.parse(row.composio_key_at) < COMPOSIO_KEY_FRESH_MS) return row.composio_key;
+  const key = await composioFileFor(tenant, row);
+  if (key) {
+    const { error } = await tenant.db
+      .from("attachments")
+      .update({ composio_key: key, composio_key_at: new Date().toISOString() })
+      .eq("id", row.id)
+      .eq("workspace_id", tenant.workspace.id)
+      .eq("user_id", tenant.userId);
+    if (error) console.error("[browser-files] couldn't keep the file's Composio key", error.message);
+  }
+  return key;
 }
 
 /** Composio's key for one stored file, uploaded to its file store. */

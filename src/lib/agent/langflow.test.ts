@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { approvalActions, browserFilesContext, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, withoutCallLimit, type LangflowConfig } from "./langflow";
+import { describe, expect, it, vi } from "vitest";
+import { approvalActions, browserFilesContext, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, uploadsKey, withoutCallLimit, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -1566,5 +1566,62 @@ describe("toolBrowserSessions", () => {
   it("reports an ended browser, and ignores failures and other tools", () => {
     expect(toolBrowserSessions(bot("", [use("navigate", mcp({ studioBrowserSession: S1 })), use("end", mcp({ success: true }))]) as never)).toEqual([{ type: "browser-session", sessionId: null }]);
     expect(toolBrowserSessions(bot("", [use("navigate", null, "boom"), use("search", mcp({ studioBrowserSession: S1 }))]) as never)).toEqual([]);
+  });
+});
+
+describe("Langflow standing files", () => {
+  const withFiles = { ...base, tweaks: { "ChatInput-1": { files: "{{files}}" } } };
+  const key = uploadsKey(withFiles);
+  const stream = () => streamResponse([frame("add_message", bot("Read it.")), frame("end", {})]);
+  const standing = (sent: { to: string; id: string; path: string } | null, remember = vi.fn(async () => undefined)) => ({
+    file: { id: "a1", name: "cv.pdf", mimeType: "application/pdf", size: 3, read: async () => new Blob(["pdf"]), sent, remember },
+    remember,
+  });
+  const uploads = (calls: { url: string; init: RequestInit }[]) => calls.filter((c) => c.url.endsWith("/api/v2/files") && c.init.method === "POST");
+  const checks = (calls: { url: string; init: RequestInit }[]) => calls.filter((c) => c.url.includes("/api/v2/files/") && !c.init.method);
+  const sentPaths = (calls: { url: string; init: RequestInit }[]) =>
+    JSON.parse(calls.find((c) => c.url.endsWith("/api/v2/workflows"))!.init.body as string).tweaks["ChatInput-1"].files;
+
+  it("reuses a copy this Langflow still has from an earlier run, without uploading", async () => {
+    const { file, remember } = standing({ to: key, id: "f-old", path: "user-1/f-old.pdf" });
+    const { calls, error } = await run(withFiles, stream(), input(tenantA, { attachments: [file] }), {
+      "/api/v2/files/f-old": () => new Response("bytes", { status: 200 }),
+    });
+    expect(error).toBeUndefined();
+    expect(checks(calls)).toHaveLength(1);
+    expect(uploads(calls)).toHaveLength(0);
+    expect(sentPaths(calls)).toEqual(["user-1/f-old.pdf"]);
+    expect(remember).not.toHaveBeenCalled();
+  });
+
+  it("uploads again when the copy is gone, and remembers where the new one went", async () => {
+    const { file, remember } = standing({ to: key, id: "f-old", path: "user-1/f-old.pdf" });
+    const { calls, error } = await run(withFiles, stream(), input(tenantA, { attachments: [file] }), {
+      "/api/v2/files/f-old": () => new Response("no such file", { status: 404 }),
+      "/api/v2/files": () => Response.json({ id: "f-new", path: "user-1/f-new.pdf" }),
+    });
+    expect(error).toBeUndefined();
+    expect(checks(calls)).toHaveLength(1);
+    expect(uploads(calls)).toHaveLength(1);
+    expect(sentPaths(calls)).toEqual(["user-1/f-new.pdf"]);
+    expect(remember).toHaveBeenCalledWith({ to: key, id: "f-new", path: "user-1/f-new.pdf" });
+  });
+
+  it("never reuses a copy made for another Langflow, and uploads a file sent nowhere yet", async () => {
+    const elsewhere = standing({ to: "langflow:0000000000000000", id: "f-x", path: "user-9/f-x.pdf" });
+    const fresh = standing(null);
+    const { calls, error } = await run(withFiles, stream(), input(tenantA, { attachments: [elsewhere.file, fresh.file] }), {
+      "/api/v2/files": () => Response.json({ id: "f-new", path: "user-1/f-new.pdf" }),
+    });
+    expect(error).toBeUndefined();
+    expect(checks(calls)).toHaveLength(0);
+    expect(uploads(calls)).toHaveLength(2);
+    expect(elsewhere.remember).toHaveBeenCalledWith({ to: key, id: "f-new", path: "user-1/f-new.pdf" });
+    expect(fresh.remember).toHaveBeenCalledWith({ to: key, id: "f-new", path: "user-1/f-new.pdf" });
+    // A run that only knows the path (an older Langflow) remembers nothing, and still works.
+    const older = standing(null);
+    const again = await run(withFiles, stream(), input(tenantA, { attachments: [older.file] }), { "/api/v2/files": () => Response.json({ path: "user-1/x.pdf" }) });
+    expect(again.error).toBeUndefined();
+    expect(older.remember).not.toHaveBeenCalled();
   });
 });

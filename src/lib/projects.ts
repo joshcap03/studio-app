@@ -1,8 +1,9 @@
 import { getAgentAdapter } from "@/lib/agent";
-import type { AgentAttachment, AgentTenantContext } from "@/lib/agent/types";
+import type { AgentAttachment, AgentTenantContext, SentFile } from "@/lib/agent/types";
 import { ATTACHMENTS_BUCKET, attachmentError, checkUpload, readAttachment, removeAttachmentFiles, uploadError } from "@/lib/attachments";
 import { storeFor } from "@/lib/chat/store-for";
 import type { StoredAttachment } from "@/lib/db/store";
+import { rememberSent, SENT_COLUMNS, sentOf, type SentRow } from "@/lib/sent-files";
 import type { Tenant } from "@/lib/tenant-core";
 import { MAX_PROJECT_FILES, MAX_PROJECTS, type Attachment, type Project, type ProjectSummary } from "@/lib/types";
 
@@ -19,7 +20,7 @@ interface ProjectRow {
   updated_at: string;
 }
 
-interface FileRow {
+interface FileRow extends SentRow {
   id: string;
   name: string;
   mime_type: string;
@@ -28,7 +29,7 @@ interface FileRow {
 }
 
 const COLUMNS = "id, name, instructions, created_at, updated_at";
-const FILE_COLUMNS = "id, name, mime_type, size, storage_path";
+const FILE_COLUMNS = `id, name, mime_type, size, storage_path, ${SENT_COLUMNS}`;
 
 function check<T>(result: { data: T; error: { message: string; code?: string } | null }): T {
   if (result.error)
@@ -45,14 +46,18 @@ const toSummary = (r: ProjectRow): ProjectSummary => ({
   updatedAt: Date.parse(r.updated_at),
 });
 
-const toFile = (r: FileRow): StoredAttachment => ({
+/** A stored file with where the agent service already has it (server-side only). */
+type StoredFile = StoredAttachment & { sent: SentFile | null };
+
+const toFile = (r: FileRow): StoredFile => ({
   id: r.id,
   name: r.name,
   mimeType: r.mime_type,
   size: r.size,
   storagePath: r.storage_path,
+  sent: sentOf(r),
 });
-const publicFile = ({ storagePath: _, ...file }: StoredAttachment): Attachment => file;
+const publicFile = ({ storagePath: _, sent: _sent, ...file }: StoredFile): Attachment => file;
 
 const projects = (tenant: Tenant) => tenant.db.from("projects");
 const files = (tenant: Tenant) => tenant.db.from("project_files");
@@ -75,7 +80,7 @@ async function projectRow(tenant: Tenant, id: string): Promise<ProjectRow | null
   ) as ProjectRow | null;
 }
 
-async function storedFiles(tenant: Tenant, projectId: string): Promise<StoredAttachment[]> {
+async function storedFiles(tenant: Tenant, projectId: string): Promise<StoredFile[]> {
   const rows = check(
     await files(tenant)
       .select(FILE_COLUMNS)
@@ -246,6 +251,8 @@ export async function projectForRun(
       mimeType: f.mimeType,
       size: f.size,
       read: () => readAttachment(tenant, f),
+      sent: f.sent,
+      remember: (sent) => rememberSent(tenant, "project_files", f.id, sent),
     })),
   };
 }

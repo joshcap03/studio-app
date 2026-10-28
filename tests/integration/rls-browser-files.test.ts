@@ -12,6 +12,7 @@ let bob: TestAccount;
 let aliceWs: string;
 const conversation = crypto.randomUUID();
 const other = crypto.randomUUID();
+const spare = crypto.randomUUID();
 const MD5 = "0123456789abcdef0123456789abcdef";
 
 const tenantOf = (account: TestAccount, workspace: string) =>
@@ -40,7 +41,7 @@ beforeAll(async () => {
   bob = await createAccount("bf-bob");
   aliceWs = await createWorkspace(alice, "Alice Shop");
   await createWorkspace(bob, "Bob Shop");
-  for (const id of [conversation, other]) {
+  for (const id of [conversation, other, spare]) {
     expect((await alice.client.from("conversations").insert({ id, workspace_id: aliceWs, title: "Labels" })).error).toBeNull();
   }
   const here = await reply(conversation);
@@ -87,5 +88,15 @@ describe("files from the agent's browser", () => {
       .from("attachments")
       .insert({ workspace_id: aliceWs, message_id: id, name: "x.pdf", mime_type: "application/pdf", size: 8, storage_path: `${aliceWs}/${alice.userId}/${crypto.randomUUID()}/x.pdf`, browser_md5: "nope" });
     expect(bad.error).not.toBeNull();
+  });
+});
+
+describe("a file's Composio key", () => {
+  it("keep Composio's key for a file with its member, and no one else", async () => {
+    const id = await file(await reply(spare), "receipt.pdf", MD5);
+    const own = await alice.client.from("attachments").update({ composio_key: "s3/key-1", composio_key_at: new Date().toISOString() }).eq("id", id).select("composio_key");
+    expect(own.data).toEqual([{ composio_key: "s3/key-1" }]);
+    expect((await bob.client.from("attachments").update({ composio_key: "s3/forged" }).eq("id", id).select("id")).data ?? []).toEqual([]);
+    expect((await alice.client.from("attachments").update({ name: "renamed.pdf" }).eq("id", id)).error).not.toBeNull();
   });
 });
