@@ -71,6 +71,8 @@ export function readRun(events: AgentEvent[], ms: number, error?: string): Run {
 /** A check: null when the run passes it, else what the run did instead (for the log). */
 export type Check = { name: string; test: (run: Run) => string | null };
 
+/** Warm-up and sign-off lines that only make a reply longer. */
+const FILLER = /\b(great question|good question|happy to help|hope (this|that) helps|let me know if (you|there)|feel free to (ask|reach))\b/i;
 export const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 const clip = (text: string, n = 120) => (text.length > n ? `${text.slice(0, n)}…` : text);
 
@@ -128,6 +130,16 @@ export const HYGIENE: Check[] = [
       const paragraphs = run.reply.split(/\n\s*\n/).map((x) => x.trim().toLowerCase()).filter((x) => words(x) >= 10 && !x.startsWith(">"));
       const again = paragraphs.find((x, i) => paragraphs.indexOf(x) !== i);
       return again ? clip(again) : null;
+    },
+  },
+  {
+    // Written for a busy reader: no warm-up before the answer and no sign-off after it. Only the
+    // reply's own first and last lines count, since a draft inside it may say these to its reader.
+    name: "no preamble or sign-off",
+    test: (run) => {
+      const lines = run.reply.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith(">"));
+      const hit = [lines[0] ?? "", lines.at(-1) ?? ""].join("\n").match(FILLER);
+      return hit ? hit[0] : null;
     },
   },
   {
