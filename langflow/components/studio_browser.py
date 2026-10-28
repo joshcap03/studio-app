@@ -114,6 +114,11 @@ SESSION_GONE = re.compile(r"session[^.\n]{0,60}(not found|no longer|ended|expire
                           r"|no (active |browser )?session", re.IGNORECASE)
 # A bound browser is dropped for a fresh one after this many failed calls in a row on it.
 MAX_STRIKES = 3
+# Browserbase's own model behind act/observe/extract now and then answers off its schema
+# (an element id its own validator refuses); the same call usually works the next time.
+# Tried again this many times before the agent hears of it.
+FLAKE = re.compile(r"AI_NoObjectGeneratedError|AI_TypeValidationError|did not match schema")
+FLAKE_RETRIES = 2
 
 
 def conversation_key(session_id: str) -> str:
@@ -623,10 +628,16 @@ class StudioBrowserComponent(ComponentWithCache):
                     kwargs[session_field] = current
                 downloaded: list[str] = []
                 try:
-                    if expect_download and current and name in DOWNLOAD_TOOLS:
-                        result, downloaded = await catch_downloads(api_key, current, lambda: tool.coroutine(**kwargs))
-                    else:
-                        result = await tool.coroutine(**kwargs)
+                    for attempt in range(FLAKE_RETRIES + 1):
+                        try:
+                            if expect_download and current and name in DOWNLOAD_TOOLS:
+                                result, downloaded = await catch_downloads(api_key, current, lambda: tool.coroutine(**kwargs))
+                            else:
+                                result = await tool.coroutine(**kwargs)
+                            break
+                        except ValueError as exc:
+                            if attempt == FLAKE_RETRIES or not FLAKE.search(str(exc)):
+                                raise
                 except Exception as exc:
                     failed = str(exc)
                     if ACTION_FAILED.match(failed):
