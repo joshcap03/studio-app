@@ -54,6 +54,16 @@ beforeAll(async () => {
 });
 
 describe("projects", () => {
+  it("let their member note where the agent service has a file, and no one else", async () => {
+    const sent = { sent_to: "langflow:0123456789abcdef", sent_id: "f-1", sent_path: "u/f-1.csv", sent_at: new Date().toISOString() };
+    const own = await alice.client.from("project_files").update(sent).eq("id", file).select("sent_id");
+    expect(own.data).toEqual([{ sent_id: "f-1" }]);
+    for (const other of [teammate, bob]) {
+      expect((await other.client.from("project_files").update({ ...sent, sent_id: "f-forged" }).eq("id", file).select("id")).data ?? []).toEqual([]);
+    }
+    expect((await alice.client.from("project_files").update({ name: "renamed.csv" }).eq("id", file)).error).not.toBeNull();
+  });
+
   it("are visible only to the member who made them", async () => {
     expect((await alice.client.from("projects").select("instructions").eq("id", project).single()).data?.instructions).toBe("alice-secret");
     for (const other of [teammate, bob]) {

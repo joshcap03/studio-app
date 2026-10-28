@@ -31,6 +31,17 @@ beforeAll(async () => {
 });
 
 describe("agent files", () => {
+  it("let their member note where the agent service has them, and no one else", async () => {
+    const sent = { sent_to: "langflow:0123456789abcdef", sent_id: "f-1", sent_path: "u/f-1.pdf", sent_at: new Date().toISOString() };
+    const own = await alice.client.from("agent_files").update(sent).eq("id", file).select("sent_to, sent_id, sent_path");
+    expect(own.data).toEqual([{ sent_to: sent.sent_to, sent_id: "f-1", sent_path: "u/f-1.pdf" }]);
+    for (const other of [teammate, bob]) {
+      expect((await other.client.from("agent_files").update({ ...sent, sent_id: "f-forged" }).eq("id", file).select("id")).data ?? []).toEqual([]);
+    }
+    // Nothing else about a file changes after it's added.
+    expect((await alice.client.from("agent_files").update({ name: "renamed.pdf" }).eq("id", file)).error).not.toBeNull();
+  });
+
   it("are visible only to the member who added them", async () => {
     expect((await alice.client.from("agent_files").select("name").eq("id", file).single()).data?.name).toBe("alice-resume.pdf");
     for (const other of [teammate, bob]) {

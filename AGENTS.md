@@ -146,6 +146,8 @@ raw/technical text.
   (`accounts.composio_user_id`, one per person; `workspace_members.composio_user_id` is legacy).
 - `src/lib/agent-files.ts`: a member's own files for one agent (a résumé), sent with every run of
   that agent ahead of project files (`runFiles` caps them). `claimAsAgentFile` moves an unsent upload there.
+  A standing file (an agent's, a project's) is uploaded to the agent service once: the row keeps where
+  it went (`src/lib/sent-files.ts`), and the adapter reuses the copy while the service still has it.
 - `src/lib/library.ts`: the member's Library for one agent (`agent_artifacts`): docs the agent made,
   filed from its tools' own artifact results as each reply streams (one row per link), links the agent
   files when the member asks it to keep one (`file_link`), and links the member pastes. Each run's

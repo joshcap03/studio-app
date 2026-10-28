@@ -128,7 +128,14 @@ export interface AgentTenantContext {
   self?: { name: string | null; manner: string | null; callName?: string | null; naming?: boolean; voice?: VoiceKey } | null;
 }
 
-/** A file the member attached to the message being answered. */
+/** Where an agent service already has a file: which deployment (an opaque key), and its id and path there. */
+export interface SentFile {
+  to: string;
+  id: string;
+  path: string;
+}
+
+/** A file the member attached to the message being answered, or one attached to every run. */
 export interface AgentAttachment {
   id: string;
   name: string;
@@ -136,6 +143,13 @@ export interface AgentAttachment {
   size: number;
   /** Loads the file (from the member's own storage, under their session). */
   read(): Promise<Blob>;
+  /**
+   * The copy the agent service got on an earlier run, if the file is a standing one (an agent's
+   * or a project's). The adapter reuses it only when the key is its own and the copy is still
+   * there; otherwise it uploads again and calls `remember` with the new copy.
+   */
+  sent?: SentFile | null;
+  remember?(sent: SentFile): Promise<void>;
 }
 
 /** Continue a run the provider paused for approval. */

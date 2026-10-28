@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appForToolkit } from "@/lib/apps";
 import { seamBetween } from "@/lib/chat/seam";
 import { toMemoryCategory } from "@/lib/types";
@@ -5,7 +6,7 @@ import { voiceByKey, voiceMenu, type VoiceKey } from "@/lib/voice/voices";
 import { standingGuide } from "@/lib/approvals/standing";
 import { evidenceFor, interpretCalls, keepsBooks, NEEDS_APPROVAL, OPENING_LINE_MAX, opensWork, ranOutOfTime, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
-import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
+import { AgentError, type AgentAdapter, type AgentAttachment, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
 
 // Langflow adapter. Everything Langflow-specific lives in this file.
 //
@@ -25,7 +26,9 @@ import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, typ
 //     → 404 unknown job, 409 not suspended/stale; then the job continues and its events are
 //     read again from the last event id.
 //   POST {base}/api/v2/workflows/stop  { job_id } cancels a running or suspended job.
-//   POST {base}/api/v2/files (multipart "file") → { path } usable in ChatInput.files.
+//   POST {base}/api/v2/files (multipart "file") → { id, path }; the path goes in ChatInput.files.
+//   GET  {base}/api/v2/files/{id} downloads it (only its status is read here, to check a copy from
+//     an earlier run is still there: the server's disk may not outlive a restart).
 //   GET/DELETE {base}/api/v1/monitor/messages: the flow's stored chat memory per session.
 //   Approvals come from the Agent's tool-approval middleware: tools whose metadata carries
 //   approval_actions (the Studio Tool Gateway's take_action) pause before running.
@@ -496,6 +499,15 @@ function templateHasFiles(template: unknown): boolean {
 /** Header values must be single-line ASCII; tenant ids always are, names may not be. */
 function headerSafe(value: string): string | null {
   return /^[\x20-\x7e]{1,256}$/.test(value) ? value : null;
+}
+
+/**
+ * Which Langflow a file was sent to, as kept with the member's standing files (SentFile.to): an
+ * opaque key for this deployment, so a copy made for another server is never reused, and the
+ * server's address never sits in a row the member can read.
+ */
+export function uploadsKey(config: Pick<LangflowConfig, "baseUrl">): string {
+  return `langflow:${createHash("sha256").update(config.baseUrl).digest("hex").slice(0, 16)}`;
 }
 
 function endpoint(config: LangflowConfig, path: string): string {
@@ -1215,25 +1227,53 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
     await post("api/v2/workflows/stop", { job_id: jobId }).catch(() => undefined);
   }
 
-  /** Uploads attachments under random names and returns their Langflow paths. */
-  async function upload(input: AgentRunInput): Promise<string[]> {
-    const paths: string[] = [];
-    for (const file of input.attachments) {
-      const form = new FormData();
-      const name = `${crypto.randomUUID()}-${file.name.replace(/[^\w.-]+/g, "_").slice(-120)}`;
-      form.append("file", new Blob([await file.read()], { type: file.mimeType }), name);
-      let response: Response;
-      try {
-        response = await doFetch(endpoint(config, "api/v2/files"), { method: "POST", headers: headers(config), body: form, signal: input.signal });
-      } catch (error) {
-        if (input.signal.aborted) throw error;
-        throw new AgentError("Couldn't send your files to the agent.", { cause: error });
-      }
-      const result = (await response.json().catch(() => null)) as { path?: unknown } | null;
-      if (!response.ok || typeof result?.path !== "string") throw new AgentError(`The agent couldn't take “${file.name}”. Try a different file.`);
-      paths.push(result.path);
+  const sentTo = uploadsKey(config);
+
+  /** Whether Langflow still has a file sent on an earlier run: only the download's status is read. */
+  async function stillThere(id: string, signal: AbortSignal): Promise<boolean> {
+    try {
+      const response = await doFetch(endpoint(config, `api/v2/files/${encodeURIComponent(id)}`), { headers: headers(config), signal });
+      await response.body?.cancel().catch(() => undefined);
+      return response.ok;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return false;
     }
-    return paths;
+  }
+
+  /** Uploads one attachment under a random name and returns its id and path. */
+  async function uploadOne(file: AgentAttachment, signal: AbortSignal): Promise<{ id: string | null; path: string }> {
+    const form = new FormData();
+    const name = `${crypto.randomUUID()}-${file.name.replace(/[^\w.-]+/g, "_").slice(-120)}`;
+    form.append("file", new Blob([await file.read()], { type: file.mimeType }), name);
+    let response: Response;
+    try {
+      response = await doFetch(endpoint(config, "api/v2/files"), { method: "POST", headers: headers(config), body: form, signal });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new AgentError("Couldn't send your files to the agent.", { cause: error });
+    }
+    const result = (await response.json().catch(() => null)) as { id?: unknown; path?: unknown } | null;
+    if (!response.ok || typeof result?.path !== "string") throw new AgentError(`The agent couldn't take “${file.name}”. Try a different file.`);
+    return { id: typeof result.id === "string" && result.id ? result.id : null, path: result.path };
+  }
+
+  /**
+   * The Langflow paths of the run's attachments, in order. A standing file this Langflow already
+   * has from an earlier run is reused if it's still there; anything else is uploaded (all at
+   * once), and where it landed is remembered for the next run.
+   */
+  async function upload(input: AgentRunInput): Promise<string[]> {
+    return Promise.all(
+      input.attachments.map(async (file) => {
+        if (file.sent?.to === sentTo && (await stillThere(file.sent.id, input.signal))) return file.sent.path;
+        const { id, path } = await uploadOne(file, input.signal);
+        if (id && file.remember) {
+          await file.remember({ to: sentTo, id, path }).catch((error) => console.error("[langflow] couldn't remember where a file went", error));
+        }
+        return path;
+      }),
+    );
   }
 
   return {

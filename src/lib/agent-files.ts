@@ -1,15 +1,17 @@
-import type { AgentAttachment } from "@/lib/agent/types";
+import type { AgentAttachment, SentFile } from "@/lib/agent/types";
 import { ATTACHMENTS_BUCKET, attachmentError, checkUpload, readAttachment, removeAttachmentFiles, uploadError } from "@/lib/attachments";
 import type { StoredAttachment } from "@/lib/db/store";
+import { rememberSent, SENT_COLUMNS, sentOf, type SentRow } from "@/lib/sent-files";
 import type { Tenant } from "@/lib/tenant-core";
 import { MAX_AGENT_FILES, MAX_RUN_FILES, type Attachment } from "@/lib/types";
 
 // A member's files for one agent (a résumé, a price list): the agent gets them on every run,
-// in every conversation. Private to the member, like their projects: every query is filtered
+// in every conversation, uploaded to the agent service once and reused while it still has them
+// (src/lib/sent-files.ts). Private to the member, like their projects: every query is filtered
 // by the tenant's workspace and user, and RLS enforces the same. Bytes live in the member's
 // own folder of the attachments bucket.
 
-interface FileRow {
+interface FileRow extends SentRow {
   id: string;
   name: string;
   mime_type: string;
@@ -17,16 +19,20 @@ interface FileRow {
   storage_path: string;
 }
 
-const FILE_COLUMNS = "id, name, mime_type, size, storage_path";
+const FILE_COLUMNS = `id, name, mime_type, size, storage_path, ${SENT_COLUMNS}`;
 
-const toFile = (r: FileRow): StoredAttachment => ({
+/** A stored file with where the agent service already has it (server-side only). */
+type StoredFile = StoredAttachment & { sent: SentFile | null };
+
+const toFile = (r: FileRow): StoredFile => ({
   id: r.id,
   name: r.name,
   mimeType: r.mime_type,
   size: r.size,
   storagePath: r.storage_path,
+  sent: sentOf(r),
 });
-const publicFile = ({ storagePath: _, ...file }: StoredAttachment): Attachment => file;
+const publicFile = ({ storagePath: _, sent: _sent, ...file }: StoredFile): Attachment => file;
 
 const files = (tenant: Tenant) => tenant.db.from("agent_files");
 
@@ -34,7 +40,7 @@ const fullError = () => attachmentError(`This agent can hold up to ${MAX_AGENT_F
 /** The database's own cap (see the agent_files migration), as an error the member can act on. */
 const capped = (error: { message: string; hint?: string }) => error.hint === "agent_files_cap" || /agent files limit/.test(error.message);
 
-async function storedFiles(tenant: Tenant): Promise<StoredAttachment[]> {
+async function storedFiles(tenant: Tenant): Promise<StoredFile[]> {
   const { data, error } = await files(tenant)
     .select(FILE_COLUMNS)
     .eq("workspace_id", tenant.workspace.id)
@@ -113,7 +119,7 @@ export async function removeAgentFile(tenant: Tenant, fileId: string): Promise<b
   return rows.length > 0;
 }
 
-/** This agent's files as a run gets them, when the agent can read files. */
+/** This agent's files as a run gets them, when the agent can read files, with the copy the service already has. */
 export async function agentFilesForRun(tenant: Tenant, readsFiles: boolean): Promise<AgentAttachment[]> {
   if (!readsFiles) return [];
   return (await storedFiles(tenant)).map((f) => ({
@@ -122,6 +128,8 @@ export async function agentFilesForRun(tenant: Tenant, readsFiles: boolean): Pro
     mimeType: f.mimeType,
     size: f.size,
     read: () => readAttachment(tenant, f),
+    sent: f.sent,
+    remember: (sent) => rememberSent(tenant, "agent_files", f.id, sent),
   }));
 }
 
