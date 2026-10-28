@@ -73,6 +73,11 @@ export interface AgentTenantContext {
    */
   library?: { title: string; kind: string; url: string; pinned: boolean }[];
   /**
+   * Files the agent's browser got for the member in this conversation (save_file), newest first,
+   * each with Composio's key for attaching it to an email when it could be staged.
+   */
+  browserFiles?: { name: string; mimeType: string; s3key?: string }[];
+  /**
    * How the member's bar is holding up: what they kept of the results they judged lately, and
    * what they passed on and why. `lastBatch` is the last card they judged, when they passed on
    * most of it, with what they've said in other chats since. Absent until they've judged something.
@@ -230,6 +235,8 @@ export type AgentEvent =
   | { type: "record"; record: unknown }
   /** A link the agent filed in the member's Library on their request (file_link), unvalidated. */
   | { type: "library-item"; item: unknown }
+  /** A file the agent asked to give the member from its browser (save_file), unvalidated. */
+  | { type: "browser-file"; file: unknown }
   /** How a task's run went (nothing new, an update, or needs the member), unvalidated. */
   | { type: "run-report"; report: unknown }
   /** The agent's keep_going: out of time with the job unfinished, the rest needing nothing from the member. */

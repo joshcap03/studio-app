@@ -1,4 +1,4 @@
-"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me.
+"""Dynamic Tool Gateway for Langflow: discover_tools, execute_tool, take_action, remember, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me, save_file.
 
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
@@ -359,6 +359,13 @@ class SecretArgs(BaseModel):
     reason: str = Field(description=("Why, in one short sentence as you'd say it, e.g. 'To sign in to your Acme account and "
                                      "download the March invoice.'"))
     username_hint: str = Field(default="", description="Optional: the username or email the site seems to expect, if you know it.")
+class SaveFileArgs(BaseModel):
+    name: str = Field(description="The file's name for the owner, e.g. 'Label - Jane Doe.pdf'.")
+    link: str = Field(default="", description=("Optional: the file's address as your browser's page has it (a Download "
+                                              "or Print label link's href, found with observe or extract). Left out, "
+                                              "the page you have open is saved as a PDF."))
+
+
 class WatchArgs(BaseModel):
     job: str = Field(description=("The job they'll show you, in one sentence in their words, e.g. 'Book the cheapest nonstop "
                                   "flight to see my parents.'"))
@@ -1445,6 +1452,28 @@ class ToolGatewayComponent(Component):
         async def request_secret_async(kind: str, reason: str, username_hint: str = "") -> str:
             return request_secret(kind, reason, username_hint)
 
+        def save_file(name: str, link: str = "") -> str:
+            # Changes nothing: the app fetches the file from this conversation's browser itself (with
+            # the page's own sign-in), or prints the open page as a PDF, and saves it for the owner
+            # under their own session, shown under the reply. No file passes through this flow.
+            name = " ".join(str(name or "").split())[:120].strip(" .")
+            if not name:
+                return "Not saved: give the file a name the owner will recognize, e.g. 'Label - Jane Doe.pdf'."
+            link = str(link or "").strip()
+            if link and (len(link) > 4000 or any(c.isspace() for c in link) or
+                         not re.match(r"(?i)^(https://|/|\.{0,2}/|blob:https://|[a-z0-9_.~%-]+(/|\?|$))", link)):
+                return "Not saved: give the file's link exactly as the page has it, or leave it out to save the page you have open."
+            return json.dumps({
+                "browser_file": {"name": name, **({"link": link} if link else {})},
+                "note": ("Studio is getting this file from your browser for the owner: it shows under your reply as "
+                         "a file they can download. " + ("" if link else "It saves the page you have open now, so "
+                         "don't leave that page in this reply. ") + "Say so in a few words. From your next reply on, "
+                         "CONTEXT lists it with what you need to attach it to an email, if they want it emailed."),
+            })
+
+        async def save_file_async(name: str, link: str = "") -> str:
+            return save_file(name, link)
+
         def hand_browser(reason: str, site: str = "") -> str:
             # Changes nothing: the app shows a "Your turn in the browser" card under the reply, and
             # the owner gets the browser only when they tap Take over (for a CAPTCHA, or a page only
@@ -1485,7 +1514,7 @@ class ToolGatewayComponent(Component):
 
         available = capabilities(registry)
         offers = f"Available behind it: {', '.join(available)}. " if available else ""
-        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, read_result, remember, file_link, keep_going, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me"
+        self.status = f"Gateway registered {len(registry)} tools; agent sees discover_tools, execute_tool, take_action, read_result, remember, file_link, keep_going, report_timeline, report_visual, cite, ask_user, show_form, propose_agent, merge_memories, offer_call, request_secret, hand_browser, watch_me, save_file"
         return [
             StructuredTool.from_function(
                 func=discover, coroutine=discover_async, name="discover_tools",
@@ -1656,6 +1685,15 @@ class ToolGatewayComponent(Component):
                              "into the page you have open. You never see it. Open the page with the fields first. Never "
                              "ask for passwords, card numbers, or card security codes any other way. Call it as the "
                              "last thing in your reply. Changes nothing."),
+            ),
+            StructuredTool.from_function(
+                func=save_file, coroutine=save_file_async, name="save_file",
+                args_schema=SaveFileArgs,
+                description=("Give the owner a file from your browser, such as a shipping label, receipt, or invoice "
+                             "the site made: Studio fetches it with the page's own sign-in (or, with no link, saves the "
+                             "page you have open as a PDF) and puts it under your reply for them to download. Use it "
+                             "whenever they need the file itself; a file the site downloads otherwise stays in your "
+                             "browser. Saved for the owner; changes nothing in their accounts."),
             ),
             StructuredTool.from_function(
                 func=hand_browser, coroutine=hand_browser_async, name="hand_browser",

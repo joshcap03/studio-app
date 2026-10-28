@@ -183,6 +183,13 @@ raw/technical text.
   and kept in Supabase Vault; a saved card keeps its security code too (the owner's call), so checkout
   doesn't ask for it again. Settings → Saved logins & cards
   lists and removes them.
+- Files from the agent's browser (a shipping label, a receipt): the agent's `save_file` names one and
+  gives its link as the page has it (`src/lib/browser-files.ts`). The server fetches it from that
+  conversation's browser over CDP with the page's own cookies (`Network.loadNetworkResource`; https or
+  the page's own `blob:` links only), or with no link prints the open page to a PDF, and saves it as
+  an attachment on the reply under the member's session (`attachments.browser_md5` marks it), shown
+  there to download. Later runs there list those files (`browserFilesFor`), each staged in Composio's
+  file store so the agent can attach it to an email (Gmail's `attachment.s3key`); sending still asks.
 - Handing over the agent's browser, for a CAPTCHA or a page only the member can use (a Google
   sign-in button, a passkey): the agent calls `hand_browser` and the member gets a "Take over" card
   (`src/components/chat/browser-handoff.tsx`). Their tap fetches a short-lived Browserbase live view

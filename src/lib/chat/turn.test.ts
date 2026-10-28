@@ -1181,6 +1181,45 @@ describe("edits, files, and memory suggestions", () => {
     expect(reply.content).toBe("Saved.");
   });
 
+  it("saves files the agent got from its browser on the reply, one at a time, and says which it couldn't get", async () => {
+    const store = createMemoryStore(scopeA);
+    const id = crypto.randomUUID();
+    const asked: [unknown, { messageId: string }][] = [];
+    const adapter = scripted([
+      { type: "browser-file", file: { name: "Label.pdf", link: "/label/1.pdf" } },
+      { type: "browser-file", file: { name: "Receipt.pdf" } },
+      { type: "browser-file", file: "not a request" },
+      { type: "message", text: "Here's your label." },
+    ]);
+    const label = { id: crypto.randomUUID(), name: "Label.pdf", mimeType: "application/pdf", size: 2048 };
+    const events = await collect(
+      startTurn(
+        {
+          store,
+          adapter,
+          context: context(scopeA),
+          idleTimeoutMs: 1000,
+          saveBrowserFile: async (file, source) => {
+            asked.push([file, source]);
+            const name = (file as { name?: string }).name;
+            if (name === "Label.pdf") return { ok: true, attachment: label };
+            if (name === "Receipt.pdf") return { ok: false, name, why: "the browser had closed" };
+            return null;
+          },
+        },
+        { conversationId: id, kind: "send", text: "Make the label" },
+      ),
+    );
+    const [, reply] = await store.listMessages(id);
+    expect(asked.map(([f]) => f)).toEqual([{ name: "Label.pdf", link: "/label/1.pdf" }, { name: "Receipt.pdf" }, "not a request"]);
+    expect(asked[0][1]).toEqual({ messageId: reply.id });
+    expect(events.filter((e) => e.type === "file")).toEqual([{ type: "file", attachment: label }]);
+    const end = events.find((e) => e.type === "end") as Extract<StreamEvent, { type: "end" }>;
+    expect(end.message.attachments).toEqual([label]);
+    expect(end.message.content).toBe("Here's your label.\n\n_Couldn't get Receipt.pdf from the browser: the browser had closed._");
+    expect(reply.content).toBe(end.message.content);
+  });
+
   it("passes the agent's run report to onFinished, ignoring malformed ones", async () => {
     const reports: unknown[] = [];
     for (const report of [{ outcome: "nothing_new", summary: "  No   replies " }, { outcome: "bogus" }]) {
