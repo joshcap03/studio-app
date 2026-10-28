@@ -5,12 +5,12 @@ import { errorResponse, noStore, parseBody } from "@/lib/api";
 import { removeAttachmentFiles } from "@/lib/attachments";
 import { markCovered } from "@/lib/chat/run";
 import { storeFor } from "@/lib/chat/store-for";
-import { unknownCards, withoutCards } from "@/lib/chat/ui";
+import { shownTo } from "@/lib/chat/ui";
 import type { Conversation } from "@/lib/db/store";
 import { journeyOrNone } from "@/lib/journey";
 import { authorizeTenant, jsonError } from "@/lib/tenant";
 import { getProject } from "@/lib/projects";
-import { MAX_TITLE_LENGTH, type ConversationSummary } from "@/lib/types";
+import { MAX_TITLE_LENGTH, MESSAGE_PAGE, type ConversationSummary } from "@/lib/types";
 import { messagesWithCalls } from "@/lib/voice/calls";
 
 type Context = { params: Promise<{ id: string }> };
@@ -35,31 +35,37 @@ function summaryOf({ agentProvider: _p, agentThreadId: _t, ...summary }: Convers
   return summary;
 }
 
+/**
+ * The conversation with its newest messages (MESSAGE_PAGE of them; `earlier` says there are more),
+ * or with `?before=<message id>` the page before that one, which carries no plan (the page has it).
+ */
 export async function GET(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);
   if (!auth.ok) return auth.response;
   const parsed = id.safeParse((await params).id);
   if (!parsed.success) return jsonError(404, "Conversation not found.");
+  const before = request.nextUrl.searchParams.get("before");
+  if (before !== null && !id.safeParse(before).success) return jsonError(400, "Ask for the messages before one of this conversation's.");
   try {
     const store = storeFor(auth.value);
     const conversation = await store.getConversation(parsed.data);
     if (!conversation) return jsonError(404, "Conversation not found.");
     // The plan of the work here comes with it, so a run followed from elsewhere fills in the rail
     // too, and so do the calls its messages were said on (for their recaps).
-    const [listed, journey] = await Promise.all([store.listMessages(conversation.id), journeyOrNone(auth.value, conversation.id)]);
-    const withCalls = await messagesWithCalls(auth.value, listed);
+    const [page, journey] = await Promise.all([
+      store.pageMessages(conversation.id, { limit: MESSAGE_PAGE, ...(before ? { before } : {}) }),
+      before ? null : journeyOrNone(auth.value, conversation.id),
+    ]);
+    const withCalls = await messagesWithCalls(auth.value, page.messages);
     const { calls } = withCalls;
-    // A request the member's standing OK covers is being approved by the run itself.
-    const messages = await markCovered(auth.value, conversation.id, withCalls.messages);
-    // Offers to call (?offers=1), requests for a login or card (?secrets=1), and the browser
-    // handed over (?handoffs=1) only go to pages that know them: a tab still on older code breaks on one.
-    const params = request.nextUrl.searchParams;
-    const shown = withoutCards(messages, unknownCards({ offers: params.get("offers") === "1", secrets: params.get("secrets") === "1", handoffs: params.get("handoffs") === "1" }));
-    return NextResponse.json({ conversation: summaryOf(conversation), messages: shown, journey, calls }, noStore);
+    // A request the member's standing OK covers is being approved by the run itself (only ever the latest).
+    const messages = before ? withCalls.messages : await markCovered(auth.value, conversation.id, withCalls.messages);
+    return NextResponse.json({ conversation: summaryOf(conversation), messages: shownTo(request.nextUrl.searchParams, messages), earlier: page.earlier, journey, calls }, noStore);
   } catch (error) {
     return errorResponse(error);
   }
 }
+
 
 export async function PATCH(request: NextRequest, { params }: Context) {
   const auth = await authorizeTenant(request);

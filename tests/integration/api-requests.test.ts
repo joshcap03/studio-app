@@ -98,6 +98,35 @@ describe("approvals over the API", () => {
   });
 });
 
+describe("following a conversation over the API", () => {
+  it("loads the newest page, then only what changed from the page's last message, and only for its member", async () => {
+    const id = crypto.randomUUID();
+    expect((await alice.turn(id, { kind: "send", text: "non-streaming first" })).res.status).toBe(200);
+    expect((await alice.turn(id, { kind: "send", text: "non-streaming second" })).res.status).toBe(200);
+    const page = (await (await alice.request(`/api/conversations/${id}`)).json()) as { messages: { id: string; content: string }[]; earlier: boolean };
+    expect(page.messages.map((m) => m.content).filter((c) => c.startsWith("non-streaming"))).toEqual(["non-streaming first", "non-streaming second"]);
+    expect(page.earlier).toBe(false);
+
+    const from = page.messages[2].id;
+    const latest = (await (await alice.request(`/api/conversations/${id}/latest?from=${from}`)).json()) as { messages: { id: string }[]; reset?: boolean };
+    expect(latest.messages.map((m) => m.id)).toEqual(page.messages.slice(2).map((m) => m.id));
+    expect(latest.reset).toBeUndefined();
+    // Gone from here (a retry replaced it): the newest page, said so.
+    const gone = (await (await alice.request(`/api/conversations/${id}/latest?from=${crypto.randomUUID()}`)).json()) as { messages: unknown[]; reset?: boolean };
+    expect(gone.reset).toBe(true);
+    expect(gone.messages).toHaveLength(page.messages.length);
+    // The page before the first message is empty; one that isn't a message is refused.
+    const before = (await (await alice.request(`/api/conversations/${id}?before=${page.messages[0].id}`)).json()) as { messages: unknown[]; earlier: boolean };
+    expect(before).toMatchObject({ messages: [], earlier: false });
+    expect((await alice.request(`/api/conversations/${id}?before=nope`)).status).toBe(400);
+    expect((await alice.request(`/api/conversations/${id}/latest`)).status).toBe(400);
+
+    // Another member gets nothing, as if there were no such conversation.
+    expect((await bob.request(`/api/conversations/${id}/latest?from=${from}`)).status).toBe(404);
+    expect((await bob.request(`/api/conversations/${id}?before=${from}`)).status).toBe(404);
+  });
+});
+
 describe("run limits over the API", () => {
   it("lets at most the concurrency limit through when many messages arrive at once", async () => {
     const carol = await signUp("carol");

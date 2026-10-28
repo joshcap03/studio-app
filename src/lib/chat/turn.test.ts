@@ -1869,13 +1869,14 @@ describe("startTurn with preloaded state", () => {
     const base = { conversationId: id, status: "complete" as const, activity: [], artifacts: [] };
     await store.insertMessage({ ...base, id: crypto.randomUUID(), role: "user", content: "Find roles" });
     await store.insertMessage({ ...base, id: crypto.randomUUID(), role: "assistant", content: "Found two." });
-    return { id, preloaded: { conversation: await store.getConversation(id), messages: await store.listMessages(id) } };
+    return { id, preloaded: { conversation: await store.getConversation(id), messages: await store.listMessagesForRun(id) } };
   }
 
   it("uses the conversation and messages given, reading only the latest message's state", async () => {
     const store = createMemoryStore(scopeA);
     const { id, preloaded } = await conversationWithReply(store);
     const list = vi.spyOn(store, "listMessages");
+    const forRun = vi.spyOn(store, "listMessagesForRun");
     const get = vi.spyOn(store, "getConversation");
     const latest = vi.spyOn(store, "latestMessage");
     const seen: AgentRunInput[] = [];
@@ -1884,6 +1885,8 @@ describe("startTurn with preloaded state", () => {
     expect(events.at(-1)?.type).toBe("end");
     expect(latest).toHaveBeenCalledTimes(1);
     expect(get).not.toHaveBeenCalled();
+    expect(forRun).not.toHaveBeenCalled();
+    // Full messages, with every step and card, are never read to start a plain turn.
     expect(list).not.toHaveBeenCalled();
     // The agent still gets the earlier exchange as history.
     expect(seen[0].history).toEqual([
@@ -1898,7 +1901,7 @@ describe("startTurn with preloaded state", () => {
     const { id, preloaded } = await conversationWithReply(store);
     // Another request's reply started streaming after the snapshot was taken.
     await store.insertMessage({ id: crypto.randomUUID(), conversationId: id, role: "assistant", content: "", status: "streaming", activity: [], artifacts: [] });
-    const list = vi.spyOn(store, "listMessages");
+    const list = vi.spyOn(store, "listMessagesForRun");
     const adapter = scripted([{ type: "text-delta", text: "never" }]);
     await expect(startTurn({ store, adapter, context: context(scopeA), idleTimeoutMs: 1000, preloaded }, { conversationId: id, kind: "send", text: "Hi" })).rejects.toMatchObject({
       status: 409,

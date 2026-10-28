@@ -51,3 +51,36 @@ export function joinedEvents(messages: ChatMessage[], conversation: Conversation
   if (!run) return [];
   return followEvents(messages.filter((m) => m !== run), messages, conversation, announced);
 }
+
+/**
+ * The message a page asks for changes from when it follows a run (GET …/latest?from=): the last
+ * one it has that the server knows (not a placeholder still on its way), or null when it has none.
+ */
+export function followAnchor(messages: Pick<ChatMessage, "id">[]): string | null {
+  return messages.findLast((m) => !m.id.startsWith("pending-"))?.id ?? null;
+}
+
+/**
+ * The conversation as the page has it, brought up to date with what the server sent from `fromId`
+ * on (that message as it stands now, and everything after it). Earlier messages are kept as they
+ * were; null when `fromId` isn't in what the page has (it should load the conversation again).
+ */
+export function mergeSince<T extends Pick<ChatMessage, "id">>(before: T[], since: T[], fromId: string): T[] | null {
+  const at = before.findIndex((m) => m.id === fromId);
+  return at < 0 ? null : [...before.slice(0, at), ...since];
+}
+
+/**
+ * The conversation's newest page as it loads again, keeping the earlier messages the member already
+ * read back to on the page (so it doesn't jump back to the newest page). `earlier` is whether the
+ * server has more before what's kept.
+ */
+export function keepEarlier<T extends Pick<ChatMessage, "id">>(
+  before: { messages: T[]; earlier?: boolean } | undefined,
+  page: { messages: T[]; earlier?: boolean },
+): { messages: T[]; earlier: boolean } {
+  const first = page.messages[0]?.id;
+  const at = before && first ? before.messages.findIndex((m) => m.id === first) : -1;
+  if (!before || at <= 0) return { messages: page.messages, earlier: Boolean(page.earlier) };
+  return { messages: [...before.messages.slice(0, at), ...page.messages], earlier: Boolean(before.earlier) };
+}

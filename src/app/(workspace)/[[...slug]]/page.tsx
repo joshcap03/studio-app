@@ -18,6 +18,7 @@ import { firstName } from "@/lib/setup-words";
 import { dictationStatus, voiceStatus } from "@/lib/voice";
 import { messagesWithCalls } from "@/lib/voice/calls";
 import { resolvePersona } from "@/lib/voice/persona";
+import { MESSAGE_PAGE } from "@/lib/types";
 import { getSettings } from "@/lib/workspace";
 
 // One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", "/tasks[/<task id>]", and "/library[/<tracker>]". After the first load the browser
@@ -91,7 +92,7 @@ export default async function WorkspacePage({
   // The open conversation with the plan of the work in it, and whose move it is in the latest
   // conversations for the sidebar's marks (best-effort: the browser asks again).
   const [thread, moves] = await Promise.all([
-    conversation ? Promise.all([store.listMessages(conversation.id), journeyOrNone(tenant, conversation.id)]) : null,
+    conversation ? Promise.all([store.pageMessages(conversation.id, { limit: MESSAGE_PAGE }), journeyOrNone(tenant, conversation.id)]) : null,
     store
       .lastMessages(conversations.slice(0, MAX_MOVES).map((c) => c.id))
       .then(marksOf)
@@ -103,10 +104,10 @@ export default async function WorkspacePage({
   let initialThread: InitialThread | null = null;
   if (conversationId) {
     // The calls its messages were said on, for their recaps (and nothing of voice, with it off).
-    const said = thread ? await messagesWithCalls(tenant, thread[0]) : null;
+    const said = thread ? await messagesWithCalls(tenant, thread[0].messages) : null;
     initialThread = thread && said
-      ? { id: conversationId, status: "ready", messages: said.messages, journey: thread[1], calls: said.calls }
-      : { id: conversationId, status: "missing", messages: [], journey: null, calls: [] };
+      ? { id: conversationId, status: "ready", messages: said.messages, earlier: thread[0].earlier, journey: thread[1], calls: said.calls }
+      : { id: conversationId, status: "missing", messages: [], earlier: false, journey: null, calls: [] };
   }
 
   return (
