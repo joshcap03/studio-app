@@ -148,9 +148,11 @@ def main(argv):
     existing = by_type("StudioBrowser")
     browser_id = None
     if not strip and (shared or existing):
+        proxies = False
         if existing:
             template = existing["data"]["node"]["template"]
             auth_header, auth_var = template["auth_header"].get("value"), template["auth_value"].get("value")
+            proxies = bool((template.get("proxies") or {}).get("value"))
         else:
             # The node's server may be registered in Langflow's MCP settings, which win over
             # the config embedded in the flow; take the credential from whichever is used.
@@ -175,6 +177,7 @@ def main(argv):
         browser["template"]["auth_value"]["load_from_db"] = True
         browser["template"]["auth_value"]["value"] = auth_var
         browser["template"]["auth_header"]["value"] = auth_header
+        browser["template"]["proxies"]["value"] = proxies  # The flow's own setting outlives a reinstall.
         browser_id = "StudioBrowser-studio"
         data["nodes"].append({
             "id": browser_id,
