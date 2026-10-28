@@ -14,7 +14,8 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
   const session = await getSession();
   if (!session) redirect("/login");
   const tenant = await resolveTenant(session, (await cookies()).get(ACTIVE_WORKSPACE_COOKIE)?.value);
-  const creating = !tenant || (await searchParams).new === "1";
+  // Someone with an agent who isn't adding another has nothing to set up here.
+  if (tenant && (await searchParams).new !== "1") redirect("/");
   // First-time setup starts with the person; another agent later skips straight to it.
   const account = tenant ? null : await getAccount(session);
 
@@ -26,9 +27,8 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
           <span className="text-[15px] font-semibold tracking-[-0.01em]">Studio</span>
         </div>
         <Onboarding
-          initialStep={account ? "you" : creating ? "workspace" : "connect"}
+          initialStep={account ? "you" : "workspace"}
           account={account}
-          workspaceName={creating ? null : tenant!.workspace.name}
           canCancel={!!tenant}
           canTalk={voiceStatus(session) !== null}
         />

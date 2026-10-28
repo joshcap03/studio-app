@@ -6,7 +6,7 @@ import { authorizeTenant, jsonError } from "@/lib/tenant";
 
 type Context = { params: Promise<{ toolkit: string }> };
 const slug = z.string().regex(/^[a-z0-9_]{1,64}$/);
-const returnTo = z.enum(["/onboarding", "/settings"]).catch("/settings");
+const returnTo = z.enum(["/settings"]).catch("/settings");
 
 /** Start connecting an app for the caller. Returns the provider's authorization URL. */
 export async function POST(request: NextRequest, { params }: Context) {
