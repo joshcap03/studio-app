@@ -785,13 +785,14 @@ function WorkspaceShell({
           if (started) return;
         }
         const aborted = controller.signal.aborted;
-        if (!started && (body.kind === "decide" || body.kind === "edit") && error instanceof ApiError) {
-          // The server refused (e.g. already answered elsewhere): show its state, not a guess.
+        if (!started && (body.kind === "decide" || body.kind === "edit" || body.kind === "continue") && error instanceof ApiError) {
+          // The server refused (e.g. already answered, or carried on, elsewhere): show its state, not
+          // a guess. A job the background worker carried on first is followed from there.
           await api
             .getConversation(conversationId)
             .then((latest) => setThreads((all) => ({ ...all, [conversationId]: loaded(latest) })))
             .catch(() => undefined);
-          setNotice(error.message);
+          if (body.kind !== "continue") setNotice(error.message);
           return;
         }
         if (!started && body.kind === "send") {
@@ -1055,7 +1056,8 @@ function WorkspaceShell({
   // A reply that ran out of time with the job unfinished, and nothing asked of the member, says
   // so (keepGoing): while it's the latest message here, the next reply starts by itself, as a
   // new request with its own time. Each reply once per tab; the server caps how many in a row,
-  // and anything the member sends or stops ends it.
+  // and anything the member sends or stops ends it. With no tab open, the background worker
+  // carries it on instead; whichever starts first takes it.
   const continuedFrom = useRef(new Set<string>());
   // Looked at again when the tab comes back into view: a reply that ended while it was hidden
   // carries on then, rather than waiting for something else to change.

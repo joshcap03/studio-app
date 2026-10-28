@@ -18,6 +18,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!(await store.getConversation(id.data))) return jsonError(404, "Conversation not found.");
     // The run may be on another server, or a task's in the background worker: it checks these flags.
     if (!stopRun(auth.value.workspace.id, id.data)) await Promise.all([store.requestStop(id.data), requestStop(auth.value, id.data)]);
+    // A job waiting to carry on in its next reply (keep_going) ends too, so the worker doesn't carry it on.
+    await store.claimKeepGoing(id.data);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return errorResponse(error);
