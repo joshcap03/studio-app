@@ -76,6 +76,8 @@ function captions(reply: string): string[] {
 
 const BUSINESS =/\b(ceramics?|pottery|studio|mugs?|bowls?|glazes?|kiln|wholesale|clay)\b/i;
 const noPlan = check("no plan for a quick ask", (run) => expect(!run.plan, `planned: ${run.plan?.steps.join(" / ")}`));
+/** Short enough for a busy reader to take in at a glance. */
+const brief = (most: number) => check(`under ${most} words`, (run) => expect(words(run.reply) <= most, `${words(run.reply)} words`));
 const noConnect = check("doesn't reach for their apps", (run) => expect(!connected(run), "asked to connect an app"));
 
 /** A one-off project that runs over several weeks, as the member set it up. */
@@ -269,6 +271,7 @@ export const CASES: BehaviorCase[] = [
       check("searches the web for it", (run) => expect(searchedWeb(run), "didn't search")),
       check("answers about that company", (run) => expect(/blue apron/i.test(run.reply), clip(run.reply))),
       check("cites what it found", (run) => expect(run.cited && /\[\d+\]/.test(run.reply), run.cited ? "no [n] in the reply" : "no citations")),
+      brief(180),
     ],
   },
   // TOOLS AND DATA SOURCES: naming a platform is a planning question, not a connection.
@@ -278,7 +281,8 @@ export const CASES: BehaviorCase[] = [
     message: "thinking of also selling our mugs on etsy. how should I price them there vs our own site?",
     checks: [
       noConnect,
-      check("answers it", (run) => expect(words(run.reply) >= 80 && /\bfees?\b/i.test(run.reply), `${words(run.reply)} words${/\bfees?\b/i.test(run.reply) ? "" : ", no fees"}`)),
+      check("answers it", (run) => expect(words(run.reply) >= 30 && /\bfees?\b/i.test(run.reply), `${words(run.reply)} words${/\bfees?\b/i.test(run.reply) ? "" : ", no fees"}`)),
+      brief(250),
     ],
   },
   // OPERATING PRINCIPLES / EXECUTION EFFICIENCY: answer directly when context is enough.
@@ -289,7 +293,7 @@ export const CASES: BehaviorCase[] = [
     checks: [
       check("gets it right", (run) => expect(/\$?40\.80?\b/.test(run.reply), clip(run.reply))),
       check("at most one step", (run) => expect(workSteps(run).length <= 1, workSteps(run).map((s) => s.label).join(" / "))),
-      check("short", (run) => expect(words(run.reply) <= 60, `${words(run.reply)} words`)),
+      brief(30),
       noPlan,
     ],
   },
@@ -300,7 +304,7 @@ export const CASES: BehaviorCase[] = [
     checks: [
       check("greets back", (run) => expect(/^\W*(hey|hi|hello|morning|good (morning|afternoon|evening))\b/i.test(run.reply), clip(run.reply, 60))),
       check("doesn't go to work", (run) => expect(workSteps(run).length === 0, workSteps(run).map((s) => s.label).join(" / "))),
-      check("short", (run) => expect(words(run.reply) <= 80, `${words(run.reply)} words`)),
+      brief(40),
       noPlan,
     ],
   },
@@ -340,7 +344,22 @@ export const CASES: BehaviorCase[] = [
       check("says what it needs", (run) => expect(connected(run) || run.forms.some((f) => f.fields.some((x) => x.kind === "connect")) || /\b(connect|shopify)\b/i.test(run.reply), clip(run.reply))),
     ],
   },
-  // COMMUNICATION: limits the member sets that code can check (after IFEval).
+  // HOW YOU WRITE: the answer first, short, for a reader who skims.
+  {
+    id: "format.answer-first",
+    says: "A decision question gets the pick in the first sentence and a few lines of why, nothing more.",
+    message: "should our free shipping threshold be $75 or $100? most orders are 1-2 mugs",
+    context: { memories: ["Mugs retail at $32 on our site."] },
+    checks: [
+      check("leads with the pick", (run) => {
+        const first = run.reply.trim().split(/(?<=[.!?])\s|\n/)[0] ?? "";
+        return expect(/\$\s?(75|100)\b/.test(first), clip(first));
+      }),
+      brief(200),
+      noPlan,
+    ],
+  },
+  // Limits the member sets that code can check (after IFEval).
   {
     id: "format.exact-limits",
     says: "Explicit limits on a draft are all kept.",
@@ -513,7 +532,7 @@ Rosa, Ridgeline Clay Supply`,
     checks: [
       check("remembers it", (run) => expect(run.memories.some((m) => /tue/i.test(m.content)), run.memories.length ? run.memories.map((m) => m.content).join(" / ") : "nothing saved")),
       check("once", (run) => expect(run.memories.length <= 2, `${run.memories.length} facts`)),
-      check("short", (run) => expect(words(run.reply) <= 60, `${words(run.reply)} words`)),
+      brief(40),
     ],
   },
   {

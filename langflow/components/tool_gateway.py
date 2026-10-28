@@ -1300,7 +1300,8 @@ class ToolGatewayComponent(Component):
                         "'quote' (a short passage copied word for word from that result). Call cite again with those keys.")
             return json.dumps({
                 "citations": {"sources": rows},
-                "note": ("Now write your answer. Put [n] right after the sentence or figure each source supports, "
+                "note": ("Now write your answer, short: the answer itself first, then only what supports it (a few "
+                         "sentences, or at most five one-sentence bullets with no bold labels). Put [n] right after the sentence or figure each source supports, "
                          "e.g. 'Rated 4.5/5 from 9 reviews [2].' Don't add a list of sources or links at the end: "
                          "the owner sees them under your answer. If you'll end on a question with a few likely "
                          "answers (whether to go ahead, which first), ask it with ask_user after your answer "
