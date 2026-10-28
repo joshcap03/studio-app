@@ -787,10 +787,12 @@ export function toolQuestions(message: LangflowMessage): AgentEvent[] {
  * Plan updates, tracker rows, Library links, files from its browser, and a reply's keep-going the
  * agent reported through update_plan, save_record, file_link, save_file, and keep_going (validated
  * and saved by the turn, under the
- * member's session), and the gateway's word that the reply's time ran out.
+ * member's session), and the word that the reply was cut off: the gateway's that its time ran out,
+ * or Langflow's that its agent reached its cap on model calls.
  */
 export function toolTaskUpdates(message: LangflowMessage): AgentEvent[] {
   const events: AgentEvent[] = [];
+  if (hitCallLimit(message)) events.push({ type: "out-of-time" });
   for (const tool of toolUses(message)) {
     if (tool.output == null || tool.error) continue;
     const result = unwrapResult(tool.output);
@@ -1080,6 +1082,23 @@ export function withoutNotes(text: string, notes: string[]): string {
     if (trimmed.startsWith(note)) rest = trimmed.slice(note.length);
   }
   return rest.trimStart();
+}
+
+/**
+ * Langflow's own closing line when its agent reaches its cap on model calls in one run (its
+ * ModelCallLimitMiddleware ends the run with it in place of a reply). Mid-job by definition: a run
+ * that finished its answer never gets one. So the app treats it as a cut-off, not an answer.
+ */
+const CALL_LIMIT = /\s*Model call limits exceeded:[^\n]*$/;
+
+/** Whether a bot message's text ends on that line. */
+function hitCallLimit(message: LangflowMessage): boolean {
+  return typeof message.text === "string" && CALL_LIMIT.test(message.text);
+}
+
+/** The text without that line: the member reads the agent's words, and the job carries on. */
+export function withoutCallLimit(text: string): string {
+  return text.replace(CALL_LIMIT, "");
 }
 
 function isBot(message: LangflowMessage): boolean {
@@ -1453,7 +1472,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                   yield p;
                 }
               }
-              const answer = typeof message.text === "string" ? withoutNotes(separateAroundTools(message.text, message), notes) : "";
+              const answer = typeof message.text === "string" ? withoutCallLimit(withoutNotes(separateAroundTools(message.text, message), notes)) : "";
               if (!tokens && answer !== shownText && (answer || shownText)) {
                 shownText = answer;
                 yield { type: "message", text: answer };
@@ -1502,7 +1521,7 @@ export function createLangflowAdapter(config: LangflowConfig): AgentAdapter {
                 pending = "";
               }
               const final = resultMessage((data as { result?: unknown })?.result) ?? lastBot;
-              const text = typeof final?.text === "string" ? withoutNotes(separateAroundTools(final.text, final), notes) : "";
+              const text = typeof final?.text === "string" ? withoutCallLimit(withoutNotes(separateAroundTools(final.text, final), notes)) : "";
               if (text && text !== shownText && !tokens) yield { type: "message", text };
               if (final) {
                 yield* activityFor(final, lastBot?.id ?? final.id ?? "message");

@@ -290,7 +290,7 @@ describe("startTurn", () => {
     const end = events.at(-1);
     if (end?.type !== "end") throw new Error("no end");
     expect(end.message.status).toBe("error");
-    expect(end.message.error).toMatch(/ran past the time one reply can take/);
+    expect(end.message.error).toMatch(/ran past what one reply can take/);
     expect(end.message.activity[0]).toMatchObject({ status: "failed", detail: "Stopped when the reply ran out of time." });
     expect(stopped).toBe(true);
     const saved = (await store.listMessages(end.conversation.id)).at(-1);
@@ -1830,6 +1830,17 @@ describe("keep going", () => {
     const asked = (await collect(startTurn(form, { conversationId: crypto.randomUUID(), kind: "send", text: "Tag my inbox" }))).at(-1);
     expect(asked?.type === "end" && asked.message.ui?.length).toBeTruthy();
     expect(asked?.type === "end" && asked.message.keepGoing).toBeUndefined();
+  });
+
+  it("carries on a reply the agent's cap on model calls ended before it wrote a word", async () => {
+    const seen: AgentRunInput[] = [];
+    const d = deps([{ type: "out-of-time" }] as AgentEvent[], seen);
+    const id = crypto.randomUUID();
+    const end = (await collect(startTurn(d, { conversationId: id, kind: "send", text: "Make the label" }))).at(-1);
+    expect(end?.type === "end" && end.message.keepGoing).toBeTruthy();
+    expect(end?.type === "end" && end.message.error).toMatch(/carries on in the next one/);
+    await collect(startTurn(d, { conversationId: id, kind: "continue" }));
+    expect(seen.at(-1)?.message).toMatch(/left unfinished/);
   });
 
   it("carries on a reply the request's own time limit cut off", async () => {

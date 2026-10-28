@@ -987,7 +987,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
           status = "awaiting";
         } else if (!content.trim() && artifacts.length === 0 && proposals.length === 0 && !questions && !ui) {
           status = "error";
-          error = "I finished without writing a reply.";
+          error = NO_REPLY;
         }
       } catch (e) {
         if (e instanceof AgentError) {
@@ -1047,15 +1047,17 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       const voiceNote = deps.voiceNotes ? voiceNoteFor({ ...assistant, content, status }, { answered, report, earlier, callEnded }) : null;
       const noted = voiceNote || assistant.voiceNote ? { voiceNote } : {};
       // A reply carries on by itself only when it ended with nothing asked of the member: when the
-      // agent said so, and also when its time ran out (a tool cut short, or the request's own
-      // limit) and the agent didn't, so a long job never waits on the member to say carry on. Only
-      // so many in a row: past that, the member says when to go on.
-      const cutOff = (ranOut && status === "complete") || (outOfTime && status === "error");
+      // agent said so, and also when it was cut off (a tool cut short, the request's own limit, or
+      // the provider's cap on model calls, which can end a run before it wrote a word) and the
+      // agent didn't, so a long job never waits on the member to say carry on. Only so many in a
+      // row: past that, the member says when to go on.
+      const noReply = status === "error" && error === NO_REPLY;
+      const cutOff = (ranOut && (status === "complete" || noReply)) || (outOfTime && status === "error");
       const asks = Boolean(questions?.length || ui?.length);
       const left = keepGoing ?? (cutOff ? UNFINISHED : null);
       const inRow = keepGoingRun(existing.some((m) => m.id === assistant.id) ? existing : [...existing, assistant]);
       const going = left && (status === "complete" || cutOff) && !asks && inRow < MAX_KEEP_GOING ? { keepGoing: left } : {};
-      if (going.keepGoing && outOfTime && status === "error") error = CARRIED_ON;
+      if (going.keepGoing && status === "error" && (outOfTime || noReply)) error = CARRIED_ON;
       let updated = summary;
       try {
         await store.updateMessage(assistant.id, { content, status, activity, artifacts, memoryProposals: proposals, timeline, citations, questions, ui, error, ...noted, ...going });
@@ -1198,7 +1200,9 @@ function sameStep(a: ActivityStep, b: ActivityStep): boolean {
 }
 
 const OUT_OF_TIME = "This ran past the time one reply can take, so it stopped here. Try asking for a smaller piece of it.";
-const CARRIED_ON = "This ran past the time one reply can take, so it carries on in the next one.";
+const CARRIED_ON = "This ran past what one reply can take, so it carries on in the next one.";
+/** A run that ended with nothing to show: no words, cards, files, or memory. */
+const NO_REPLY = "I finished without writing a reply.";
 
 /** Fails the run if the agent goes quiet for longer than `ms`, and stops on abort. */
 async function* withIdleTimeout<T>(source: AsyncIterable<T>, ms: number, signal: AbortSignal): AsyncGenerator<T> {

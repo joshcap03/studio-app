@@ -34,6 +34,14 @@ turns downloads on over its own connection to the conversation's browser, held o
 action runs and until the download it starts finishes (DOWNLOAD_FINISH_S at most), and tells the
 agent what came down, so save_file can give it to the member from Browserbase's store. Without it,
 an action costs nothing extra.
+
+One call at a time per conversation: the agent may ask for several page actions in one turn, and
+on one page they'd fill over each other (and with no browser yet, each would open its own). A
+failed action is the action's, not the browser's: the server answered, so the connection and the
+browser (its page as the agent left it) are kept, and the agent hears the error. A lost connection
+is forgotten and remade on the next call, the kept-alive browser with it. Only when the server says
+the browser session is gone, or MAX_STRIKES calls in a row fail, is the browser dropped for a fresh
+one (and released, so it doesn't burn the plan's minutes).
 Tool names stay Browserbase's (start, end, navigate, act, observe, extract): the Tool Gateway
 routes `act` through take_action, so it still needs the owner's approval. Wire the output to
 the Tool Gateway's Tools input. Authenticates with a Langflow global variable sent in one
@@ -93,6 +101,14 @@ DOWNLOAD_START_S = 3
 DOWNLOAD_FINISH_S = 30
 # How lfx reports a client that lost its MCP session (the browser itself may be fine).
 DISCONNECTED = re.compile(r"not initialized or disconnected", re.IGNORECASE)
+# How lfx reports the server's own error result: the action failed, but the server answered, so
+# the connection and the browser are fine. (A lost connection reads "Tool '…' execution failed".)
+ACTION_FAILED = re.compile(r"^MCP tool '[^']+' failed:")
+# The server saying the browser session itself is gone.
+SESSION_GONE = re.compile(r"session[^.\n]{0,60}(not found|no longer|ended|expired|terminated|closed|invalid|does not exist)"
+                          r"|no (active |browser )?session", re.IGNORECASE)
+# A bound browser is dropped for a fresh one after this many failed calls in a row on it.
+MAX_STRIKES = 3
 
 
 def conversation_key(session_id: str) -> str:
@@ -389,6 +405,41 @@ class StudioBrowserComponent(ComponentWithCache):
                 current[conv] = (time.monotonic(), sid)
             safe_cache_set(cache, bindings_key, current)
 
+        strikes_key = f"studio_browser:strikes:{server}"
+
+        def strike(sid: str) -> int:
+            """Counts a failed call on this conversation's browser; how many in a row it has had."""
+            current = safe_cache_get(cache, strikes_key) or {}
+            entry = current.get(conv)
+            count = entry[1] + 1 if entry and entry[0] == sid else 1
+            current[conv] = (sid, count)
+            if len(current) > MAX_CONNECTIONS:
+                current = dict(list(current.items())[-MAX_CONNECTIONS:])
+            safe_cache_set(cache, strikes_key, current)
+            return count
+
+        def clear_strikes() -> None:
+            current = safe_cache_get(cache, strikes_key) or {}
+            if current.pop(conv, None) is not None:
+                safe_cache_set(cache, strikes_key, current)
+
+        locks_key = f"studio_browser:locks:{server}"
+
+        def conversation_lock() -> asyncio.Lock:
+            """This conversation's lock in this process (one per event loop): its browser takes
+            one call at a time."""
+            loop = asyncio.get_running_loop()
+            current = safe_cache_get(cache, locks_key) or {}
+            entry = current.get(conv)
+            if entry and entry[0] is loop:
+                return entry[1]
+            lock = asyncio.Lock()
+            current[conv] = (loop, lock)
+            if len(current) > MAX_CONNECTIONS:
+                current = dict(list(current.items())[-MAX_CONNECTIONS:])
+            safe_cache_set(cache, locks_key, current)
+            return lock
+
         async def make_room() -> bool:
             """Ends the browser idle longest (at least a minute) to free a concurrent session."""
             now = time.monotonic()
@@ -494,6 +545,7 @@ class StudioBrowserComponent(ComponentWithCache):
                 elif current and not DISCONNECTED.search(str(exc)):
                     # The bound browser ended; open a fresh one for this conversation.
                     bind(None)
+                    await release(current)
                     return await start(tool, kwargs)
                 if CONCURRENCY_LIMIT.search(str(exc)) and await make_room():
                     return await tool.coroutine(**kwargs)
@@ -514,6 +566,12 @@ class StudioBrowserComponent(ComponentWithCache):
                 for arg in SESSION_ARGS:
                     kwargs.pop(arg, None)
                 expect_download = bool(kwargs.pop("expect_download", False))
+                # One call at a time: the agent's parallel calls would each open a browser, or
+                # fill one page over each other.
+                async with conversation_lock():
+                    return await call_now(kwargs, expect_download)
+
+            async def call_now(kwargs: dict, expect_download: bool):
                 tools = await conversation_tools(conv)
                 tool = tools.get(name)
                 if tool is None:
@@ -522,6 +580,7 @@ class StudioBrowserComponent(ComponentWithCache):
                 if name == "start":
                     result = await start(tool, kwargs)
                     bind(started_session(result))
+                    clear_strikes()
                     return with_session(clean_result(result), bound())
                 current = bound()
                 if current is None and name != "end" and "start" in tools:
@@ -537,13 +596,22 @@ class StudioBrowserComponent(ComponentWithCache):
                         result, downloaded = await catch_downloads(api_key, current, lambda: tool.coroutine(**kwargs))
                     else:
                         result = await tool.coroutine(**kwargs)
-                except Exception:
-                    forget_connection(conv)
-                    if current and bound() == current:
-                        bind(None)  # Next call opens a fresh browser rather than retrying a dead one.
-                    if name == "end" and current:
+                except Exception as exc:
+                    failed = str(exc)
+                    if ACTION_FAILED.match(failed):
+                        # The server answered: the action failed, not the browser. Its page, as the
+                        # agent left it, is what the next call needs, so connection and browser stay.
+                        gone = bool(SESSION_GONE.search(failed))
+                    else:
+                        # The connection went; the next call remakes it. The kept-alive browser outlives it.
+                        forget_connection(conv)
+                        gone = False
+                    if current and (name == "end" or gone or strike(current) >= MAX_STRIKES):
+                        if bound() == current:
+                            bind(None)  # Next call opens a fresh browser rather than retrying a dead one.
                         await release(current)
                     raise
+                clear_strikes()
                 if name == "end" and current:
                     await release(current)
                 if name == "end" or bound() == current:
