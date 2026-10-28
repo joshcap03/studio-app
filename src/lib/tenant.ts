@@ -21,7 +21,8 @@ export { AGENT_HEADER };
 
 export async function getSession(): Promise<Session | null> {
   const db = await createSupabaseServerClient();
-  // getUser() validates the token with Supabase Auth instead of trusting the cookie.
+  // getUser() validates the token with Supabase Auth instead of trusting the cookie (the proxy's
+  // signature check already turned away anything unsigned; this is the one Auth call per request).
   const { data, error } = await db.auth.getUser();
   if (error || !data.user) return null;
   return sessionFor(db, data.user);

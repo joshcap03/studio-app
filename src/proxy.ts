@@ -2,7 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 // Refreshes the Supabase session on every request and keeps signed-out traffic away from
-// the app. Route handlers and pages verify the user again; this is the outer gate.
+// the app, without a call to Supabase Auth per request. Route handlers and pages verify the
+// user again; this is the outer gate.
 
 const PUBLIC_PATHS = ["/login", "/auth/confirm", "/api/auth/"];
 
@@ -22,10 +23,15 @@ export async function proxy(request: NextRequest) {
       },
     },
   });
-  const { data } = await supabase.auth.getUser();
+  // getClaims() checks the token's signature against the project's public signing keys (fetched
+  // once and cached for ten minutes) instead of asking Supabase Auth on every request. It still
+  // refreshes an expired session first, so the cookies stay fresh. A project on the legacy shared
+  // secret falls back to getUser(). Route handlers verify the user with Auth again before any data.
+  const { data } = await supabase.auth.getClaims();
+  const signedIn = Boolean(data?.claims);
 
   const path = request.nextUrl.pathname;
-  if (data.user || PUBLIC_PATHS.some((p) => path.startsWith(p)) || isWorkerRunStart(request) || isVoiceFront(request) || isWatchEvent(request)) return response;
+  if (signedIn || PUBLIC_PATHS.some((p) => path.startsWith(p)) || isWorkerRunStart(request) || isVoiceFront(request) || isWatchEvent(request)) return response;
 
   if (path.startsWith("/api/")) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   const login = new URL("/login", request.url);

@@ -31,13 +31,6 @@ export function sessionFor(db: Db, user: { id: string; email?: string | null }):
   return { db, userId: user.id, email: user.email ?? null };
 }
 
-interface MembershipRow {
-  workspace_id: string;
-  role: "owner" | "member";
-  created_at: string;
-  workspaces: { name: string } | null;
-}
-
 interface AccountRow {
   display_name: string;
   about: string;
@@ -51,30 +44,31 @@ export async function ensureAccount(session: Session): Promise<AccountRow> {
   return data;
 }
 
-/** The member's workspace `preferred`, if they belong to it, else their first; null without one. */
-export async function resolveTenant(session: Session, preferred?: string | null): Promise<Tenant | null> {
-  const [{ data, error }, account] = await Promise.all([
-    session.db
-      .from("workspace_members")
-      .select("workspace_id, role, created_at, workspaces(name)")
-      .eq("user_id", session.userId)
-      .order("created_at", { ascending: true })
-      .returns<MembershipRow[]>(),
-    ensureAccount(session),
-  ]);
-  if (error) throw error;
-  if (!data || data.length === 0) return null;
+/** What resolve_tenant returns (see its migration): the account, and memberships oldest first. */
+interface ResolvedTenant {
+  account: Pick<AccountRow, "display_name" | "about" | "composio_user_id">;
+  memberships: { workspace_id: string; role: "owner" | "member"; name: string | null }[];
+}
 
-  const workspaces: WorkspaceSummary[] = data.map((m) => ({
+/**
+ * The member's workspace `preferred`, if they belong to it, else their first; null without one.
+ * One round trip: the account (created on first use) and the memberships come back together.
+ */
+export async function resolveTenant(session: Session, preferred?: string | null): Promise<Tenant | null> {
+  const { data, error } = await session.db.rpc("resolve_tenant");
+  if (error) throw error;
+  const { account, memberships } = data as ResolvedTenant;
+  if (!memberships?.length) return null;
+
+  const workspaces: WorkspaceSummary[] = memberships.map((m) => ({
     id: m.workspace_id,
-    name: m.workspaces?.name ?? "Workspace",
+    name: m.name ?? "Workspace",
     role: m.role,
   }));
-  const active = data.find((m) => m.workspace_id === preferred) ?? data[0];
   return {
     ...session,
     workspaces,
-    workspace: workspaces.find((w) => w.id === active.workspace_id)!,
+    workspace: workspaces.find((w) => w.id === preferred) ?? workspaces[0],
     composioUserId: account.composio_user_id,
     account: { name: account.display_name, about: account.about },
   };

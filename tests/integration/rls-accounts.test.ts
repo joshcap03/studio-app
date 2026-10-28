@@ -43,6 +43,27 @@ describe("accounts", () => {
     expect(made.data?.composio_user_id).toMatch(/^lj_[0-9a-f]{32}$/);
   });
 
+  it("resolve in one round trip with the person's agents, oldest first", async () => {
+    const mine = await alice.client.rpc("resolve_tenant");
+    expect(mine.error).toBeNull();
+    const resolved = mine.data as { account: { composio_user_id: string; display_name: string }; memberships: { workspace_id: string; role: string; name: string }[] };
+    expect(resolved.account.composio_user_id).toBe(aliceComposio);
+    expect(resolved.memberships.map((m) => [m.name, m.role])).toEqual([
+      ["Accounts Atelier", "owner"],
+      ["Second agent", "owner"],
+    ]);
+    // A teammate sees their own account and membership, never the owner's.
+    const theirs = await teammate.client.rpc("resolve_tenant");
+    const other = theirs.data as typeof resolved;
+    expect(other.account.composio_user_id).not.toBe(aliceComposio);
+    expect(other.memberships).toEqual([{ workspace_id: resolved.memberships[0].workspace_id, role: "member", name: "Accounts Atelier" }]);
+    // Someone with no agent yet gets an account and no memberships.
+    const fresh = await createAccount("acct-none");
+    const none = (await fresh.client.rpc("resolve_tenant")).data as typeof resolved;
+    expect(none.account.composio_user_id).toMatch(/^lj_[0-9a-f]{32}$/);
+    expect(none.memberships).toEqual([]);
+  });
+
   it("are visible only to their owner", async () => {
     for (const other of [teammate, bob]) {
       expect((await other.client.from("accounts").select("user_id").eq("user_id", alice.userId)).data).toEqual([]);
