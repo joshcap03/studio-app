@@ -42,7 +42,7 @@ export function SettingsView({ email, guardrail, account, agents, current }: Pro
         title="Connected apps"
         description="Apps your agents can use for you. Every one of your agents shares these. It asks before changing anything, and only you can use your connections."
       >
-        <ConnectionsList returnTo="/settings" />
+        <ConnectionsList />
       </Section>
       <Section title="Saved logins & cards" description="Your agents use these in their browser only when you pick one. They never see them.">
         <SavedCredentials />

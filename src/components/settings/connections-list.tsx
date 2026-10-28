@@ -9,14 +9,7 @@ import { agentHeaders } from "@/lib/client/tab-agent";
  * The signed-in member's own connected apps. Connecting sends them to the provider's
  * authorization page; credentials never pass through this app.
  */
-export function ConnectionsList({
-  returnTo,
-  onConnectedCount,
-}: {
-  returnTo: "/onboarding" | "/settings";
-  /** Told how many apps are connected each time the list loads. */
-  onConnectedCount?: (count: number) => void;
-}) {
+export function ConnectionsList() {
   const [state, setState] = useState<ConnectionsState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -29,7 +22,6 @@ export function ConnectionsList({
     }
     const next = (await res.json()) as ConnectionsState;
     setState(next);
-    onConnectedCount?.(next.toolkits.filter((t) => t.status === "connected").length);
   }
 
   useEffect(() => {
@@ -39,7 +31,7 @@ export function ConnectionsList({
   async function connect(slug: string) {
     setBusy(slug);
     setError(null);
-    const res = await fetch(`/api/workspace/connections/${slug}?return=${encodeURIComponent(returnTo)}`, { method: "POST", headers: agentHeaders() });
+    const res = await fetch(`/api/workspace/connections/${slug}?return=/settings`, { method: "POST", headers: agentHeaders() });
     const body = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
     if (!res.ok || !body?.url) {
       setError(body?.error ?? "Couldn't start connecting. Try again.");
