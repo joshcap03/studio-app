@@ -44,6 +44,11 @@ describe("setupSkill", () => {
       expect(call).toContain("just your first open question");
       expect(call.slice(call.indexOf("- Go step by step"))).toBe(skill.slice(skill.indexOf("- Go step by step")).replace(` ${template.setup.intro}`, "").replace("Your first reply opens with your greeting (see above). ", "Your first reply is just your first question (see above). "));
       expect(skill).toMatch(/Trial run[\s\S]*verdict field/);
+      // The bar asks only what's still missing: its first card may be skipped, the bar's card
+      // takes vague criteria itself, and the plan doesn't ask again what the bar settled.
+      expect(skill).toContain("If nothing's missing, skip this card");
+      expect(skill).toContain("not a question of its own");
+      expect(skill).toContain("Their bar already settled when results come");
       // The trial changes nothing, but the tasks do the job as agreed: a task that sorts their
       // inbox applies the labels (with approval), and only results to choose from end in a verdict.
       expect(skill).toContain("the trial's alone");
