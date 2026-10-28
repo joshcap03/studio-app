@@ -157,8 +157,10 @@ describe("API tenant isolation", () => {
   }, 60_000);
 
   it("ignores a forged active-workspace cookie", async () => {
-    const list = (await (await bob.json("/api/conversations", "GET", undefined, { lj_ws: aliceWs })).json()) as { conversations: unknown[] };
-    expect(list.conversations).toEqual([]);
+    // Bob's own list (he has a chat of his own from above), never Alice's.
+    const list = (await (await bob.json("/api/conversations", "GET", undefined, { lj_ws: aliceWs })).json()) as { conversations: { id: string; title: string }[] };
+    expect(list.conversations.map((c) => c.id)).not.toContain(aliceConv);
+    expect(list.conversations.map((c) => c.title)).not.toContain("non-streaming alice-private-message");
     const settings = (await (await bob.json("/api/workspace/settings", "GET", undefined, { lj_ws: aliceWs })).json()) as {
       settings: { name: string; profile: string };
     };
