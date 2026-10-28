@@ -113,6 +113,13 @@ const schema = z.object({
   // Spoken approvals on calls (docs/voice.md): on unless set to "off". One report that one wasn't
   // what the member said turns them off for everyone anyway, until cleared with SQL.
   VOICE_SPOKEN_APPROVALS: z.string().optional(),
+
+  // Dictation (the message box's mic: speak, and the words go into the message) is on for
+  // everyone wherever there's speech to text (ELEVENLABS_API_KEY, or voice under the mock), even
+  // with the rest of voice out. "off" turns it off. Its own daily time per person, in seconds,
+  // counted with any other voice time that day.
+  DICTATION: z.string().optional(),
+  LIMIT_DICTATION_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1800),
 });
 
 const toolkitSchema = z.record(
@@ -170,6 +177,18 @@ export interface AppConfig {
   previewVoiceEmails: Set<string>;
   /** Voice calls. Unset means they're off. */
   voice?: VoiceConfig;
+  /** Dictation into the message box. Unset means it's off. */
+  dictation?: DictationConfig;
+}
+
+export interface DictationConfig {
+  /** "mock" hears nothing: the browser asks for typed words instead. */
+  provider: "mock" | "elevenlabs";
+  elevenlabs?: { apiKey: string };
+  /** Keys the names recordings are charged under (VoiceConfig.sealSecret). */
+  sealSecret: string;
+  /** The most voice time a person may have used today for a recording to be heard. */
+  secondsPerDay: number;
 }
 
 export interface VoiceConfig {
@@ -259,6 +278,7 @@ export function getConfig(): AppConfig {
     previewEmails: emails(env.PREVIEW_FEATURE_EMAILS),
     previewVoiceEmails: emails(env.PREVIEW_VOICE_EMAILS),
     voice,
+    dictation: dictationConfig(env, voice),
   };
   return cached;
 }
@@ -303,6 +323,16 @@ function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
     };
   }
   return { provider, sealSecret: env.VOICE_SEAL_SECRET ?? processSecret(), llm, limits, spokenApprovals };
+}
+
+function dictationConfig(env: z.infer<typeof schema>, voice: VoiceConfig | undefined): DictationConfig | undefined {
+  if (/^(off|false|0|no|disabled?)$/i.test(env.DICTATION?.trim() ?? "")) return undefined;
+  const secondsPerDay = env.LIMIT_DICTATION_SECONDS_PER_DAY;
+  // With voice on, its provider hears dictation too; without it, only speech to text is needed.
+  if (voice?.provider === "mock") return { provider: "mock", sealSecret: voice.sealSecret, secondsPerDay };
+  const apiKey = voice?.elevenlabs?.apiKey ?? env.ELEVENLABS_API_KEY?.trim();
+  if (!apiKey) return undefined;
+  return { provider: "elevenlabs", elevenlabs: { apiKey }, sealSecret: voice?.sealSecret ?? env.VOICE_SEAL_SECRET ?? processSecret(), secondsPerDay };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

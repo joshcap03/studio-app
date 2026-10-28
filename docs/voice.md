@@ -3,6 +3,8 @@
 **Voice is out of the app for now.** Unless `VOICE_ENABLED=on`, nobody sees or hears any of it
 (calls, the mic, voice notes, voice choices, call offers), the agent isn't told about it, and the
 voice routes refuse. The code below stays as it is; `npm run qa:serve` turns it on for tests.
+Dictation (tap the message box's mic, ✓ puts the words in the draft) is the exception: it's on for
+every member wherever there's speech to text (`ELEVENLABS_API_KEY`), unless `DICTATION=off`.
 
 A call puts a fast voice in front of the agent. The voice (ElevenLabs Agents) listens, talks, and
 handles being talked over; the agent (the worker, Langflow) does all the thinking and work, as in

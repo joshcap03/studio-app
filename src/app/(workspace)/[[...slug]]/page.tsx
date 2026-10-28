@@ -15,7 +15,7 @@ import { builtinSkills } from "@/lib/skills/builtin";
 import { summarizeSetup } from "@/lib/setup-state";
 import { requirePageTenant } from "@/lib/tenant";
 import { firstName } from "@/lib/setup-words";
-import { voiceStatus } from "@/lib/voice";
+import { dictationStatus, voiceStatus } from "@/lib/voice";
 import { messagesWithCalls } from "@/lib/voice/calls";
 import { resolvePersona } from "@/lib/voice/persona";
 import { getSettings } from "@/lib/workspace";
@@ -126,6 +126,7 @@ export default async function WorkspacePage({
         initialSkillId={initialSkillId}
         setup={setup}
         voice={voice}
+        dictation={dictationStatus()}
         member={firstName(tenant.account.name)}
         greeter={greeter}
         companions={own}

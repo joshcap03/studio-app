@@ -18,6 +18,15 @@ export interface VoiceStatus {
 }
 
 /**
+ * The message box's mic for one member, on with or without the rest of voice: speak, and the
+ * words go into the message. Absent when there's no speech to text.
+ */
+export interface DictationStatus {
+  /** The mock hears nothing: the mic asks for typed words instead. */
+  mock: boolean;
+}
+
+/**
  * Speech outside a call: an agent's voice saying a line (previews, voice notes) and a member's
  * recording turned into text. Under the mock (live false) speech is a short tone and the member
  * types what they'd say.

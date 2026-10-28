@@ -7,7 +7,7 @@ import { MOCK_VOICE_LABEL } from "./mock";
 import { spokenApprovalsOn } from "./approvals";
 import { agentLabel, resolvePersona } from "./persona";
 import { clipKey, sealContext } from "./seal";
-import { voiceStatus } from "./status";
+import { dictationStatus, voiceStatus } from "./status";
 import type { VoiceCapabilities, VoiceGrant, VoiceJoin, VoiceStatus } from "./types";
 
 // Voice calls, server side: whether a member can call, starting a call (cap, provider, seal),
@@ -15,7 +15,7 @@ import type { VoiceCapabilities, VoiceGrant, VoiceJoin, VoiceStatus } from "./ty
 // same daily voice time. Everything runs under the member's own session; the voice front, which
 // has none, gets only the sealed context.
 
-export { VoiceUnavailable, voiceStatus, type VoiceStatus };
+export { dictationStatus, VoiceUnavailable, voiceStatus, type VoiceStatus };
 
 const MOCK_CAPABILITIES: VoiceCapabilities = { audio: false, bargeIn: true, verbatimTranscripts: true };
 const GUARDRAIL_CHARS = 4000;
@@ -122,17 +122,22 @@ export async function claimVoiceClip(
   clip: { kind: ClipKind; ref: string; seconds: number },
   { spent = false }: { spent?: boolean } = {},
 ): Promise<{ ok: true; charged: number } | { ok: false; refused: "daily" }> {
-  const voice = getConfig().voice;
-  if (!voice) throw new VoiceUnavailable("Voice isn't set up.");
+  // A recording is dictation, which is on with or without the rest of voice, under its own daily limit.
+  const config = getConfig();
+  const ledger =
+    clip.kind === "transcribe"
+      ? config.dictation && { sealSecret: config.dictation.sealSecret, secondsPerDay: config.dictation.secondsPerDay }
+      : config.voice && { sealSecret: config.voice.sealSecret, secondsPerDay: config.voice.limits.secondsPerDay };
+  if (!ledger) throw new VoiceUnavailable("Voice isn't set up.");
   const seconds = Math.max(0, Math.ceil(clip.seconds));
   if (seconds > MAX_CLIP_SECONDS) throw new RangeError(`A clip charges at most ${MAX_CLIP_SECONDS} seconds.`);
   const rows = check(
     await tenant.db.rpc("claim_voice_clip", {
       ws: tenant.workspace.id,
       p_kind: clip.kind,
-      p_ref: clipKey(clip.kind, clip.ref, voice.sealSecret),
+      p_ref: clipKey(clip.kind, clip.ref, ledger.sealSecret),
       p_seconds: seconds,
-      p_daily_seconds: spent ? NO_LIMIT : voice.limits.secondsPerDay,
+      p_daily_seconds: spent ? NO_LIMIT : ledger.secondsPerDay,
     }),
   ) as { clip_id: string | null; seconds: number; refused: string | null }[];
   const claim = rows[0];

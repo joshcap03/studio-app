@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { Tenant } from "@/lib/tenant-core";
 
 const secret = "s".repeat(40);
-const config = vi.hoisted(() => ({ voice: { provider: "mock", sealSecret: "s".repeat(40), limits: { secondsPerDay: 1800, callSeconds: 1500 } } }));
+const config = vi.hoisted(() => ({
+  voice: { provider: "mock", sealSecret: "s".repeat(40), limits: { secondsPerDay: 1800, callSeconds: 1500 } } as unknown,
+  dictation: { provider: "mock", sealSecret: "s".repeat(40), secondsPerDay: 600 },
+}));
 vi.mock("@/lib/config", () => ({ getConfig: () => config }));
 
 const { claimVoiceClip } = await import("./index");
@@ -26,6 +29,19 @@ describe("claimVoiceClip", () => {
     });
     const sent = (rpc.mock.calls[0] as unknown[])[1] as { p_ref: string };
     expect(sent.p_ref).not.toContain("preview:warm");
+  });
+
+  it("charges a recording against dictation's own limit, with the rest of voice out too", async () => {
+    const { rpc, tenant } = tenantWith([{ clip_id: "clip_3", seconds: 5, refused: null }]);
+    const voice = config.voice;
+    config.voice = undefined;
+    try {
+      expect(await claimVoiceClip(tenant, { kind: "transcribe", ref: "r2", seconds: 5 })).toEqual({ ok: true, charged: 5 });
+      expect(rpc).toHaveBeenCalledWith("claim_voice_clip", expect.objectContaining({ p_kind: "transcribe", p_ref: clipKey("transcribe", "r2", secret), p_daily_seconds: 600 }));
+      await expect(claimVoiceClip(tenant, { kind: "note", ref: "m1", seconds: 3 })).rejects.toThrow("Voice isn't set up.");
+    } finally {
+      config.voice = voice;
+    }
   });
 
   it("says when today's voice time is used up", async () => {

@@ -35,6 +35,22 @@ describe("VOICE_SPOKEN_APPROVALS", () => {
   });
 });
 
+describe("dictation", () => {
+  it("is on wherever there's speech to text, with the rest of voice out too, unless it's off", async () => {
+    const out = { VOICE_ENABLED: "", VOICE_PROVIDER: "elevenlabs" };
+    expect((await configWith(out)).dictation).toBeUndefined();
+    const keyed = await configWith({ ...out, ELEVENLABS_API_KEY: "xi_test" });
+    expect(keyed.voice).toBeUndefined();
+    expect(keyed.dictation).toMatchObject({ provider: "elevenlabs", elevenlabs: { apiKey: "xi_test" }, secondsPerDay: 1800 });
+    expect((await configWith({})).dictation?.provider).toBe("mock");
+    expect((await configWith({ ...out, ELEVENLABS_API_KEY: "xi_test", LIMIT_DICTATION_SECONDS_PER_DAY: "600" })).dictation?.secondsPerDay).toBe(600);
+    for (const off of ["off", "OFF", "false", "0", "no", "disabled"]) {
+      expect((await configWith({ ...out, ELEVENLABS_API_KEY: "xi_test", DICTATION: off })).dictation, off).toBeUndefined();
+      expect((await configWith({ DICTATION: off })).dictation, off).toBeUndefined();
+    }
+  });
+});
+
 describe("watches", () => {
   it("are on only with connected apps, the webhook secret, and the worker's key", async () => {
     const all = { COMPOSIO_API_KEY: "ak_test", COMPOSIO_WEBHOOK_SECRET: "whsec_test", TRIGGER_SECRET_KEY: "tr_dev_test" };
