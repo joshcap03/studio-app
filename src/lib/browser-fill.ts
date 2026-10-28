@@ -189,13 +189,23 @@ export async function fillBrowser(tenant: Tenant, conversationId: string, values
   }
 }
 
-/** The site (origin) the conversation's browser is on now, for the card to show and match saved logins against. */
-export async function browserSite(tenant: Tenant, conversationId: string, connect: SocketFactory = defaultConnect): Promise<{ ok: true; site: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" }> {
+/**
+ * The site (origin) the conversation's browser is on now, for the card to show and match saved
+ * logins against. "blank": the browser is open but on no page (the agent asked before opening
+ * one), so there's nothing to fill until it does.
+ */
+export async function browserSite(tenant: Tenant, conversationId: string, connect: SocketFactory = defaultConnect): Promise<{ ok: true; site: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" | "blank" }> {
   const connection = await browserConnection(tenant, conversationId);
   if (!connection.ok) return connection;
+  return pageSite(connection.url, connect);
+}
+
+/** The origin of the page a browser is on, or "blank" when it's on none (about:blank has the origin "null"). */
+export async function pageSite(url: string, connect: SocketFactory): Promise<{ ok: true; site: string } | { ok: false; reason: "failed" | "blank" }> {
   try {
-    const site = await withCdp(connection.url, connect, 8000, async (call) => evaluate(call, (await attachToPage(call)).sessionId, "location.origin"));
-    return typeof site === "string" && /^https?:\/\//.test(site) ? { ok: true, site } : { ok: false, reason: "failed" };
+    const site = await withCdp(url, connect, 8000, async (call) => evaluate(call, (await attachToPage(call)).sessionId, "location.origin"));
+    if (typeof site === "string" && /^https?:\/\//.test(site)) return { ok: true, site };
+    return { ok: false, reason: site === "null" || site === "" ? "blank" : "failed" };
   } catch {
     return { ok: false, reason: "failed" };
   }

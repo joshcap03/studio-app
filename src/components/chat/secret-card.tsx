@@ -12,7 +12,8 @@ import { BrowserDrive } from "./browser-drive";
 // browser's page server-side (src/app/api/conversations/[id]/secrets): it never goes into the chat,
 // the card's drafts, or anything a call can fill, and the agent hears only what was filled. Or they
 // take the browser over and do it themselves (a CAPTCHA, a form the fill can't find). If the
-// browser has closed, one tap asks the agent to open the page again and ask once more.
+// browser has closed, or is open on no page yet (the agent asked before opening one), one tap
+// asks the agent to open the page and ask once more.
 
 const card = "mt-4 overflow-hidden rounded-xl border border-line-strong bg-surface shadow-composer animate-fade-up";
 const input =
@@ -103,8 +104,10 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
   const site = host(lookup?.site ?? null);
   const insecure = Boolean(lookup?.site && !lookup.site.startsWith("https://"));
   const noBrowser = lookup !== null && lookup.browser !== "open";
-  // It was open and isn't now (or never was): the agent can open the page again from a tap.
-  const closed = lookup !== null && (lookup.browser === "ended" || lookup.browser === "none");
+  // The browser is open on no page yet: the agent asked before opening one.
+  const blank = lookup !== null && lookup.browser === "blank";
+  // It was open and isn't now (or never was), or is on no page: the agent can open the page from a tap.
+  const closed = blank || (lookup !== null && (lookup.browser === "ended" || lookup.browser === "none"));
   const savedPick = lookup?.saved.find((c) => c.id === picked) ?? null;
   // A card saved before its security code was kept asks for it once; after that it's on file.
   const askCode = Boolean(savedPick && isCard && !savedPick.codeSaved);
@@ -152,9 +155,11 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
     setCvv("");
     setCode("");
     onAnswer?.(
-      isCode
-        ? "Your browser closed before I could put the code in. Open the page again where you were, and ask me for a new code if the site sends one."
-        : "Your browser closed before I could fill that in. Open the page again where you were and ask me again.",
+      blank
+        ? "Your browser isn't on a page yet, so there was nowhere to fill that in. Open the page it goes on (navigate to it), and ask me again once the form is showing."
+        : isCode
+          ? "Your browser closed before I could put the code in. Open the page again where you were, and ask me for a new code if the site sends one."
+          : "Your browser closed before I could fill that in. Open the page again where you were and ask me again.",
     );
   }
 
@@ -179,7 +184,11 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
             <p className="text-[13px] text-fg-3">Checking the page…</p>
           ) : noBrowser ? (
             <p className="text-[13px] text-fg-3">
-              {closed ? "The browser closed before this was filled in. Open it again and the agent will go back to this page." : "Couldn't reach the browser just now."}
+              {blank
+                ? "The browser isn't on a page yet. Open it and the agent will go to the page this goes on, then ask again."
+                : closed
+                  ? "The browser closed before this was filled in. Open it again and the agent will go back to this page."
+                  : "Couldn't reach the browser just now."}
             </p>
           ) : isCode ? (
             <>
@@ -241,7 +250,7 @@ export function SecretCard({ request, response, conversationId, messageId, onAns
           {closed ? (
             <button type="button" onClick={reopen} className={primary}>
               <RotateCcw size={14} />
-              Open it again
+              {blank ? "Open the page" : "Open it again"}
             </button>
           ) : (
             <>

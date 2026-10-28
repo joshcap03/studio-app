@@ -117,7 +117,7 @@ export const api = {
     }),
   /** The site the agent's browser is on now, and the saved logins (for that site) or cards that fit a request. */
   secretRequest: (conversationId: string, blockId: string) =>
-    request<{ site: string | null; browser: "open" | "off" | "none" | "ended" | "failed"; saved: CredentialSummary[]; canSave: boolean }>(
+    request<{ site: string | null; browser: "open" | "off" | "none" | "ended" | "failed" | "blank"; saved: CredentialSummary[]; canSave: boolean }>(
       `/api/conversations/${conversationId}/secrets/${blockId}`,
     ),
   /**
