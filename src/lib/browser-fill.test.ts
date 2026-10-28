@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drivePage, fillPage } from "./browser-fill";
+import { drivePage, fillPage, pageSite } from "./browser-fill";
 import type { Socket } from "./browser-view";
 
 const PASSWORD = "hunter2-correct-horse";
@@ -79,6 +79,15 @@ function fakeBrowser({
   };
   return { connect: () => (queueMicrotask(() => emit("open")), socket), sent, docs };
 }
+
+describe("the page the browser is on", () => {
+  it("names the site, and says when the browser is open on no page yet", async () => {
+    expect(await pageSite("wss://x", fakeBrowser({ origin: "https://acme.example" }).connect)).toEqual({ ok: true, site: "https://acme.example" });
+    // about:blank has the origin "null": the agent asked before opening a page.
+    expect(await pageSite("wss://x", fakeBrowser({ origin: "null" }).connect)).toEqual({ ok: false, reason: "blank" });
+    expect(await pageSite("wss://x", fakeBrowser({ origin: "chrome-error://chromewebdata" }).connect)).toEqual({ ok: false, reason: "failed" });
+  });
+});
 
 describe("filling a login", () => {
   it("types the username then the password into the page, and only through Input.insertText", async () => {

@@ -208,6 +208,24 @@ def with_downloads(result, names: list[str], expected: bool):
     return result.model_copy(update={"content": [*content, content[0].model_copy(update={"text": note})]})
 
 
+URL_IN_ACTION = re.compile(r"https?://\S+", re.IGNORECASE)
+NO_ACTION = re.compile(r"No action found", re.IGNORECASE)
+
+
+def with_navigate_hint(result, name: str, kwargs: dict):
+    """An act that named a URL and found nothing to do is told how to open one: act works on the
+    page it has, so "Go to https://…" finds no element, and an agent that doesn't know asks for a
+    sign-in on a blank page."""
+    action = kwargs.get("action")
+    content = getattr(result, "content", None)
+    if name != "act" or not isinstance(action, str) or not URL_IN_ACTION.search(action) or not isinstance(content, list) or not content:
+        return result
+    if not any(NO_ACTION.search(getattr(item, "text", "") or "") for item in content):
+        return result
+    note = "act can't open a URL: call navigate with the URL first, then act on the page it opens."
+    return result.model_copy(update={"content": [*content, content[0].model_copy(update={"text": note})]})
+
+
 async def catch_downloads(api_key: str, sid: str, work):
     """Runs `work` (an action in the browser) with downloads on, over a CDP connection of this
     node's own, held until a download it started finishes. Returns its result and the names of the
@@ -616,7 +634,7 @@ class StudioBrowserComponent(ComponentWithCache):
                     await release(current)
                 if name == "end" or bound() == current:
                     bind(None if name == "end" else current)
-                result = with_downloads(result, downloaded, expect_download and name in DOWNLOAD_TOOLS)
+                result = with_downloads(with_navigate_hint(result, name, kwargs), downloaded, expect_download and name in DOWNLOAD_TOOLS)
                 return with_session(clean_result(result), None if name == "end" else current)
 
             return StructuredTool(
