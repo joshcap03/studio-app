@@ -88,6 +88,12 @@ export interface ConversationPlan {
   updatedAt: number | null;
 }
 
+/**
+ * A message with only what starting a turn needs: who said what, how, and whether it waits to be
+ * carried on. No steps, cards, files, or sources: the whole list is read before every turn.
+ */
+export type RunMessage = Pick<ChatMessage, "id" | "conversationId" | "role" | "content" | "status" | "origin" | "skill" | "uiResponse" | "keepGoing" | "createdAt">;
+
 export interface Store {
   readonly scope: Scope;
   listConversations(query?: string): Promise<ConversationSummary[]>;
@@ -117,6 +123,18 @@ export interface Store {
    */
   lastMessages(conversationIds: string[]): Promise<Record<string, LastMessage>>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
+  /**
+   * The newest `limit` messages, oldest first, and whether there are earlier ones; with `before`,
+   * the page before that message (none when it isn't here). Earlier pages load as the member reads back.
+   */
+  pageMessages(conversationId: string, page: { limit: number; before?: string }): Promise<{ messages: ChatMessage[]; earlier: boolean }>;
+  /**
+   * The message `fromId` as it stands now and everything after it, oldest first, for following a
+   * run with little traffic; null when there's no such message in the conversation.
+   */
+  messagesSince(conversationId: string, fromId: string): Promise<ChatMessage[] | null>;
+  /** Every message in the conversation, oldest first, with only what a turn needs (see RunMessage). */
+  listMessagesForRun(conversationId: string): Promise<RunMessage[]>;
   /**
    * The conversation's latest message, as far as whether a turn may start there: its id and
    * status (one small read, for checking a list loaded a moment ago is still current).
@@ -272,6 +290,7 @@ const MESSAGE_COLUMNS =
 const APPROVAL_COLUMNS =
   "id, conversation_id, message_id, summary, app, details, status, provider, provider_state, created_at, decided_at, tools, voice_ok, tap_only, read_back, decided_via, decided_words, reported_at, standing";
 const ATTACHMENT_COLUMNS = "id, name, mime_type, size, storage_path";
+const RUN_COLUMNS = "id, conversation_id, role, content, status, origin, skill, ui_response, keep_going, continued_at, created_at, updated_at";
 
 const toApproval = (r: Omit<ApprovalRow, "provider" | "provider_state">): Approval => ({
   id: r.id,
@@ -353,6 +372,21 @@ const toMessage = (r: MessageRow): ChatMessage => ({
   createdAt: Date.parse(r.created_at),
 });
 
+type RunRow = Pick<MessageRow, "id" | "conversation_id" | "role" | "content" | "status" | "origin" | "skill" | "ui_response" | "keep_going" | "continued_at" | "created_at" | "updated_at">;
+
+const toRunMessage = (r: RunRow): RunMessage => ({
+  id: r.id,
+  conversationId: r.conversation_id,
+  role: r.role,
+  content: r.content,
+  status: liveStatus(r.status, r.updated_at),
+  origin: r.origin ?? null,
+  skill: r.skill ? { id: String(r.skill.id), name: String(r.skill.name) } : null,
+  uiResponse: r.ui_response ?? null,
+  ...(r.keep_going && !r.continued_at ? { keepGoing: r.keep_going } : {}),
+  createdAt: Date.parse(r.created_at),
+});
+
 function check<T>(result: { data: T; error: { message: string } | null }): T {
   if (result.error) throw new Error(`Database error: ${result.error.message}`);
   return result.data;
@@ -370,6 +404,13 @@ export function createStore(db: Db, scope: Scope): Store {
   const messages = () => db.from("messages");
   const approvals = () => db.from("approvals");
   const attachments = () => db.from("attachments");
+  /** A message's place in its conversation, or null when it isn't the caller's there. */
+  const seqOf = async (conversationId: string, id: string): Promise<number | null> => {
+    const row = check(
+      await messages().select("seq").eq("id", id).eq("conversation_id", conversationId).eq("workspace_id", workspaceId).eq("user_id", userId).maybeSingle(),
+    ) as { seq: number } | null;
+    return row ? row.seq : null;
+  };
 
   return {
     scope,
@@ -574,6 +615,39 @@ export function createStore(db: Db, scope: Scope): Store {
           .order("seq", { ascending: true }),
       ) as unknown as MessageRow[];
       return rows.map(toMessage);
+    },
+
+    async pageMessages(conversationId, { limit, before }) {
+      let query = messages().select(MESSAGE_COLUMNS).eq("conversation_id", conversationId).eq("workspace_id", workspaceId).eq("user_id", userId);
+      if (before) {
+        const anchor = await seqOf(conversationId, before);
+        if (anchor === null) return { messages: [], earlier: false };
+        query = query.lt("seq", anchor);
+      }
+      const rows = check(await query.order("seq", { ascending: false }).limit(limit + 1)) as unknown as MessageRow[];
+      return { messages: rows.slice(0, limit).reverse().map(toMessage), earlier: rows.length > limit };
+    },
+
+    async messagesSince(conversationId, fromId) {
+      const anchor = await seqOf(conversationId, fromId);
+      if (anchor === null) return null;
+      const rows = check(
+        await messages()
+          .select(MESSAGE_COLUMNS)
+          .eq("conversation_id", conversationId)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .gte("seq", anchor)
+          .order("seq", { ascending: true }),
+      ) as unknown as MessageRow[];
+      return rows.map(toMessage);
+    },
+
+    async listMessagesForRun(conversationId) {
+      const rows = check(
+        await messages().select(RUN_COLUMNS).eq("conversation_id", conversationId).eq("workspace_id", workspaceId).eq("user_id", userId).order("seq", { ascending: true }),
+      ) as unknown as RunRow[];
+      return rows.map(toRunMessage);
     },
 
     async latestMessage(conversationId) {

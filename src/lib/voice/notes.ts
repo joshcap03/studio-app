@@ -19,7 +19,7 @@ import { plain, speakableGist } from "./relay";
  */
 export function voiceNoteFor(
   final: ChatMessage,
-  { answered, report, earlier, callEnded = false }: { answered: ChatMessage | null; report?: RunReport | null; earlier?: string | null; callEnded?: boolean },
+  { answered, report, earlier, callEnded = false }: { answered: Pick<ChatMessage, "origin"> | null; report?: RunReport | null; earlier?: string | null; callEnded?: boolean },
 ): VoiceNote | null {
   if (final.role !== "assistant" || final.status !== "complete") return null;
   const said = since(final.content, earlier);

@@ -9,9 +9,13 @@ import { AssistantMessage, UserMessage } from "./message";
 import { pointOutNote } from "./voice-note";
 
 const STICK_THRESHOLD = 64;
+const EARLIER_THRESHOLD = 400;
 
 interface Props {
   messages: ChatMessage[];
+  /** Whether there are messages before these, loaded with `onLoadEarlier` as the reader scrolls up. */
+  earlier?: boolean;
+  onLoadEarlier?: () => Promise<void>;
   /** Whether the agent is working in this conversation. */
   running: boolean;
   onRetry: (messageId: string) => void;
@@ -42,13 +46,37 @@ interface Props {
  * The scrolling message list. Follows new output while the reader is at the bottom, and
  * leaves the scroll position alone once they scroll up to read earlier messages.
  */
-export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onRunTask, onFeedback, onOpenPanel, sendCount, noteFocus, onCall, calls, footer }: Props) {
+export function Thread({ messages, earlier = false, onLoadEarlier, running, onRetry, onEdit, onDecide, onProposal, onAnswer, onUiResponse, onRunTask, onFeedback, onOpenPanel, sendCount, noteFocus, onCall, calls, footer }: Props) {
   const lastUserId = messages.findLast((m) => m.role === "user")?.id;
   const recaps = useMemo(() => recapsByMessage(messages, calls ?? []), [messages, calls]);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  /** The scroll height before earlier messages went in above, to keep the reader where they were. */
+  const heightBefore = useRef<number | null>(null);
+
+  const showEarlier = useCallback(async () => {
+    const el = scroller.current;
+    if (!onLoadEarlier || !el || loadingEarlier) return;
+    setLoadingEarlier(true);
+    heightBefore.current = el.scrollHeight;
+    try {
+      await onLoadEarlier();
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [onLoadEarlier, loadingEarlier]);
+
+  // Earlier messages went in above: the ones the reader was looking at stay where they were.
+  const firstId = messages[0]?.id;
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || heightBefore.current === null) return;
+    el.scrollTop += el.scrollHeight - heightBefore.current;
+    heightBefore.current = null;
+  }, [firstId]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = scroller.current;
@@ -93,12 +121,26 @@ export function Thread({ messages, running, onRetry, onEdit, onDecide, onProposa
     const bottom = distance < STICK_THRESHOLD;
     stick.current = bottom;
     if (bottom !== atBottom) setAtBottom(bottom);
+    // Near the top with more before: they load by themselves, as the reader scrolls up.
+    if (earlier && el.scrollTop < EARLIER_THRESHOLD) void showEarlier();
   }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scroller} onScroll={onScroll} className="scroll-quiet min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]">
         <div ref={content} className="mx-auto w-full max-w-[46rem] px-5 pt-6 pb-10 md:px-8 md:pt-10">
+          {earlier ? (
+            <div className="mb-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => void showEarlier()}
+                disabled={loadingEarlier}
+                className="rounded-full border border-line px-3 py-1.5 text-[13px] text-fg-2 transition-colors hover:bg-hover hover:text-fg disabled:opacity-60"
+              >
+                {loadingEarlier ? "Loading earlier messages…" : "Show earlier messages"}
+              </button>
+            </div>
+          ) : null}
           {messages.map((message, index) => {
             const previous = messages[index - 1];
             const spacing = index === 0 ? "" : previous?.role === message.role ? "mt-4" : message.role === "user" ? "mt-10" : "mt-6";

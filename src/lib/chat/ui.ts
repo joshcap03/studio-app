@@ -585,6 +585,15 @@ export function unknownCards(knows: { offers?: boolean; secrets?: boolean; hando
  * did with one. Such a page draws any card it doesn't know as a proposed setup and breaks on it,
  * so only pages that say they know a kind get it.
  */
+/**
+ * Messages as the page asking gets them: offers to call (?offers=1), requests for a login or card
+ * (?secrets=1), and the browser handed over (?handoffs=1) only go to pages that know them, since
+ * a tab still on older code breaks on one.
+ */
+export function shownTo(params: URLSearchParams, messages: ChatMessage[]): ChatMessage[] {
+  return withoutCards(messages, unknownCards({ offers: params.get("offers") === "1", secrets: params.get("secrets") === "1", handoffs: params.get("handoffs") === "1" }));
+}
+
 export function withoutCards(messages: ChatMessage[], kinds: readonly NewerCard[]): ChatMessage[] {
   if (!kinds.length) return messages;
   const hidden = (b: UiBlock) => (kinds as readonly string[]).includes(b.kind);

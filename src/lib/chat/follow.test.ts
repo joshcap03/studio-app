@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityStep, ChatMessage, ConversationSummary } from "@/lib/types";
-import { followEvents, joinedEvents } from "./follow";
+import { followEvents, joinedEvents, followAnchor, keepEarlier, mergeSince } from "./follow";
 
 const conversation: ConversationSummary = { id: "c1", title: "Find roles", projectId: null, createdAt: 0, updatedAt: 0 };
 const step = (id: string, status: ActivityStep["status"], label = "Searching LinkedIn"): ActivityStep => ({ id, label, status, startedAt: 0 });
@@ -79,5 +79,34 @@ describe("joinedEvents", () => {
     // One already told says nothing more here.
     expect(joinedEvents([asked, older, brief, { ...run, status: "complete" }], conversation, new Set(["r2"]))).toEqual([]);
     expect(joinedEvents([asked], conversation, new Set())).toEqual([]);
+  });
+});
+
+describe("following with little traffic", () => {
+  const m = (id: string, content = id) => ({ id, content });
+
+  it("asks from the last message the server knows, never a placeholder", () => {
+    expect(followAnchor([m("a"), m("b"), m("pending-user"), m("pending-reply")])).toBe("b");
+    expect(followAnchor([m("pending-user")])).toBeNull();
+    expect(followAnchor([])).toBeNull();
+  });
+
+  it("brings the page up to date from that message on, keeping what came before", () => {
+    const before = [m("a"), m("b"), m("c", "work…")];
+    expect(mergeSince(before, [m("c", "done"), m("d")], "c")).toEqual([m("a"), m("b"), m("c", "done"), m("d")]);
+    // A placeholder the page had after the anchor gives way to the server's copy.
+    expect(mergeSince([...before, m("pending-x")], [m("c"), m("e")], "c")).toEqual([m("a"), m("b"), m("c"), m("e")]);
+    expect(mergeSince(before, [m("z")], "gone")).toBeNull();
+  });
+
+  it("keeps the earlier messages the member read back to when the newest page loads again", () => {
+    const read = { messages: [m("a"), m("b"), m("c"), m("d")], earlier: false };
+    expect(keepEarlier(read, { messages: [m("c"), m("d", "new"), m("e")], earlier: true })).toEqual({
+      messages: [m("a"), m("b"), m("c"), m("d", "new"), m("e")],
+      earlier: false,
+    });
+    // Nothing in common (a fresh load, or the page never had it): the newest page as it is.
+    expect(keepEarlier(read, { messages: [m("x")], earlier: true })).toEqual({ messages: [m("x")], earlier: true });
+    expect(keepEarlier(undefined, { messages: [m("x")] })).toEqual({ messages: [m("x")], earlier: false });
   });
 });

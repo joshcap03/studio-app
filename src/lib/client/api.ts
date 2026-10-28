@@ -64,8 +64,27 @@ export const api = {
     request<{ conversations: ConversationSummary[] }>(`/api/conversations?q=${encodeURIComponent(query)}`, { signal }),
   // This page knows the agent's offers to call and its browser handed over, so it asks for them
   // (pages from before them don't get any).
+  /** The conversation with its newest messages; `earlier` says there are more before them. */
   getConversation: (id: string, signal?: AbortSignal) =>
-    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null; calls: CallSummary[] }>(`/api/conversations/${id}?offers=1&secrets=1&handoffs=1`, { signal }),
+    request<{ conversation: ConversationSummary; messages: ChatMessage[]; earlier: boolean; journey: Journey | null; calls: CallSummary[] }>(
+      `/api/conversations/${id}?offers=1&secrets=1&handoffs=1`,
+      { signal },
+    ),
+  /** The page of messages before `before`, as the member reads back. */
+  earlierMessages: (id: string, before: string, signal?: AbortSignal) =>
+    request<{ messages: ChatMessage[]; earlier: boolean; calls: CallSummary[] }>(
+      `/api/conversations/${id}?offers=1&secrets=1&handoffs=1&before=${encodeURIComponent(before)}`,
+      { signal },
+    ),
+  /**
+   * What changed since the page's last message `from` (it, as it stands now, and everything after),
+   * for following a run; `reset` when that message is gone, with the newest page instead.
+   */
+  latestMessages: (id: string, from: string, signal?: AbortSignal) =>
+    request<{ conversation: ConversationSummary; messages: ChatMessage[]; journey: Journey | null; calls: CallSummary[]; reset?: true; earlier?: boolean }>(
+      `/api/conversations/${id}/latest?offers=1&secrets=1&handoffs=1&from=${encodeURIComponent(from)}`,
+      { signal },
+    ),
   /** Whose move it is in these conversations: only those working, waiting on the member, or stuck. */
   conversationMoves: (ids: string[], signal?: AbortSignal) =>
     request<{ moves: Record<string, MarkedMove> }>(`/api/conversations/moves?ids=${ids.map(encodeURIComponent).join(",")}`, { signal }),

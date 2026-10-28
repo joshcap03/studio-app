@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AgentError, type AgentAdapter, type AgentAttachment, type AgentResume, type AgentTenantContext } from "@/lib/agent/types";
-import { STALE_STREAM_MS, type Conversation, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
+import { STALE_STREAM_MS, type Conversation, type RunMessage, type StoredApproval, type StoredAttachment, type Store } from "@/lib/db/store";
 import { renderSkillMessage } from "@/lib/skills/render";
 import { talksMachinery, type Evidence } from "@/lib/agent/tools";
 import { isRecord } from "@/lib/agent/tools/sanitize";
@@ -106,12 +106,12 @@ export interface TurnDeps {
   context: AgentTenantContext;
   idleTimeoutMs: number;
   /**
-   * The conversation and its messages as the caller already read them (building the context
-   * reads them anyway), so the turn doesn't read them again. They're a moment old, so the turn
-   * checks the latest message is still the one here (one small read) and reads the list again
-   * only when it isn't. Without it, the turn reads both itself.
+   * The conversation and its messages (as a turn needs them) as the caller already read them
+   * (building the context reads them anyway), so the turn doesn't read them again. They're a
+   * moment old, so the turn checks the latest message is still the one here (one small read) and
+   * reads the list again only when it isn't. Without it, the turn reads both itself.
    */
-  preloaded?: { conversation: Conversation | null; messages: ChatMessage[] };
+  preloaded?: { conversation: Conversation | null; messages: RunMessage[] };
   /** Loads an attachment's bytes for the agent (under the caller's session). */
   loadAttachment?: (attachment: StoredAttachment) => Promise<Blob>;
   /** The conversation's project files, given to the agent on every new run (not on a resumed one). */
@@ -326,7 +326,8 @@ async function stopElsewhere(store: Store, conversationId: string, messageId: st
   const until = Date.now() + waitMs;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, Math.min(500, waitMs / 4)));
-    if ((await store.getMessage(conversationId, messageId))?.status !== "streaming") return true;
+    const latest = await store.latestMessage(conversationId);
+    if (latest?.id !== messageId || latest.status !== "streaming") return true;
   }
   return false;
 }
@@ -362,17 +363,18 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   }
 
   let conversation: Conversation | null;
-  let existing: ChatMessage[];
+  /** Every message here, with only what the turn needs; the few it needs in full are read by id. */
+  let existing: RunMessage[];
   if (deps.preloaded) {
     ({ conversation, messages: existing } = deps.preloaded);
     // A reply that started elsewhere since the list was read would be missed, so the latest
     // message is checked, and the list read again only when it has moved on.
     const latest = conversation ? await store.latestMessage(conversationId) : null;
     const last = existing.at(-1);
-    if (latest?.id !== last?.id || latest?.status !== last?.status) existing = conversation ? await store.listMessages(conversationId) : [];
+    if (latest?.id !== last?.id || latest?.status !== last?.status) existing = conversation ? await store.listMessagesForRun(conversationId) : [];
   } else {
     conversation = await store.getConversation(conversationId);
-    existing = conversation ? await store.listMessages(conversationId) : [];
+    existing = conversation ? await store.listMessagesForRun(conversationId) : [];
   }
   // Another server instance may be running this conversation: redirecting stops it there, as Stop does.
   const elsewhere = existing.at(-1)?.status === "streaming" ? existing.at(-1)! : null;
@@ -380,15 +382,15 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     if (!steering || !(await stopElsewhere(store, conversationId, elsewhere.id, deps.steerWaitMs ?? STEER_WAIT_MS))) {
       throw new TurnError(409, "The agent is still working in this conversation.");
     }
-    existing = await store.listMessages(conversationId);
+    existing = await store.listMessagesForRun(conversationId);
   }
-  if ((running || elsewhere) && existing.at(-1)?.role === "assistant") interrupted = existing.at(-1)!;
+  if ((running || elsewhere) && existing.at(-1)?.role === "assistant") interrupted = await store.getMessage(conversationId, existing.at(-1)!.id);
   let pending = conversation ? await store.pendingApproval(conversationId) : null;
   if (pending && steering) {
     // Writing instead of answering declines the request, and the agent hears why.
     if (await store.settleApproval(pending.id, "pending", "declined")) {
       await adapter.discard?.(pending.providerState).catch(() => undefined);
-      const paused = existing.find((m) => m.id === pending!.messageId);
+      const paused = existing.some((m) => m.id === pending!.messageId) ? await store.getMessage(conversationId, pending.messageId) : null;
       if (paused) {
         await store.updateMessage(paused.id, { status: "stopped" });
         interrupted = { ...paused, status: "stopped" };
@@ -410,8 +412,8 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
   if (request.kind === "decide") {
     if (!conversation) throw new TurnError(404, "Conversation not found.");
     if (!pending || pending.id !== request.approvalId) throw new TurnError(409, "This request was already answered.");
-    continued = existing.find((m) => m.id === pending.messageId) ?? null;
-    if (!continued || existing.at(-1)?.id !== continued.id) throw new TurnError(409, "This request was already answered.");
+    continued = existing.at(-1)?.id === pending.messageId ? await store.getMessage(conversationId, pending.messageId) : null;
+    if (!continued) throw new TurnError(409, "This request was already answered.");
     if (pending.provider !== adapter.id) {
       await store.settleApproval(pending.id, "pending", "expired");
       throw new TurnError(409, "This request can't be answered anymore. Ask the agent again.");
@@ -480,7 +482,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     await adapter.discard?.(pending.providerState).catch(() => undefined);
   };
   /** A message sent with a skill is answered with the skill's current instructions. */
-  const withSkill = async (message: ChatMessage, text: string) => {
+  const withSkill = async (message: Pick<ChatMessage, "skill">, text: string) => {
     if (!message.skill) return text;
     const skill = await deps.loadSkill?.(message.skill.id);
     if (!skill) throw new TurnError(409, `The skill "${message.skill.name}" was removed from this agent.`);
@@ -512,7 +514,10 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     await abandonPending();
     await store.updateMessage(lastUser.id, { content: request.text });
     await store.deleteMessagesAfter(conversationId, lastUser.id);
-    userMessage = { ...lastUser, content: request.text };
+    // The page replaces the message with this one, so it's the whole message (its files too).
+    const edited = await store.getMessage(conversationId, lastUser.id);
+    if (!edited) throw new TurnError(409, "Only your latest message can be edited.");
+    userMessage = edited;
     existing = [...existing.slice(0, existing.indexOf(lastUser)), userMessage];
     await rewind(deps, conversation.agentProvider === adapter.id ? conversation.agentThreadId : null, conversationId);
   } else if (request.kind === "send") {
@@ -1118,7 +1123,7 @@ const CARRIES_ON = new Set<MessageStatus>(["complete", "error"]);
 const UNFINISHED = "whatever your last reply left unfinished";
 
 /** How many replies have carried the job on by themselves since the member's last message. */
-function keepGoingRun(messages: ChatMessage[]): number {
+function keepGoingRun(messages: Pick<ChatMessage, "role">[]): number {
   const lastUser = messages.findLastIndex((m) => m.role === "user");
   return messages.slice(lastUser + 1).filter((m) => m.role === "assistant").length - 1;
 }

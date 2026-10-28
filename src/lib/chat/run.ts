@@ -163,7 +163,7 @@ export async function buildTurnDeps(
   const setupRun = input.kind === "send" && input.skillId === SETUP_SKILL_ID;
   const store = storeFor(tenant);
   // Read once here, for the context and the turn alike (startTurn gets them as `preloaded`).
-  const loading = Promise.all([store.getConversation(conversationId), store.listMessages(conversationId)]);
+  const loading = Promise.all([store.getConversation(conversationId), store.listMessagesForRun(conversationId)]);
   const earlier = loading.then(([, messages]) => messages).catch(() => null);
   // In a task's conversation, the task, with the member's standing OKs on it from before. Read
   // once, for the context and the run alike.
@@ -443,7 +443,7 @@ export async function standingCarryOn(
  * carrying the job on: the member wrote, stopped it, or their page carried it on first.
  */
 export async function continueKeptReply(tenant: Tenant, conversationId: string, replyId: string): Promise<KeptOutcome> {
-  const last = (await storeFor(tenant).listMessages(conversationId)).at(-1);
+  const last = (await storeFor(tenant).listMessagesForRun(conversationId)).at(-1);
   if (last?.id !== replyId || !last.keepGoing) return { status: "taken" };
   if (!agentEnabledFor(tenant.workspace.id)) return { status: "refused", reason: "agent_unavailable" };
   let settle!: (outcome: KeptOutcome) => void;
@@ -465,7 +465,7 @@ export async function continueKeptReply(tenant: Tenant, conversationId: string, 
 }
 
 /** Whether the member said Not now to an offer to call under this message. */
-function declinedOffer(message: ChatMessage): boolean {
+function declinedOffer(message: Pick<ChatMessage, "uiResponse">): boolean {
   return Object.values(message.uiResponse ?? {}).some((r) => r.status === "declined");
 }
 

@@ -335,6 +335,8 @@ export const MAX_PROJECTS = 100;
 export const MAX_AGENT_FILES = 10;
 /** Standing files (agent files, then project files) one run carries, besides the message's own. */
 export const MAX_RUN_FILES = 15;
+/** Messages a conversation loads at a time; earlier ones load as the member scrolls up. */
+export const MESSAGE_PAGE = 50;
 
 export interface AgentStatus {
   /** "unavailable": a live agent is configured but not enabled for this workspace. */

@@ -24,7 +24,7 @@ import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
 import { Call, type CallLayout, type OpenResult } from "@/components/voice/call";
 import { VoicePlayer } from "@/components/voice/player";
 import { ScreenButtonsContext, type ScreenButtons } from "@/components/voice/screen";
-import { followEvents, joinedEvents } from "@/lib/chat/follow";
+import { followAnchor, followEvents, joinedEvents, keepEarlier, mergeSince } from "@/lib/chat/follow";
 import { callOf, originFor } from "@/lib/chat/modality";
 import { markOf, moveOf, type MarkedMove, type WhoseMove } from "@/lib/chat/move";
 import { ApiError, api, streamTurn, type SpokenDecision, type TurnBody } from "@/lib/client/api";
@@ -63,6 +63,11 @@ import { SETUP_JOURNEY_TITLE, type CallPurpose, type CallScreen, type ScreenActi
 /** How long a reply waiting on a request the member's standing OK covers is followed for the run to carry on. */
 const GOING_AHEAD_MS = 20_000;
 /** When each such request was first seen here, by id. */
+/** The calls a page knows of, with the server's latest word on each. */
+function mergedCalls(known: CallSummary[] | undefined, latest: CallSummary[] | undefined): CallSummary[] {
+  return [...new Map([...(known ?? []), ...(latest ?? [])].map((c) => [c.id, c])).values()];
+}
+
 const goingAheadSince = new Map<string, number>();
 
 /**
@@ -128,7 +133,10 @@ const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
 interface ThreadState {
   status: "loading" | "ready" | "missing" | "error";
+  /** The newest messages, and as many earlier ones as the member read back to. */
   messages: ChatMessage[];
+  /** Whether the server has messages before these. */
+  earlier?: boolean;
   /** The plan of the work here, as the server last reported it; null or absent when there's none. */
   journey?: JourneyInfo | null;
   /** The calls messages here were said on, as the server last reported them (for their recaps). */
@@ -139,17 +147,33 @@ export interface InitialThread {
   id: string;
   status: "ready" | "missing";
   messages: ChatMessage[];
+  earlier: boolean;
   journey: JourneyInfo | null;
   calls: CallSummary[];
 }
 
 /** A conversation as the server returned it, for the thread's state. */
-const loaded = ({ messages, journey, calls }: { messages: ChatMessage[]; journey: JourneyInfo | null; calls?: CallSummary[] }): ThreadState => ({
+const loaded = ({ messages, earlier, journey, calls }: { messages: ChatMessage[]; earlier?: boolean; journey: JourneyInfo | null; calls?: CallSummary[] }): ThreadState => ({
   status: "ready",
   messages,
+  earlier: Boolean(earlier),
   journey,
   calls: calls ?? [],
 });
+
+/**
+ * The conversation's newest page loaded again over what the page has, keeping the earlier messages
+ * the member read back to, and the calls they were said on.
+ */
+const reloaded = (
+  before: ThreadState | undefined,
+  latest: { messages: ChatMessage[]; earlier?: boolean; journey: JourneyInfo | null; calls?: CallSummary[] },
+): ThreadState => {
+  const ready = before?.status === "ready" ? before : undefined;
+  const kept = keepEarlier(ready, latest);
+  // Calls said on the earlier messages kept stay with them.
+  return loaded({ ...latest, ...kept, calls: kept.messages.length > latest.messages.length ? mergedCalls(ready?.calls, latest.calls) : (latest.calls ?? []) });
+};
 
 /**
  * A voice call in progress: the conversation it's in now (it moves when it follows a task's run,
@@ -317,7 +341,9 @@ function WorkspaceShell({
 
   const [conversations, setConversations] = useState(initialConversations);
   const [threads, setThreads] = useState<Record<string, ThreadState>>(() =>
-    initialThread ? { [initialThread.id]: { status: initialThread.status, messages: initialThread.messages, journey: initialThread.journey, calls: initialThread.calls } } : {},
+    initialThread
+      ? { [initialThread.id]: { status: initialThread.status, messages: initialThread.messages, earlier: initialThread.earlier, journey: initialThread.journey, calls: initialThread.calls } }
+      : {},
   );
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
@@ -551,6 +577,29 @@ function WorkspaceShell({
     };
   }, [activeId, callArrived]);
 
+  // Earlier messages, a page at a time, as the member reads back.
+  const loadingEarlier = useRef<string | null>(null);
+  const loadEarlier = useCallback(async () => {
+    const id = activeId;
+    const thread = id ? threadsRef.current[id] : undefined;
+    const first = thread?.status === "ready" && thread.earlier ? thread.messages.find((m) => !m.id.startsWith("pending-")) : undefined;
+    if (!id || !first || loadingEarlier.current === id) return;
+    loadingEarlier.current = id;
+    try {
+      const page = await api.earlierMessages(id, first.id);
+      setThreads((all) => {
+        const now = all[id];
+        // Only onto the thread it was asked for, while it still starts there.
+        if (now?.status !== "ready" || now.messages[0]?.id !== first.id) return all;
+        return { ...all, [id]: { ...now, messages: [...page.messages, ...now.messages], earlier: page.earlier, calls: mergedCalls(page.calls, now.calls) } };
+      });
+    } catch {
+      // The button stays, to try again.
+    } finally {
+      loadingEarlier.current = null;
+    }
+  }, [activeId]);
+
   const activeConversation = useMemo(() => (activeId ? conversations.find((c) => c.id === activeId) : undefined), [activeId, conversations]);
   const activeTitle = activeConversation?.title;
   /** The project the open conversation is in, for the header. */
@@ -612,7 +661,7 @@ function WorkspaceShell({
           .getConversation(conversationId)
           .then((latest) => {
             if (controllers.current.has(conversationId)) return;
-            setThreads((all) => ({ ...all, [conversationId]: loaded(latest) }));
+            setThreads((all) => ({ ...all, [conversationId]: reloaded(all[conversationId], latest) }));
             callArrived(conversationId, latest);
           })
           .catch(() => undefined);
@@ -776,7 +825,7 @@ function WorkspaceShell({
           const latest = await api.getConversation(conversationId).catch(() => null);
           if (latest) {
             const before = threadsRef.current[conversationId]?.messages ?? [];
-            setThreads((all) => ({ ...all, [conversationId]: loaded(latest) }));
+            setThreads((all) => ({ ...all, [conversationId]: reloaded(all[conversationId], latest) }));
             upsertConversation(latest.conversation);
             // A call narrating it hears what happened meanwhile (and the end, if it's over).
             tellFollowed(conversationId, before, latest.messages, latest.conversation);
@@ -790,7 +839,7 @@ function WorkspaceShell({
           // a guess. A job the background worker carried on first is followed from there.
           await api
             .getConversation(conversationId)
-            .then((latest) => setThreads((all) => ({ ...all, [conversationId]: loaded(latest) })))
+            .then((latest) => setThreads((all) => ({ ...all, [conversationId]: reloaded(all[conversationId], latest) })))
             .catch(() => undefined);
           if (body.kind !== "continue") setNotice(error.message);
           return;
@@ -1154,12 +1203,19 @@ function WorkspaceShell({
           if (cancelled || controllers.current.has(id)) return;
           if (document.visibilityState === "hidden") continue;
           try {
-            const latest = await api.getConversation(id);
+            // Only what changed since the page's last message, not the whole conversation each time.
+            const current = threadsRef.current[id];
+            const from = followAnchor(current?.messages ?? []);
+            const latest = from ? await api.latestMessages(id, from) : { ...(await api.getConversation(id)), reset: true as const };
             if (cancelled || controllers.current.has(id)) return;
             const before = threadsRef.current[id]?.messages ?? [];
-            setThreads((all) => ({ ...all, [id]: loaded(latest) }));
-            tellFollowed(id, before, latest.messages, latest.conversation);
-            if (!latest.messages.some((m) => m.status === "streaming") && !goingAhead(latest.messages)) {
+            const merged = latest.reset || !from ? null : mergeSince(before, latest.messages, from);
+            const next: ThreadState = merged
+              ? { ...(threadsRef.current[id] ?? loaded(latest)), status: "ready", messages: merged, journey: latest.journey, calls: mergedCalls(threadsRef.current[id]?.calls, latest.calls) }
+              : reloaded(threadsRef.current[id], latest);
+            setThreads((all) => ({ ...all, [id]: next }));
+            tellFollowed(id, before, next.messages, latest.conversation);
+            if (!next.messages.some((m) => m.status === "streaming") && !goingAhead(next.messages)) {
               upsertConversation(latest.conversation);
               return;
             }
@@ -2100,6 +2156,8 @@ function WorkspaceShell({
             <Thread
               key={activeId}
               messages={activeThread.messages}
+              earlier={Boolean(activeThread.earlier)}
+              onLoadEarlier={loadEarlier}
               running={isRunning}
               onRetry={retryHere}
               onEdit={edit}

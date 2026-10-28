@@ -123,6 +123,36 @@ export function createMemoryStore(scope: Scope, shared: MemoryDb = createMemoryD
           memoryProposals: m.memoryProposals ?? [],
         }));
     },
+    async pageMessages(conversationId, { limit, before }) {
+      const all = await store.listMessages(conversationId);
+      const end = before ? all.findIndex((m) => m.id === before) : all.length;
+      if (end < 0) return { messages: [], earlier: false };
+      const start = Math.max(0, end - limit);
+      return { messages: all.slice(start, end), earlier: start > 0 };
+    },
+    async messagesSince(conversationId, fromId) {
+      const all = await store.listMessages(conversationId);
+      const at = all.findIndex((m) => m.id === fromId);
+      return at < 0 ? null : all.slice(at);
+    },
+    async listMessagesForRun(conversationId) {
+      const c = shared.conversations.get(conversationId);
+      if (!c || !owns(c)) return [];
+      return shared.messages
+        .filter((m) => m.conversationId === conversationId)
+        .map(({ id, conversationId: cid, role, content, status, origin, skill, uiResponse, keepGoing, createdAt }) => ({
+          id,
+          conversationId: cid,
+          role,
+          content,
+          status,
+          origin: origin ?? null,
+          skill: skill ?? null,
+          uiResponse: uiResponse ?? null,
+          ...(keepGoing ? { keepGoing } : {}),
+          createdAt,
+        }));
+    },
     async latestMessage(conversationId) {
       const c = shared.conversations.get(conversationId);
       if (!c || !owns(c)) return null;
