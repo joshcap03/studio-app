@@ -640,6 +640,8 @@ class StudioBrowserComponent(ComponentWithCache):
                                 raise
                 except Exception as exc:
                     failed = str(exc)
+                    if FLAKE.search(failed):
+                        raise  # The model's miss, not the browser's: no strike, nothing dropped.
                     if ACTION_FAILED.match(failed):
                         # The server answered: the action failed, not the browser. Its page, as the
                         # agent left it, is what the next call needs, so connection and browser stay.
