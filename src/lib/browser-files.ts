@@ -1,21 +1,23 @@
 import { createHash } from "node:crypto";
-import { ATTACHMENTS_BUCKET, attachmentType, uploadError } from "@/lib/attachments";
-import { attachToPage, browserConnection, defaultConnect, withCdp, type CdpCall, type SocketFactory } from "@/lib/browser-view";
+import { ATTACHMENTS_BUCKET, uploadError } from "@/lib/attachments";
+import { attachToPage, browserConnection, defaultConnect, recordedSession, withCdp, type CdpCall, type SocketFactory } from "@/lib/browser-view";
 import { getConfig } from "@/lib/config";
 import type { Tenant } from "@/lib/tenant-core";
 import { MAX_ATTACHMENT_BYTES, type Attachment } from "@/lib/types";
 
 // Files from the agent's browser, for the member: a shipping label, a receipt, an invoice the site
-// made. The agent's save_file names the file and, usually, gives its link as the page has it. The
-// server then fetches it from the conversation's own browser over CDP, the way the page itself
-// would (Network.loadNetworkResource, with the page's cookies, so a signed-in download works), or
-// with no link prints the open page to a PDF. Nothing is clicked or typed, and no file passes
-// through the agent. It's saved as an attachment on the reply that asked for it, in the member's own
+// made. The agent's save_file names the file and gives its link as the page has it, or the name of
+// a file a click downloaded. The server then fetches it from the conversation's own browser over
+// CDP, the way the page itself would (Network.loadNetworkResource, with the page's cookies, so a
+// signed-in download works); takes a downloaded one from Browserbase's store (Studio Browser turns
+// downloads on around a click the agent expects to download, langflow/components/studio_browser.py);
+// or with neither prints the open page to a PDF. Nothing is clicked or typed here, and no file
+// passes through the agent. It's saved as an attachment on the reply that asked for it, in the member's own
 // folder under their session, and shows there for them to download.
 //
 // To email one, the agent needs Composio's key for the file: later runs in the conversation list
-// its files from the browser with one (browserFilesFor), staged in Composio's file store, which its
-// Gmail tool attaches from. Free of next/*.
+// its files from the browser with one (browserFilesFor), staged in Composio's file store, which
+// Gmail's and Outlook's send, draft, and reply tools attach from. Free of next/*.
 
 /** How long fetching one file from the browser may take, start to finish. */
 const FETCH_MS = 30_000;
@@ -26,19 +28,28 @@ const LISTED = 5;
 /** How long after it was saved a file is staged for the agent to attach. */
 const STAGED_FOR_MS = 7 * 24 * 3600 * 1000;
 const COMPOSIO_API = "https://backend.composio.dev/api/v3";
+const BROWSERBASE_API = "https://api.browserbase.com/v1";
+/** How long to wait for a file the browser downloaded to reach Browserbase's store. */
+const DOWNLOAD_SYNC_MS = 15_000;
+/** A download this recent stands in for one the site named differently. */
+const RECENT_DOWNLOAD_MS = 5 * 60_000;
 
 export interface BrowserFileRequest {
   name: string;
+  /** The file's link as the page has it. */
   link?: string;
+  /** The name of a file a click downloaded in the browser (from the browser's own note to the agent). */
+  downloaded?: string;
 }
 
-/** What save_file reported, if it's usable: a name, and a link as the page has it. */
+/** What save_file reported, if it's usable: a name, and a link as the page has it or a download's name. */
 export function parseBrowserFile(raw: unknown): BrowserFileRequest | null {
   if (!raw || typeof raw !== "object") return null;
-  const { name, link } = raw as Record<string, unknown>;
+  const { name, link, downloaded } = raw as Record<string, unknown>;
   if (typeof name !== "string" || !name.trim()) return null;
   const request: BrowserFileRequest = { name: name.replace(/\s+/g, " ").trim().slice(0, 120) };
-  if (typeof link === "string" && link.trim() && link.length <= 4000 && !/\s/.test(link.trim())) request.link = link.trim();
+  if (typeof downloaded === "string" && downloaded.trim()) request.downloaded = downloaded.replace(/\s+/g, " ").trim().slice(0, 255);
+  else if (typeof link === "string" && link.trim() && link.length <= 4000 && !/\s/.test(link.trim())) request.link = link.trim();
   return request;
 }
 
@@ -47,40 +58,75 @@ export function parseBrowserFile(raw: unknown): BrowserFileRequest | null {
  * one the agent's name claims), and only a type Studio keeps.
  */
 export function fileName(asked: string, mimeType: string): { name: string; mimeType: string } | null {
-  const ext = EXTENSIONS[mimeType.split(";")[0].trim().toLowerCase()];
+  const type = bare(mimeType);
+  const ext = Object.entries(TYPES).find(([, t]) => t === type)?.[0];
   if (!ext) return null;
   const base = (asked.split(/[\\/]/).pop() ?? "")
     .replace(/[^\w.\- ()]+/g, "_")
     .replace(/^\.+/, "")
     .replace(/\.[a-z0-9]{1,5}$/i, "")
     .trim() || "file";
-  return { name: `${base.slice(0, 140)}.${ext}`, mimeType: attachmentType(`x.${ext}`)! };
+  return { name: `${base.slice(0, 140)}.${ext}`, mimeType: TYPES[ext] };
 }
-
-const EXTENSIONS: Record<string, string> = {
-  "application/pdf": "pdf",
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "text/csv": "csv",
-  "text/plain": "txt",
-  "application/json": "json",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-};
-
-/** The type a file's first bytes show, for one served without a usable type (a label as octet-stream). */
-export function sniffType(bytes: Uint8Array): string {
-  const head = Buffer.from(bytes.subarray(0, 8));
-  if (head.subarray(0, 5).toString("latin1") === "%PDF-") return "application/pdf";
-  if (head.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
-  return "";
-}
-
-export type Fetched = { ok: true; bytes: Uint8Array; mimeType: string } | { ok: false; reason: "off" | "none" | "ended" | "failed" | "too-big" | "refused" };
 
 /**
- * The file from the conversation's browser: its link fetched as the open page would (cookies
- * included; https or the page's own blob: links only), or with no link the open page as a PDF.
+ * What Studio keeps from the browser, by extension. More than members may attach to a message
+ * (sheets and zips: exports, statements), since these are only ever downloaded, never read by the agent.
+ */
+const TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  csv: "text/csv",
+  txt: "text/plain",
+  json: "application/json",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  zip: "application/zip",
+};
+
+const bare = (mimeType: string) => {
+  const type = mimeType.split(";")[0].trim().toLowerCase();
+  return type === "application/x-zip-compressed" ? TYPES.zip : type;
+};
+const named = (asked: string) => asked.toLowerCase().match(/\.([a-z0-9]{1,5})$/)?.[1] ?? "";
+
+/**
+ * The type a file really is: what its first bytes show (the site's word or the agent's name only
+ * tell which kind of zip or Office file it is), or for text, what the site says. A file whose bytes
+ * aren't what the site claims (HTML sent as a PDF) has no type, so it isn't kept.
+ */
+export function fileType(bytes: Uint8Array, declared: string, asked: string): string {
+  const head = Buffer.from(bytes.subarray(0, 8));
+  const said = bare(declared);
+  if (head.subarray(0, 5).toString("latin1") === "%PDF-") return TYPES.pdf;
+  if (head.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return TYPES.png;
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return TYPES.jpg;
+  if (head.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+    // Word and Excel files are zips inside; which one is in the type the site sent, or the name.
+    for (const office of [TYPES.docx, TYPES.xlsx]) if (said === office) return office;
+    const ext = named(asked);
+    return ext === "docx" || ext === "xlsx" ? TYPES[ext] : TYPES.zip;
+  }
+  if (head.equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))) {
+    // An older Office file: kept only as the spreadsheet the site or the name says it is.
+    return said === TYPES.xls || named(asked) === "xls" ? TYPES.xls : "";
+  }
+  // A web page, whatever the site called it (a sign-in page sent where the file was asked for).
+  if (/^\s*<(!doctype html|html|head|body)\b/i.test(Buffer.from(bytes.subarray(0, 512)).toString("latin1"))) return "text/html";
+  // Text the site sent as text; a binary type with other bytes in it is something else.
+  return [TYPES.csv, TYPES.txt, TYPES.json, "text/html"].includes(said) ? said : "";
+}
+
+export type Fetched =
+  | { ok: true; bytes: Uint8Array; mimeType: string }
+  | { ok: false; reason: "off" | "none" | "ended" | "failed" | "too-big" | "refused" | "no-download" };
+
+/**
+ * The file from the conversation's browser: one a click downloaded there, from Browserbase's store;
+ * its link fetched as the open page would (cookies included; https or the page's own blob: links
+ * only); or with neither, the open page as a PDF.
  */
 export async function fetchFromBrowser(
   tenant: Tenant,
@@ -88,6 +134,15 @@ export async function fetchFromBrowser(
   request: BrowserFileRequest,
   connect: SocketFactory = defaultConnect,
 ): Promise<Fetched> {
+  if (request.downloaded) {
+    const session = await recordedSession(tenant, conversationId);
+    if (!session.ok) return session;
+    try {
+      return await fetchDownload(session.apiKey, session.sessionId, request.downloaded);
+    } catch {
+      return { ok: false, reason: "failed" };
+    }
+  }
   const connection = await browserConnection(tenant, conversationId);
   if (!connection.ok) return connection;
   try {
@@ -149,6 +204,57 @@ export async function fetchOnPage(call: CdpCall, link: string | undefined): Prom
   return { ok: true, bytes: new Uint8Array(Buffer.concat(chunks)), mimeType: type };
 }
 
+interface Download {
+  id: string;
+  filename?: string;
+  mimeType?: string;
+  size?: number;
+  createdAt?: string;
+}
+
+/**
+ * A file the conversation's browser downloaded, from Browserbase's store: the newest one with that
+ * name, waited for a little since the store fills just after the download; failing that, the newest
+ * from the last few minutes (a site may name the file differently than it said). Exported for tests
+ * (`wait` stands in for the delay between looks).
+ */
+export async function fetchDownload(
+  apiKey: string,
+  sessionId: string,
+  filename: string,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<Fetched> {
+  const headers = { "X-BB-API-Key": apiKey };
+  let found: Download | undefined;
+  let recent: Download | undefined;
+  for (let waited = 0; !found && waited <= DOWNLOAD_SYNC_MS; waited += 1500) {
+    if (waited) await wait(1500);
+    const res = await fetch(`${BROWSERBASE_API}/downloads?sessionId=${encodeURIComponent(sessionId)}&limit=100`, {
+      headers,
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { ok: false, reason: res.status === 404 ? "ended" : "failed" };
+    const listed = ((await res.json()) as { downloads?: Download[] }).downloads ?? [];
+    const newest = [...listed].filter((d) => typeof d.id === "string").sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? ""));
+    found = newest.find((d) => d.filename === filename);
+    recent = newest.find((d) => Date.now() - Date.parse(d.createdAt ?? "") < RECENT_DOWNLOAD_MS);
+  }
+  found ??= recent;
+  if (!found) return { ok: false, reason: "no-download" };
+  if ((found.size ?? 0) > MAX_ATTACHMENT_BYTES) return { ok: false, reason: "too-big" };
+  const file = await fetch(`${BROWSERBASE_API}/downloads/${encodeURIComponent(found.id)}`, {
+    headers: { ...headers, Accept: "application/octet-stream" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!file.ok) return { ok: false, reason: "failed" };
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length === 0) return { ok: false, reason: "failed" };
+  if (bytes.length > MAX_ATTACHMENT_BYTES) return { ok: false, reason: "too-big" };
+  return { ok: true, bytes, mimeType: found.mimeType ?? file.headers.get("content-type") ?? "" };
+}
+
 /** A blob: link only the page itself can read (a label the site drew in the page), read there. */
 async function blobOnPage(call: CdpCall, sessionId: string, href: string, pageUrl: string): Promise<Fetched> {
   // Only the page's own blobs: a blob: URL carries its creator's origin.
@@ -178,6 +284,7 @@ const MISSES: Record<Exclude<Fetched, { ok: true }>["reason"] | "type" | "page",
   failed: "the browser couldn't get it",
   "too-big": "it's over 10 MB",
   refused: "its link isn't one Studio fetches",
+  "no-download": "the browser hadn't downloaded it",
   type: "Studio doesn't keep that kind of file",
   page: "the site sent a web page instead of the file (it may want you signed in)",
 };
@@ -199,7 +306,7 @@ export async function saveBrowserFile(
   if (!request) return null;
   const fetched = await fetchFromBrowser(tenant, conversationId, request, connect);
   if (!fetched.ok) return { ok: false, name: request.name, why: MISSES[fetched.reason] };
-  const type = sniffType(fetched.bytes) || fetched.mimeType;
+  const type = fileType(fetched.bytes, fetched.mimeType, request.downloaded ?? request.name);
   const named = fileName(request.name, type);
   if (!named) return { ok: false, name: request.name, why: /^text\/html\b/i.test(type) ? MISSES.page : MISSES.type };
 

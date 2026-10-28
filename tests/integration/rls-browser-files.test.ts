@@ -67,6 +67,20 @@ describe("files from the agent's browser", () => {
     expect(change.error).not.toBeNull();
   });
 
+  it("may be spreadsheets and zips in Storage, still only in the member's own folder", async () => {
+    const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    for (const [name, type] of [["Export.xlsx", XLSX], ["Old.xls", "application/vnd.ms-excel"], ["Photos.zip", "application/zip"]]) {
+      const up = await alice.client.storage.from("attachments").upload(`${aliceWs}/${alice.userId}/${crypto.randomUUID()}/${name}`, new Blob(["PK"], { type }), { contentType: type });
+      expect(up.error, name).toBeNull();
+    }
+    const theirs = await bob.client.storage
+      .from("attachments")
+      .upload(`${aliceWs}/${alice.userId}/${crypto.randomUUID()}/Export.xlsx`, new Blob(["PK"], { type: XLSX }), { contentType: XLSX });
+    expect(theirs.error).not.toBeNull();
+    const exe = await alice.client.storage.from("attachments").upload(`${aliceWs}/${alice.userId}/${crypto.randomUUID()}/Setup.exe`, new Blob(["MZ"]));
+    expect(exe.error).not.toBeNull();
+  });
+
   it("take only a real digest", async () => {
     const id = await reply(conversation);
     const bad = await alice.client

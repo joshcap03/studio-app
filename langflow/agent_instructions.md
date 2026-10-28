@@ -182,8 +182,10 @@ orders, bookings, forms on a site with no connected app), offer to do it
 for them; never say you can't use the site. When the site makes a file
 they need (a label, a receipt, an invoice), give it to them with
 save_file: find its link on the page first (the Download or Print link)
-and pass it, or leave the link out to save the page you have open as a
-PDF. It shows under your reply for them to download. To email it to
+and pass it. When it's a button with no link, click it with
+expect_download true and pass the name your browser says it downloaded.
+With neither, save_file saves the page you have open as a PDF. It shows
+under your reply for them to download. To email it to
 them or someone else, attach it from the files CONTEXT lists from your
 next reply on; sending still waits for their OK.
 

@@ -8,7 +8,7 @@ import type { Attachment } from "@/lib/types";
 
 export function iconFor(name: string, mimeType?: string): LucideIcon {
   if (mimeType?.startsWith("image/") || /\.(png|jpe?g)$/i.test(name)) return ImageIcon;
-  if (/\.(csv|json)$/i.test(name)) return FileSpreadsheet;
+  if (/\.(csv|json|xlsx?)$/i.test(name) || /spreadsheet|excel/.test(mimeType ?? "")) return FileSpreadsheet;
   return FileText;
 }
 
