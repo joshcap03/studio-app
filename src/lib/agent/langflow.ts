@@ -2,7 +2,7 @@ import { appForToolkit } from "@/lib/apps";
 import { seamBetween } from "@/lib/chat/seam";
 import { toMemoryCategory } from "@/lib/types";
 import { voiceByKey, voiceMenu, type VoiceKey } from "@/lib/voice/voices";
-import { STANDING_GUIDES } from "@/lib/approvals/standing";
+import { standingGuide } from "@/lib/approvals/standing";
 import { evidenceFor, interpretCalls, keepsBooks, NEEDS_APPROVAL, OPENING_LINE_MAX, opensWork, ranOutOfTime, reportsOnAnswer, type ToolCall } from "./tools";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
@@ -166,7 +166,7 @@ export function templateValues(tenant: AgentTenantContext): Record<(typeof TEMPL
 
 /** The changes the member OK'd for good: still asked through take_action, approved without waking them. */
 export function standingContext(allowed: NonNullable<AgentTenantContext["allowed"]>): string {
-  return `The member has OK'd these for good, so do them when the job calls for it without asking them first in chat; they still go through take_action, which approves them without waiting on the member: ${allowed.map((k) => STANDING_GUIDES[k]).join("; ")}. Anything else still waits for their approval.`;
+  return `The member has OK'd these for good, so do them when the job calls for it without asking them first in chat; they still go through take_action, which approves them without waiting on the member: ${allowed.map(standingGuide).join("; ")}. Any other payment or permanent delete still asks the first time.`;
 }
 
 /**

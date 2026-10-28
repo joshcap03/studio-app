@@ -103,7 +103,7 @@ raw/technical text.
   same columns on every row, and every run is told the collections and field names
   already in use so it reuses them instead of starting a second list for the same thing. Private to each member; the API is the "tasks" preview.
   `run-task.ts` starts a task's run as its member, for "Run now" and the worker alike, and carries
-  it on past a request the member OK'd for good (see Rules: standing approvals).
+  it on past a request the member OK'd for good (see Rules: approvals).
   `watches.ts`: a task that runs when something happens in a connected app (the "watches" preview,
   docs/watches.md). Its Composio trigger is created under the member's own id and follows the task;
   Composio's events reach `/api/watches/composio`, the worker matches each to its watch and owner
@@ -256,20 +256,24 @@ raw/technical text.
 - The agent may write the member's own Studio state (memory, a task's or a conversation's plan,
   tracker rows, Library links) without approval, but only through gateway tools that return
   structured results the app validates and saves under the member's session; the member sees
-  each write as a step and can edit or undo it. Anything touching their external accounts
-  still needs approval.
-- Anything the agent does that changes a member's accounts must pause for their approval
-  (`take_action` in the gateway). Don't add tools that write without it, and never approve on
-  the member's behalf. Provider resume state stays server-side. The one standing exception is
-  the member's own: on a request of a kind Studio can check from its arguments to be tidy,
-  undoable, and reaching no one (`src/lib/approvals/standing.ts`: labels on their own Gmail, never
-  trash, spam, archiving, sending, deleting, or money), their tap on "Don't ask again" OKs that
-  kind for the person (`accounts.allowed_actions`; older OKs on one task, `agent_tasks.allowed_actions`,
-  still count there). Then any run of any of their agents, chat or task, approves such requests
-  itself once the reply pauses on one (`standingCarryOn` in `src/lib/chat/run.ts`, recorded as
-  `decided_via 'standing'`), within the request's time, and the member's page follows it. Never
-  code, which always asks; it's taken back in Settings (or on the task's page for a task's own).
-  Add a kind only with a check that fails closed on its arguments.
+  each write as a step and can edit or undo it.
+- Approvals are for what's sensitive, once per use case. The agent acts in the member's accounts
+  and its browser without asking (sending, booking, filling, creating, updating); only what
+  moves money or deletes for good pauses for their approval (`take_action`; `needs_approval` in
+  the gateway: money and delete verbs, money apps, a browser step that pays or places an order,
+  the shell, and code that calls those or hides what it runs). Don't add a tool that moves money
+  or deletes for good without it, and never approve on the member's behalf. Provider resume state
+  stays server-side. The member's first tapped approval of a kind OKs it for good
+  (`src/lib/approvals/standing.ts`: one app tool, `tool:<SLUG>`, or paying on one site in the
+  agent's browser, `site:<host>`, the host read from the browser over CDP, never the agent's
+  words; code and mixed requests have no kind and ask each time). It's kept for the person
+  (`accounts.allowed_actions`; older OKs on one task, `agent_tasks.allowed_actions`, still count
+  there), so any run of any of their agents, chat or task, approves that kind itself once the
+  reply pauses on one (`standingCarryOn` in `src/lib/chat/run.ts`, recorded as
+  `decided_via 'standing'`), within the request's time, and the member's page follows it. It's
+  taken back in Settings (or on the task's page for a task's own). A run an event started (a
+  watch) still asks before anything that changes their accounts, and no OK but the older tidy
+  `gmail_labels` covers it there.
 - Agent-rendered UI is built as reusable gateway tools any skill can call (`ask_user`,
   `show_form`, `propose_agent`, `merge_memories`, `offer_call`, `hand_browser`, `watch_me`; cards in `src/components/chat/ui-cards.tsx` and
   `requests.tsx`), never as UI for one flow or template. They change nothing: a form's

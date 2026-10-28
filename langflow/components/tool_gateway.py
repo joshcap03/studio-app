@@ -3,10 +3,12 @@
 Connect existing executable Tool outputs to Tools and Gateway Tools to Agent.Tools.
 No additional LLM router. Original tools remain connected behind the gateway.
 
-Approvals: anything that changes something in the owner's accounts (sending, creating,
-updating, deleting, browser actions) must go through take_action, which carries
+Approvals: only what moves money or deletes for good (paying, buying, refunds, transfers, a
+browser step that places an order, permanent deletes) must go through take_action, which carries
 ``approval_actions`` metadata so the Agent's human-in-the-loop middleware pauses the run
-until the owner approves or declines it. execute_tool refuses those calls. Source of truth:
+until the owner approves or declines it; the app approves a kind itself once they've OK'd it
+(src/lib/approvals/standing.ts). execute_tool refuses those calls and runs everything else.
+In a run an event started (run_cause "watch"), anything that changes their accounts still asks. Source of truth:
 langflow/components/tool_gateway.py in the Studio repo.
 """
 
@@ -615,8 +617,8 @@ LOOKUP_TOOLS = {
     "search", "search_memory", "list_memories", "list_documents", "get_document", "get_profile",
 }
 
-# Composio slugs read TOOLKIT_VERB_OBJECT. A slug with a changing verb needs approval; one
-# with only reading verbs doesn't; anything unrecognized needs approval (fail closed).
+# Composio slugs read TOOLKIT_VERB_OBJECT. A slug with a changing verb changes the owner's accounts;
+# one with only reading verbs doesn't; anything unrecognized counts as changing (fail closed).
 WRITE_WORDS = {
     "SEND", "CREATE", "UPDATE", "DELETE", "REMOVE", "ADD", "INSERT", "APPEND", "MODIFY", "PATCH",
     "PUT", "POST", "REPLY", "FORWARD", "MOVE", "ARCHIVE", "TRASH", "UNTRASH", "UPLOAD", "SET",
@@ -633,6 +635,27 @@ READ_WORDS = {
 }
 # Tools that act in the world without a Composio slug to read.
 ACTION_TOOLS = {"act"}
+# What asks the owner first: only what moves money, or deletes for good. Everything else the agent
+# does in their accounts runs, and the app OKs a kind for good the first time they approve it
+# (src/lib/approvals/standing.ts), so each use case asks once.
+MONEY_WORDS = {
+    "PAY", "PAYS", "PAYMENT", "PAYMENTS", "PAYOUT", "PAYOUTS", "CHARGE", "CHARGES", "TRANSFER", "TRANSFERS",
+    "REFUND", "REFUNDS", "PURCHASE", "BUY", "CHECKOUT", "WITHDRAW", "WITHDRAWAL", "DEPOSIT", "CAPTURE",
+    "DONATE", "DONATION", "TIP", "PLACE", "ORDER", "ORDERS", "PAYPAL", "WIRE", "REMIT",
+}
+GONE_WORDS = {"DELETE", "PURGE", "DESTROY", "EMPTY", "ERASE", "WIPE"}
+# Apps that hold or move money: anything in them that changes something asks.
+MONEY_APPS = {
+    "STRIPE", "SQUARE", "PAYPAL", "BRAINTREE", "ADYEN", "WISE", "PLAID", "COINBASE", "BREX", "RAMP", "MERCURY",
+    "VENMO", "CASHAPP", "REVOLUT", "CHARGEBEE", "RECURLY", "PADDLE", "LEMONSQUEEZY", "GUMROAD", "RAZORPAY",
+    "MOLLIE", "KLARNA", "BILLCOM", "PAYONEER", "ALPACA", "ROBINHOOD", "KRAKEN", "BINANCE",
+}
+# A browser step that pays, buys, or places an order, read from its words.
+MONEY_STEP = re.compile(
+    r"(?i)\b(?:pay|pays|paying|payment|purchase|purchasing|buy|buying|check\s*out|checkout|donate|subscribe|"
+    r"transfer|withdraw|place\s+(?:the\s+|my\s+|your\s+|this\s+)?order|(?:submit|confirm|complete|finish)\s+"
+    r"(?:the\s+|my\s+|your\s+|this\s+)?(?:order|purchase|payment|booking|checkout))\b"
+)
 # Tools that run arbitrary code in Composio's sandbox.
 CODE_TOOLS = {"composio_remote_workbench", "composio_remote_bash_tool"}
 # The sandbox reaches the owner's accounts only through Composio: run_composio_tool, proxy_execute,
@@ -658,8 +681,19 @@ def slug_changes_things(slug):
     return not any(t in READ_WORDS for t in tokens)
 
 
-def code_changes_things(name, arguments):
-    """Whether a code run could change something in the owner's accounts."""
+def slug_is_sensitive(slug):
+    """Whether an app tool moves money or deletes for good: the only app tools that ask."""
+    parts = str(slug or "").upper().split("_")
+    if len(parts) < 2:
+        return True
+    if not slug_changes_things(slug):
+        return False
+    return parts[0] in MONEY_APPS or any(t in MONEY_WORDS or t in GONE_WORDS for t in parts[1:])
+
+
+def code_changes_things(name, arguments, changes=None):
+    """Whether a code run could change something in the owner's accounts (with `changes`, something sensitive)."""
+    changes = changes or slug_changes_things
     if name != "composio_remote_workbench" or not isinstance(arguments, dict):
         return True
     code = next((arguments[k] for k in CODE_ARGS if isinstance(arguments.get(k), str)), None)
@@ -669,10 +703,10 @@ def code_changes_things(name, arguments):
     # Every other mention of Composio (an aliased helper, a slug built at runtime, its API) asks.
     if len(re.findall(r"composio", code, re.IGNORECASE)) != len(called):
         return True
-    return any(slug_changes_things(slug) for slug in called)
+    return any(changes(slug) for slug in called)
 
 
-def needs_approval(name, arguments):
+def changes_accounts(name, arguments):
     """Whether a routed call changes something in the owner's accounts."""
     if name in ACTION_TOOLS:
         return True
@@ -687,6 +721,25 @@ def needs_approval(name, arguments):
     # listed as lookups; new ones fail closed.
     if name.startswith("composio_") and name not in LOOKUP_TOOLS:
         return True
+    return False
+
+
+def needs_approval(name, arguments):
+    """Whether a routed call must ask the owner first: it moves money or deletes for good.
+
+    Fail closed on what can't be read: the shell, code that hides what it runs, and a browser
+    step that pays, buys, or places an order."""
+    if name in ACTION_TOOLS:
+        return bool(MONEY_STEP.search(json.dumps(arguments, default=str) if not isinstance(arguments, str) else arguments))
+    if name == "composio_multi_execute_tool":
+        calls = arguments.get("tools") if isinstance(arguments, dict) else None
+        if not isinstance(calls, list):
+            return True
+        return any(not isinstance(c, dict) or slug_is_sensitive(c.get("tool_slug")) for c in calls)
+    if name in CODE_TOOLS:
+        return code_changes_things(name, arguments, slug_is_sensitive)
+    if COMPOSIO_SLUG.match(name or "") and not name.lower().startswith("composio_"):
+        return slug_is_sensitive(name)
     return False
 
 
@@ -710,8 +763,9 @@ def has_link(value):
 
 
 def watch_needs_approval(name, arguments):
-    """Whether, in a run an event started, a routed call must ask the owner first."""
-    return name in CODE_TOOLS or name in BROWSER_TOOLS or has_link(arguments) or needs_approval(name, arguments)
+    """Whether, in a run an event started, a routed call must ask the owner first: anything that
+    changes their accounts, as before, since other people's words started it."""
+    return name in CODE_TOOLS or name in BROWSER_TOOLS or has_link(arguments) or changes_accounts(name, arguments)
 
 
 # Seconds a run's tools may take in all (see run_budget). The app's request lasts 300: this leaves
@@ -922,30 +976,32 @@ class ToolGatewayComponent(Component):
         asks = watch_needs_approval if watched else needs_approval
 
         def approval_hint(name, arguments=None):
-            if watched and not needs_approval(name, arguments):
+            if watched and not changes_accounts(name, arguments):
                 return ("This run started from an event in the owner's app, which other people wrote, so code, the browser, "
                         "and anything with a link ask the owner first. If it's needed for the job, call take_action now with "
                         "the same tool_name and arguments plus a one-sentence summary that names the link; otherwise do "
                         "without it.")
+            if watched and not needs_approval(name, arguments):
+                return ("This run started from an event in the owner's app, which other people wrote, so anything that "
+                        "changes their accounts asks them first. If the job needs it, call take_action now with the same "
+                        "tool_name and arguments plus a one-sentence summary; don't reply first.")
             # Said plainly for code: what made this run ask, so the agent can write code that
-            # doesn't when the job only reads, and each approved run should do the whole job.
+            # doesn't, and each approved run should do the whole job.
             if name == "composio_remote_bash_tool":
-                return ("Shell commands always need the owner's approval. To read or work through data, including "
-                        "files an earlier step saved, run Python in composio_remote_workbench through execute_tool "
-                        "instead: code that only reads (no proxy_execute, environment, exec, eval, or getattr, and "
-                        "app tools only through run_composio_tool with literal read-only slugs) runs without "
-                        "approval. Only if a shell command is truly needed, call take_action with the same "
-                        "tool_name and arguments plus a one-sentence summary.")
+                return ("Shell commands always need the owner's approval, since Studio can't read what they'd do. Run "
+                        "Python in composio_remote_workbench through execute_tool instead: it runs without approval "
+                        "unless it moves money or deletes for good. Only if a shell command is truly needed, call "
+                        "take_action with the same tool_name and arguments plus a one-sentence summary.")
             if name in CODE_TOOLS:
-                return ("Running code needs the owner's approval when it could change their accounts: it calls a "
-                        "changing app tool, uses proxy_execute or the environment, or hides what it runs (exec, eval, "
-                        "getattr, a slug built at runtime). Code that only reads, calling run_composio_tool with literal "
-                        "read-only slugs, runs without approval. If this one must change something, call take_action "
-                        "now with the same tool_name and arguments plus a one-sentence summary; don't reply first. "
-                        "Make that one call do the whole job, and read a long output with read_result rather than "
-                        "running code again.")
-            return ("This changes something in the owner's accounts, so it needs their approval. Call take_action "
-                    "now with the same tool_name and arguments plus a one-sentence summary; don't reply first.")
+                return ("This code needs the owner's approval: it calls an app tool that moves money or deletes for good, "
+                        "or it hides what it runs (proxy_execute, the environment, exec, eval, getattr, a slug built at "
+                        "runtime). Code that calls run_composio_tool with literal slugs runs without approval otherwise, "
+                        "sending and changing things included. Call money or deleting tools directly through take_action "
+                        "rather than in code, with a one-sentence summary; don't reply first.")
+            return ("This moves money or deletes something for good, so it needs the owner's OK the first time. Call "
+                    "take_action now with the same tool_name and arguments plus a one-sentence summary naming the "
+                    "amount, who it goes to, or what's deleted; don't reply first. Once they approve this kind, "
+                    "Studio stops asking.")
 
         async def execute_async(tool_name: str, arguments=None, config: RunnableConfig = None) -> str:
             return with_reminder(await run_async(tool_name, arguments, config, approved=False), config)
@@ -1527,16 +1583,18 @@ class ToolGatewayComponent(Component):
             StructuredTool.from_function(
                 func=execute_sync, coroutine=execute_async, name="execute_tool",
                 args_schema=ExecuteArgs,
-                description=("Execute a discovered tool by exact name with schema-valid arguments, for looking things up "
-                             "and working with data. Anything that sends, creates, changes, or deletes something in the "
-                             "owner's accounts must use take_action instead. Errors are not successful results."),
+                description=("Execute a discovered tool by exact name with schema-valid arguments: looking things up, "
+                             "working with data, and doing the job in the owner's accounts (sending, creating, updating, "
+                             "browser steps). Only paying, buying, moving money, or deleting for good must use "
+                             "take_action instead. Errors are not successful results."),
             ),
             StructuredTool.from_function(
                 func=action_sync, coroutine=action_async, name="take_action",
                 args_schema=ActionArgs,
-                description=("Do something that changes the owner's accounts (send, create, update, delete, post, pay, "
-                             "browser actions). The owner sees your summary and approves or declines before it runs; "
-                             "if declined, don't retry it, say what you would have done instead."),
+                description=("Do something that pays, buys, moves money, or deletes for good in the owner's accounts, "
+                             "including a browser step that pays or places an order. The first time for each kind, the "
+                             "owner sees your summary and approves or declines before it runs; once they approve a kind, "
+                             "it runs without asking. If declined, don't retry it, say what you would have done instead."),
                 metadata={"approval_actions": ["approve", "reject"]},
             ),
             StructuredTool.from_function(

@@ -59,7 +59,7 @@ Cite every source. Keep it to one page.`,
 3. Draft a cover letter under 250 words: why this company, the two most relevant wins, and a clear close.
 4. Save both as a document draft and reply with a link and a list of what changed.
 5. In the job tracker, set the role's next step (with a Studio tracker, save_record on its "applications" row, same key).
-Do not submit anything: submitting an application always waits for the user's approval.`,
+Don't submit the application unless the user asked you to.`,
   },
   {
     id: "outreach-drafts",
@@ -73,7 +73,7 @@ Do not submit anything: submitting an application always waits for the user's ap
 3. For each, draft a first message under 120 words: one specific reason you're writing to them, one relevant result of the user's, and one easy ask.
 4. Draft one follow-up for 5 business days later if there's no reply.
 5. Track each person: with a Studio tracker, save_record in "contacts" (key = their email or profile link, status "drafted", fields for company, role, and the application's link) and set the role's "applications" row to status "outreach". Otherwise use the "Job search tracker" sheet.
-6. Save the messages as Gmail drafts, or as an Apollo sequence if the user prefers. Sending an email, adding someone to a sequence, and activating a sequence each wait for the user's approval.
+6. Save the messages as Gmail drafts, or as an Apollo sequence if the user prefers. Send them, or start the sequence, only if the user asked you to.
 Reply with who you found, why each, and the drafts.`,
   },
   {

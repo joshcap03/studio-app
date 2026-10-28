@@ -133,11 +133,17 @@ export interface TurnDeps {
   allowSpokenDecision?: (approval: StoredApproval, decision: "approve" | "reject", spoken: SpokenDecision) => Promise<string | null>;
   /**
    * The kinds of change the member has OK'd for good (src/lib/approvals/standing.ts), and how to
-   * add one (on their tap). Requests of a kind that qualifies are marked so their card can offer
-   * it, and ones already covered are marked `auto` (the run approves them itself). Without it,
-   * nothing is marked and no standing decision is taken.
+   * add one (their first tap approving a request of that kind). Requests of a kind are marked with
+   * it, and ones already covered are marked `auto` (the run approves them itself). `site` reads the
+   * host the conversation's browser is on, for a browser step; `tidyOnly` keeps a run an event
+   * started to the older tidy kinds. Without it, nothing is marked and no standing decision is taken.
    */
-  standing?: { allowed: StandingKind[]; grant: (kind: StandingKind) => Promise<boolean> };
+  standing?: {
+    allowed: StandingKind[];
+    grant: (kind: StandingKind) => Promise<boolean>;
+    site?: () => Promise<string | null>;
+    tidyOnly?: boolean;
+  };
   /**
    * Saves what the agent reported about the work here, under the caller's session: a rewritten
    * plan with what done looks like (on the conversation's task, the setup checklist, or the
@@ -439,8 +445,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
       throw new TurnError(409, request.spoken ? "That couldn't be answered by voice: it was already answered, or the call has ended. It's on screen." : "This request was already answered.");
     }
     decided = { ...approval, status: to, decidedAt: Date.now(), decidedVia: how.via, ...(how.via === "voice" ? { decidedWords: how.words } : {}) };
+    // The first approval of a kind OKs it for good: tapped (never said on a call, or the run's own).
     // The approval stands either way; a grant that didn't save just means the next run asks again.
-    if (request.standing === "grant") {
+    if (approval.standing && deps.standing && to === "approved" && !request.spoken && request.standing !== "auto") {
       await deps.standing!.grant(approval.standing!).catch((e) => console.error("[turn] couldn't save a standing OK", e));
     }
     resume = { decision: request.decision, state: approval.providerState };
@@ -949,7 +956,9 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
               const spoken = spokenApprovalFor({ actions: event.actions, summary });
               // Whether its member may OK its kind for good, decided from what it would run, and whether
               // they already have: then the run approves it itself once this reply is saved.
-              const standing = deps.standing ? standingKindFor(event.actions) : null;
+              const browserStep = Boolean(event.actions?.length) && event.actions!.every((a) => a.tool === "act");
+              const site = browserStep && deps.standing?.site ? await deps.standing.site().catch(() => null) : null;
+              const standing = deps.standing ? standingKindFor(event.actions, { site, tidyOnly: deps.standing.tidyOnly }) : null;
               const auto = Boolean(standing && deps.standing!.allowed.includes(standing));
               const stored = await store.createApproval({
                 conversationId,

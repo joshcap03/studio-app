@@ -822,9 +822,11 @@ describe("approvals", () => {
       actions: [{ tool: "GMAIL_BATCH_MODIFY_MESSAGES", arguments: { messageIds: ["m1", "m2", "m3"], addLabelIds: ["Label_1"] } }],
       state: { jobId: "job-2" },
     } as AgentEvent;
-    const sending = { ...labels, summary: "Send it", actions: [{ tool: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "jo@acme.example" } }] } as AgentEvent;
+    const sending = { ...labels, summary: "Send it", actions: [{ tool: "composio_remote_workbench", arguments: { code_to_execute: "x" } }] } as AgentEvent;
+    const refund = { ...labels, summary: "Refund $5", actions: [{ tool: "STRIPE_CREATE_REFUND", arguments: { charge: "ch_1", amount: 500 } }] } as AgentEvent;
+    const paying = { ...labels, summary: "Buy the label", actions: [{ tool: "act", arguments: { action: "click Pay and Print" } }] } as AgentEvent;
 
-    async function pauseOn(event: AgentEvent, standing?: { allowed: string[] }) {
+    async function pauseOn(event: AgentEvent, standing?: { allowed: string[]; site?: string | null; tidyOnly?: boolean }) {
       const store = createMemoryStore(scopeA);
       const granted: string[] = [];
       const adapter: AgentAdapter = {
@@ -840,7 +842,16 @@ describe("approvals", () => {
         adapter,
         context: context(scopeA),
         idleTimeoutMs: 1000,
-        ...(standing ? { standing: { allowed: standing.allowed as "gmail_labels"[], grant: async (k: string) => Boolean(granted.push(k)) } } : {}),
+        ...(standing
+          ? {
+              standing: {
+                allowed: standing.allowed as "gmail_labels"[],
+                grant: async (k: string) => Boolean(granted.push(k)),
+                site: async () => standing.site ?? null,
+                tidyOnly: standing.tidyOnly,
+              },
+            }
+          : {}),
       };
       const id = crypto.randomUUID();
       const events = await collect(startTurn(deps, { conversationId: id, kind: "send", text: "Sort my mail" }));
@@ -853,6 +864,27 @@ describe("approvals", () => {
       expect((await pauseOn(labels, { allowed: [] })).approval.standing).toBe("gmail_labels");
       expect((await pauseOn(sending, { allowed: [] })).approval.standing).toBeUndefined();
       expect((await pauseOn(labels)).approval.standing).toBeUndefined();
+    });
+
+    it("keys a payment by its tool, and a browser step by the browser's own site; never money in a run an event started", async () => {
+      expect((await pauseOn(refund, { allowed: [] })).approval.standing).toBe("tool:STRIPE_CREATE_REFUND");
+      expect((await pauseOn(paying, { allowed: [], site: "usps.com" })).approval.standing).toBe("site:usps.com");
+      expect((await pauseOn(paying, { allowed: [] })).approval.standing).toBeUndefined();
+      expect((await pauseOn(refund, { allowed: [], tidyOnly: true })).approval.standing).toBeUndefined();
+      expect((await pauseOn(paying, { allowed: ["site:usps.com"], site: "usps.com" })).approval.auto).toBe(true);
+    });
+
+    it("OKs a kind for good the first time the member taps Approve on it, but not on a Decline", async () => {
+      const first = await pauseOn(refund, { allowed: [] });
+      await collect(startTurn(first.deps, { conversationId: first.id, kind: "decide", approvalId: first.approval.id, decision: "approve" }));
+      expect(first.granted).toEqual(["tool:STRIPE_CREATE_REFUND"]);
+      expect(await first.store.getApproval(first.approval.id)).toMatchObject({ status: "approved", decidedVia: "tap" });
+      const no = await pauseOn(refund, { allowed: [] });
+      await collect(startTurn(no.deps, { conversationId: no.id, kind: "decide", approvalId: no.approval.id, decision: "reject" }));
+      expect(no.granted).toEqual([]);
+      const code = await pauseOn(sending, { allowed: [] });
+      await collect(startTurn(code.deps, { conversationId: code.id, kind: "decide", approvalId: code.approval.id, decision: "approve" }));
+      expect(code.granted).toEqual([]);
     });
 
     it("marks a request the member already OK'd as going ahead on its own, and nothing else", async () => {
