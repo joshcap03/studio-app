@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CdpCall } from "@/lib/browser-view";
-import { fetchOnPage, fileName, parseBrowserFile, sniffType } from "./browser-files";
+import { fetchDownload, fetchOnPage, fileName, fileType, parseBrowserFile } from "./browser-files";
 
 // Getting a file from the agent's browser: what save_file may ask for, the name and type it's kept
 // as, and the CDP exchange on a fake browser (only reads: no clicks, no typing).
@@ -45,6 +45,7 @@ describe("files from the agent's browser", () => {
     expect(parseBrowserFile({ name: "  Label  Jane.pdf ", link: " /label/1.pdf " })).toEqual({ name: "Label Jane.pdf", link: "/label/1.pdf" });
     expect(parseBrowserFile({ name: "Page" })).toEqual({ name: "Page" });
     expect(parseBrowserFile({ name: "x", link: "two words" })).toEqual({ name: "x" });
+    expect(parseBrowserFile({ name: "Export", downloaded: " orders.xlsx ", link: "/x" })).toEqual({ name: "Export", downloaded: "orders.xlsx" });
     expect(parseBrowserFile({ link: "/a.pdf" })).toBeNull();
     expect(parseBrowserFile("Label.pdf")).toBeNull();
   });
@@ -60,10 +61,24 @@ describe("files from the agent's browser", () => {
     expect(fileName("Setup", "application/x-msdownload")).toBeNull();
   });
 
-  it("know a PDF or picture by its first bytes when the site doesn't say", () => {
-    expect(sniffType(new Uint8Array(PDF))).toBe("application/pdf");
-    expect(sniffType(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]))).toBe("image/png");
-    expect(sniffType(new Uint8Array(Buffer.from("MZ\x90")))).toBe("");
+  it("are the type their bytes show, with the site's word or the name telling which kind of Office file", () => {
+    const bytes = (...b: number[]) => new Uint8Array([...b, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const zip = bytes(0x50, 0x4b, 0x03, 0x04);
+    const ole = bytes(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1);
+    const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    expect(fileType(new Uint8Array(PDF), "application/octet-stream", "Label")).toBe("application/pdf");
+    expect(fileType(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a), "", "x")).toBe("image/png");
+    expect(fileType(zip, XLSX, "Export")).toBe(XLSX);
+    expect(fileType(zip, "application/octet-stream", "Statement.xlsx")).toBe(XLSX);
+    expect(fileType(zip, "application/x-zip-compressed", "Photos")).toBe("application/zip");
+    expect(fileType(ole, "application/vnd.ms-excel", "Report")).toBe("application/vnd.ms-excel");
+    expect(fileType(ole, "application/octet-stream", "Letter.doc")).toBe("");
+    expect(fileType(new Uint8Array(Buffer.from("a,b\n1,2")), "text/csv; charset=utf-8", "x")).toBe("text/csv");
+    // What the site claims doesn't make it so.
+    expect(fileType(new Uint8Array(Buffer.from("  <!DOCTYPE html><title>Sign in</title>")), "application/pdf", "Label.pdf")).toBe("text/html");
+    expect(fileType(new Uint8Array(Buffer.from("MZ\x90\x00")), "application/pdf", "Label.pdf")).toBe("");
+    expect(fileName("Export", XLSX)).toEqual({ name: "Export.xlsx", mimeType: XLSX });
+    expect(fileName("Photos.zip", "application/zip")).toEqual({ name: "Photos.zip", mimeType: "application/zip" });
   });
 
   it("fetch a link the way the page would, resolved against it, read in chunks", async () => {
@@ -92,5 +107,39 @@ describe("files from the agent's browser", () => {
     const big = browser({ url: "https://shop.example/", chunks: [Buffer.alloc(6 * 1024 * 1024), Buffer.alloc(6 * 1024 * 1024)] });
     expect(await fetchOnPage(big.call, "/huge.pdf")).toEqual({ ok: false, reason: "too-big" });
     expect(big.sent).toContain("IO.close");
+  });
+
+  describe("downloaded by a click", () => {
+    afterEach(() => vi.unstubAllGlobals());
+    const now = new Date().toISOString();
+    const old = new Date(Date.now() - 60 * 60_000).toISOString();
+
+    function store(lists: { id: string; filename: string; createdAt: string; mimeType?: string; size?: number }[][]) {
+      const asked: string[] = [];
+      vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+        asked.push(url);
+        expect((init.headers as Record<string, string>)["X-BB-API-Key"]).toBe("bb-key");
+        if (url.includes("/downloads?")) return new Response(JSON.stringify({ downloads: lists.length > 1 ? lists.shift() : lists[0] }));
+        return new Response(PDF, { headers: { "Content-Type": "application/pdf" } });
+      });
+      return asked;
+    }
+    const noWait = async () => undefined;
+
+    it("wait for the named file to reach Browserbase's store, then fetch it", async () => {
+      const asked = store([[{ id: "older", filename: "other.pdf", createdAt: now }], [{ id: "d2", filename: "label.pdf", createdAt: now, mimeType: "application/pdf", size: 14 }]]);
+      expect(await fetchDownload("bb-key", "sess", "label.pdf", noWait)).toEqual({ ok: true, bytes: new Uint8Array(PDF), mimeType: "application/pdf" });
+      expect(asked.at(-1)).toBe("https://api.browserbase.com/v1/downloads/d2");
+      expect(asked[0]).toContain("sessionId=sess");
+    });
+
+    it("fall back to a download from the last few minutes, never an old one", async () => {
+      store([[{ id: "recent", filename: "Label_123.pdf", createdAt: now }]]);
+      expect((await fetchDownload("bb-key", "sess", "label.pdf", noWait)).ok).toBe(true);
+      store([[{ id: "stale", filename: "Label_123.pdf", createdAt: old }]]);
+      expect(await fetchDownload("bb-key", "sess", "label.pdf", noWait)).toEqual({ ok: false, reason: "no-download" });
+      store([[{ id: "big", filename: "label.pdf", createdAt: now, size: 11 * 1024 * 1024 }]]);
+      expect(await fetchDownload("bb-key", "sess", "label.pdf", noWait)).toEqual({ ok: false, reason: "too-big" });
+    });
   });
 });

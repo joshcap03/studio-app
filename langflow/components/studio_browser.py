@@ -28,6 +28,12 @@ per person), and the browser opens with it (persisted, so a site the member sign
 stays signed in once that browser closes). Tweaks are dropped when a paused run resumes, so the
 member's context is also kept in the process cache under their id from the session id.
 
+Downloads: Browserbase keeps a file the browser downloads only while a CDP connection has turned
+downloads on, and Stagehand doesn't. So act and navigate take expect_download: with it, this node
+turns downloads on over its own connection to the conversation's browser, held open while the
+action runs and until the download it starts finishes (DOWNLOAD_FINISH_S at most), and tells the
+agent what came down, so save_file can give it to the member from Browserbase's store. Without it,
+an action costs nothing extra.
 Tool names stay Browserbase's (start, end, navigate, act, observe, extract): the Tool Gateway
 routes `act` through take_action, so it still needs the owner's approval. Wire the output to
 the Tool Gateway's Tools input. Authenticates with a Langflow global variable sent in one
@@ -36,18 +42,20 @@ header: the Browserbase key in `x-bb-api-key`, or "Bearer <key>" in `Authorizati
 Source of truth: langflow/components/studio_browser.py in the Studio repo.
 """
 
+import asyncio
 import hashlib
 import json
 import re
 import time
 
 import httpx
+import websockets
 from langchain_core.tools import StructuredTool
 from lfx.base.agents.utils import safe_cache_get, safe_cache_set
 from lfx.base.mcp.util import MCPStreamableHttpClient, update_tools
 from lfx.custom.custom_component.component_with_cache import ComponentWithCache
 from lfx.io import MessageTextInput, Output, SecretStrInput
-from pydantic import create_model
+from pydantic import Field, create_model
 
 # Header that gives each conversation its own MCP connection (and so its own browser). The
 # value is a hash, so Browserbase never sees workspace, member, or conversation ids.
@@ -79,6 +87,10 @@ BROWSERBASE_API = "https://api.browserbase.com/v1"
 # The app's format for a context id; anything else (an unfilled "{{browser_context}}") is ignored.
 CONTEXT_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+# Actions that can start a download, and how long one has to begin after the action, then to finish.
+DOWNLOAD_TOOLS = {"act", "navigate"}
+DOWNLOAD_START_S = 3
+DOWNLOAD_FINISH_S = 30
 # How lfx reports a client that lost its MCP session (the browser itself may be fine).
 DISCONNECTED = re.compile(r"not initialized or disconnected", re.IGNORECASE)
 
@@ -164,6 +176,93 @@ def with_session(result, session: str | None):
                 tagged = True
         out.append(item)
     return result.model_copy(update={"content": out})
+
+
+def with_downloads(result, names: list[str], expected: bool):
+    """The result with what the action downloaded (or that it downloaded nothing) told to the agent."""
+    content = getattr(result, "content", None)
+    if not expected or not isinstance(content, list) or not content or not hasattr(content[0], "text"):
+        return result
+    if names:
+        note = (f"Your browser downloaded: {', '.join(names)}. To give the owner one, call save_file with "
+                f"downloaded set to its name exactly as here.")
+    else:
+        note = ("Nothing downloaded. If the page shows the file or a link to it, call save_file with its link, "
+                "or with neither to save the page.")
+    return result.model_copy(update={"content": [*content, content[0].model_copy(update={"text": note})]})
+
+
+async def catch_downloads(api_key: str, sid: str, work):
+    """Runs `work` (an action in the browser) with downloads on, over a CDP connection of this
+    node's own, held until a download it started finishes. Returns its result and the names of the
+    files that finished. Best effort: anything that goes wrong here just runs the action."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.get(f"{BROWSERBASE_API}/sessions/{sid}", headers={"X-BB-API-Key": api_key})
+        connect_url = res.json().get("connectUrl") if res.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        connect_url = None
+    if not isinstance(connect_url, str) or not connect_url.startswith("wss://"):
+        return await work(), []
+    return await downloads_over(connect_url, work)
+
+
+async def downloads_over(connect_url: str, work):
+    """catch_downloads on a browser's CDP connection (the signed URL stays in this process)."""
+    try:
+        ws = await websockets.connect(connect_url, max_size=None, open_timeout=10, ping_interval=None)
+    except Exception:  # noqa: BLE001  Downloads are extra; the action isn't.
+        return await work(), []
+    begun: dict = {}
+    finished: dict = {}
+    allowed = asyncio.Event()
+    changed = asyncio.Event()
+
+    async def listen():
+        async for raw in ws:
+            try:
+                message = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if message.get("id") == 1:
+                allowed.set()
+                continue
+            params = message.get("params") or {}
+            if message.get("method") == "Browser.downloadWillBegin":
+                begun[params.get("guid")] = str(params.get("suggestedFilename") or "download")
+                changed.set()
+            elif message.get("method") == "Browser.downloadProgress" and params.get("state") in ("completed", "canceled"):
+                finished[params.get("guid")] = params["state"]
+                changed.set()
+
+    listener = asyncio.create_task(listen())
+    try:
+        await ws.send(json.dumps({"id": 1, "method": "Browser.setDownloadBehavior",
+                                  "params": {"behavior": "allow", "downloadPath": "downloads", "eventsEnabled": True}}))
+        try:
+            await asyncio.wait_for(allowed.wait(), 5)
+        except asyncio.TimeoutError:
+            pass
+        result = await work()
+        loop = asyncio.get_running_loop()
+        start_by = loop.time() + DOWNLOAD_START_S
+        finish_by = loop.time() + DOWNLOAD_FINISH_S
+        while True:
+            pending = [g for g in begun if g not in finished]
+            if (begun and not pending) or (not begun and loop.time() >= start_by) or loop.time() >= finish_by:
+                break
+            changed.clear()
+            try:
+                await asyncio.wait_for(changed.wait(), max(0.1, (finish_by if begun else start_by) - loop.time()))
+            except asyncio.TimeoutError:
+                pass
+        return result, [name for g, name in begun.items() if finished.get(g) == "completed"]
+    finally:
+        listener.cancel()
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def started_session(result) -> str | None:
@@ -403,10 +502,18 @@ class StudioBrowserComponent(ComponentWithCache):
 
         def make_tool(name: str, description: str, model):
             public_model, session_field = without_session_arg(model)
+            if name in DOWNLOAD_TOOLS:
+                fields = getattr(public_model, "model_fields", {}) or {}
+                public_model = create_model(public_model.__name__, **{n: (f.annotation, f) for n, f in fields.items()},
+                                            expect_download=(bool, Field(default=False, description=(
+                                                "True when this will download a file (a Download, Export, or Print "
+                                                "label button, or a file's link), so your browser keeps it for "
+                                                "save_file."))))
 
             async def call(**kwargs):
                 for arg in SESSION_ARGS:
                     kwargs.pop(arg, None)
+                expect_download = bool(kwargs.pop("expect_download", False))
                 tools = await conversation_tools(conv)
                 tool = tools.get(name)
                 if tool is None:
@@ -424,8 +531,12 @@ class StudioBrowserComponent(ComponentWithCache):
                     bind(current)  # In use from now: make_room counts idle time from here.
                 if session_field and current:
                     kwargs[session_field] = current
+                downloaded: list[str] = []
                 try:
-                    result = await tool.coroutine(**kwargs)
+                    if expect_download and current and name in DOWNLOAD_TOOLS:
+                        result, downloaded = await catch_downloads(api_key, current, lambda: tool.coroutine(**kwargs))
+                    else:
+                        result = await tool.coroutine(**kwargs)
                 except Exception:
                     forget_connection(conv)
                     if current and bound() == current:
@@ -437,6 +548,7 @@ class StudioBrowserComponent(ComponentWithCache):
                     await release(current)
                 if name == "end" or bound() == current:
                     bind(None if name == "end" else current)
+                result = with_downloads(result, downloaded, expect_download and name in DOWNLOAD_TOOLS)
                 return with_session(clean_result(result), None if name == "end" else current)
 
             return StructuredTool(
