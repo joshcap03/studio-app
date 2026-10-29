@@ -66,6 +66,9 @@ const clip = (text: string, n = 160) => (text.length > n ? `${text.slice(0, n)}â
 /** What the member reads: the agent's lines while it worked, then its reply. */
 const said = (run: Run) => [...run.notes, run.reply].join("\n");
 
+/** A reply's lines (each list item or paragraph on its own), markup taken off. */
+const lines = (reply: string) => reply.split("\n").map((l) => l.replace(/[*_`]/g, "").trim()).filter(Boolean);
+
 /** A reply's list items (numbered or bulleted), markup and wrapping quotes taken off. */
 function captions(reply: string): string[] {
   return reply
@@ -417,6 +420,25 @@ export const CASES: BehaviorCase[] = [
         expect(/\b(not|haven't|hasn't|isn't|aren't|no|without|until|yet)\b[^.\n]{0,80}\b(test|tested|testing|certif\w*)/i.test(said(run)), clip(said(run))),
       ),
       check("still writes the listing", (run) => expect(words(run.reply) >= 80, `${words(run.reply)} words`)),
+    ],
+  },
+  {
+    id: "colleague.fits-their-conventions",
+    says: "A detail that carries meaning (a label's color) fits what they already have and what it plainly means, named in a word.",
+    message: "I'm about to make three labels in my inbox: Priority, FYI and Noise. I already have 'action needed' in orange and 'receipts' in purple. what color should each get, and why?",
+    checks: [
+      // "Priority: green" or "Priority gets a deep green"; a line that only mentions red to pass on it is fine.
+      check("priority is green, not red", (run) => {
+        const given = (color: string) => lines(run.reply).find((l) => new RegExp(`\\bpriority\\b\\W{0,3}(?:is |in |gets? |as |should be )?(?:a |the )?(?:dark |deep |light |bright |true |pale )?${color}\\b`, "i").test(l));
+        const green = given("green");
+        const red = given("red");
+        return expect(Boolean(green) && !red, red ? clip(red) : green ? clip(green) : "no line gives Priority a color");
+      }),
+      check("keeps their colors for what they are", (run) => {
+        const taken = lines(run.reply).filter((l) => /\b(fyi|noise)\b\W{0,3}(?:is |in |gets? |as |should be )?(?:a |the )?(?:dark |deep |light |bright |pale )?(orange|purple)\b/i.test(l));
+        return expect(taken.length === 0, clip(taken.join(" / ")));
+      }),
+      brief(160),
     ],
   },
   {

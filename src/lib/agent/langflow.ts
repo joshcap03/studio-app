@@ -5,6 +5,7 @@ import { toMemoryCategory } from "@/lib/types";
 import { voiceByKey, voiceMenu, type VoiceKey } from "@/lib/voice/voices";
 import { standingGuide } from "@/lib/approvals/standing";
 import { evidenceFor, interpretCalls, keepsBooks, NEEDS_APPROVAL, OPENING_LINE_MAX, opensWork, ranOutOfTime, reportsOnAnswer, type ToolCall } from "./tools";
+import { withColorName } from "./tools/colors";
 import { clip, isRecord, maybeJson, unwrapResult } from "./tools/sanitize";
 import { AgentError, type AgentAdapter, type AgentAttachment, type AgentEvent, type AgentRunInput, type AgentTenantContext, type ApprovalAction } from "./types";
 
@@ -901,7 +902,8 @@ export function approvalFor(data: unknown): { summary: string; app?: string; det
     for (const [key, value] of Object.entries(fields)) {
       if (details.length >= APPROVAL_FIELD_MAX) break;
       if (value == null || value === "" || /^(current_step|thought)$/.test(key)) continue;
-      const text = typeof value === "string" ? value : JSON.stringify(value);
+      // A color given as a code is said in a word too, so the member reads "red", not "#fb4c2f".
+      const text = typeof value === "string" ? withColorName(value) : JSON.stringify(value);
       details.push([clip(humanizeKey(key), 40), clip(text, 300)]);
     }
   }

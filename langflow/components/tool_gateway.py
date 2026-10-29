@@ -41,7 +41,9 @@ class ExecuteArgs(BaseModel):
 class ActionArgs(BaseModel):
     tool_name: str = Field(description="Exact name from discover_tools.")
     arguments: dict | str | None = Field(default=None, description="Tool arguments, following the discovered schema.")
-    summary: str = Field(description="One plain-English sentence the owner reads before approving, e.g. 'Send the March invoice to jo@acme.com'.")
+    summary: str = Field(description="One plain-English sentence the owner reads before approving, e.g. 'Send the March invoice "
+                                     "to jo@acme.com'. Name in it any choice of yours they'll see and didn't ask for, such as a "
+                                     "new label's color, in a word (red), never a code.")
 
 
 MEMORY_CATEGORIES = {"customers", "suppliers", "products", "policies", "voice", "team", "other"}
@@ -727,6 +729,88 @@ def changes_accounts(name, arguments):
     return False
 
 
+COLOR_KEY = re.compile(r"colou?r", re.I)
+# A text or foreground color is legibility, not meaning: only the color of the thing itself counts.
+TEXT_COLOR_KEY = re.compile(r"text|font|fore", re.I)
+HEX_COLOR = re.compile(r"^#?[0-9a-fA-F]{6}$")
+NAME_KEYS = ("label_name", "labelName", "name", "title", "summary")
+
+
+def hue_name(value):
+    """The plain word for a hex color (red, green, gray…), or None when it isn't one."""
+    if not isinstance(value, str) or not HEX_COLOR.match(value.strip()):
+        return None
+    n = int(value.strip().lstrip("#"), 16)
+    r, g, b = ((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255
+    mx, mn = max(r, g, b), min(r, g, b)
+    light, d = (mx + mn) / 2, mx - mn
+    if d < 0.08:
+        return "white" if light > 0.9 else "black" if light < 0.12 else "gray"
+    if d / (1 - abs(2 * light - 1)) < 0.15:
+        return "gray"
+    h = ((g - b) / d) % 6 if mx == r else (b - r) / d + 2 if mx == g else (r - g) / d + 4
+    h = (h * 60 + 360) % 360
+    if h < 15 or h >= 345:
+        return "pink" if light > 0.75 else "red"
+    if h < 42:
+        return "peach" if light > 0.75 else "orange"
+    if h < 68:
+        return "yellow"
+    if h < 160:
+        return "green"
+    if h < 200:
+        return "teal"
+    if h < 255:
+        return "blue"
+    if h < 300:
+        return "purple"
+    return "pink"
+
+
+def color_choices(name, arguments):
+    """The colors an app call sets, as "<thing> <color>" phrases ("Priority red (#fb4c2f)"), for the
+    note that has the agent think them through before they're set. Looks at app tools only (a
+    Composio slug, or the ones batched in composio_multi_execute_tool): a color is any argument
+    whose name says so, at any depth, with its hex code read into a word."""
+    if name == "composio_multi_execute_tool":
+        calls = arguments.get("tools") if isinstance(arguments, dict) else None
+        calls = [(c.get("tool_slug"), c.get("arguments")) for c in calls if isinstance(c, dict)] if isinstance(calls, list) else []
+    elif isinstance(name, str) and COMPOSIO_SLUG.match(name):
+        calls = [(name, arguments)]
+    else:
+        return []
+    found = []
+    for slug, args in calls:
+        if not isinstance(args, dict):
+            continue
+        thing = next((str(args[k]).strip() for k in NAME_KEYS if isinstance(args.get(k), str) and args[k].strip()), "")
+
+        def walk(value, key=""):
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    walk(v, str(k))
+            elif isinstance(value, list):
+                for v in value:
+                    walk(v, key)
+            elif COLOR_KEY.search(key) and not TEXT_COLOR_KEY.search(key) and value not in (None, ""):
+                word = hue_name(value)
+                shown = f"{word} ({value.strip()})" if word else str(value)
+                found.append(f"{thing or 'this'} {shown}")
+
+        walk(args)
+    return found
+
+
+def color_hint(choices):
+    """What the agent reads instead of a result the first time a conversation sets colors."""
+    return ("Before this runs: it sets colors, " + ", ".join(choices) + ". The owner sees these every day and reads "
+            "meaning into them. If you haven't looked at what they already use there (their labels, their statuses, "
+            "their colors), look now, and fit in: their conventions first, nothing new in a color they already use "
+            "for something else, and otherwise the plain meaning: green for what they want to see or do first, amber "
+            "for what's waiting or needs care, red only for trouble or stop, gray for what to ignore. Then call this "
+            "again with the colors you'll stand by (the same ones, if they fit) and name them in a word in your reply.")
+
+
 def needs_approval(name, arguments):
     """Whether a routed call must ask the owner first: it moves money or deletes for good.
 
@@ -1029,6 +1113,8 @@ class ToolGatewayComponent(Component):
                 return error
             if not approved and asks(tool_name, params):
                 return approval_hint(tool_name, params)
+            if not approved and (hint := colors_to_think_through(tool_name, params, config)):
+                return hint
             left = None if approved else time_left()
             if left is not None and left < MIN_TOOL_SECONDS:
                 return out_of_time(tool_name)
@@ -1065,6 +1151,8 @@ class ToolGatewayComponent(Component):
                 return error
             if not approved and asks(tool_name, params):
                 return approval_hint(tool_name, params)
+            if not approved and (hint := colors_to_think_through(tool_name, params, config)):
+                return hint
             left = None if approved else time_left()
             if left is not None and left < MIN_TOOL_SECONDS:
                 return out_of_time(tool_name)
@@ -1134,6 +1222,19 @@ class ToolGatewayComponent(Component):
                     "owner sees where the work is.")
 
         noticed = set()
+        colors_noted = set()
+
+        def colors_to_think_through(tool_name, params, config):
+            # The first app call in a conversation that sets a color is sent back to check the
+            # owner's conventions before the color is set; after that, calls run as given.
+            thread = thread_of(config)
+            if thread in colors_noted:
+                return ""
+            choices = color_choices(tool_name, params)
+            if not choices:
+                return ""
+            colors_noted.add(thread)
+            return color_hint(choices)
 
         def time_notice(config):
             # Once a run, when its budget is nearly spent: the agent wraps up the step it's on and
