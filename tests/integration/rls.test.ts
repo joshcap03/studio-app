@@ -109,6 +109,8 @@ describe("row level security", () => {
       .eq("workspace_id", aliceWs)
       .select();
     expect(settings.data ?? []).toEqual([]);
+    const onHome = await bob.client.from("workspace_settings").update({ on_home: false }).eq("workspace_id", aliceWs).select();
+    expect(onHome.data ?? []).toEqual([]);
     const del = await bob.client.from("workspaces").delete().eq("id", aliceWs).select();
     expect(del.data ?? []).toEqual([]);
     const delMsgs = await bob.client.from("messages").delete().eq("conversation_id", aliceConv).select();
@@ -116,6 +118,13 @@ describe("row level security", () => {
 
     const still = await alice.client.from("conversations").select("title").eq("id", aliceConv).single();
     expect(still.data?.title).toBe("Alice secret plans");
+  });
+
+  it("lists only the caller's own conversations when no agent is named (Home reads across agents)", async () => {
+    const mine = await alice.client.from("conversations").select("id");
+    expect(mine.data?.map((c) => c.id)).toContain(aliceConv);
+    const theirs = await bob.client.from("conversations").select("id");
+    expect(theirs.data?.map((c) => c.id) ?? []).not.toContain(aliceConv);
   });
 
   it("does not let a user move their data into another workspace or change ownership columns", async () => {

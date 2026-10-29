@@ -109,6 +109,13 @@ const schema = z.object({
   // Extra fields for the voice model's requests, as JSON, e.g. {"reasoning":{"enabled":false}} to
   // skip thinking on OpenRouter (a voice should answer fast).
   VOICE_LLM_EXTRA_BODY: jsonRecord,
+  // A small, fast OpenAI-compatible model Studio uses for its own short decisions (which agent
+  // takes a message from Home, src/lib/route.ts). Unset: Studio decides by keyword overlap and asks
+  // when unsure. The voice front falls back to it when VOICE_LLM_* is unset.
+  LLM_BASE_URL: z.url().optional(),
+  LLM_API_KEY: z.string().optional(),
+  LLM_MODEL: z.string().optional(),
+  LLM_EXTRA_BODY: jsonRecord,
   // Voice time per person per day (UTC), calls and speech outside them (voice previews, voice
   // notes) together, and the longest one call may run, in seconds.
   LIMIT_VOICE_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1800),
@@ -184,6 +191,16 @@ export interface AppConfig {
   voice?: VoiceConfig;
   /** Dictation into the message box. Unset means it's off. */
   dictation?: DictationConfig;
+  /** Studio's own small model (src/lib/llm.ts): which agent takes an ask from Home. Unset means keyword matching. */
+  llm?: LlmConfig;
+}
+
+/** An OpenAI-compatible chat-completions endpoint and the model to ask there. */
+export interface LlmConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  extraBody?: Record<string, unknown>;
 }
 
 export interface DictationConfig {
@@ -203,8 +220,8 @@ export interface VoiceConfig {
   sealSecret: string;
   /** The custom-LLM key ElevenLabs sends the voice front. */
   llmSecret?: string;
-  /** The model the voice front talks with; unset under the mock means its scripted replies. */
-  llm?: { baseUrl: string; apiKey: string; model: string; extraBody?: Record<string, unknown> };
+  /** The model the voice front talks with (VOICE_LLM_*, else LLM_*); unset under the mock means its scripted replies. */
+  llm?: LlmConfig;
   limits: { secondsPerDay: number; callSeconds: number };
   /** Whether a call may approve a request by voice at all (VOICE_SPOKEN_APPROVALS). */
   spokenApprovals: boolean;
@@ -246,7 +263,8 @@ export function getConfig(): AppConfig {
     };
   }
 
-  const voice = voiceConfig(env);
+  const llm = llmFrom(env.LLM_BASE_URL, env.LLM_API_KEY, env.LLM_MODEL, env.LLM_EXTRA_BODY);
+  const voice = voiceConfig(env, llm);
 
   cached = {
     supabase: { url: env.NEXT_PUBLIC_SUPABASE_URL, anonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY },
@@ -285,28 +303,28 @@ export function getConfig(): AppConfig {
     previewVoiceEmails: emails(env.PREVIEW_VOICE_EMAILS),
     voice,
     dictation: dictationConfig(env, voice),
+    llm,
   };
   return cached;
+}
+
+/** An OpenAI-compatible model from its three settings; nothing unless all three are set. */
+function llmFrom(baseUrl: string | undefined, apiKey: string | undefined, model: string | undefined, extraBody: unknown): LlmConfig | undefined {
+  if (!baseUrl || !apiKey || !model) return undefined;
+  return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey, model, ...(isPlainObject(extraBody) ? { extraBody } : {}) };
 }
 
 function emails(list: string | undefined): Set<string> {
   return new Set((list ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
 }
 
-function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
+function voiceConfig(env: z.infer<typeof schema>, general: LlmConfig | undefined): VoiceConfig | undefined {
   // Only something that reads as on (on, true, 1, yes) brings voice back, so a mistyped switch leaves it out.
   if (!/^(on|true|1|yes)$/i.test(env.VOICE_ENABLED?.trim() ?? "")) return undefined;
   const provider = env.VOICE_PROVIDER ?? (env.ELEVENLABS_API_KEY && env.ELEVENLABS_AGENT_ID ? "elevenlabs" : undefined);
   if (!provider) return undefined;
-  const llm =
-    env.VOICE_LLM_BASE_URL && env.VOICE_LLM_API_KEY && env.VOICE_LLM_MODEL
-      ? {
-          baseUrl: env.VOICE_LLM_BASE_URL.replace(/\/+$/, ""),
-          apiKey: env.VOICE_LLM_API_KEY,
-          model: env.VOICE_LLM_MODEL,
-          ...(isPlainObject(env.VOICE_LLM_EXTRA_BODY) ? { extraBody: env.VOICE_LLM_EXTRA_BODY } : {}),
-        }
-      : undefined;
+  // The voice's own model, else Studio's general small one.
+  const llm = llmFrom(env.VOICE_LLM_BASE_URL, env.VOICE_LLM_API_KEY, env.VOICE_LLM_MODEL, env.VOICE_LLM_EXTRA_BODY) ?? general;
   const limits = { secondsPerDay: env.LIMIT_VOICE_SECONDS_PER_DAY, callSeconds: env.LIMIT_VOICE_CALL_SECONDS };
   // Anything that reads as "off" turns it off, so a mistyped switch fails closed.
   const spokenApprovals = !/^(off|false|0|no|disabled?)$/i.test(env.VOICE_SPOKEN_APPROVALS?.trim() ?? "");
@@ -314,7 +332,7 @@ function voiceConfig(env: z.infer<typeof schema>): VoiceConfig | undefined {
     if (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_AGENT_ID || !env.VOICE_SEAL_SECRET || !env.VOICE_LLM_SECRET || !llm) {
       // A preview feature: half set up, calls stay off rather than taking the app down.
       console.error(
-        "[config] Voice calls are off: ElevenLabs needs ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, VOICE_SEAL_SECRET, VOICE_LLM_SECRET, VOICE_LLM_BASE_URL, VOICE_LLM_API_KEY, and VOICE_LLM_MODEL.",
+        "[config] Voice calls are off: ElevenLabs needs ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, VOICE_SEAL_SECRET, VOICE_LLM_SECRET, and a model (VOICE_LLM_BASE_URL, VOICE_LLM_API_KEY, and VOICE_LLM_MODEL, or the LLM_* set).",
       );
       return undefined;
     }

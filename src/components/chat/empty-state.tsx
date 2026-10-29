@@ -59,6 +59,10 @@ interface Props {
   voice?: VoiceStatus | null;
   /** A call with the agent from the message box, for a new chat ("Call Rowan"). */
   call?: { label: string; onCall: () => void; busy?: boolean };
+  /** This agent is a draft: asks from Home don't come to it (src/lib/home.ts). */
+  offHome?: boolean;
+  /** Puts it on Home (the owner's). */
+  onPutOnHome?: () => void;
 }
 
 const chip =
@@ -72,7 +76,7 @@ export function chipSkills(skills: WorkspaceSkill[]): WorkspaceSkill[] {
 }
 
 export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
-  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, micInstead, onSayHello, voice, call },
+  { draft, onDraftChange, onSubmit, skills, initialSkillId, canManageSkills, allowFiles, footnote, setup, agentName, member, greeter, onSetup, onSkipSetup, onTalk, talking, talkNotice, micInstead, onSayHello, voice, call, offHome, onPutOnHome },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
@@ -173,6 +177,20 @@ export const EmptyState = forwardRef<ComposerHandle, Props>(function EmptyState(
 
       <div className="mx-auto w-full max-w-[44rem] pb-[max(12px,env(safe-area-inset-bottom))] md:mt-8 md:pb-0">
         {onSayHello && companion ? <Hello workspaceId={companion.workspaceId} onSayHello={onSayHello} /> : null}
+        {offHome ? (
+          <div className="mb-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-xl border border-dashed border-line-strong px-4 py-2.5 text-center text-[13px] text-fg-2 animate-fade-up">
+            <span>Not on Home yet, so asks from Home don&apos;t come here.</span>
+            {onPutOnHome ? (
+              <button
+                type="button"
+                onClick={onPutOnHome}
+                className="inline-flex h-7 items-center rounded-lg bg-inverse px-3 text-[12.5px] font-medium text-on-inverse transition-[opacity,transform] duration-150 hover:opacity-90 active:scale-[0.97]"
+              >
+                Put it on Home
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {setup && onSetup ? (
           <SetupGreeting setup={setup} agentName={agentName} greeter={greeter} onSetup={onSetup} onSkip={onSkipSetup} onTalk={onTalk && fromButton(onTalk)} talking={talking} notice={tapped ? null : talkNotice} />
         ) : null}

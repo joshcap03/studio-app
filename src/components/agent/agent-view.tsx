@@ -83,6 +83,7 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
           Your bar: {score}
         </p>
       ) : null}
+      {canEdit ? <OnHomeRow initial={settings.onHome} onSaved={setSettings} /> : null}
       <div className="mt-10 space-y-14">
         <AgentSection initial={settings} canEdit={canEdit} onSaved={setSettings} />
         {voice ? <VoicePanel initial={voice} keptName={keptName} /> : null}
@@ -104,6 +105,60 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
         <ChatHistorySection />
       </div>
     </>
+  );
+}
+
+/**
+ * Whether this agent takes asks from Home, the page across the owner's agents. Off, it's a
+ * draft: reached from the agent menu and its own new-chat screen, never sent anything from Home.
+ */
+function OnHomeRow({ initial, onSaved }: { initial: boolean; onSaved: (settings: WorkspaceSettings) => void }) {
+  const [on, setOn] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function toggle() {
+    if (busy) return;
+    const next = !on;
+    setOn(next);
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(await patchSettings({ onHome: next }));
+    } catch (e) {
+      setOn(!next);
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="mt-5 flex items-center gap-4 rounded-xl border border-line bg-surface px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-medium text-fg">On Home</p>
+        <p className="text-[13px] text-fg-3">
+          {on ? "Takes asks from Home when they fit what it's for." : "Off: asks from Home never come here. You reach it from the agent menu."}
+        </p>
+        {error ? <p className="mt-1 text-[12.5px] text-danger">{error}</p> : null}
+      </div>
+      <OnHomeSwitch on={on} busy={busy} onToggle={() => void toggle()} label="On Home" />
+    </div>
+  );
+}
+
+/** A switch, in Studio's tokens: brass when on. */
+export function OnHomeSwitch({ on, busy, onToggle, label }: { on: boolean; busy?: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={busy}
+      onClick={onToggle}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60 ${on ? "bg-accent" : "bg-line-strong"}`}
+    >
+      <span aria-hidden="true" className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-surface shadow-sm transition-transform ${on ? "translate-x-4" : ""}`} />
+    </button>
   );
 }
 
@@ -146,7 +201,7 @@ function CompanionPanel({ initial, withManner, onNamed }: { initial: CompanionIn
           <p className="text-[14px] text-fg-2">{companion.stage === "ready" ? "I think I know you well enough to introduce myself." : companion.toMeet ? companionHint(companion.stage, null, companion.toMeet) : `${companionHint(companion.stage, null)}.`}</p>
           {companion.stage === "ready" ? (
             <a
-              href="/?hello=1"
+              href="/new?hello=1"
               className="mt-2 inline-flex h-8 items-center rounded-lg bg-inverse px-3.5 text-[13px] font-medium text-on-inverse transition-opacity hover:opacity-90"
             >
               Say hello
@@ -589,7 +644,7 @@ function SetupInterview({ setup }: { setup: WorkspaceSettings["setup"] }) {
           <p className="text-[12.5px] leading-[1.45] text-fg-3">{status}</p>
         </div>
         <a
-          href={resume ? `/c/${setup.conversationId}` : "/?setup=new"}
+          href={resume ? `/c/${setup.conversationId}` : "/new?setup=new"}
           className="inline-flex h-8 shrink-0 items-center rounded-lg border border-line px-3 text-[13px] font-medium text-fg-2 transition-colors hover:bg-hover hover:text-fg"
         >
           {resume ? "Continue" : setup?.status === "done" ? "Run again" : "Start"}

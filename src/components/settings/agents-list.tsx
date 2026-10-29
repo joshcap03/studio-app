@@ -2,12 +2,14 @@
 
 import { Check, Plus } from "lucide-react";
 import { useState } from "react";
+import { OnHomeSwitch } from "@/components/agent/agent-view";
 import { api } from "@/lib/client/api";
-import { MAX_AGENTS, type WorkspaceSummary } from "@/lib/types";
+import { AGENT_HEADER } from "@/lib/client/tab-agent";
+import { MAX_AGENTS, type WorkspaceSettings, type WorkspaceSummary } from "@/lib/types";
 
 /**
- * The member's agents, to add one or delete one they own. Deleting asks once, in the row, and
- * takes the agent's chats, tasks, skills, files, and memory with it.
+ * The member's agents: which take asks from Home, one to add, and one to delete they own. Deleting
+ * asks once, in the row, and takes the agent's chats, tasks, skills, files, and memory with it.
  */
 export function AgentsList({ initial, current }: { initial: WorkspaceSummary[]; current: string }) {
   const [agents, setAgents] = useState(initial);
@@ -16,6 +18,7 @@ export function AgentsList({ initial, current }: { initial: WorkspaceSummary[]; 
   const [error, setError] = useState<string | null>(null);
   const owned = agents.filter((a) => a.role === "owner").length;
   const full = owned >= MAX_AGENTS;
+  const several = agents.length > 1;
 
   async function remove(id: string) {
     setBusy(id);
@@ -35,8 +38,30 @@ export function AgentsList({ initial, current }: { initial: WorkspaceSummary[]; 
     }
   }
 
+  /** Each row's agent is named on the request, since this page's tab is on one of them only. */
+  async function setOnHome(id: string, onHome: boolean) {
+    setBusy(id);
+    setError(null);
+    setAgents((list) => list.map((a) => (a.id === id ? { ...a, onHome } : a)));
+    try {
+      const res = await fetch("/api/workspace/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", [AGENT_HEADER]: id },
+        body: JSON.stringify({ onHome }),
+      });
+      const body = (await res.json().catch(() => null)) as { settings?: WorkspaceSettings; error?: string } | null;
+      if (!res.ok || !body?.settings) throw new Error(body?.error ?? "Couldn't change that. Try again.");
+    } catch (e) {
+      setAgents((list) => list.map((a) => (a.id === id ? { ...a, onHome: !onHome } : a)));
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div>
+      {several ? <p className="mb-2 text-[13px] text-fg-3">Home sends asks to the agents that are on it. The others you reach from the agent menu.</p> : null}
       <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
         {agents.map((a) =>
           confirming === a.id ? (
@@ -69,6 +94,12 @@ export function AgentsList({ initial, current }: { initial: WorkspaceSummary[]; 
                 <span className="flex shrink-0 items-center gap-1 text-[12.5px] text-fg-3">
                   <Check size={13} aria-hidden="true" />
                   Open here
+                </span>
+              ) : null}
+              {several ? (
+                <span className="flex shrink-0 items-center gap-2 text-[12.5px] text-fg-3">
+                  {a.onHome ? "On Home" : "Draft"}
+                  {a.role === "owner" ? <OnHomeSwitch on={a.onHome} busy={busy === a.id} onToggle={() => void setOnHome(a.id, !a.onHome)} label={`On Home: ${a.name}`} /> : null}
                 </span>
               ) : null}
               {a.role === "owner" ? (

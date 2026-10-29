@@ -3,6 +3,7 @@
 
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { StandingKind } from "@/lib/approvals/standing";
+import type { MarkedMove } from "@/lib/chat/move";
 
 export type MessageRole = "user" | "assistant";
 
@@ -350,6 +351,29 @@ export interface WorkspaceSummary {
   id: string;
   name: string;
   role: "owner" | "member";
+  /** Whether it takes asks from Home and is offered there (src/lib/home.ts); off, it's a draft reached from the agent menu. */
+  onHome: boolean;
+}
+
+/** Which of the member's agents should take an ask from Home (src/lib/route.ts). */
+export interface RouteResult {
+  workspaceId: string;
+  /** Clear enough to send without asking; otherwise Home shows the pick and lets the member confirm. */
+  sure: boolean;
+  /** How it was decided: the model, keyword overlap, or the agent the member was last in. */
+  by: "model" | "heuristic" | "last";
+}
+
+/** A conversation on Home, which lists chats across the member's agents: a summary that also names its agent. */
+export interface HomeConversation extends ConversationSummary {
+  workspaceId: string;
+}
+
+/** What Home shows across the member's agents (src/lib/home.ts). */
+export interface HomeData {
+  conversations: HomeConversation[];
+  /** Whose move it is in each of them, where it's worth a mark. */
+  moves: Record<string, MarkedMove>;
 }
 
 /**
@@ -392,6 +416,8 @@ export interface WorkspaceSettings {
   templateId: string | null;
   /** Where the owner is in the agent's setup interview; null until it's started. */
   setup: AgentSetup | null;
+  /** Whether this agent takes asks from Home (see WorkspaceSummary.onHome). */
+  onHome: boolean;
 }
 
 /** What the chat screen shows the owner about the agent's setup: how far along, and where. */

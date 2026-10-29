@@ -124,7 +124,7 @@ export function SkillsView({ initialSkills, canEdit, initialDraft }: Props) {
                   {s.description ? <div className="truncate text-[12.5px] text-fg-3">{s.description}</div> : null}
                 </div>
                 <a
-                  href={`/?skill=${s.id}`}
+                  href={`/new?skill=${s.id}`}
                   aria-label={`Use ${s.name}`}
                   className={`${secondary} max-sm:w-8 max-sm:justify-center max-sm:px-0`}
                 >

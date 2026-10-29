@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chatCompletion } from "@/lib/llm";
 import { TAP_ONLY_REASONS } from "@/lib/types";
 import { greetingKind, isAffirmation, isApproveIntent, isBackchannel, isDeclineIntent, isHangOnIntent, isHoldOn, isLookIntent, isOpenIntent, isRedirect, isSendIntent, isStopIntent, isVoiceNoteIntent, pressIntent } from "./intent";
 import { mockReplyToRefusals, mockReplyToSpeech, type BrainReply } from "./mock";
@@ -614,47 +615,35 @@ export async function modelReply(
   signal: AbortSignal,
 ): Promise<BrainReply> {
   try {
-    const res = await fetch(`${llm.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${llm.apiKey}` },
-      body: JSON.stringify({
-        // Provider-specific settings first, so they can't replace the call's own fields.
-        ...llm.extraBody,
-        model: llm.model,
+    const message = await chatCompletion(
+      llm,
+      {
         messages: modelMessages(context, request.messages),
         tools: modelTools(request.tools),
         tool_choice: "auto",
-        stream: false,
         // Room for a few fill_card calls at once; what it says is capped separately (spokenText).
         max_tokens: 600,
         temperature: 0.4,
-      }),
+      },
       signal,
-    });
-    if (!res.ok) {
-      console.error("[voice] model call failed", res.status);
-      return { text: LOST_LINE };
-    }
-    const body = (await res.json()) as { choices?: { message?: { content?: unknown; tool_calls?: { function?: { name?: string; arguments?: string } }[] } }[] };
-    const message = body.choices?.[0]?.message;
+    );
     // A request waiting on their OK is answered only by fixed rules on their own words (routeSpeech), never by the model.
     const answered = latestStage(request.messages)?.approval ? new Set(["send_card", "stop_work"]) : new Set<string>();
-    const tools = (message?.tool_calls ?? []).flatMap((t) => {
-      const name = t.function?.name ?? "";
-      if (!ALLOWED_CALLS.has(name) || answered.has(name)) return [];
+    const tools = message.toolCalls.flatMap((t) => {
+      if (!ALLOWED_CALLS.has(t.name) || answered.has(t.name)) return [];
       let args: Record<string, unknown> = {};
       try {
-        args = t.function?.arguments ? (JSON.parse(t.function.arguments) as Record<string, unknown>) : {};
+        args = t.arguments ? (JSON.parse(t.arguments) as Record<string, unknown>) : {};
       } catch {
         // malformed arguments: the tool sees none
       }
-      return [{ name, args }];
+      return [{ name: t.name, args }];
     });
     const last = callTurns(request.messages).at(-1);
     if (last?.role === "user") return routeSpeech(textOf(last.content), latestStage(request.messages), tools, { approvals: context.approvals === true });
     if (tools.length) return { tools };
     // Only after a tool was turned down may the model say why, in a few words.
-    const text = spokenText(message?.content);
+    const text = spokenText(message.content);
     return text ? { text } : { tools: [{ name: "skip_turn", args: {} }] };
   } catch (e) {
     if (!signal.aborted) console.error("[voice] model call failed", e);

@@ -454,6 +454,60 @@ describe("one person, several agents", () => {
     expect(thread.messages.filter((m) => m.role === "user")).toHaveLength(2);
   }, 60_000);
 
+  it("route an ask from Home to one of the person's own agents on Home, and list their chats across agents", async () => {
+    const fay = await signUp("fay");
+    const first = ((await (await fay.json("/api/workspaces", "POST", { name: "Fay Shop" })).json()) as { workspaceId: string }).workspaceId;
+    const second = ((await (await fay.json("/api/workspaces", "POST", { name: "Fay Inbox" })).json()) as { workspaceId: string }).workspaceId;
+    const tabFirst = { "x-studio-agent": first };
+    const tabSecond = { "x-studio-agent": second };
+
+    // The first agent is on Home; a second starts as a draft.
+    const agents = (await (await fay.json("/api/workspaces", "GET")).json()) as { workspaces: { id: string; onHome: boolean }[] };
+    expect(agents.workspaces.find((w) => w.id === first)?.onHome).toBe(true);
+    expect(agents.workspaces.find((w) => w.id === second)?.onHome).toBe(false);
+
+    // With one agent on Home, an ask about the other still goes to the one on Home.
+    const only = (await (await fay.request("/api/route", { method: "POST", body: JSON.stringify({ text: "Fay Inbox: go through my email" }), headers: tabFirst })).json()) as { workspaceId: string; sure: boolean };
+    expect(only).toMatchObject({ workspaceId: first, sure: true });
+
+    // The owner puts the draft on Home; now the router (keyword overlap under the mock) may pick either, and only hers.
+    const put = await fay.request("/api/workspace/settings", { method: "PATCH", body: JSON.stringify({ onHome: true }), headers: tabSecond });
+    expect(put.status, await put.clone().text()).toBe(200);
+    expect(((await put.json()) as { settings: { onHome: boolean } }).settings.onHome).toBe(true);
+    const routed = (await (await fay.request("/api/route", { method: "POST", body: JSON.stringify({ text: "Fay Inbox: go through my email" }), headers: tabFirst })).json()) as { workspaceId: string; by: string };
+    expect([first, second]).toContain(routed.workspaceId);
+    expect(["heuristic", "last", "model"]).toContain(routed.by);
+    expect((await fay.request("/api/route", { method: "POST", body: JSON.stringify({ text: "x" }), headers: { ...tabFirst, Origin: "https://evil.example" } })).status).toBe(403);
+
+    // A chat with the second agent shows on Home while the tab is on the first, and on nobody else's.
+    const conversation = crypto.randomUUID();
+    const sent = await fay.request(`/api/conversations/${conversation}/messages`, { method: "POST", body: JSON.stringify({ kind: "send", text: "non-streaming fay-inbox-hello" }), headers: tabSecond });
+    expect(sent.status).toBe(200);
+    await sent.text();
+    const home = (await (await fay.request("/api/home", { headers: tabFirst })).json()) as { conversations: { id: string; workspaceId: string }[] };
+    expect(home.conversations.find((c) => c.id === conversation)?.workspaceId).toBe(second);
+    const bobsHome = (await (await bob.json("/api/home", "GET")).json()) as { conversations: { id: string }[] };
+    expect(bobsHome.conversations.some((c) => c.id === conversation)).toBe(false);
+    const bobsRoute = (await (await bob.json("/api/route", "POST", { text: "Fay Inbox Fay Shop" })).json()) as { workspaceId: string };
+    expect(bobsRoute.workspaceId).toBe(bobWs);
+
+    // Opened by its link while the tab's last agent was the first, the chat renders under the agent that owns it.
+    expect((await fay.json("/api/workspaces/active", "POST", { workspaceId: first })).status).toBe(200);
+    const page = await fay.request(`/c/${conversation}`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("fay-inbox-hello");
+    // Another person's chat by its link is still nothing to them.
+    const theirs = await fay.request(`/c/${aliceConv}`);
+    expect(await theirs.text()).not.toContain("Alice");
+
+    // Off Home again, it takes nothing from Home.
+    expect((await fay.request("/api/workspace/settings", { method: "PATCH", body: JSON.stringify({ onHome: false }), headers: tabSecond })).status).toBe(200);
+    const after = (await (await fay.request("/api/home", { headers: tabFirst })).json()) as { conversations: { id: string }[] };
+    expect(after.conversations.some((c) => c.id === conversation)).toBe(false);
+    const back = (await (await fay.request("/api/route", { method: "POST", body: JSON.stringify({ text: "Fay Inbox email" }), headers: tabFirst })).json()) as { workspaceId: string };
+    expect(back.workspaceId).toBe(first);
+  }, 90_000);
+
   it("delete one the person owns, freeing its place, and never another person's", async () => {
     const erin = await signUp("erin");
     const ids: string[] = [];

@@ -311,7 +311,7 @@ function Topic({ title, hint, items, startOpen, expanded, tidy, children }: Topi
               ) : null}
               {tidy ? (
                 <a
-                  href={`/?tidy=${tidy}`}
+                  href={`/new?tidy=${tidy}`}
                   title="The agent suggests combining facts that overlap. Nothing changes until you merge them."
                   className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[12.5px] text-fg-2 hover:bg-hover hover:text-fg"
                 >

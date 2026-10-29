@@ -2,11 +2,12 @@
 
 import { AudioLines, ChevronRight, Menu, PanelLeftOpen, Paperclip, SquarePen } from "lucide-react";
 import { usePathname } from "next/navigation";
-import { Tooltip } from "radix-ui";
+import { DropdownMenu, Tooltip } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CardDraftsProvider } from "@/components/chat/card-drafts";
 import { Composer, type ComposerHandle } from "@/components/chat/composer";
 import { EmptyState } from "@/components/chat/empty-state";
+import { HomeView, agentLabel } from "@/components/home/home";
 import { DictationContext } from "@/components/chat/mic";
 import { Thread } from "@/components/chat/thread";
 import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
@@ -17,7 +18,7 @@ import { TrackerPage } from "@/components/library/tracker-page";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { collectionName } from "@/components/tasks/tracker";
 import { TasksView } from "@/components/tasks/tasks-view";
-import { CompanionContext } from "@/components/ui/companion";
+import { Companion as CompanionMark, CompanionContext } from "@/components/ui/companion";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
 import { Journey } from "@/components/ui/journey";
 import { isMac, useKeyboardHeight, useMedia } from "@/components/ui/use-media";
@@ -29,6 +30,7 @@ import { callOf, originFor } from "@/lib/chat/modality";
 import { markOf, moveOf, type MarkedMove, type WhoseMove } from "@/lib/chat/move";
 import { ApiError, api, streamTurn, type SpokenDecision, type TurnBody } from "@/lib/client/api";
 import { openRequest, reopening } from "@/lib/client/open";
+import { stashPendingSend, takePendingSend } from "@/lib/client/pending-send";
 import { registerServiceWorker } from "@/lib/client/push";
 import { INTRODUCE_SKILL_ID, INTRODUCE_SKILL_NAME } from "@/lib/skills/introduce";
 import { SETUP_SKILL_ID, SETUP_SKILL_NAME } from "@/lib/skills/setup";
@@ -40,6 +42,8 @@ import type {
   ChatMessage,
   Companion,
   ConversationSummary,
+  HomeConversation,
+  HomeData,
   Journey as JourneyInfo,
   MemoryProposal,
   MessageFeedback,
@@ -47,6 +51,7 @@ import type {
   Modality,
   Project,
   ProjectSummary,
+  RouteResult,
   ScreenRef,
   SetupSummary,
   StreamEvent,
@@ -236,6 +241,8 @@ interface Props {
   greeter: string | null;
   /** Who each of the member's agents is to them, by agent id (a preview); null to show none. */
   companions: Record<string, Companion> | null;
+  /** Home across their agents (the page at "/" with several), as the server loaded it; null elsewhere. */
+  home: HomeData | null;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -308,7 +315,7 @@ function WorkspaceShell({
   initialProject,
   agent,
   workspace,
-  workspaces,
+  workspaces: initialWorkspaces,
   email,
   skills,
   initialSkillId,
@@ -317,6 +324,7 @@ function WorkspaceShell({
   member,
   greeter,
   companions,
+  home: initialHome,
   onCompanion,
   onCallChange,
 }: Props & { onCompanion: (companion: Companion) => void; onCallChange: (live: boolean) => void }) {
@@ -332,6 +340,13 @@ function WorkspaceShell({
   const libraryPath = libraryPathFrom(pathname);
   const libraryActive = libraryPath !== null;
   const [taskTitle, setTaskTitle] = useState<string | null>(null);
+  // The member's agents, and which are on Home ("Put it on Home" on a draft's screen updates it here).
+  const [workspaces, setWorkspaces] = useState(initialWorkspaces);
+  const several = workspaces.length > 1;
+  /** Home across agents: "/" with several agents. With one, "/" is that agent's own new-chat screen. */
+  const atHome = several && /^\/?$/.test(pathname);
+  /** The agent's own new-chat screen: "/new", or "/" with one agent. */
+  const atNew = !atHome && /^\/(new\/?)?$/.test(pathname);
 
   useEffect(() => {
     const onPop = () => setPathname(window.location.pathname);
@@ -637,8 +652,8 @@ function WorkspaceShell({
   const tasksTitle = activeTask === "list" ? "Tasks" : activeTask ? (taskTitle ?? undefined) : undefined;
   useEffect(() => {
     const title = activeTitle ?? activeProjectName ?? tasksTitle ?? (libraryPath === "home" ? "Library" : libraryPath ? collectionName(libraryPath) : undefined);
-    document.title = title ? `${title} · Studio` : `${workspace.name} · Studio`;
-  }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name]);
+    document.title = title ? `${title} · Studio` : atHome ? "Studio" : `${workspace.name} · Studio`;
+  }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name, atHome]);
 
   /**
    * Opens a task's conversation (or one a notification is about). A run may have just created it
@@ -938,6 +953,120 @@ function WorkspaceShell({
     [navigate, runTurn],
   );
 
+  // ---------------------------------------------------------------------------------------
+  // Home: one place to ask across the member's agents (src/lib/route.ts decides which takes it).
+
+  /** What Home shows across agents, kept fresh while it's on screen. */
+  const [homeData, setHomeData] = useState<HomeData | null>(initialHome);
+  const refreshHome = useCallback(() => {
+    api.home().then(setHomeData, () => undefined);
+  }, []);
+  useEffect(() => {
+    if (!atHome) return;
+    refreshHome();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshHome();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [atHome, refreshHome]);
+  const homeWorking = atHome && Object.values(homeData?.moves ?? {}).includes("working");
+  useEffect(() => {
+    if (!homeWorking) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") refreshHome();
+    }, MOVES_POLL_MS);
+    return () => clearInterval(timer);
+  }, [homeWorking, refreshHome]);
+
+  const [routing, setRouting] = useState(false);
+  /** Home wasn't sure who should take the ask: the text stays, and the likeliest agent is held up to confirm. */
+  const [homeAsk, setHomeAsk] = useState<{ text: string; suggested: string } | null>(null);
+  const [homeNotice, setHomeNotice] = useState<string | null>(null);
+  /** A chat Home sent to an agent, for the "Sent to …" line under its first reply. */
+  const [routed, setRouted] = useState<{ conversationId: string; workspaceId: string } | null>(null);
+
+  /**
+   * Sends an ask to another agent than this tab's: the ask waits for that agent's own new-chat
+   * screen, which sends it there as if it had been typed there (one page load; the agent becomes
+   * the one new tabs open on).
+   */
+  const sendElsewhere = useCallback(async (workspaceId: string, text: string, by: RouteResult["by"], sure: boolean) => {
+    const conversationId = crypto.randomUUID();
+    if (!stashPendingSend({ workspaceId, conversationId, text, routed: { sure, by } })) {
+      setHomeNotice("Couldn't hand that to the other agent from here. Pick it in the agent menu and send again.");
+      return;
+    }
+    try {
+      await api.setActiveAgent(workspaceId);
+    } catch {
+      takePendingSend(workspaceId);
+      setHomeNotice("Couldn't reach that agent. Try again.");
+      return;
+    }
+    window.location.assign("/new");
+  }, []);
+
+  /** An ask from Home: to the agent the member picked, else to whichever fits; when that isn't clear, Home asks. */
+  const sendFromHome = useCallback(
+    async (text: string, pick: string | null) => {
+      const trimmed = text.trim();
+      if (!trimmed || routing) return;
+      setHomeNotice(null);
+      const onHome = (id: string) => workspaces.some((w) => w.id === id && w.onHome);
+      const fallback = onHome(workspace.id) ? workspace.id : (workspaces.find((w) => w.onHome)?.id ?? workspace.id);
+      let target: RouteResult;
+      if (pick && onHome(pick)) {
+        target = { workspaceId: pick, sure: true, by: "last" };
+      } else {
+        setRouting(true);
+        try {
+          target = await api.route(trimmed);
+        } catch {
+          target = { workspaceId: fallback, sure: false, by: "last" };
+        } finally {
+          setRouting(false);
+        }
+        if (!onHome(target.workspaceId)) target = { workspaceId: fallback, sure: false, by: "last" };
+        if (!target.sure) {
+          setHomeAsk({ text: trimmed, suggested: target.workspaceId });
+          return;
+        }
+      }
+      setHomeAsk(null);
+      drafts.current.delete("home");
+      if (target.workspaceId === workspace.id) {
+        const conversationId = crypto.randomUUID();
+        setRouted({ conversationId, workspaceId: workspace.id });
+        sendTo(conversationId, trimmed, true);
+        return;
+      }
+      await sendElsewhere(target.workspaceId, trimmed, target.by, target.sure);
+    },
+    [routing, workspace.id, workspaces, sendTo, sendElsewhere],
+  );
+
+  /** "Ask another agent instead": the same first message, as a new chat with that agent (a chat never moves). */
+  const askAnother = useCallback(
+    (workspaceId: string) => {
+      if (!activeId) return;
+      const first = threadsRef.current[activeId]?.messages.find((m) => m.role === "user")?.content ?? "";
+      if (first.trim()) void sendElsewhere(workspaceId, first, "last", true);
+    },
+    [activeId, sendElsewhere],
+  );
+
+  /** The owner puts a draft agent on Home from its own new-chat screen. */
+  const putOnHome = useCallback(() => {
+    api.setOnHome(true).then(
+      () => setWorkspaces((list) => list.map((w) => (w.id === workspace.id ? { ...w, onHome: true } : w))),
+      () => undefined,
+    );
+  }, [workspace.id]);
+
+  /** A chat on Home: this agent's opens in place (another agent's is a link, loaded under that agent). */
+  const openFromHome = useCallback((conversation: HomeConversation) => navigate(`/c/${conversation.id}`), [navigate]);
+
   const send = useCallback(
     (text: string, extras: Partial<SendExtras> = {}) => {
       const full: SendExtras = { skill: extras.skill ?? null, attachments: extras.attachments ?? [], ...(extras.modality ? { modality: extras.modality } : {}) };
@@ -945,6 +1074,8 @@ function WorkspaceShell({
         // Sending while the agent works (or waits for an approval) redirects it.
         const awaitingHere = threadsRef.current[activeId]?.messages.at(-1)?.status === "awaiting";
         drafts.current.delete(activeId);
+        // Once the member carries on here, the chat is theirs with this agent; the "Sent to" line has done its job.
+        setRouted((r) => (r?.conversationId === activeId ? null : r));
         sendTo(activeId, text, false, full, running.has(activeId) || awaitingHere);
       } else {
         drafts.current.delete(activeProjectId ? `project:${activeProjectId}` : "new");
@@ -1257,10 +1388,11 @@ function WorkspaceShell({
   // ---------------------------------------------------------------------------------------
   // Conversation management
 
+  // A new chat with this agent: its own screen (/new) where Home has taken "/".
   const newChat = useCallback(() => {
-    navigate("/");
+    navigate(several ? "/new" : "/");
     requestAnimationFrame(() => composer.current?.focus());
-  }, [navigate]);
+  }, [navigate, several]);
 
   // The agent's setup interview: picks up where it left off, or starts it in a new chat with
   // the setup skill attached (the agent opens with its first question). Returns its
@@ -1504,6 +1636,24 @@ function WorkspaceShell({
     if (wanted === "talk" && voice) void startCall({ setup: true, waitForTap: true });
     else startSetup(wanted === "new");
   }, [setup, startSetup, startCall, voice]);
+
+  // An ask from Home routed to this agent arrives with the page (src/lib/client/pending-send.ts)
+  // and is sent here as if typed here. One meant for another agent (the page landed elsewhere)
+  // goes back into the message box instead, so nothing is lost and nothing goes to the wrong one.
+  const pickedUp = useRef(false);
+  useEffect(() => {
+    if (pickedUp.current || !atNew) return;
+    pickedUp.current = true;
+    const pending = takePendingSend(workspace.id);
+    if (!pending) return;
+    if ("mismatch" in pending) {
+      composer.current?.setValue(pending.mismatch.text);
+      return;
+    }
+    drafts.current.delete("new");
+    setRouted({ conversationId: pending.conversationId, workspaceId: workspace.id });
+    sendTo(pending.conversationId, pending.text, true);
+  }, [atNew, workspace.id, sendTo]);
 
   // "Tidy up" on a Brain topic arrives as ?tidy=<topic>: a new chat with that topic's tidy
   // skill attached, where the agent suggests facts to combine.
@@ -1977,6 +2127,9 @@ function WorkspaceShell({
             companions={companions}
             email={email}
             mod={mod}
+            atHome={atHome}
+            home={homeData}
+            onHome={() => navigate("/")}
             onSelect={(id) => navigate(`/c/${id}`)}
             onNew={newChat}
             onCollapse={toggleSidebar}
@@ -2045,6 +2198,16 @@ function WorkspaceShell({
               </div>
             ) : null}
             <h1 className="flex min-w-0 flex-1 items-center gap-1 px-1.5 text-[14px] font-medium text-fg-2 max-md:justify-center">
+              {/* With several agents, every chat says which one it's with. */}
+              {several && activeId ? (
+                <>
+                  <span className="flex min-w-0 shrink-0 items-center gap-1.5 text-fg">
+                    {companion ? <CompanionMark stage={companion.stage} look={companion.look} size={16} /> : null}
+                    <span className="max-w-[10rem] truncate">{agentLabel(workspace, companions)}</span>
+                  </span>
+                  <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
+                </>
+              ) : null}
               {conversationProject ? (
                 <>
                   <a
@@ -2124,6 +2287,25 @@ function WorkspaceShell({
                 <span className="spinner animate-fade-in [animation-delay:200ms]" aria-label="Loading project" />
               </div>
             )
+          ) : atHome ? (
+            <HomeView
+              key="home"
+              ref={composer}
+              data={homeData}
+              workspaces={workspaces}
+              companions={companions}
+              current={workspace.id}
+              draft={drafts.current.get("home") ?? ""}
+              onDraftChange={(v) => drafts.current.set("home", v)}
+              onSubmit={(text, pick) => void sendFromHome(text, pick)}
+              routing={routing}
+              ask={homeAsk}
+              onCancelAsk={() => setHomeAsk(null)}
+              onOpen={openFromHome}
+              voice={voice}
+              footnote={footnote}
+              notice={homeNotice}
+            />
           ) : !activeId ? (
             <EmptyState
               key="new"
@@ -2131,6 +2313,8 @@ function WorkspaceShell({
               draft={drafts.current.get("new") ?? ""}
               onDraftChange={(v) => drafts.current.set("new", v)}
               onSubmit={send}
+              offHome={several && workspaces.some((w) => w.id === workspace.id && !w.onHome)}
+              onPutOnHome={workspace.role === "owner" ? putOnHome : undefined}
               skills={skills}
               initialSkillId={initialSkillId}
               canManageSkills={workspace.role === "owner"}
@@ -2174,6 +2358,37 @@ function WorkspaceShell({
               calls={activeCalls}
               footer={
                 <div className="mx-auto w-full max-w-[46rem] px-3 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
+                  {/* Home sent this ask here. A chat never moves, so another agent gets it as a new chat. */}
+                  {routed?.conversationId === activeId && several ? (
+                    <p className="mb-2 flex flex-wrap items-center justify-center gap-x-1.5 px-1 text-center text-[12.5px] text-fg-3 animate-fade-up">
+                      <span>Sent to {agentLabel(workspace, companions)}</span>
+                      {workspaces.some((w) => w.id !== workspace.id && w.onHome) ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger className="rounded text-fg-2 underline underline-offset-2 hover:text-fg">Ask another agent instead</DropdownMenu.Trigger>
+                            <DropdownMenu.Portal>
+                              <DropdownMenu.Content align="center" side="top" sideOffset={6} className="z-50 w-[248px] rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in">
+                                <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Start this as a new chat with</DropdownMenu.Label>
+                                {workspaces
+                                  .filter((w) => w.id !== workspace.id && w.onHome)
+                                  .map((w) => (
+                                    <DropdownMenu.Item
+                                      key={w.id}
+                                      onSelect={() => askAnother(w.id)}
+                                      className="flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover"
+                                    >
+                                      {companions?.[w.id] ? <CompanionMark stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}
+                                      <span className="min-w-0 truncate">{agentLabel(w, companions)}</span>
+                                    </DropdownMenu.Item>
+                                  ))}
+                              </DropdownMenu.Content>
+                            </DropdownMenu.Portal>
+                          </DropdownMenu.Root>
+                        </>
+                      ) : null}
+                    </p>
+                  ) : null}
                   {notice ? (
                     <p role="status" className="mb-2 px-1 text-center text-[13px] text-danger">
                       {notice}
@@ -2214,7 +2429,7 @@ function WorkspaceShell({
                     onStop={stopHere}
                     skills={skills}
                     running={isRunning}
-                    placeholder={isRunning ? "Redirect the agent…" : "Reply…"}
+                    placeholder={isRunning ? "Redirect the agent…" : several ? `Reply to ${agentLabel(workspace, companions)}…` : "Reply…"}
                     autoFocus={desktop}
                     allowFiles={agent.attachments}
                     hint={composerHint(lastMove)}
