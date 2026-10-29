@@ -84,6 +84,9 @@ raw/technical text.
   Its name and manner then ride in every run's context, on calls and in push titles. Members never read
   the stage words, but they know someone is on the way: until it's ready, the new-chat screen, the
   agent page and the mark's title say the mark is their agent and what to do to meet it (`toMeet`, from the same signals).
+- `src/lib/home.ts`: Home (`/home`), every agent the person has side by side to pick one to talk to,
+  each with what it's for, its latest chats, and whose move it is in them (the sidebar's marks). Sign-in
+  lands there; picking an agent or one of its chats switches to it (`/api/workspaces/active`).
 - `src/lib/delete-agent.ts`: deleting an agent its owner picks (Settings → Agents, up to `MAX_AGENTS`
   per person, held again by `create_workspace`). The row's delete cascades its data; the owner's watch
   triggers, its memory namespaces, and their files go after it, best effort.
