@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { approvalActions, browserFilesContext, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, uploadsKey, withoutCallLimit, type LangflowConfig } from "./langflow";
+import { approvalActions, approvalFor, browserFilesContext, buildRequest, createLangflowAdapter, endedOnHold, fillTemplate, HOLD_NUDGE, langflowSessionId, leadingNotes, openingLineIndexes, selfContext, separateAroundTools, templateValues, toolBrowserSessions, toolQuestions, toolMemoryProposals, toolTaskUpdates, toolTimelines, toolUi, uploadsKey, withoutCallLimit, type LangflowConfig } from "./langflow";
 import { AgentError, type AgentEvent, type AgentRunInput, type AgentTenantContext } from "./types";
 
 // Wire fixtures follow what Langflow 1.12.5 actually sends (captured from a live server and
@@ -1041,6 +1041,16 @@ describe("Langflow approvals", () => {
     expect(approval.actions).toEqual([
       { tool: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "jo@acme.example", subject: "March invoice", api_key: "sk-live-abcdefghijklmnopqrstuvwx" } },
     ]);
+  });
+
+  it("says a color given as a code in a word too, so the member reads what they're approving", () => {
+    const card = approvalFor({
+      action_requests: [{ name: "take_action", args: { tool_name: "composio_multi_execute_tool", summary: "Create three labels", arguments: { tools: [{ tool_slug: "GMAIL_CREATE_LABEL", arguments: { label_name: "Priority", background_color: "#fb4c2f", text_color: "#ffffff" } }] } } }],
+    });
+    expect(card.app).toBe("gmail");
+    expect(card.details).toContainEqual(["Label name", "Priority"]);
+    expect(card.details).toContainEqual(["Background color", "#fb4c2f (red)"]);
+    expect(card.details).toContainEqual(["Text color", "#ffffff (white)"]);
   });
 
   it("unwraps calls the way the gateway's route() does, and leaves what it couldn't run unnamed", () => {
