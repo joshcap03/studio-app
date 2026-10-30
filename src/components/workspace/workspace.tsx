@@ -12,7 +12,7 @@ import { DictationContext } from "@/components/chat/mic";
 import { Thread } from "@/components/chat/thread";
 import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { ProjectView } from "@/components/project/project-view";
-import { Sidebar } from "@/components/sidebar/sidebar";
+import { Sidebar, type ShellMode } from "@/components/sidebar/sidebar";
 import { LibraryView } from "@/components/library/library-view";
 import { TrackerPage } from "@/components/library/tracker-page";
 import { TaskDetail } from "@/components/tasks/task-detail";
@@ -248,6 +248,8 @@ interface Props {
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
+/** Home or Studio, the shell's two modes with several agents (src/components/sidebar/sidebar.tsx). */
+const MODE_KEY = "lj.mode";
 /** Conversations whose moves the sidebar asks about: the most recent ones (the server caps it too). */
 const MAX_MOVE_IDS = 100;
 /** How often to ask again while a run is going out of view. */
@@ -345,10 +347,34 @@ function WorkspaceShell({
   const [taskTitle, setTaskTitle] = useState<string | null>(null);
   // The member's agents, and which are on Home ("Put it on Home" on a draft's screen updates it here).
   const [workspaces, setWorkspaces] = useState(initialWorkspaces);
-  /** Several agents, with the Home preview on: Home takes "/", and every chat names its agent. */
+  /** Several agents, with the Home preview on: the Home / Studio switch shows, and every chat names its agent. */
   const several = homeEnabled && workspaces.length > 1;
-  /** Home across agents: "/" with several agents. With one, "/" is that agent's own new-chat screen. */
-  const atHome = several && /^\/?$/.test(pathname);
+  // Home or Studio, remembered on this device. Home is one view across agents: "/" routes an ask,
+  // and the sidebar lists every agent's chats. Studio is agent-first: the agent picked in the menu,
+  // its own chats, projects, and setup. Read after hydration, so the server's Home never mismatches.
+  const [mode, setModeState] = useState<ShellMode>("home");
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(MODE_KEY);
+      if (saved === "studio" || saved === "home") setModeState(saved);
+    } catch {
+      // Without storage, Home.
+    }
+  }, []);
+  const setMode = useCallback((next: ShellMode) => {
+    setModeState(next);
+    try {
+      window.localStorage.setItem(MODE_KEY, next);
+    } catch {
+      // Remembered for this page only.
+    }
+  }, []);
+  /** One view across agents: several agents, the preview on, and Home mode. */
+  const unified = several && mode === "home";
+  /** Home across agents: "/" in the one view. Otherwise "/" is the agent's own new-chat screen. */
+  const atHome = unified && /^\/?$/.test(pathname);
+  /** What the one view lists across agents, kept fresh while it's on screen. */
+  const [homeData, setHomeData] = useState<HomeData | null>(initialHome);
   /** The agent's own new-chat screen: "/new", or "/" with one agent. */
   const atNew = !atHome && /^\/(new\/?)?$/.test(pathname);
 
@@ -549,9 +575,29 @@ function WorkspaceShell({
     [patchMessages],
   );
 
-  const upsertConversation = useCallback((summary: ConversationSummary) => {
-    setConversations((list) => [summary, ...list.filter((c) => c.id !== summary.id)].sort((a, b) => b.updatedAt - a.updatedAt));
-  }, []);
+  /**
+   * A chat this tab started or changed shows in the one view's list at once, under this agent.
+   * `keepTitle`: a provisional entry, which mustn't replace the title of one already listed.
+   */
+  const upsertHome = useCallback(
+    (summary: ConversationSummary, keepTitle = false) => {
+      setHomeData((data) => {
+        if (!data) return data;
+        const existing = data.conversations.find((c) => c.id === summary.id);
+        const next: HomeConversation = { ...summary, title: keepTitle && existing ? existing.title : summary.title, workspaceId: existing?.workspaceId ?? workspace.id };
+        return { ...data, conversations: [next, ...data.conversations.filter((c) => c.id !== summary.id)].sort((a, b) => b.updatedAt - a.updatedAt) };
+      });
+    },
+    [workspace.id],
+  );
+
+  const upsertConversation = useCallback(
+    (summary: ConversationSummary) => {
+      setConversations((list) => [summary, ...list.filter((c) => c.id !== summary.id)].sort((a, b) => b.updatedAt - a.updatedAt));
+      upsertHome(summary);
+    },
+    [upsertHome],
+  );
 
   const setRunState = useCallback((id: string, on: boolean) => {
     setRunning((current) => {
@@ -940,6 +986,7 @@ function WorkspaceShell({
             };
         return [summary, ...list.filter((c) => c.id !== conversationId)];
       });
+      upsertHome({ id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), projectId, createdAt: now, updatedAt: now }, true);
       if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
       setNotice(null);
@@ -962,21 +1009,20 @@ function WorkspaceShell({
         { user: user.id, assistant: assistant.id },
       );
     },
-    [navigate, runTurn],
+    [navigate, runTurn, upsertHome],
   );
 
   // ---------------------------------------------------------------------------------------
-  // Home: one place to ask across the member's agents (src/lib/route.ts decides which takes it).
+  // Home: one place to ask across the member's agents (src/lib/route.ts decides which takes it),
+  // and in Home mode the one list of every agent's chats, on every page.
 
-  /** What Home shows across agents, kept fresh while it's on screen. */
-  const [homeData, setHomeData] = useState<HomeData | null>(initialHome);
   const refreshHome = useCallback(() => {
     api.home().then(setHomeData, () => undefined);
   }, []);
-  // What the server rendered is fresh; later arrivals on Home ask again.
+  // What the server rendered is fresh; coming back to the tab asks again.
   const homeFresh = useRef(initialHome !== null);
   useEffect(() => {
-    if (!atHome) return;
+    if (!unified) return;
     if (homeFresh.current) homeFresh.current = false;
     else refreshHome();
     const onVisibility = () => {
@@ -984,8 +1030,8 @@ function WorkspaceShell({
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [atHome, refreshHome]);
-  const homeWorking = atHome && Object.values(homeData?.moves ?? {}).includes("working");
+  }, [unified, refreshHome]);
+  const homeWorking = unified && Object.values(homeData?.moves ?? {}).includes("working");
   useEffect(() => {
     if (!homeWorking) return;
     const timer = setInterval(() => {
@@ -993,6 +1039,13 @@ function WorkspaceShell({
     }, MOVES_POLL_MS);
     return () => clearInterval(timer);
   }, [homeWorking, refreshHome]);
+  /** The one list's marks: what the server said, with this tab's own runs on top. */
+  const homeView = useMemo(() => {
+    if (!homeData) return null;
+    const moves: Record<string, MarkedMove> = { ...homeData.moves };
+    for (const id of running) moves[id] = "working";
+    return { ...homeData, moves };
+  }, [homeData, running]);
 
   const [routing, setRouting] = useState(false);
   /** Home wasn't sure who should take the ask: the text stays, and the likeliest agent is held up to confirm. */
@@ -1406,11 +1459,11 @@ function WorkspaceShell({
   // ---------------------------------------------------------------------------------------
   // Conversation management
 
-  // A new chat with this agent: its own screen (/new) where Home has taken "/".
+  // A new chat: in Home mode, Home (the ask goes to whichever agent fits); else this agent's own screen.
   const newChat = useCallback(() => {
-    navigate(several ? "/new" : "/");
+    navigate("/");
     requestAnimationFrame(() => composer.current?.focus());
-  }, [navigate, several]);
+  }, [navigate]);
 
   // The agent's setup interview: picks up where it left off, or starts it in a new chat with
   // the setup skill attached (the agent opens with its first question). Returns its
@@ -1739,8 +1792,8 @@ function WorkspaceShell({
       controllers.current.get(id)?.abort();
       const snapshot = conversations;
       setConversations((list) => list.filter((c) => c.id !== id));
-      // Back to this agent's own new-chat screen (with Home on, "/" would be Home).
-      if (id === activeId) navigate(several ? "/new" : "/");
+      setHomeData((data) => (data ? { ...data, conversations: data.conversations.filter((c) => c.id !== id) } : data));
+      if (id === activeId) navigate("/");
       api
         .deleteConversation(id)
         .then(() =>
@@ -1751,7 +1804,7 @@ function WorkspaceShell({
         )
         .catch(() => setConversations(snapshot));
     },
-    [activeId, conversations, navigate, several],
+    [activeId, conversations, navigate],
   );
 
   const createProject = useCallback(
@@ -1804,7 +1857,8 @@ function WorkspaceShell({
       for (const conversationId of doomed) controllers.current.get(conversationId)?.abort();
       setProjects((list) => list.filter((p) => p.id !== id));
       setConversations((list) => list.filter((c) => !doomed.has(c.id)));
-      if (activeProjectId === id || (activeId && doomed.has(activeId))) navigate(several ? "/new" : "/");
+      setHomeData((data) => (data ? { ...data, conversations: data.conversations.filter((c) => !doomed.has(c.id)) } : data));
+      if (activeProjectId === id || (activeId && doomed.has(activeId))) navigate("/");
       api
         .deleteProject(id)
         .then(() => {
@@ -1819,7 +1873,7 @@ function WorkspaceShell({
           setConversations(snapshot.conversations);
         });
     },
-    [activeId, activeProjectId, conversations, navigate, projects, several],
+    [activeId, activeProjectId, conversations, navigate, projects],
   );
 
   const moveConversation = useCallback(
@@ -2147,8 +2201,10 @@ function WorkspaceShell({
             email={email}
             mod={mod}
             atHome={atHome}
-            home={homeData}
+            home={homeView}
             homeEnabled={several}
+            mode={mode}
+            onMode={setMode}
             onHome={() => navigate("/")}
             onSelect={(id) => navigate(`/c/${id}`)}
             onNew={newChat}
@@ -2311,7 +2367,7 @@ function WorkspaceShell({
             <HomeView
               key="home"
               ref={composer}
-              data={homeData}
+              data={homeView}
               workspaces={workspaces}
               companions={companions}
               current={workspace.id}
@@ -2325,6 +2381,7 @@ function WorkspaceShell({
               voice={voice}
               footnote={footnote}
               notice={homeNotice}
+              showRecent={sidebarHidden}
             />
           ) : !activeId ? (
             <EmptyState

@@ -76,8 +76,9 @@ export default async function WorkspacePage({
       }
     }
   }
-  // Home, with several agents: the ask goes to whichever fits. With one, "/" is its own new-chat screen.
-  const home = homeEnabled && slug.length === 0 && tenant.workspaces.length > 1;
+  // Home, with several agents: "/" is where an ask goes to whichever agent fits, and in Home mode the
+  // sidebar lists chats across agents on every page. With one agent, "/" is its own new-chat screen.
+  const home = homeEnabled && tenant.workspaces.length > 1;
 
   const store = storeFor(tenant);
   // Who each agent is to this member (a preview); without it, everything looks as before.

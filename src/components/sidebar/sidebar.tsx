@@ -24,6 +24,7 @@ import {
   SquarePen,
   Trash2,
   Sparkles,
+  Wrench,
   X,
 } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -45,6 +46,13 @@ import {
   type WorkspaceSummary,
 } from "@/lib/types";
 
+/**
+ * The shell's two modes with several agents. Home: one view, where an ask goes to whichever agent
+ * fits and the list holds every agent's chats. Studio: agent-first, the agent picked in the menu with
+ * its own chats, projects, and setup, where an agent is shaped before it's put on Home.
+ */
+export type ShellMode = "home" | "studio";
+
 interface Props {
   conversations: ConversationSummary[];
   activeId: string | null;
@@ -63,6 +71,9 @@ interface Props {
   home: HomeData | null;
   /** Home across agents is on for this member (a preview) and they have several agents. */
   homeEnabled: boolean;
+  /** Home (one view across agents) or Studio (agent-first), with the switch at the top. */
+  mode: ShellMode;
+  onMode: (mode: ShellMode) => void;
   onHome: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -98,6 +109,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
     atHome,
     home,
     homeEnabled,
+    mode,
+    onMode,
     onHome,
     onSelect,
     onNew,
@@ -160,6 +173,10 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   const groups = useMemo(() => groupByRecency(visible), [visible]);
   // Recency groups depend on the viewer's time zone, so the list renders after hydration.
   const hydrated = useSyncExternalStore(noop, () => true, () => false);
+  /** One view across agents: Home mode, with the preview and several agents. */
+  const unified = homeEnabled && mode === "home";
+  const modeButton = (on: boolean) =>
+    `inline-flex h-7 items-center justify-center gap-1.5 rounded-lg text-[13px] font-medium transition-[background-color,color] ${on ? "bg-surface text-fg shadow-[0_1px_2px_rgb(0_0_0_/_0.06)]" : "text-fg-2 hover:text-fg"}`;
 
   return (
     <div className="flex h-full w-[264px] flex-col">
@@ -168,16 +185,32 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           workspace={workspace}
           workspaces={workspaces}
           companions={companions}
-          working={Object.values(atHome && home ? home.moves : moves).includes("working")}
+          working={Object.values(unified && home ? home.moves : moves).includes("working")}
           email={email}
           atHome={atHome}
           homeEnabled={homeEnabled}
+          unified={unified}
+          onMode={onMode}
           onHome={onHome}
         />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
           <PanelLeftClose size={17} strokeWidth={1.75} />
         </IconButton>
       </div>
+
+      {/* Home or Studio: one view across agents, or one agent at a time to shape it. */}
+      {homeEnabled ? (
+        <div role="group" aria-label="Home or Studio" className="mx-2 mb-2 grid grid-cols-2 gap-0.5 rounded-[10px] bg-press p-0.5">
+          <button type="button" aria-pressed={mode === "home"} onClick={() => onMode("home")} className={modeButton(mode === "home")}>
+            <Home size={14} strokeWidth={1.75} />
+            Home
+          </button>
+          <button type="button" aria-pressed={mode === "studio"} onClick={() => onMode("studio")} className={modeButton(mode === "studio")}>
+            <Wrench size={14} strokeWidth={1.75} />
+            Studio
+          </button>
+        </div>
+      ) : null}
 
       <div className="space-y-0.5 px-2">
         <button
@@ -186,8 +219,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           className="group/new flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press"
         >
           <SquarePen size={16} strokeWidth={1.75} className="text-fg-2" />
-          {/* On Home, a new chat is still with one agent: the tab's last. Say which. */}
-          <span className="min-w-0 truncate">{atHome ? `New chat with ${agentLabel(workspace, companions)}` : "New chat"}</span>
+          {/* In Studio a new chat is with the agent picked; in Home it's Home's ask, routed. */}
+          <span className="min-w-0 truncate">{homeEnabled && !unified ? `New chat with ${agentLabel(workspace, companions)}` : "New chat"}</span>
           <kbd className="ml-auto font-sans text-[11.5px] font-normal text-fg-4 opacity-0 transition-opacity group-hover/new:opacity-100">
             {mod}⇧O
           </kbd>
@@ -249,8 +282,35 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
       </div>
 
       <nav aria-label="Conversations" className="scroll-quiet mt-4 min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-        {atHome && home ? (
-          hydrated ? <HomeList home={home} companions={companions} current={workspace.id} query={query} onSelect={onSelect} /> : null
+        {unified && home ? (
+          hydrated ? (
+            <>
+              {/* Projects are an agent's own: this agent's, where it has any, under its name. */}
+              {projects.length > 0 && !query.trim() ? (
+                <section className="mb-4" aria-labelledby="sidebar-projects">
+                  <h2 id="sidebar-projects" className="truncate px-2.5 pb-1 text-[11.5px] font-medium text-fg-3">
+                    Projects · {agentLabel(workspace, companions)}
+                  </h2>
+                  <ul>
+                    {projects.map((p) => (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          onClick={() => onSelectProject(p.id)}
+                          aria-current={p.id === activeProjectId ? "page" : undefined}
+                          className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-[13.5px] text-fg transition-colors hover:bg-hover aria-[current=page]:bg-press"
+                        >
+                          <FolderOpen size={15} strokeWidth={1.75} className="shrink-0 text-fg-3" />
+                          <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+              <HomeList home={home} companions={companions} current={workspace.id} activeId={activeId} query={query} onSelect={onSelect} />
+            </>
+          ) : null
         ) : (
           <>
         {query.trim() ? null : (
@@ -503,12 +563,14 @@ function HomeList({
   home,
   companions,
   current,
+  activeId,
   query,
   onSelect,
 }: {
   home: HomeData;
   companions: Record<string, CompanionInfo> | null;
   current: string;
+  activeId: string | null;
   /** The sidebar's search: Home's list is searched by title (contents are an agent's own). */
   query: string;
   onSelect: (id: string) => void;
@@ -530,12 +592,13 @@ function HomeList({
             <li key={c.id}>
               <a
                 href={`/c/${c.id}`}
+                aria-current={c.id === activeId ? "page" : undefined}
                 onClick={(e) => {
                   if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0 || agent !== current) return;
                   e.preventDefault();
                   onSelect(c.id);
                 }}
-                className="flex h-9 items-center gap-2 rounded-lg px-2.5 text-[13.5px] text-fg transition-colors hover:bg-hover"
+                className="flex h-9 items-center gap-2 rounded-lg px-2.5 text-[13.5px] text-fg transition-colors hover:bg-hover aria-[current=page]:bg-press"
               >
                 {companion ? <Companion stage={companion.stage} look={companion.look} size={14} mood={move === "working" ? "working" : "idle"} /> : null}
                 <span className="min-w-0 flex-1 truncate">{c.title}</span>
@@ -835,7 +898,7 @@ function openPage(path: string, onCall: boolean) {
 }
 
 // One login, several agents. Each agent is stored as a workspace. With several, Home comes first:
-// one place to ask, routed to whichever agent fits.
+// one place to ask, routed to whichever agent fits; picking an agent is Studio, that agent alone.
 function AgentMenu({
   workspace,
   workspaces,
@@ -844,6 +907,8 @@ function AgentMenu({
   email,
   atHome,
   homeEnabled,
+  unified,
+  onMode,
   onHome,
 }: {
   workspace: WorkspaceSummary;
@@ -855,29 +920,37 @@ function AgentMenu({
   atHome: boolean;
   /** Home across agents is on for this member (a preview) and they have several agents. */
   homeEnabled: boolean;
+  /** Home mode: the menu reads "Home", and the list is every agent's chats. */
+  unified: boolean;
+  onMode: (mode: ShellMode) => void;
   onHome: () => void;
 }) {
   const companion = companions?.[workspace.id];
   const onCall = useCallLive();
   const several = homeEnabled;
-  // Picking an agent lands on its own new-chat screen (with Home, /new; without it, "/" is that screen).
+  // Picking an agent is Studio: that agent's own new-chat screen, its chats and setup.
   async function switchTo(id: string) {
-    if (id === workspace.id && !atHome) return;
+    if (several) onMode("studio");
+    if (id === workspace.id) {
+      if (!unified) return;
+      // Already this tab's agent: Studio shows it without a load.
+      return;
+    }
     try {
       await api.setActiveAgent(id);
     } catch {
       return;
     }
-    window.location.assign(several ? "/new" : "/");
+    window.location.assign("/");
   }
 
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger
-        title={atHome ? "Home: all your agents" : companion ? companionHint(companion.stage, companion.name, companion.toMeet) : undefined}
+        title={unified ? "Home: all your agents" : companion ? companionHint(companion.stage, companion.name, companion.toMeet) : undefined}
         className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg pr-2 pl-2 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover"
       >
-        {atHome || !companion ? (
+        {unified || !companion ? (
           <span className={`flex shrink-0 ${working ? "breathe-soft" : ""}`}>
             <BrandMark size={22} />
           </span>
@@ -885,7 +958,7 @@ function AgentMenu({
           <Companion stage={companion.stage} look={companion.look} mood={working ? "working" : "idle"} size={22} seenKey={workspace.id} present="home" />
         )}
         {working ? <span className="sr-only">Working</span> : null}
-        {atHome ? (
+        {unified ? (
           <span className="flex min-w-0 items-baseline gap-1.5">
             <span className="shrink-0 text-[14px] font-semibold tracking-[-0.01em]">Home</span>
             <span className="min-w-0 truncate text-[12.5px] text-fg-3">All your agents</span>
@@ -903,21 +976,27 @@ function AgentMenu({
         >
           {email ? <div className="truncate px-2.5 pt-1.5 pb-1 text-[12px] text-fg-3">{email}</div> : null}
           {several ? (
-            <DropdownMenu.Item onSelect={onHome} className={menuItem}>
+            <DropdownMenu.Item
+              onSelect={() => {
+                onMode("home");
+                onHome();
+              }}
+              className={menuItem}
+            >
               <Home size={14} className="text-fg-3" />
               <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
                 <span>Home</span>
                 <span className="min-w-0 truncate text-[12.5px] text-fg-3">All your agents</span>
               </span>
-              {atHome ? <Check size={14} className="text-fg-2" /> : null}
+              {unified && atHome ? <Check size={14} className="text-fg-2" /> : null}
             </DropdownMenu.Item>
           ) : null}
-          <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Agents</DropdownMenu.Label>
+          <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">{several ? "Agents · Studio" : "Agents"}</DropdownMenu.Label>
           {workspaces.map((w) => (
             <DropdownMenu.Item key={w.id} onSelect={() => void switchTo(w.id)} className={menuItem}>
               {companions?.[w.id] ? <Companion stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}
               <AgentLabel workspace={w} companion={companions?.[w.id]} draft={several && !w.onHome} />
-              {w.id === workspace.id && !atHome ? <Check size={14} className="text-fg-2" /> : null}
+              {w.id === workspace.id && !unified ? <Check size={14} className="text-fg-2" /> : null}
             </DropdownMenu.Item>
           ))}
           <DropdownMenu.Item onSelect={() => window.location.assign("/onboarding?new=1")} className={`${menuItem} text-fg-2`}>
