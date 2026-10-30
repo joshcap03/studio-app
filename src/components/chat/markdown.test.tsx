@@ -24,7 +24,14 @@ describe("SourceList", () => {
     const { SourceList } = await import("./citation");
     const two = { ...citation, n: 2, title: "Unused" };
     const html = renderToStaticMarkup(<SourceList citations={[citation, two]} content="Rated 4.5 [1]." />);
-    expect(html).toContain("Reviews");
+    expect(html).toContain("1 source");
     expect(html).not.toContain("Unused");
+  });
+
+  it("starts folded", async () => {
+    const { SourceList } = await import("./citation");
+    const html = renderToStaticMarkup(<SourceList citations={[citation]} content="Rated 4.5 [1]." />);
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("Reviews");
   });
 });
