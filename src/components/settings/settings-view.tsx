@@ -18,15 +18,17 @@ interface Props {
   /** The member's agents, and the one this page was opened from. */
   agents: WorkspaceSummary[];
   current: string;
+  /** Home across agents (a preview) is on for this member: the list says which agents are on it. */
+  homeEnabled: boolean;
 }
 
 // What belongs to the person, shared by all their agents. Each agent's own setup lives at /agent.
-export function SettingsView({ email, account, agents, current }: Props) {
+export function SettingsView({ email, account, agents, current, homeEnabled }: Props) {
   return (
     <div className="mt-10 space-y-14">
       <YouSection initial={account} />
       <Section id="agents" title="Agents" description="Each keeps its own chats and memory.">
-        <AgentsList initial={agents} current={current} />
+        <AgentsList initial={agents} current={current} homeEnabled={homeEnabled} />
       </Section>
       <Section title="Connected apps" description="Shared by all your agents.">
         <ConnectionsList />

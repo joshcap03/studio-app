@@ -8,12 +8,14 @@ import { storeFor } from "@/lib/chat/store-for";
 import { MAX_MOVES } from "@/lib/db/store";
 import { getCompanions, withToMeet } from "@/lib/companion";
 import { previewEnabled } from "@/lib/flags";
+import { loadHome } from "@/lib/home";
 import { journeyOrNone } from "@/lib/journey";
+import { ownerOf, type Owned } from "@/lib/owner";
 import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
 import { summarizeSetup } from "@/lib/setup-state";
-import { requirePageTenant } from "@/lib/tenant";
+import { requirePageTenant, resolveTenant } from "@/lib/tenant";
 import { firstName } from "@/lib/setup-words";
 import { dictationStatus, voiceStatus } from "@/lib/voice";
 import { messagesWithCalls } from "@/lib/voice/calls";
@@ -21,8 +23,10 @@ import { resolvePersona } from "@/lib/voice/persona";
 import { MESSAGE_PAGE } from "@/lib/types";
 import { getSettings } from "@/lib/workspace";
 
-// One page serves "/" (new conversation), "/c/<id>", "/p/<project id>", "/tasks[/<task id>]", and "/library[/<tracker>]". After the first load the browser
-// switches conversations in place, without a server round trip per navigation.
+// One page serves "/" (Home across the member's agents, or with one agent its new-chat screen),
+// "/new" (the agent's own new-chat screen), "/c/<id>", "/p/<project id>", "/tasks[/<task id>]", and
+// "/library[/<tracker>]". After the first load the browser switches conversations in place, without
+// a server round trip per navigation.
 
 export const dynamic = "force-dynamic";
 
@@ -33,23 +37,47 @@ export default async function WorkspacePage({
   params: Promise<{ slug?: string[] }>;
   searchParams: Promise<{ skill?: string | string[] }>;
 }) {
-  const tenant = await requirePageTenant();
+  let tenant = await requirePageTenant();
 
   const { slug = [] } = await params;
   let conversationId: string | null = null;
   let projectId: string | null = null;
+  let taskId: string | null = null;
   if (slug[0] === "library") {
     // A tracker's page loads in the browser, like a task.
     if (slug.length > 2 || (slug.length === 2 && !/^[a-z0-9][a-z0-9_-]{0,39}$/.test(slug[1]))) notFound();
   } else if (slug[0] === "tasks") {
     // The task itself loads in the browser, like a project opened from the sidebar.
     if (slug.length > 2 || (slug.length === 2 && !z.uuid().safeParse(slug[1]).success)) notFound();
+    if (slug.length === 2) taskId = slug[1];
+  } else if (slug[0] === "new") {
+    if (slug.length !== 1) notFound();
   } else if (slug.length > 0) {
     const id = z.uuid().safeParse(slug[1]);
     if (slug.length !== 2 || (slug[0] !== "c" && slug[0] !== "p") || !id.success) notFound();
     if (slug[0] === "c") conversationId = id.data;
     else projectId = id.data;
   }
+
+  // A chat, project, or task opened by its link (a push, a row on Home) may belong to another of
+  // the member's agents than the tab's last. It's found among their own rows only, and the page
+  // renders for that agent, which then becomes the one new tabs open on (TabAgent remembers it).
+  // Home across agents is a preview: without it, everything here looks as before.
+  const homeEnabled = previewEnabled(tenant, "home");
+  let remember = false;
+  const wanted: [Owned, string] | null = conversationId ? ["conversations", conversationId] : projectId ? ["projects", projectId] : taskId ? ["agent_tasks", taskId] : null;
+  if (wanted && homeEnabled && tenant.workspaces.length > 1) {
+    const here = wanted[0] === "conversations" ? await storeFor(tenant).getConversation(wanted[1]) : wanted[0] === "projects" ? await getProject(tenant, wanted[1]) : null;
+    if (!here) {
+      const owner = await ownerOf(tenant, wanted[0], wanted[1]);
+      if (owner && owner !== tenant.workspace.id && tenant.workspaces.some((w) => w.id === owner)) {
+        tenant = (await resolveTenant(tenant, owner)) ?? tenant;
+        remember = tenant.workspace.id === owner;
+      }
+    }
+  }
+  // Home, with several agents: the ask goes to whichever fits. With one, "/" is its own new-chat screen.
+  const home = homeEnabled && slug.length === 0 && tenant.workspaces.length > 1;
 
   const store = storeFor(tenant);
   // Who each agent is to this member (a preview); without it, everything looks as before.
@@ -59,13 +87,19 @@ export default async function WorkspacePage({
         return null;
       })
     : null;
-  const [conversations, conversation, workspaceSkills, projects, project, settings] = await Promise.all([
+  const [conversations, conversation, workspaceSkills, projects, project, settings, homeData] = await Promise.all([
     store.listConversations(),
     conversationId ? store.getConversation(conversationId) : null,
     listSkills(tenant),
     listProjects(tenant),
     projectId ? getProject(tenant, projectId) : null,
     getSettings(tenant),
+    home
+      ? loadHome(tenant).catch((error) => {
+          console.error("[home] unavailable", error);
+          return null;
+        })
+      : null,
   ]);
   const all = await companions;
   // What's left before the agent they're in introduces itself (best effort: the mark shows anyway).
@@ -112,10 +146,12 @@ export default async function WorkspacePage({
 
   return (
     <>
-      <TabAgent id={tenant.workspace.id} />
+      <TabAgent id={tenant.workspace.id} remember={remember} />
       <Workspace
         initialConversations={conversations}
         initialMoves={moves}
+        home={homeData}
+        homeEnabled={homeEnabled}
         initialThread={initialThread}
         initialProjects={projects}
         initialProject={initialProject}

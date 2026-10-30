@@ -56,7 +56,7 @@ describe("accounts", () => {
     const theirs = await teammate.client.rpc("resolve_tenant");
     const other = theirs.data as typeof resolved;
     expect(other.account.composio_user_id).not.toBe(aliceComposio);
-    expect(other.memberships).toEqual([{ workspace_id: resolved.memberships[0].workspace_id, role: "member", name: "Accounts Atelier" }]);
+    expect(other.memberships).toEqual([{ workspace_id: resolved.memberships[0].workspace_id, role: "member", name: "Accounts Atelier", on_home: true }]);
     // Someone with no agent yet gets an account and no memberships.
     const fresh = await createAccount("acct-none");
     const none = (await fresh.client.rpc("resolve_tenant")).data as typeof resolved;

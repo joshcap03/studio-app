@@ -9,6 +9,7 @@ import {
   FolderInput,
   FolderMinus,
   FolderOpen,
+  Home,
   LibraryBig,
   ListChecks,
   LogOut,
@@ -26,17 +27,20 @@ import {
   X,
 } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { agentLabel } from "@/components/home/home";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Companion, companionHint } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
+import { MoveMark } from "@/components/ui/move-mark";
 import { useCallLive } from "@/components/voice/player";
-import { MOVE_LABEL, type MarkedMove } from "@/lib/chat/move";
+import type { MarkedMove } from "@/lib/chat/move";
 import { api } from "@/lib/client/api";
 import {
   MAX_PROJECT_NAME_LENGTH,
   type AgentStatus,
   type Companion as CompanionInfo,
   type ConversationSummary,
+  type HomeData,
   type ProjectSummary,
   type WorkspaceSummary,
 } from "@/lib/types";
@@ -53,6 +57,13 @@ interface Props {
   companions: Record<string, CompanionInfo> | null;
   email: string | null;
   mod: string;
+  /** Home across the member's agents is on screen: the list shows chats from every agent on Home. */
+  atHome: boolean;
+  /** What Home shows, when it's on screen and loaded. */
+  home: HomeData | null;
+  /** Home across agents is on for this member (a preview) and they have several agents. */
+  homeEnabled: boolean;
+  onHome: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
   onCollapse: () => void;
@@ -84,6 +95,10 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
     companions,
     email,
     mod,
+    atHome,
+    home,
+    homeEnabled,
+    onHome,
     onSelect,
     onNew,
     onCollapse,
@@ -149,7 +164,16 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   return (
     <div className="flex h-full w-[264px] flex-col">
       <div className="flex h-14 shrink-0 items-center justify-between gap-1 pr-2 pl-2">
-        <AgentMenu workspace={workspace} workspaces={workspaces} companions={companions} working={Object.values(moves).includes("working")} email={email} />
+        <AgentMenu
+          workspace={workspace}
+          workspaces={workspaces}
+          companions={companions}
+          working={Object.values(atHome && home ? home.moves : moves).includes("working")}
+          email={email}
+          atHome={atHome}
+          homeEnabled={homeEnabled}
+          onHome={onHome}
+        />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
           <PanelLeftClose size={17} strokeWidth={1.75} />
         </IconButton>
@@ -162,7 +186,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           className="group/new flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press"
         >
           <SquarePen size={16} strokeWidth={1.75} className="text-fg-2" />
-          New chat
+          {/* On Home, a new chat is still with one agent: the tab's last. Say which. */}
+          <span className="min-w-0 truncate">{atHome ? `New chat with ${agentLabel(workspace, companions)}` : "New chat"}</span>
           <kbd className="ml-auto font-sans text-[11.5px] font-normal text-fg-4 opacity-0 transition-opacity group-hover/new:opacity-100">
             {mod}⇧O
           </kbd>
@@ -224,6 +249,10 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
       </div>
 
       <nav aria-label="Conversations" className="scroll-quiet mt-4 min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+        {atHome && home ? (
+          hydrated ? <HomeList home={home} companions={companions} current={workspace.id} query={query} onSelect={onSelect} /> : null
+        ) : (
+          <>
         {query.trim() ? null : (
           <section className="mb-4" aria-labelledby="sidebar-projects">
             <div className="flex items-center pr-1 pb-1 pl-2.5">
@@ -311,6 +340,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
               </ul>
             </section>
           ))
+        )}
+          </>
         )}
       </nav>
 
@@ -464,18 +495,58 @@ function projectMove(marks: (MarkedMove | undefined)[]): MarkedMove | undefined 
 }
 
 /**
- * Whose move it is in a chat (or a project's chats) at a glance: the agent working on it, the
- * member's call (held still), or stuck. Nothing for done: there's no "unread" to show.
+ * On Home: the member's latest chats across every agent on Home, each wearing its agent's mark.
+ * Rows only open: a chat is renamed or moved from inside its own agent. This agent's open in
+ * place; another agent's load under that agent.
  */
-function MoveMark({ move }: { move?: MarkedMove }) {
-  if (!move) return null;
-  if (move === "working") return <span className="spinner shrink-0" aria-label="Working" />;
-  return (
-    <span className="flex size-4 shrink-0 items-center justify-center">
-      <span className={`size-1.5 rounded-full ${move === "stuck" ? "bg-danger" : "bg-accent"}`} aria-hidden="true" />
-      <span className="sr-only">{MOVE_LABEL[move]}</span>
-    </span>
-  );
+function HomeList({
+  home,
+  companions,
+  current,
+  query,
+  onSelect,
+}: {
+  home: HomeData;
+  companions: Record<string, CompanionInfo> | null;
+  current: string;
+  /** The sidebar's search: Home's list is searched by title (contents are an agent's own). */
+  query: string;
+  onSelect: (id: string) => void;
+}) {
+  const needle = query.trim().toLowerCase();
+  const shown = useMemo(() => (needle ? home.conversations.filter((c) => c.title.toLowerCase().includes(needle)) : home.conversations), [home.conversations, needle]);
+  const groups = useMemo(() => groupByRecency(shown), [shown]);
+  const agentOf = useMemo(() => new Map(home.conversations.map((c) => [c.id, c.workspaceId])), [home.conversations]);
+  if (groups.length === 0) return <p className="px-2.5 py-2 text-[13px] text-fg-3">{needle ? "No conversations match." : "Chats with all your agents will show here."}</p>;
+  return groups.map((group) => (
+    <section key={group.label} className="mb-4 last:mb-0">
+      <h2 className="px-2.5 pb-1 text-[11.5px] font-medium text-fg-4">{group.label}</h2>
+      <ul>
+        {group.items.map((c) => {
+          const agent = agentOf.get(c.id);
+          const companion = agent ? companions?.[agent] : undefined;
+          const move = home.moves[c.id];
+          return (
+            <li key={c.id}>
+              <a
+                href={`/c/${c.id}`}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0 || agent !== current) return;
+                  e.preventDefault();
+                  onSelect(c.id);
+                }}
+                className="flex h-9 items-center gap-2 rounded-lg px-2.5 text-[13.5px] text-fg transition-colors hover:bg-hover"
+              >
+                {companion ? <Companion stage={companion.stage} look={companion.look} size={14} mood={move === "working" ? "working" : "idle"} /> : null}
+                <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                <MoveMark move={move} />
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  ));
 }
 
 function ProjectItem({
@@ -745,13 +816,14 @@ const NESTED_CHATS = 5;
 const menuItem =
   "flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover";
 
-/** An agent's name: its own once it has arrived, with what it's for beside it. */
-function AgentLabel({ workspace, companion, bold }: { workspace: WorkspaceSummary; companion?: CompanionInfo; bold?: boolean }) {
-  if (!companion?.name) return <span className={`min-w-0 truncate ${bold ? "text-[14px] font-semibold tracking-[-0.01em]" : "flex-1"}`}>{workspace.name}</span>;
+/** An agent's name: its own once it has arrived, with what it's for beside it; "Draft" while it isn't on Home (the Home preview). */
+function AgentLabel({ workspace, companion, bold, draft }: { workspace: WorkspaceSummary; companion?: CompanionInfo; bold?: boolean; draft?: boolean }) {
+  const sub = companion?.name ? workspace.name : draft ? "Draft" : null;
+  if (!sub) return <span className={`min-w-0 truncate ${bold ? "text-[14px] font-semibold tracking-[-0.01em]" : "flex-1"}`}>{workspace.name}</span>;
   return (
     <span className={`flex min-w-0 items-baseline gap-1.5 ${bold ? "" : "flex-1"}`}>
-      <span className={`shrink-0 truncate ${bold ? "text-[14px] font-semibold tracking-[-0.01em]" : ""}`}>{companion.name}</span>
-      <span className="min-w-0 truncate text-[12.5px] text-fg-3">{workspace.name}</span>
+      <span className={`shrink-0 truncate ${bold ? "text-[14px] font-semibold tracking-[-0.01em]" : ""}`}>{companion?.name ?? workspace.name}</span>
+      <span className="min-w-0 truncate text-[12.5px] text-fg-3">{sub}</span>
     </span>
   );
 }
@@ -762,13 +834,17 @@ function openPage(path: string, onCall: boolean) {
   else window.location.assign(path);
 }
 
-// One login, several agents. Each agent is stored as a workspace.
+// One login, several agents. Each agent is stored as a workspace. With several, Home comes first:
+// one place to ask, routed to whichever agent fits.
 function AgentMenu({
   workspace,
   workspaces,
   companions,
   working,
   email,
+  atHome,
+  homeEnabled,
+  onHome,
 }: {
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
@@ -776,34 +852,47 @@ function AgentMenu({
   /** The agent is running in one of its conversations, here or out of view (a task's run). */
   working: boolean;
   email: string | null;
+  atHome: boolean;
+  /** Home across agents is on for this member (a preview) and they have several agents. */
+  homeEnabled: boolean;
+  onHome: () => void;
 }) {
   const companion = companions?.[workspace.id];
   const onCall = useCallLive();
+  const several = homeEnabled;
+  // Picking an agent lands on its own new-chat screen (with Home, /new; without it, "/" is that screen).
   async function switchTo(id: string) {
-    if (id === workspace.id) return;
-    const res = await fetch("/api/workspaces/active", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspaceId: id }),
-    });
-    if (res.ok) window.location.assign("/");
+    if (id === workspace.id && !atHome) return;
+    try {
+      await api.setActiveAgent(id);
+    } catch {
+      return;
+    }
+    window.location.assign(several ? "/new" : "/");
   }
 
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger
-        title={companion ? companionHint(companion.stage, companion.name, companion.toMeet) : undefined}
+        title={atHome ? "Home: all your agents" : companion ? companionHint(companion.stage, companion.name, companion.toMeet) : undefined}
         className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg pr-2 pl-2 text-left transition-colors hover:bg-hover data-[state=open]:bg-hover"
       >
-        {companion ? (
-          <Companion stage={companion.stage} look={companion.look} mood={working ? "working" : "idle"} size={22} seenKey={workspace.id} present="home" />
-        ) : (
+        {atHome || !companion ? (
           <span className={`flex shrink-0 ${working ? "breathe-soft" : ""}`}>
             <BrandMark size={22} />
           </span>
+        ) : (
+          <Companion stage={companion.stage} look={companion.look} mood={working ? "working" : "idle"} size={22} seenKey={workspace.id} present="home" />
         )}
         {working ? <span className="sr-only">Working</span> : null}
-        <AgentLabel workspace={workspace} companion={companion} bold />
+        {atHome ? (
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <span className="shrink-0 text-[14px] font-semibold tracking-[-0.01em]">Home</span>
+            <span className="min-w-0 truncate text-[12.5px] text-fg-3">All your agents</span>
+          </span>
+        ) : (
+          <AgentLabel workspace={workspace} companion={companion} bold draft={several && !workspace.onHome} />
+        )}
         <ChevronsUpDown size={13} className="shrink-0 text-fg-3" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -813,12 +902,22 @@ function AgentMenu({
           className="z-50 w-[248px] rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in"
         >
           {email ? <div className="truncate px-2.5 pt-1.5 pb-1 text-[12px] text-fg-3">{email}</div> : null}
+          {several ? (
+            <DropdownMenu.Item onSelect={onHome} className={menuItem}>
+              <Home size={14} className="text-fg-3" />
+              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                <span>Home</span>
+                <span className="min-w-0 truncate text-[12.5px] text-fg-3">All your agents</span>
+              </span>
+              {atHome ? <Check size={14} className="text-fg-2" /> : null}
+            </DropdownMenu.Item>
+          ) : null}
           <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Agents</DropdownMenu.Label>
           {workspaces.map((w) => (
             <DropdownMenu.Item key={w.id} onSelect={() => void switchTo(w.id)} className={menuItem}>
               {companions?.[w.id] ? <Companion stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}
-              <AgentLabel workspace={w} companion={companions?.[w.id]} />
-              {w.id === workspace.id ? <Check size={14} className="text-fg-2" /> : null}
+              <AgentLabel workspace={w} companion={companions?.[w.id]} draft={several && !w.onHome} />
+              {w.id === workspace.id && !atHome ? <Check size={14} className="text-fg-2" /> : null}
             </DropdownMenu.Item>
           ))}
           <DropdownMenu.Item onSelect={() => window.location.assign("/onboarding?new=1")} className={`${menuItem} text-fg-2`}>

@@ -9,6 +9,8 @@ const patch = z.object({
   name: z.string().trim().min(1, "Name this agent.").max(80).optional(),
   profile: z.string().trim().max(MAX_CONTEXT_LENGTH).optional(),
   agentInstructions: z.string().trim().max(MAX_CONTEXT_LENGTH).optional(),
+  /** Whether the agent takes asks from Home. */
+  onHome: z.boolean().optional(),
 });
 
 export async function GET(request: NextRequest) {

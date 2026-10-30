@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
+import { previewEnabled } from "@/lib/flags";
 import { ACTIVE_WORKSPACE_COOKIE, authorizeSession, jsonError, resolveTenant } from "@/lib/tenant";
 import { applyTemplate } from "@/lib/templates/apply";
 import { templateById } from "@/lib/templates";
 import { timezoneSchema } from "@/lib/tasks/schema";
 import { MAX_AGENTS, MAX_CONTEXT_LENGTH } from "@/lib/types";
+import { updateSettings } from "@/lib/workspace";
 
 const create = z.object({
   name: z.string().trim().min(1, "Name this agent.").max(80),
@@ -39,9 +41,12 @@ export async function POST(request: NextRequest) {
       if (error.hint === "workspace_limit") return jsonError(409, `You can have up to ${MAX_AGENTS} agents. Delete one in Settings to make room.`);
       throw error;
     }
-    if (input.templateId) {
-      const tenant = await resolveTenant(auth.value, data as string);
-      if (tenant) await applyTemplate(tenant, input.templateId, { timezone: input.timezone });
+    const tenant = await resolveTenant(auth.value, data as string);
+    if (tenant) {
+      // With the Home preview, a second agent starts as a draft: Home sends it nothing until its
+      // owner puts it on Home. The first is on Home from the start, so one agent works as it always has.
+      if (previewEnabled(tenant, "home") && tenant.workspaces.length > 1) await updateSettings(tenant, { onHome: false });
+      if (input.templateId) await applyTemplate(tenant, input.templateId, { timezone: input.timezone });
     }
     const response = NextResponse.json({ workspaceId: data as string }, { status: 201 });
     response.cookies.set(ACTIVE_WORKSPACE_COOKIE, data as string, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 365 });

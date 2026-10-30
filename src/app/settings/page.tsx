@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { SettingsView } from "@/components/settings/settings-view";
 import { TabAgent } from "@/components/tab-agent";
+import { previewEnabled } from "@/lib/flags";
 import { requirePageTenant } from "@/lib/tenant";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -28,7 +29,7 @@ export default async function SettingsPage() {
             {tenant.workspace.name}&apos;s own settings
           </a>
         </p>
-        <SettingsView email={tenant.email} account={tenant.account} agents={tenant.workspaces} current={tenant.workspace.id} />
+        <SettingsView email={tenant.email} account={tenant.account} agents={tenant.workspaces} current={tenant.workspace.id} homeEnabled={previewEnabled(tenant, "home")} />
       </div>
     </main>
   );

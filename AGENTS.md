@@ -89,6 +89,24 @@ raw/technical text.
   triggers, its memory namespaces, and their files go after it, best effort.
 - `src/lib/account.ts`: the person's profile (Settings → You, onboarding's first step), sent to
   every agent as "You're assisting".
+- `src/lib/home.ts` + `src/lib/route.ts`: Home, one place to ask across a member's agents (the
+  "home" preview, `previewEnabled`; off, everything looks as before and `/api/route` and `/api/home`
+  are only ever reached by that member's own pages). With
+  several agents "/" is Home (`src/components/home/home.tsx`): the ask goes to whichever agent fits,
+  or to the one they pick; `/new` is an agent's own new-chat screen. `routeAsk` builds a card per
+  agent that is **on Home** (`workspace_settings.on_home`, `WorkspaceSummary.onHome`; a second agent
+  starts as a draft until its owner puts it on Home, from its page, its new-chat screen, or
+  Settings → Agents) and asks Studio's small model (`src/lib/llm.ts`, `LLM_*`, an OpenAI-compatible
+  endpoint; the voice front falls back to it) for a number, never an id; with no model, under the
+  mock, or on any failure, keyword overlap decides and says it isn't sure unless one agent clearly
+  wins, and Home then holds the likeliest agent up for the member to confirm rather than guessing.
+  The answer is always one of the member's own agents on Home. A chat stays with the agent it
+  started in: an ask for another agent waits in `sessionStorage` (`src/lib/client/pending-send.ts`)
+  across one page load of that agent's `/new`, which sends it as if typed there; "Ask another agent
+  instead" starts the same ask as a new chat there. Home lists the member's recent chats across
+  agents (`loadHome`, `GET /api/home`, their own rows only), and every thread's header names its agent.
+  A chat, project, or task opened by its link under another of the member's agents renders for the
+  agent that owns it (`src/lib/owner.ts`, their own rows only) and that agent becomes the tab's.
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
   composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
   sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to, with one
@@ -157,6 +175,7 @@ raw/technical text.
 - `src/lib/attachments.ts`: uploaded files (private Storage bucket, `<workspace>/<member>/` paths).
 - `src/lib/push.ts` + `public/sw.js`: notifications on members' devices (Web Push), sent when a
   run ends while the member isn't watching. Studio installs as a home-screen app (`src/app/manifest.ts`).
+  A push's link (`/c/<id>`) opens under whichever of the member's agents owns the chat (see Home above).
 - `src/lib/voice/`: voice calls (preview; `docs/voice.md`), out of the app unless `VOICE_ENABLED=on`
   (`voiceConfig` in `src/lib/config.ts`; `qa:serve` sets it). `index.ts` starts and ends calls under
   the member's session (`claim_voice` caps daily voice time; `claimVoiceClip` charges speech outside

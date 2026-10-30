@@ -69,7 +69,7 @@ export function Onboarding({ initialStep, account, canCancel, canTalk }: Props) 
       setError(body?.error ?? "Couldn't create the agent. Try again.");
       return;
     }
-    window.location.assign(next === "talk" ? "/?setup=talk" : "/?setup=1");
+    window.location.assign(next === "talk" ? "/new?setup=talk" : "/new?setup=1");
   }
 
   const current = steps.findIndex((s) => s.id === step);

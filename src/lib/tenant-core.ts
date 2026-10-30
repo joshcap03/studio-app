@@ -47,7 +47,7 @@ export async function ensureAccount(session: Session): Promise<AccountRow> {
 /** What resolve_tenant returns (see its migration): the account, and memberships oldest first. */
 interface ResolvedTenant {
   account: Pick<AccountRow, "display_name" | "about" | "composio_user_id">;
-  memberships: { workspace_id: string; role: "owner" | "member"; name: string | null }[];
+  memberships: { workspace_id: string; role: "owner" | "member"; name: string | null; on_home?: boolean | null }[];
 }
 
 /**
@@ -64,6 +64,7 @@ export async function resolveTenant(session: Session, preferred?: string | null)
     id: m.workspace_id,
     name: m.name ?? "Workspace",
     role: m.role,
+    onHome: m.on_home ?? true,
   }));
   return {
     ...session,

@@ -86,7 +86,7 @@ function best(name: string, candidates: Candidate[]): PlaceMatch {
 }
 
 const PAGES: Partial<Record<OpenPlace, PlaceMatch>> = {
-  new_chat: { kind: "go", path: "/", title: "a new chat" },
+  new_chat: { kind: "go", path: "/new", title: "a new chat" },
   tasks: { kind: "go", path: "/tasks", title: "your task list" },
   library: { kind: "go", path: "/library", title: "your Library" },
   settings: { kind: "go", path: "/settings", title: "Settings", page: true },

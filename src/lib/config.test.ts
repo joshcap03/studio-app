@@ -60,3 +60,18 @@ describe("watches", () => {
     expect((await configWith({ ...all, TRIGGER_SECRET_KEY: " " })).watches).toBeUndefined();
   });
 });
+
+describe("LLM_*", () => {
+  const model = { LLM_BASE_URL: "https://model.example.test/v1/", LLM_API_KEY: "k", LLM_MODEL: "small" };
+  it("is Studio's own small model only with all three set, and the voice's fallback", async () => {
+    expect((await configWith({})).llm).toBeUndefined();
+    expect((await configWith({ LLM_BASE_URL: model.LLM_BASE_URL, LLM_MODEL: "small" })).llm).toBeUndefined();
+    const config = await configWith({ ...model, LLM_EXTRA_BODY: '{"reasoning":{"enabled":false}}' });
+    expect(config.llm).toEqual({ baseUrl: "https://model.example.test/v1", apiKey: "k", model: "small", extraBody: { reasoning: { enabled: false } } });
+    // The voice front uses it when it has no model of its own, and its own otherwise.
+    expect(config.voice?.llm).toEqual(config.llm);
+    const own = await configWith({ ...model, VOICE_LLM_BASE_URL: "https://voice.example.test", VOICE_LLM_API_KEY: "v", VOICE_LLM_MODEL: "fast" });
+    expect(own.voice?.llm).toMatchObject({ baseUrl: "https://voice.example.test", model: "fast" });
+    expect(own.llm?.model).toBe("small");
+  });
+});

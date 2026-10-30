@@ -1,6 +1,6 @@
 import type { StandingKind } from "@/lib/approvals/standing";
 import type { MarkedMove } from "@/lib/chat/move";
-import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSummary } from "@/lib/types";
+import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, HomeData, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, RouteResult, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSettings, WorkspaceSummary } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
@@ -172,6 +172,15 @@ export const api = {
   /** Deletes one of the member's agents; `next` is the agent to open now, null when none is left. */
   deleteAgent: (id: string) => request<{ next: string | null }>(`/api/workspaces/${id}`, { method: "DELETE" }),
   listAgents: () => request<{ workspaces: WorkspaceSummary[]; active: string | null }>("/api/workspaces"),
+  /** Makes one of the member's agents the one new tabs open on (the active-agent cookie). */
+  setActiveAgent: (workspaceId: string) =>
+    request<{ workspace: WorkspaceSummary }>("/api/workspaces/active", { method: "POST", body: JSON.stringify({ workspaceId }) }),
+  /** Which agent should take an ask typed on Home. */
+  route: (text: string) => request<RouteResult>("/api/route", { method: "POST", body: JSON.stringify({ text }) }),
+  /** Home across the member's agents: recent chats from each, with whose move it is. */
+  home: (signal?: AbortSignal) => request<HomeData>("/api/home", { signal }),
+  /** Whether this agent takes asks from Home (the owner's call). */
+  setOnHome: (onHome: boolean) => request<{ settings: WorkspaceSettings }>("/api/workspace/settings", { method: "PATCH", body: JSON.stringify({ onHome }) }),
   forgetBrowserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser", { method: "DELETE" }),
   answerUi: (
     conversationId: string,

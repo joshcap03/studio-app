@@ -31,16 +31,17 @@ export async function getSettings(tenant: Tenant): Promise<WorkspaceSettings> {
   const row = check(
     await tenant.db
       .from("workspace_settings")
-      .select("business_context, agent_instructions, template_id, setup")
+      .select("business_context, agent_instructions, template_id, setup, on_home")
       .eq("workspace_id", tenant.workspace.id)
       .single(),
-  ) as { business_context: string; agent_instructions: string; template_id: string | null; setup: AgentSetup | null };
+  ) as { business_context: string; agent_instructions: string; template_id: string | null; setup: AgentSetup | null; on_home: boolean | null };
   return {
     name: tenant.workspace.name,
     profile: row.business_context,
     agentInstructions: row.agent_instructions,
     templateId: row.template_id,
     setup: row.setup ?? null,
+    onHome: row.on_home ?? true,
   };
 }
 
@@ -72,10 +73,15 @@ export async function updateSettings(tenant: Tenant, patch: Partial<WorkspaceSet
     check(await tenant.db.from("workspaces").update({ name: patch.name }).eq("id", tenant.workspace.id));
     tenant.workspace = { ...tenant.workspace, name: patch.name };
   }
-  const values: Record<string, string | null> = {};
+  const values: Record<string, string | boolean | null> = {};
   if (patch.profile !== undefined) values.business_context = patch.profile;
   if (patch.templateId !== undefined) values.template_id = patch.templateId;
   if (patch.agentInstructions !== undefined) values.agent_instructions = patch.agentInstructions;
+  if (patch.onHome !== undefined) {
+    values.on_home = patch.onHome;
+    tenant.workspaces = tenant.workspaces.map((w) => (w.id === tenant.workspace.id ? { ...w, onHome: patch.onHome! } : w));
+    tenant.workspace = { ...tenant.workspace, onHome: patch.onHome };
+  }
   if (Object.keys(values).length > 0) {
     check(
       await tenant.db

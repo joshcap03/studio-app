@@ -54,7 +54,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("memory namespaces", () => {
   it("keeps each workspace's shared memory in its own namespace, and a person's in theirs, across agents", () => {
-    const other = { ...tenant(), workspace: { id: "other", name: "", role: "owner" as const } };
+    const other = { ...tenant(), workspace: { id: "other", name: "", role: "owner" as const, onHome: true } };
     expect(namespaceFor(tenant(), "workspace")).toBe(`ws_${WS}`);
     expect(namespaceFor(other, "workspace")).not.toBe(`ws_${WS}`);
     expect(namespaceFor(tenant(), "personal")).toBe(`u_${USER}`);

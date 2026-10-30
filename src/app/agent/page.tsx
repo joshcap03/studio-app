@@ -60,6 +60,7 @@ export default async function AgentPage() {
           initialFiles={files}
           allowFiles={getAgentAdapter().capabilities.attachments}
           score={score}
+          homeEnabled={previewEnabled(tenant, "home")}
           initialCompanion={met}
           voice={
             voice && initialCompanion
