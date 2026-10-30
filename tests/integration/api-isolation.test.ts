@@ -504,10 +504,10 @@ describe("one person, several agents", () => {
     const theirs = await fay.request(`/c/${aliceConv}`);
     expect(await theirs.text()).not.toContain("Alice");
 
-    // Off Home again, it takes nothing from Home.
+    // Off Home again, it takes nothing from Home; its chats stay in the one list of everything going on.
     expect((await fay.request("/api/workspace/settings", { method: "PATCH", body: JSON.stringify({ onHome: false }), headers: tabSecond })).status).toBe(200);
     const after = (await (await fay.request("/api/home", { headers: tabFirst })).json()) as { conversations: { id: string }[] };
-    expect(after.conversations.some((c) => c.id === conversation)).toBe(false);
+    expect(after.conversations.some((c) => c.id === conversation)).toBe(true);
     const back = (await (await fay.request("/api/route", { method: "POST", body: JSON.stringify({ text: "Fay Inbox email" }), headers: tabFirst })).json()) as { workspaceId: string };
     expect(back.workspaceId).toBe(first);
   }, 90_000);

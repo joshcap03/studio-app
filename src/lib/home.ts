@@ -11,9 +11,13 @@ import type { HomeConversation, HomeData } from "@/lib/types";
 /** How many recent chats Home lists across agents. */
 export const HOME_RECENT = 50;
 
-/** The member's latest chats across their agents on Home, newest first, each naming its agent. */
+/**
+ * The member's latest chats across all their agents, newest first, each naming its agent. Drafts'
+ * chats are listed too: this is the one view of everything they have going; only routing
+ * (src/lib/route.ts) is limited to agents on Home.
+ */
 export async function listRecentAcrossAgents(tenant: Tenant, limit = HOME_RECENT): Promise<HomeConversation[]> {
-  const ids = tenant.workspaces.filter((w) => w.onHome).map((w) => w.id);
+  const ids = tenant.workspaces.map((w) => w.id);
   if (ids.length === 0) return [];
   const { data, error } = await tenant.db
     .from("conversations")

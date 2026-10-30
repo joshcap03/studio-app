@@ -41,13 +41,15 @@ interface Props {
   footnote: React.ReactNode;
   /** Why the last ask couldn't go. */
   notice: string | null;
+  /** List recent chats here: only where the sidebar, which lists the same chats, isn't on screen. */
+  showRecent: boolean;
 }
 
 const chip =
   "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[13px] transition-[border-color,background-color,color,box-shadow] duration-150 hover:bg-surface hover:text-fg";
 
 export const HomeView = forwardRef<ComposerHandle, Props>(function HomeView(
-  { data, workspaces, companions, current, draft, onDraftChange, onSubmit, routing, ask, onCancelAsk, onOpen, voice, footnote, notice },
+  { data, workspaces, companions, current, draft, onDraftChange, onSubmit, routing, ask, onCancelAsk, onOpen, voice, footnote, notice, showRecent },
   composerRef,
 ) {
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
@@ -170,6 +172,10 @@ export const HomeView = forwardRef<ComposerHandle, Props>(function HomeView(
           })}
         </div>
 
+        {/* The sidebar lists the same chats; this list is for where it's hidden (a phone, a collapsed sidebar). */}
+        {!showRecent ? (
+          footnote ? <div className="mt-6 pb-[max(16px,env(safe-area-inset-bottom))] text-center md:mt-8">{footnote}</div> : null
+        ) : (
         <section aria-labelledby="home-recent" className="mt-9 pb-[max(16px,env(safe-area-inset-bottom))] animate-fade-up [animation-delay:120ms]">
           <h2 id="home-recent" className="px-2.5 pb-1 text-[11.5px] font-medium tracking-[0.02em] text-fg-3 uppercase">
             Recent
@@ -211,6 +217,7 @@ export const HomeView = forwardRef<ComposerHandle, Props>(function HomeView(
           )}
           {footnote ? <div className="mt-6 text-center">{footnote}</div> : null}
         </section>
+        )}
       </div>
     </div>
   );
