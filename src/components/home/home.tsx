@@ -53,23 +53,40 @@ export const HomeView = forwardRef<ComposerHandle, Props>(function HomeView(
   const composer = composerRef && typeof composerRef === "object" ? composerRef : null;
   const agents = workspaces.filter((w) => w.onHome);
   const [pick, setPick] = useState<string | null>(null);
+  // What's in the box now, so a chip sends the words as the member last left them.
+  const [text, setText] = useState(draft);
   const label = (w: WorkspaceSummary) => agentLabel(w, companions);
   const byId = (id: string) => workspaces.find((w) => w.id === id);
+  const here = byId(current);
 
   // The composer clears on send; when Home asks instead, the words come back for the member.
   useEffect(() => {
-    if (ask) composer?.current?.setValue(ask.text);
+    if (ask) {
+      composer?.current?.setValue(ask.text);
+      setText(ask.text);
+    }
   }, [ask, composer]);
+
+  // The composer clears as it submits; while the router is still deciding the last ask, the words stay.
+  function submit(value: string, chosen: string | null) {
+    if (routing) {
+      composer?.current?.setValue(value);
+      return;
+    }
+    onSubmit(value, chosen);
+  }
 
   const suggested = ask ? byId(ask.suggested) : undefined;
   const picked = pick ? byId(pick) : undefined;
   const hint = routing
     ? "Finding the right agent…"
-    : ask && suggested
-      ? `Who should take this? Enter sends it to ${label(suggested)}, or pick another.`
-      : picked
-        ? `Going to ${label(picked)}.`
-        : "Goes to whichever agent fits, or pick one.";
+    : agents.length === 0
+      ? `None of your agents is on Home yet, so this goes to ${here ? label(here) : "this agent"}.`
+      : ask && suggested
+        ? `Who should take this? Enter sends it to ${label(suggested)}, or pick another.`
+        : picked
+          ? `Going to ${label(picked)}.`
+          : "Goes to whichever agent fits, or pick one.";
 
   return (
     <div
@@ -88,8 +105,11 @@ export const HomeView = forwardRef<ComposerHandle, Props>(function HomeView(
             ref={composerRef}
             variant="hero"
             initialValue={draft}
-            onDraftChange={onDraftChange}
-            onSubmit={(text) => onSubmit(text, ask ? ask.suggested : pick)}
+            onDraftChange={(value) => {
+              setText(value);
+              onDraftChange(value);
+            }}
+            onSubmit={(value) => submit(value, ask ? ask.suggested : pick)}
             onStop={() => {}}
             running={false}
             placeholder="Ask anything"
@@ -127,7 +147,7 @@ export const HomeView = forwardRef<ComposerHandle, Props>(function HomeView(
                 title={c ? companionHint(c.stage, c.name, c.toMeet) : undefined}
                 onClick={() => {
                   if (ask) {
-                    onSubmit(ask.text, w.id);
+                    submit(text.trim() || ask.text, w.id);
                     return;
                   }
                   setPick(w.id);

@@ -11,14 +11,15 @@ import { MAX_AGENTS, type WorkspaceSettings, type WorkspaceSummary } from "@/lib
  * The member's agents: which take asks from Home, one to add, and one to delete they own. Deleting
  * asks once, in the row, and takes the agent's chats, tasks, skills, files, and memory with it.
  */
-export function AgentsList({ initial, current }: { initial: WorkspaceSummary[]; current: string }) {
+export function AgentsList({ initial, current, homeEnabled = false }: { initial: WorkspaceSummary[]; current: string; homeEnabled?: boolean }) {
   const [agents, setAgents] = useState(initial);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const owned = agents.filter((a) => a.role === "owner").length;
   const full = owned >= MAX_AGENTS;
-  const several = agents.length > 1;
+  /** With the Home preview and several agents, each row says whether it's on Home. */
+  const several = homeEnabled && agents.length > 1;
 
   async function remove(id: string) {
     setBusy(id);

@@ -48,6 +48,8 @@ interface Props {
   allowFiles: boolean;
   /** What the caller kept of the results they judged lately ("4 of 5 kept this past week"). */
   score?: string | null;
+  /** Home across agents (a preview) is on for the caller: the owner sees whether this agent is on it. */
+  homeEnabled?: boolean;
   /** Who this agent is to the caller (a preview); null where it isn't shown. */
   initialCompanion?: CompanionInfo | null;
   /** How it sounds to them (the voice preview); null where it isn't shown. */
@@ -66,7 +68,7 @@ async function patchSettings(patch: Partial<WorkspaceSettings>): Promise<Workspa
 }
 
 // Everything about the active agent: who it is, what it knows, and how much it's used.
-export function AgentView({ initialSettings, initialMemories, initialPromotions, canEdit, initialFiles, allowFiles, score, initialCompanion, voice }: Props) {
+export function AgentView({ initialSettings, initialMemories, initialPromotions, canEdit, initialFiles, allowFiles, score, homeEnabled = false, initialCompanion, voice }: Props) {
   const [settings, setSettings] = useState(initialSettings);
   // The name it goes by on calls follows a rename here.
   const [keptName, setKeptName] = useState(voice?.keptName ?? null);
@@ -83,7 +85,7 @@ export function AgentView({ initialSettings, initialMemories, initialPromotions,
           Your bar: {score}
         </p>
       ) : null}
-      {canEdit ? <OnHomeRow initial={settings.onHome} onSaved={setSettings} /> : null}
+      {canEdit && homeEnabled ? <OnHomeRow initial={settings.onHome} onSaved={setSettings} /> : null}
       <div className="mt-10 space-y-14">
         <AgentSection initial={settings} canEdit={canEdit} onSaved={setSettings} />
         {voice ? <VoicePanel initial={voice} keptName={keptName} /> : null}

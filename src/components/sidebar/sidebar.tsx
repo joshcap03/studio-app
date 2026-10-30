@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { agentLabel } from "@/components/home/home";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Companion, companionHint } from "@/components/ui/companion";
 import { IconButton } from "@/components/ui/icon-button";
@@ -60,6 +61,8 @@ interface Props {
   atHome: boolean;
   /** What Home shows, when it's on screen and loaded. */
   home: HomeData | null;
+  /** Home across agents is on for this member (a preview) and they have several agents. */
+  homeEnabled: boolean;
   onHome: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -94,6 +97,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
     mod,
     atHome,
     home,
+    homeEnabled,
     onHome,
     onSelect,
     onNew,
@@ -167,6 +171,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           working={Object.values(atHome && home ? home.moves : moves).includes("working")}
           email={email}
           atHome={atHome}
+          homeEnabled={homeEnabled}
           onHome={onHome}
         />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
@@ -181,7 +186,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           className="group/new flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press"
         >
           <SquarePen size={16} strokeWidth={1.75} className="text-fg-2" />
-          New chat
+          {/* On Home, a new chat is still with one agent: the tab's last. Say which. */}
+          <span className="min-w-0 truncate">{atHome ? `New chat with ${agentLabel(workspace, companions)}` : "New chat"}</span>
           <kbd className="ml-auto font-sans text-[11.5px] font-normal text-fg-4 opacity-0 transition-opacity group-hover/new:opacity-100">
             {mod}⇧O
           </kbd>
@@ -243,8 +249,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
       </div>
 
       <nav aria-label="Conversations" className="scroll-quiet mt-4 min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-        {atHome && home && !query.trim() ? (
-          hydrated ? <HomeList home={home} companions={companions} current={workspace.id} onSelect={onSelect} /> : null
+        {atHome && home ? (
+          hydrated ? <HomeList home={home} companions={companions} current={workspace.id} query={query} onSelect={onSelect} /> : null
         ) : (
           <>
         {query.trim() ? null : (
@@ -493,10 +499,25 @@ function projectMove(marks: (MarkedMove | undefined)[]): MarkedMove | undefined 
  * Rows only open: a chat is renamed or moved from inside its own agent. This agent's open in
  * place; another agent's load under that agent.
  */
-function HomeList({ home, companions, current, onSelect }: { home: HomeData; companions: Record<string, CompanionInfo> | null; current: string; onSelect: (id: string) => void }) {
-  const groups = useMemo(() => groupByRecency(home.conversations), [home.conversations]);
+function HomeList({
+  home,
+  companions,
+  current,
+  query,
+  onSelect,
+}: {
+  home: HomeData;
+  companions: Record<string, CompanionInfo> | null;
+  current: string;
+  /** The sidebar's search: Home's list is searched by title (contents are an agent's own). */
+  query: string;
+  onSelect: (id: string) => void;
+}) {
+  const needle = query.trim().toLowerCase();
+  const shown = useMemo(() => (needle ? home.conversations.filter((c) => c.title.toLowerCase().includes(needle)) : home.conversations), [home.conversations, needle]);
+  const groups = useMemo(() => groupByRecency(shown), [shown]);
   const agentOf = useMemo(() => new Map(home.conversations.map((c) => [c.id, c.workspaceId])), [home.conversations]);
-  if (groups.length === 0) return <p className="px-2.5 py-2 text-[13px] text-fg-3">Chats with all your agents will show here.</p>;
+  if (groups.length === 0) return <p className="px-2.5 py-2 text-[13px] text-fg-3">{needle ? "No conversations match." : "Chats with all your agents will show here."}</p>;
   return groups.map((group) => (
     <section key={group.label} className="mb-4 last:mb-0">
       <h2 className="px-2.5 pb-1 text-[11.5px] font-medium text-fg-4">{group.label}</h2>
@@ -795,9 +816,9 @@ const NESTED_CHATS = 5;
 const menuItem =
   "flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover";
 
-/** An agent's name: its own once it has arrived, with what it's for beside it; "Draft" while it isn't on Home. */
-function AgentLabel({ workspace, companion, bold }: { workspace: WorkspaceSummary; companion?: CompanionInfo; bold?: boolean }) {
-  const sub = companion?.name ? workspace.name : workspace.onHome ? null : "Draft";
+/** An agent's name: its own once it has arrived, with what it's for beside it; "Draft" while it isn't on Home (the Home preview). */
+function AgentLabel({ workspace, companion, bold, draft }: { workspace: WorkspaceSummary; companion?: CompanionInfo; bold?: boolean; draft?: boolean }) {
+  const sub = companion?.name ? workspace.name : draft ? "Draft" : null;
   if (!sub) return <span className={`min-w-0 truncate ${bold ? "text-[14px] font-semibold tracking-[-0.01em]" : "flex-1"}`}>{workspace.name}</span>;
   return (
     <span className={`flex min-w-0 items-baseline gap-1.5 ${bold ? "" : "flex-1"}`}>
@@ -822,6 +843,7 @@ function AgentMenu({
   working,
   email,
   atHome,
+  homeEnabled,
   onHome,
 }: {
   workspace: WorkspaceSummary;
@@ -831,12 +853,14 @@ function AgentMenu({
   working: boolean;
   email: string | null;
   atHome: boolean;
+  /** Home across agents is on for this member (a preview) and they have several agents. */
+  homeEnabled: boolean;
   onHome: () => void;
 }) {
   const companion = companions?.[workspace.id];
   const onCall = useCallLive();
-  const several = workspaces.length > 1;
-  // Picking an agent lands on its own new-chat screen (Home, with several, routes asks instead).
+  const several = homeEnabled;
+  // Picking an agent lands on its own new-chat screen (with Home, /new; without it, "/" is that screen).
   async function switchTo(id: string) {
     if (id === workspace.id && !atHome) return;
     try {
@@ -844,7 +868,7 @@ function AgentMenu({
     } catch {
       return;
     }
-    window.location.assign("/new");
+    window.location.assign(several ? "/new" : "/");
   }
 
   return (
@@ -867,7 +891,7 @@ function AgentMenu({
             <span className="min-w-0 truncate text-[12.5px] text-fg-3">All your agents</span>
           </span>
         ) : (
-          <AgentLabel workspace={workspace} companion={companion} bold />
+          <AgentLabel workspace={workspace} companion={companion} bold draft={several && !workspace.onHome} />
         )}
         <ChevronsUpDown size={13} className="shrink-0 text-fg-3" />
       </DropdownMenu.Trigger>
@@ -892,7 +916,7 @@ function AgentMenu({
           {workspaces.map((w) => (
             <DropdownMenu.Item key={w.id} onSelect={() => void switchTo(w.id)} className={menuItem}>
               {companions?.[w.id] ? <Companion stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}
-              <AgentLabel workspace={w} companion={companions?.[w.id]} />
+              <AgentLabel workspace={w} companion={companions?.[w.id]} draft={several && !w.onHome} />
               {w.id === workspace.id && !atHome ? <Check size={14} className="text-fg-2" /> : null}
             </DropdownMenu.Item>
           ))}

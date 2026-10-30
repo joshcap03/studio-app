@@ -89,7 +89,9 @@ raw/technical text.
   triggers, its memory namespaces, and their files go after it, best effort.
 - `src/lib/account.ts`: the person's profile (Settings → You, onboarding's first step), sent to
   every agent as "You're assisting".
-- `src/lib/home.ts` + `src/lib/route.ts`: Home, one place to ask across a member's agents. With
+- `src/lib/home.ts` + `src/lib/route.ts`: Home, one place to ask across a member's agents (the
+  "home" preview, `previewEnabled`; off, everything looks as before and `/api/route` and `/api/home`
+  are only ever reached by that member's own pages). With
   several agents "/" is Home (`src/components/home/home.tsx`): the ask goes to whichever agent fits,
   or to the one they pick; `/new` is an agent's own new-chat screen. `routeAsk` builds a card per
   agent that is **on Home** (`workspace_settings.on_home`, `WorkspaceSummary.onHome`; a second agent

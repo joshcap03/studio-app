@@ -99,7 +99,8 @@ function words(text: string): string[] {
 /**
  * Keyword overlap between the ask and each card: an agent's name (or its companion's) counts
  * most, then what it's for and its recent chats and tasks. Sure only when one agent clearly
- * wins; with no hits at all, the agent the member was last in, not sure.
+ * wins, and never on a name alone (a companion called June, and an ask about the month); with
+ * no hits at all, the agent the member was last in, not sure.
  */
 export function heuristicRoute(text: string, cards: AgentCard[], lastUsed: string): RouteResult {
   const ask = words(text);
@@ -111,7 +112,7 @@ export function heuristicRoute(text: string, cards: AgentCard[], lastUsed: strin
       const titles = new Set(words([...card.recentTitles, ...card.taskTitles].join(" ")));
       let score = 0;
       for (const w of ask) {
-        if (names.has(w)) score += 3;
+        if (names.has(w)) score += 2;
         if (about.has(w)) score += 1;
         if (titles.has(w)) score += 1;
       }
@@ -120,7 +121,7 @@ export function heuristicRoute(text: string, cards: AgentCard[], lastUsed: strin
     .sort((a, b) => b.score - a.score);
   const [top, second] = scored;
   if (!top || top.score === 0) return { workspaceId: lastUsed, sure: false, by: "last" };
-  const sure = top.score >= 2 && (!second || top.score >= second.score * 2);
+  const sure = top.score >= 3 && (!second || top.score >= second.score * 2);
   return { workspaceId: top.card.id, sure, by: "heuristic" };
 }
 

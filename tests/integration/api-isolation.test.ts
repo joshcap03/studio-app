@@ -461,7 +461,10 @@ describe("one person, several agents", () => {
     const tabFirst = { "x-studio-agent": first };
     const tabSecond = { "x-studio-agent": second };
 
-    // The first agent is on Home; a second starts as a draft.
+    // Home is a preview; outside it a second agent starts on Home like the first, so its owner takes it off (in the
+    // preview, a second agent starts as a draft). Each row names its own agent on the request.
+    const off = await fay.request("/api/workspace/settings", { method: "PATCH", body: JSON.stringify({ onHome: false }), headers: tabSecond });
+    expect(off.status, await off.clone().text()).toBe(200);
     const agents = (await (await fay.json("/api/workspaces", "GET")).json()) as { workspaces: { id: string; onHome: boolean }[] };
     expect(agents.workspaces.find((w) => w.id === first)?.onHome).toBe(true);
     expect(agents.workspaces.find((w) => w.id === second)?.onHome).toBe(false);

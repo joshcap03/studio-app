@@ -16,7 +16,9 @@ describe("heuristicRoute", () => {
     expect(heuristicRoute("Go through my inbox and draft replies", cards, "a")).toEqual({ workspaceId: "b", sure: true, by: "heuristic" });
   });
 
-  it("isn't sure on a near tie, and falls back to the last agent with no overlap at all", () => {
+  it("isn't sure on a name alone, a near tie, and falls back to the last agent with no overlap at all", () => {
+    // A companion called Rowan, and an ask that only says the name: likely, not sure.
+    expect(heuristicRoute("Is Rowan around?", cards, "b")).toEqual({ workspaceId: "a", sure: false, by: "heuristic" });
     // Two hits each: replies (inbox) against quote and invoice (the shop).
     expect(heuristicRoute("Draft the replies about the quote and the invoice", cards, "b")).toMatchObject({ sure: false, by: "heuristic" });
     expect(heuristicRoute("What's the weather like", cards, "b")).toEqual({ workspaceId: "b", sure: false, by: "last" });

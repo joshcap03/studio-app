@@ -243,6 +243,8 @@ interface Props {
   companions: Record<string, Companion> | null;
   /** Home across their agents (the page at "/" with several), as the server loaded it; null elsewhere. */
   home: HomeData | null;
+  /** Home across agents is a preview: off, "/" is the agent's own new-chat screen and nothing names agents. */
+  homeEnabled: boolean;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -325,6 +327,7 @@ function WorkspaceShell({
   greeter,
   companions,
   home: initialHome,
+  homeEnabled,
   onCompanion,
   onCallChange,
 }: Props & { onCompanion: (companion: Companion) => void; onCallChange: (live: boolean) => void }) {
@@ -342,7 +345,8 @@ function WorkspaceShell({
   const [taskTitle, setTaskTitle] = useState<string | null>(null);
   // The member's agents, and which are on Home ("Put it on Home" on a draft's screen updates it here).
   const [workspaces, setWorkspaces] = useState(initialWorkspaces);
-  const several = workspaces.length > 1;
+  /** Several agents, with the Home preview on: Home takes "/", and every chat names its agent. */
+  const several = homeEnabled && workspaces.length > 1;
   /** Home across agents: "/" with several agents. With one, "/" is that agent's own new-chat screen. */
   const atHome = several && /^\/?$/.test(pathname);
   /** The agent's own new-chat screen: "/new", or "/" with one agent. */
@@ -580,6 +584,13 @@ function WorkspaceShell({
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         const status = error instanceof ApiError && error.status === 404 ? "missing" : "error";
+        // Not this agent's chat: with several agents it may be another's (a push tapped while this
+        // window was open). One full load renders it under the agent that owns it, or says it's gone.
+        if (status === "missing" && several && !reloadedFor.current.has(activeId)) {
+          reloadedFor.current.add(activeId);
+          window.location.assign(`/c/${activeId}`);
+          return;
+        }
         setThreads((all) => ({ ...all, [activeId]: { status, messages: [] } }));
       });
     return () => {
@@ -590,7 +601,8 @@ function WorkspaceShell({
         return rest;
       });
     };
-  }, [activeId, callArrived]);
+  }, [activeId, callArrived, several]);
+  const reloadedFor = useRef(new Set<string>());
 
   // Earlier messages, a page at a time, as the member reads back.
   const loadingEarlier = useRef<string | null>(null);
@@ -961,9 +973,12 @@ function WorkspaceShell({
   const refreshHome = useCallback(() => {
     api.home().then(setHomeData, () => undefined);
   }, []);
+  // What the server rendered is fresh; later arrivals on Home ask again.
+  const homeFresh = useRef(initialHome !== null);
   useEffect(() => {
     if (!atHome) return;
-    refreshHome();
+    if (homeFresh.current) homeFresh.current = false;
+    else refreshHome();
     const onVisibility = () => {
       if (document.visibilityState === "visible") refreshHome();
     };
@@ -1018,6 +1033,9 @@ function WorkspaceShell({
       let target: RouteResult;
       if (pick && onHome(pick)) {
         target = { workspaceId: pick, sure: true, by: "last" };
+      } else if (!workspaces.some((w) => w.onHome)) {
+        // Nothing on Home to choose between: the ask goes to this agent, as the hint says.
+        target = { workspaceId: workspace.id, sure: true, by: "last" };
       } else {
         setRouting(true);
         try {
@@ -1721,7 +1739,8 @@ function WorkspaceShell({
       controllers.current.get(id)?.abort();
       const snapshot = conversations;
       setConversations((list) => list.filter((c) => c.id !== id));
-      if (id === activeId) navigate("/");
+      // Back to this agent's own new-chat screen (with Home on, "/" would be Home).
+      if (id === activeId) navigate(several ? "/new" : "/");
       api
         .deleteConversation(id)
         .then(() =>
@@ -1732,7 +1751,7 @@ function WorkspaceShell({
         )
         .catch(() => setConversations(snapshot));
     },
-    [activeId, conversations, navigate],
+    [activeId, conversations, navigate, several],
   );
 
   const createProject = useCallback(
@@ -1785,7 +1804,7 @@ function WorkspaceShell({
       for (const conversationId of doomed) controllers.current.get(conversationId)?.abort();
       setProjects((list) => list.filter((p) => p.id !== id));
       setConversations((list) => list.filter((c) => !doomed.has(c.id)));
-      if (activeProjectId === id || (activeId && doomed.has(activeId))) navigate("/");
+      if (activeProjectId === id || (activeId && doomed.has(activeId))) navigate(several ? "/new" : "/");
       api
         .deleteProject(id)
         .then(() => {
@@ -1800,7 +1819,7 @@ function WorkspaceShell({
           setConversations(snapshot.conversations);
         });
     },
-    [activeId, activeProjectId, conversations, navigate, projects],
+    [activeId, activeProjectId, conversations, navigate, projects, several],
   );
 
   const moveConversation = useCallback(
@@ -2122,13 +2141,14 @@ function WorkspaceShell({
             activeId={activeId}
             moves={moves}
             agent={agent}
-            workspace={workspace}
+            workspace={workspaces.find((w) => w.id === workspace.id) ?? workspace}
             workspaces={workspaces}
             companions={companions}
             email={email}
             mod={mod}
             atHome={atHome}
             home={homeData}
+            homeEnabled={several}
             onHome={() => navigate("/")}
             onSelect={(id) => navigate(`/c/${id}`)}
             onNew={newChat}

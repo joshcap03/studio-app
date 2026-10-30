@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse, noStore, parseBody } from "@/lib/api";
+import { previewEnabled } from "@/lib/flags";
 import { ACTIVE_WORKSPACE_COOKIE, authorizeSession, jsonError, resolveTenant } from "@/lib/tenant";
 import { applyTemplate } from "@/lib/templates/apply";
 import { templateById } from "@/lib/templates";
@@ -42,9 +43,9 @@ export async function POST(request: NextRequest) {
     }
     const tenant = await resolveTenant(auth.value, data as string);
     if (tenant) {
-      // A second agent starts as a draft: Home sends it nothing until its owner puts it on Home.
-      // The first is on Home from the start, so one agent works as it always has.
-      if (tenant.workspaces.length > 1) await updateSettings(tenant, { onHome: false });
+      // With the Home preview, a second agent starts as a draft: Home sends it nothing until its
+      // owner puts it on Home. The first is on Home from the start, so one agent works as it always has.
+      if (previewEnabled(tenant, "home") && tenant.workspaces.length > 1) await updateSettings(tenant, { onHome: false });
       if (input.templateId) await applyTemplate(tenant, input.templateId, { timezone: input.timezone });
     }
     const response = NextResponse.json({ workspaceId: data as string }, { status: 201 });

@@ -62,9 +62,11 @@ export default async function WorkspacePage({
   // A chat, project, or task opened by its link (a push, a row on Home) may belong to another of
   // the member's agents than the tab's last. It's found among their own rows only, and the page
   // renders for that agent, which then becomes the one new tabs open on (TabAgent remembers it).
+  // Home across agents is a preview: without it, everything here looks as before.
+  const homeEnabled = previewEnabled(tenant, "home");
   let remember = false;
   const wanted: [Owned, string] | null = conversationId ? ["conversations", conversationId] : projectId ? ["projects", projectId] : taskId ? ["agent_tasks", taskId] : null;
-  if (wanted && tenant.workspaces.length > 1) {
+  if (wanted && homeEnabled && tenant.workspaces.length > 1) {
     const here = wanted[0] === "conversations" ? await storeFor(tenant).getConversation(wanted[1]) : wanted[0] === "projects" ? await getProject(tenant, wanted[1]) : null;
     if (!here) {
       const owner = await ownerOf(tenant, wanted[0], wanted[1]);
@@ -75,7 +77,7 @@ export default async function WorkspacePage({
     }
   }
   // Home, with several agents: the ask goes to whichever fits. With one, "/" is its own new-chat screen.
-  const home = slug.length === 0 && tenant.workspaces.length > 1;
+  const home = homeEnabled && slug.length === 0 && tenant.workspaces.length > 1;
 
   const store = storeFor(tenant);
   // Who each agent is to this member (a preview); without it, everything looks as before.
@@ -149,6 +151,7 @@ export default async function WorkspacePage({
         initialConversations={conversations}
         initialMoves={moves}
         home={homeData}
+        homeEnabled={homeEnabled}
         initialThread={initialThread}
         initialProjects={projects}
         initialProject={initialProject}
