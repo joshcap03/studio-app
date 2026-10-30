@@ -494,12 +494,13 @@ describe("one person, several agents", () => {
     const bobsRoute = (await (await bob.json("/api/route", "POST", { text: "Fay Inbox Fay Shop" })).json()) as { workspaceId: string };
     expect(bobsRoute.workspaceId).toBe(bobWs);
 
-    // Opened by its link while the tab's last agent was the first, the chat renders under the agent that owns it.
+    // Opened by its link while the tab's last agent is the first: in the Home preview the page renders it under the
+    // agent that owns it; this account is outside the preview, so it's only the tab's agent's chats, as before.
     expect((await fay.json("/api/workspaces/active", "POST", { workspaceId: first })).status).toBe(200);
     const page = await fay.request(`/c/${conversation}`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("fay-inbox-hello");
-    // Another person's chat by its link is still nothing to them.
+    expect(await page.text()).not.toContain("fay-inbox-hello");
+    // Another person's chat by its link is nothing to them, preview or not.
     const theirs = await fay.request(`/c/${aliceConv}`);
     expect(await theirs.text()).not.toContain("Alice");
 
