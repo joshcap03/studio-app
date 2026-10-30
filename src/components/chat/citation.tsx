@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowUpRight } from "lucide-react";
-import { createContext, useContext } from "react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { createContext, useContext, useState } from "react";
 import type { Citation } from "@/lib/types";
 import { AppGlyph } from "./app-glyph";
 
@@ -78,31 +78,50 @@ export function CitationCard({ citation }: { citation: Citation }) {
   );
 }
 
-/** The numbered sources under an answer: only the ones the answer actually points to. */
+/** The numbered sources under an answer: only the ones the answer actually points to, folded until opened. */
 export function SourceList({ citations, content }: { citations: Citation[]; content: string }) {
+  const [open, setOpen] = useState(false);
   const used = new Set([...content.matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])));
   const shown = citations.filter((c) => used.has(c.n));
   if (shown.length === 0) return null;
+  const apps = [...new Set(shown.map((c) => c.app ?? "web"))].slice(0, 4);
   return (
     <section aria-label="Sources" className="mt-4">
-      <h4 className="mb-1 text-[12px] text-fg-3">Sources</h4>
-      <ol>
-        {shown.map((c) => (
-          <li key={c.n}>
-            <a
-              href={sourceHref(c)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="-mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1 text-[13px] transition-colors hover:bg-hover"
-            >
-              <span className={`w-4 shrink-0 text-right text-[11.5px] tabular-nums ${c.quoteVerified ? "text-accent" : "text-fg-4"}`}>{c.n}</span>
-              <AppGlyph app={c.app ?? "web"} size={16} />
-              <span className="min-w-0 truncate text-fg">{c.title ?? domain(c.url)}</span>
-              <span className="shrink-0 text-fg-3">{domain(c.url)}</span>
-            </a>
-          </li>
-        ))}
-      </ol>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="-mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-fg-3 transition-colors hover:bg-hover hover:text-fg-2"
+      >
+        <span className="flex items-center -space-x-1">
+          {apps.map((app) => (
+            <AppGlyph key={app} app={app} size={14} />
+          ))}
+        </span>
+        <span>
+          {shown.length} {shown.length === 1 ? "source" : "sources"}
+        </span>
+        <ChevronRight size={12} className={`shrink-0 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open ? (
+        <ol className="mt-1 animate-fade-up">
+          {shown.map((c) => (
+            <li key={c.n}>
+              <a
+                href={sourceHref(c)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="-mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1 text-[13px] transition-colors hover:bg-hover"
+              >
+                <span className={`w-4 shrink-0 text-right text-[11.5px] tabular-nums ${c.quoteVerified ? "text-accent" : "text-fg-4"}`}>{c.n}</span>
+                <AppGlyph app={c.app ?? "web"} size={16} />
+                <span className="min-w-0 truncate text-fg">{c.title ?? domain(c.url)}</span>
+                <span className="shrink-0 text-fg-3">{domain(c.url)}</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </section>
   );
 }
