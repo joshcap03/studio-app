@@ -111,6 +111,11 @@ describe.skipIf(!liveFlow)("introduce (live)", () => {
     expect(reply).not.toMatch(GAME);
     expect(reply).not.toMatch(/propose_agent|\bsetup\b/i);
     aHello(reply, proposal!);
+    // The name fits the job: never a generic one, and the sentence offering it says how.
+    const name = proposal!.identity!.name;
+    expect(name).not.toMatch(/^(assistant|helper|buddy|job search)$/i);
+    const offer = reply.split(/(?<=[.!?])\s+/).find((s) => s.includes(name)) ?? "";
+    expect(offer).toMatch(/search|role|find|hunt|design|job|scout|look/i);
   }, 300_000);
 
   it("offers to keep the name they've heard on calls, and avoids another agent's", async () => {

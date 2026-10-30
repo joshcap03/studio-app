@@ -17,6 +17,10 @@ describe("introduceSkill", () => {
     expect(skill.instructions).toContain("Don't read their instructions");
     expect(skill.instructions).toContain("Don't name yourself before the call");
     expect(skill.instructions).not.toMatch(/keep the name or pick/);
+    // A name that fits the job, not a generic one, and the offer says how.
+    expect(skill.instructions).toContain("fits the work you do together");
+    expect(skill.instructions).toContain("Not a generic assistant name");
+    expect(skill.instructions).toContain("how it fits the work");
   });
 
   it("offers to keep the name they've heard on calls, and steers clear of their other agents' names", () => {
