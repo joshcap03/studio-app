@@ -4,8 +4,12 @@ import type { Session } from "@/lib/tenant-core";
 // Preview features ship to everyone's build but only switch on for allowlisted accounts.
 // The check uses the email of the verified session user, never anything from a request.
 
-/** "home": Home across agents, the router, and the "On Home" flag's UI (src/lib/home.ts). */
-export type PreviewFeature = "brain" | "why" | "voice" | "companion" | "watches" | "home";
+/**
+ * "home": Home across agents, the router, and the "On Home" flag's UI (src/lib/home.ts).
+ * "studio": the agent's own page in Studio mode, "/studio" (src/components/studio), where the agent
+ * describes what it reads, knows, and does, and every change is an ask in a new chat.
+ */
+export type PreviewFeature = "brain" | "why" | "voice" | "companion" | "watches" | "home" | "studio";
 
 /** On for accounts in PREVIEW_FEATURE_EMAILS (every preview), and for voice, PREVIEW_VOICE_EMAILS too. */
 export function previewEnabled(session: Pick<Session, "email">, feature: PreviewFeature): boolean {

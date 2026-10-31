@@ -93,6 +93,10 @@ interface Props {
   onSelectTasks: () => void;
   libraryActive: boolean;
   onSelectLibrary: () => void;
+  /** The agent's own page at "/studio" (a preview), where it describes itself; off, setup is the full "/agent" page. */
+  studioEnabled: boolean;
+  studioActive: boolean;
+  onSelectStudio: () => void;
 }
 
 export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
@@ -128,6 +132,9 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
     onSelectTasks,
     libraryActive,
     onSelectLibrary,
+    studioEnabled,
+    studioActive,
+    onSelectStudio,
   },
   searchRef,
 ) {
@@ -192,6 +199,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           unified={unified}
           onMode={onMode}
           onHome={onHome}
+          onStudio={studioEnabled ? onSelectStudio : undefined}
         />
         <IconButton label="Close sidebar" shortcut={`${mod}B`} onClick={onCollapse}>
           <PanelLeftClose size={17} strokeWidth={1.75} />
@@ -251,6 +259,27 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           <Archive size={16} strokeWidth={1.75} className="text-fg-2" />
           Library
         </a>
+        {studioEnabled && !unified ? (
+          // The agent itself: its own page, where it says what it reads, knows, and does. Named for the
+          // agent, with its mark, since "Studio" is the mode above.
+          <a
+            href="/studio"
+            aria-current={studioActive ? "page" : undefined}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              onSelectStudio();
+            }}
+            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press aria-[current=page]:bg-press"
+          >
+            {companions?.[workspace.id] ? (
+              <Companion stage={companions[workspace.id].stage} look={companions[workspace.id].look} size={16} className="shrink-0" />
+            ) : (
+              <SlidersHorizontal size={16} strokeWidth={1.75} className="text-fg-2" />
+            )}
+            <span className="min-w-0 truncate">{companions?.[workspace.id]?.name ?? workspace.name}</span>
+          </a>
+        ) : null}
         <div className="relative">
           <Search size={15} strokeWidth={1.75} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-fg-3" />
           <input
@@ -416,7 +445,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
         <IconButton label="Skills" side="top" onClick={() => openPage("/skills", onCall)}>
           <LibraryBig size={15} strokeWidth={1.75} />
         </IconButton>
-        <IconButton label="Agent setup" side="top" onClick={() => openPage("/agent", onCall)}>
+        <IconButton label="Agent setup" side="top" onClick={() => (studioEnabled ? onSelectStudio() : openPage("/agent", onCall))}>
           <SlidersHorizontal size={15} strokeWidth={1.75} />
         </IconButton>
         <IconButton label="Settings" side="top" onClick={() => openPage("/settings", onCall)}>
@@ -910,6 +939,7 @@ function AgentMenu({
   unified,
   onMode,
   onHome,
+  onStudio,
 }: {
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
@@ -924,6 +954,8 @@ function AgentMenu({
   unified: boolean;
   onMode: (mode: ShellMode) => void;
   onHome: () => void;
+  /** Opens the agent's own page in the shell (the "studio" preview); without it, setup is the full "/agent" page. */
+  onStudio?: () => void;
 }) {
   const companion = companions?.[workspace.id];
   const onCall = useCallLive();
@@ -1008,7 +1040,15 @@ function AgentMenu({
             Manage agents
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-line" />
-          <DropdownMenu.Item onSelect={() => openPage("/agent", onCall)} className={menuItem}>
+          <DropdownMenu.Item
+            onSelect={() => {
+              if (onStudio) {
+                if (several) onMode("studio");
+                onStudio();
+              } else openPage("/agent", onCall);
+            }}
+            className={menuItem}
+          >
             <SlidersHorizontal size={14} className="text-fg-3" />
             <span className="min-w-0 truncate">Set up {companion?.name ?? workspace.name}</span>
           </DropdownMenu.Item>

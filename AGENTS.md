@@ -111,6 +111,16 @@ raw/technical text.
   agents (`loadHome`, `GET /api/home`, their own rows only), and every thread's header names its agent.
   A chat, project, or task opened by its link under another of the member's agents renders for the
   agent that owns it (`src/lib/owner.ts`, their own rows only) and that agent becomes the tab's.
+- `src/components/studio/`: the agent's own page in Studio mode, `/studio` (the "studio" preview):
+  the agent describing itself from stored state, in first person and plain words, never a form:
+  what it reads before every reply (the profile, and its template's instructions folded under it,
+  read-only), what it knows (the Brain by topic, files, Library, lists), what it can do (connected
+  apps, the one line on money and deletions), the skills it has, what it does on its own (each task
+  as `When → I do → I keep → You hear`, with its watch), and lately. One readiness line and a quiet
+  rail say what would help most (`src/lib/studio.ts`, pure and tested: the copy is the product).
+  Every primary action is a sentence the member finishes: it opens `/new?ask=<text>` (`&skill=<id>`
+  attaches one) with the words in the message box, unsent, and the agent answers with
+  `propose_agent`. Raw editing stays on `/agent`, `/skills`, `/tasks`, and Settings.
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
   composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
   sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to, with one
