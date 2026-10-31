@@ -24,9 +24,10 @@ import { MESSAGE_PAGE } from "@/lib/types";
 import { getSettings } from "@/lib/workspace";
 
 // One page serves "/" (Home across the member's agents, or with one agent its new-chat screen),
-// "/new" (the agent's own new-chat screen), "/c/<id>", "/p/<project id>", "/tasks[/<task id>]", and
-// "/library[/<tracker>]". After the first load the browser switches conversations in place, without
-// a server round trip per navigation.
+// "/new" (the agent's own new-chat screen; "?ask=<text>" puts words in its message box, unsent),
+// "/c/<id>", "/p/<project id>", "/tasks[/<task id>]", "/library[/<tracker>]", and "/studio" (the
+// agent's own page, a preview). After the first load the browser switches conversations in place,
+// without a server round trip per navigation.
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,9 @@ export default async function WorkspacePage({
     if (slug.length === 2) taskId = slug[1];
   } else if (slug[0] === "new") {
     if (slug.length !== 1) notFound();
+  } else if (slug[0] === "studio") {
+    // The agent's own page (a preview): what it reads, knows, and does, in its words.
+    if (slug.length !== 1 || !previewEnabled(tenant, "studio")) notFound();
   } else if (slug.length > 0) {
     const id = z.uuid().safeParse(slug[1]);
     if (slug.length !== 2 || (slug[0] !== "c" && slug[0] !== "p") || !id.success) notFound();
@@ -64,6 +68,7 @@ export default async function WorkspacePage({
   // renders for that agent, which then becomes the one new tabs open on (TabAgent remembers it).
   // Home across agents is a preview: without it, everything here looks as before.
   const homeEnabled = previewEnabled(tenant, "home");
+  const studioEnabled = previewEnabled(tenant, "studio");
   let remember = false;
   const wanted: [Owned, string] | null = conversationId ? ["conversations", conversationId] : projectId ? ["projects", projectId] : taskId ? ["agent_tasks", taskId] : null;
   if (wanted && homeEnabled && tenant.workspaces.length > 1) {
@@ -153,6 +158,7 @@ export default async function WorkspacePage({
         initialMoves={moves}
         home={homeData}
         homeEnabled={homeEnabled}
+        studioEnabled={studioEnabled}
         initialThread={initialThread}
         initialProjects={projects}
         initialProject={initialProject}

@@ -17,6 +17,7 @@ import { LibraryView } from "@/components/library/library-view";
 import { TrackerPage } from "@/components/library/tracker-page";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { collectionName } from "@/components/tasks/tracker";
+import { StudioView } from "@/components/studio/studio-view";
 import { TasksView } from "@/components/tasks/tasks-view";
 import { Companion as CompanionMark, CompanionContext } from "@/components/ui/companion";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
@@ -245,6 +246,8 @@ interface Props {
   home: HomeData | null;
   /** Home across agents is a preview: off, "/" is the agent's own new-chat screen and nothing names agents. */
   homeEnabled: boolean;
+  /** The agent's own page at "/studio" (a preview): off, agent setup is the full page at "/agent". */
+  studioEnabled: boolean;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
@@ -330,6 +333,7 @@ function WorkspaceShell({
   companions,
   home: initialHome,
   homeEnabled,
+  studioEnabled,
   onCompanion,
   onCallChange,
 }: Props & { onCompanion: (companion: Companion) => void; onCallChange: (live: boolean) => void }) {
@@ -377,6 +381,8 @@ function WorkspaceShell({
   const [homeData, setHomeData] = useState<HomeData | null>(initialHome);
   /** The agent's own new-chat screen: "/new", or "/" with one agent. */
   const atNew = !atHome && /^\/(new\/?)?$/.test(pathname);
+  /** The agent's own page in Studio (src/components/studio), where it describes itself and every change is an ask. */
+  const atStudio = studioEnabled && /^\/studio\/?$/.test(pathname);
 
   useEffect(() => {
     const onPop = () => setPathname(window.location.pathname);
@@ -553,8 +559,10 @@ function WorkspaceShell({
   }, []);
 
   const navigate = useCallback((path: string) => {
-    if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setPathname(path);
+    // A query rides along in the address ("/new?ask=…" puts words in the message box) but never in the path.
+    const [pathOnly, query] = path.split("?");
+    if (window.location.pathname !== pathOnly || (query !== undefined && window.location.search !== `?${query}`)) window.history.pushState(null, "", path);
+    setPathname(pathOnly);
     setDrawerOpen(false);
   }, []);
 
@@ -710,8 +718,8 @@ function WorkspaceShell({
   const tasksTitle = activeTask === "list" ? "Tasks" : activeTask ? (taskTitle ?? undefined) : undefined;
   useEffect(() => {
     const title = activeTitle ?? activeProjectName ?? tasksTitle ?? (libraryPath === "home" ? "Library" : libraryPath ? collectionName(libraryPath) : undefined);
-    document.title = title ? `${title} · Studio` : atHome ? "Studio" : `${workspace.name} · Studio`;
-  }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name, atHome]);
+    document.title = title ? `${title} · Studio` : atHome || atStudio ? "Studio" : `${workspace.name} · Studio`;
+  }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name, atHome, atStudio]);
 
   /**
    * Opens a task's conversation (or one a notification is about). A run may have just created it
@@ -1127,13 +1135,18 @@ function WorkspaceShell({
     [activeId, sendElsewhere],
   );
 
+  /** The owner puts the agent on Home, or takes it off (from its own page in Studio). */
+  const setOnHome = useCallback(
+    async (onHome: boolean) => {
+      await api.setOnHome(onHome);
+      setWorkspaces((list) => list.map((w) => (w.id === workspace.id ? { ...w, onHome } : w)));
+    },
+    [workspace.id],
+  );
   /** The owner puts a draft agent on Home from its own new-chat screen. */
   const putOnHome = useCallback(() => {
-    api.setOnHome(true).then(
-      () => setWorkspaces((list) => list.map((w) => (w.id === workspace.id ? { ...w, onHome: true } : w))),
-      () => undefined,
-    );
-  }, [workspace.id]);
+    setOnHome(true).catch(() => undefined);
+  }, [setOnHome]);
 
   /** A chat on Home: this agent's opens in place (another agent's is a link, loaded under that agent). */
   const openFromHome = useCallback((conversation: HomeConversation) => navigate(`/c/${conversation.id}`), [navigate]);
@@ -1726,6 +1739,25 @@ function WorkspaceShell({
     sendTo(pending.conversationId, pending.text, true);
   }, [atNew, workspace.id, sendTo]);
 
+  // An ask from the agent's own page in Studio (src/components/studio) arrives as ?ask=<text> on the
+  // new-chat screen: the words go into the message box, unsent, with a skill attached when it names
+  // one (?skill=<id>). The member reads them, adds a word, and sends. Nothing is sent for them.
+  useEffect(() => {
+    if (!atNew) return;
+    const params = new URLSearchParams(window.location.search);
+    const ask = params.get("ask");
+    if (ask === null) return;
+    params.delete("ask");
+    const skillId = params.get("skill");
+    params.delete("skill");
+    const rest = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    composer.current?.setValue(ask);
+    const skill = skillId ? skills.find((s) => s.id === skillId) : undefined;
+    if (skill) composer.current?.attachSkill({ id: skill.id, name: skill.name });
+    requestAnimationFrame(() => composer.current?.focus());
+  }, [atNew, skills]);
+
   // "Tidy up" on a Brain topic arrives as ?tidy=<topic>: a new chat with that topic's tidy
   // skill attached, where the agent suggests facts to combine.
   const tidyRequested = useRef(false);
@@ -2222,6 +2254,9 @@ function WorkspaceShell({
             onSelectTasks={() => navigate("/tasks")}
             libraryActive={libraryActive}
             onSelectLibrary={() => navigate("/library")}
+            studioEnabled={studioEnabled}
+            studioActive={atStudio}
+            onSelectStudio={() => navigate("/studio")}
           />
         </aside>
 
@@ -2323,7 +2358,28 @@ function WorkspaceShell({
           {/* A call docks here, under the header, while the member keeps using the app. */}
           <div ref={setDock} className="contents" />
 
-          {libraryPath === "home" ? (
+          {atStudio ? (
+            <StudioView
+              key={workspace.id}
+              workspace={workspaces.find((w) => w.id === workspace.id) ?? workspace}
+              several={several}
+              companion={companion}
+              setup={setup}
+              skills={skills}
+              conversations={conversations}
+              onGo={navigate}
+              onSetup={() => {
+                navigate("/new");
+                startSetup();
+              }}
+              onSayHello={() => {
+                navigate("/new");
+                sayHello();
+              }}
+              onNewChat={newChat}
+              onOnHome={setOnHome}
+            />
+          ) : libraryPath === "home" ? (
             <LibraryView onOpenConversation={(id) => navigate(`/c/${id}`)} onOpenTracker={(collection) => navigate(`/library/${collection}`)} />
           ) : libraryPath ? (
             <TrackerPage key={libraryPath} collection={libraryPath} onBack={() => navigate("/library")} />

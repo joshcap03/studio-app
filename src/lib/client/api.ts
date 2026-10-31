@@ -1,10 +1,10 @@
 import type { StandingKind } from "@/lib/approvals/standing";
 import type { MarkedMove } from "@/lib/chat/move";
-import type { Attachment, CallSummary, ChatMessage, Companion, ConversationSummary, HomeData, Journey, LibraryItem, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, RouteResult, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSettings, WorkspaceSummary } from "@/lib/types";
+import type { Attachment, CallSummary, ChatMessage, Companion, ConnectionsState, ConversationSummary, HomeData, Journey, LibraryItem, Memory, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, RouteResult, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSettings, WorkspaceSkill, WorkspaceSummary } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
-import type { AgentRecord, AgentTask, PlanStep, TaskRun, TrackerSummary } from "@/lib/tasks/types";
+import type { AgentRecord, AgentTask, PlanStep, TaskRun, TaskWatch, TrackerSummary } from "@/lib/tasks/types";
 import type { VerdictCall } from "@/lib/verdicts";
 import type { DriveInput } from "@/lib/browser-fill";
 import type { CredentialSummary } from "@/lib/secrets";
@@ -179,6 +179,19 @@ export const api = {
   route: (text: string) => request<RouteResult>("/api/route", { method: "POST", body: JSON.stringify({ text }) }),
   /** Home across the member's agents: recent chats from each, with whose move it is. */
   home: (signal?: AbortSignal) => request<HomeData>("/api/home", { signal }),
+  /** The agent's settings (its name, profile, instructions, template, setup), and what the caller is to it. */
+  getSettings: (signal?: AbortSignal) => request<{ settings: WorkspaceSettings; role: WorkspaceSummary["role"] }>("/api/workspace/settings", { signal }),
+  /** The agent's own skills (the library's copies and the owner's), not the built-ins. */
+  listSkills: (signal?: AbortSignal) => request<{ skills: WorkspaceSkill[] }>("/api/workspace/skills", { signal }),
+  /** The agent's shared facts and the member's own, as the Brain lists them. */
+  listMemories: (signal?: AbortSignal) => request<{ memories: Memory[] }>("/api/workspace/memories", { signal }),
+  /** The member's connected apps, with the ones this agent's template suggests. */
+  getConnections: (signal?: AbortSignal) => request<ConnectionsState>("/api/workspace/connections", { signal }),
+  /** Starts connecting an app for the member; resolves with the provider's page to go to. `back` is where they return. */
+  connectApp: (slug: string, back: "/settings" | "/studio") =>
+    request<{ url: string }>(`/api/workspace/connections/${encodeURIComponent(slug)}?return=${encodeURIComponent(back)}`, { method: "POST" }),
+  /** What a task watches for in a connected app (the "watches" preview: 404 without it). */
+  getWatch: (taskId: string, signal?: AbortSignal) => request<{ watch: TaskWatch | null }>(`/api/tasks/${taskId}/watch`, { signal }),
   /** Whether this agent takes asks from Home (the owner's call). */
   setOnHome: (onHome: boolean) => request<{ settings: WorkspaceSettings }>("/api/workspace/settings", { method: "PATCH", body: JSON.stringify({ onHome }) }),
   forgetBrowserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser", { method: "DELETE" }),

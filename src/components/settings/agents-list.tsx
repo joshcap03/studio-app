@@ -2,7 +2,7 @@
 
 import { Check, Plus } from "lucide-react";
 import { useState } from "react";
-import { OnHomeSwitch } from "@/components/agent/agent-view";
+import { OnHomeSwitch } from "@/components/ui/on-home-switch";
 import { api } from "@/lib/client/api";
 import { AGENT_HEADER } from "@/lib/client/tab-agent";
 import { MAX_AGENTS, type WorkspaceSettings, type WorkspaceSummary } from "@/lib/types";
