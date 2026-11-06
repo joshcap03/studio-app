@@ -51,7 +51,7 @@ import { buildAgentContext, claimRun, getSettings } from "@/lib/workspace";
  * `screen`: the page they were looking at as they spoke on a call, by id.
  */
 export type RunInput = (
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; isTry?: boolean; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
   | { kind: "retry" }
   /** Carry on the job the latest reply said wasn't finished (keep_going). */
   | { kind: "continue" }
@@ -366,6 +366,7 @@ export async function buildTurnDeps(
           attachmentIds: input.attachmentIds,
           steer: input.steer,
           projectId: input.projectId,
+          isTry: input.isTry,
           origin,
         }
       : input.kind === "decide"

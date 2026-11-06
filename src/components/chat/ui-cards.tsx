@@ -1,5 +1,6 @@
 "use client";
 
+import { LineDiff } from "@/components/ui/line-diff";
 import { ArrowUp, AudioLines, Check, ChevronDown, ChevronUp, ClipboardList, Combine, ExternalLink, FileUp, GripVertical, HelpCircle, Paperclip, Pin, Plug, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Companion, useCompanion } from "@/components/ui/companion";
@@ -942,6 +943,18 @@ export function ProposalCard({ proposal, response, canApply, onApply, onFix, onR
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // The brief as it is now, for reading what this would change while it's still the member's call.
+  const [currentBrief, setCurrentBrief] = useState<{ profile: string; instructions: string } | null>(null);
+  const wantsBrief = canApply && response?.status !== "applied" && (proposal.profile !== undefined || proposal.instructions !== undefined);
+  useEffect(() => {
+    if (!wantsBrief) return;
+    const controller = new AbortController();
+    api.getSettings(controller.signal).then(
+      ({ settings }) => setCurrentBrief({ profile: settings.profile, instructions: settings.agentInstructions }),
+      () => undefined,
+    );
+    return () => controller.abort();
+  }, [wantsBrief]);
   const applied = response?.status === "applied" ? response : null;
   const live = canApply && !applied && !fixesSent;
   const fixing = Object.keys(fixes).length > 0;
@@ -1063,7 +1076,19 @@ export function ProposalCard({ proposal, response, canApply, onApply, onFix, onR
   };
   const textItem = (key: "profile" | "instructions", title: string, value: string, set: (v: string) => void) =>
     proposal[key] !== undefined && chosen(shown[key])
-      ? row(key, shown[key], () => setPicks((p) => ({ ...p, [key]: !p[key] })), title, title, value.split("\n")[0], body(key, value, set, 8000, title), true)
+      ? row(
+          key,
+          shown[key],
+          () => setPicks((p) => ({ ...p, [key]: !p[key] })),
+          title,
+          title,
+          value.split("\n")[0],
+          <>
+            {live && currentBrief?.[key] ? <LineDiff before={currentBrief[key]} after={value} gone="Now" added="Proposed" className="mb-2" /> : null}
+            {body(key, value, set, 8000, title)}
+          </>,
+          true,
+        )
       : null;
 
   const kept = applied?.applied.name;

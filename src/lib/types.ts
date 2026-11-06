@@ -309,6 +309,8 @@ export interface ConversationSummary {
   title: string;
   /** The project it belongs to, if any. */
   projectId: string | null;
+  /** A chat started from the Try pane in Studio: kept apart in the sidebar, off Home. */
+  isTry?: boolean;
   createdAt: number;
   updatedAt: number;
 }

@@ -73,6 +73,8 @@ export type TurnRequest = { conversationId: string } & (
       attachmentIds?: string[];
       steer?: boolean;
       projectId?: string;
+      /** A new conversation is a try, from the Try pane in Studio (ignored for existing ones). */
+      isTry?: boolean;
       /** Set when no one typed the message (a task's run); shown as a label instead of a member bubble. */
       origin?: MessageOrigin;
     }
@@ -526,7 +528,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
     const created = !conversation;
     if (!conversation) {
       const title = titleFromMessage(request.skill ? [request.skill.name, request.text.trim()].filter(Boolean).join(" — ") : request.text);
-      conversation = await store.createConversation({ id: conversationId, title, projectId: request.projectId });
+      conversation = await store.createConversation({ id: conversationId, title, projectId: request.projectId, isTry: request.isTry });
     }
     userMessage = await store.insertMessage({
       id: crypto.randomUUID(),

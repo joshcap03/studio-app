@@ -18,7 +18,8 @@ import { LibraryView } from "@/components/library/library-view";
 import { TrackerPage } from "@/components/library/tracker-page";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { collectionName } from "@/components/tasks/tracker";
-import { StudioView } from "@/components/studio/studio-view";
+import { Workbench } from "@/components/studio/workbench";
+import { STUDIO_PARTS, type StudioPart } from "@/lib/studio";
 import { TasksView } from "@/components/tasks/tasks-view";
 import { Companion as CompanionMark, CompanionContext } from "@/components/ui/companion";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
@@ -121,7 +122,7 @@ function setupAsJourney(setup: SetupSummary): JourneyInfo {
  * What a message is sent with besides its text, and how (on a call or held to the mic, the member
  * spoke it); on a call, which call (for its recap, once the server has checked it's theirs).
  */
-type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef };
+type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef; isTry?: boolean };
 const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
 interface ThreadState {
@@ -252,6 +253,13 @@ function conversationIdFrom(pathname: string): string | null {
   return match && UUID.test(match[1]) ? match[1] : null;
 }
 
+/** The part of the workbench at "/studio" or "/studio/<part>"; null anywhere else. */
+function studioPartFrom(pathname: string): StudioPart | null {
+  if (/^\/studio\/?$/.test(pathname)) return "brief";
+  const part = /^\/studio\/([a-z]+)\/?$/.exec(pathname)?.[1];
+  return STUDIO_PARTS.find((p) => p === part) ?? null;
+}
+
 function projectIdFrom(pathname: string): string | null {
   const match = /^\/p\/([^/]+)\/?$/.exec(pathname);
   return match && UUID.test(match[1]) ? match[1] : null;
@@ -311,7 +319,7 @@ function WorkspaceShell({
   workspace,
   workspaces: initialWorkspaces,
   email,
-  skills,
+  skills: initialSkills,
   initialSkillId,
   setup: initialSetup,
   voice,
@@ -328,7 +336,11 @@ function WorkspaceShell({
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
-  const activeId = conversationIdFrom(pathname);
+  /** The agent's workbench in Studio (src/components/studio): its parts beside a live Try pane. */
+  const atStudio = studioEnabled && studioPartFrom(pathname) !== null;
+  /** The chat in the Try pane. It's on screen without being in the address, so the workbench stays put. */
+  const [tryId, setTryId] = useState<string | null>(null);
+  const activeId = conversationIdFrom(pathname) ?? (atStudio ? tryId : null);
   /** The project page on screen (not the project of an open conversation). */
   const activeProjectId = activeId ? null : projectIdFrom(pathname);
   /** The Tasks page on screen: "list", or the id of the open task. */
@@ -341,8 +353,6 @@ function WorkspaceShell({
   const [workspaces, setWorkspaces] = useState(initialWorkspaces);
   /** Several agents, with the Home preview on: the Home / Studio switch shows, and every chat names its agent. */
   const several = homeEnabled && workspaces.length > 1;
-  /** The agent's own page in Studio (src/components/studio), where it describes itself and every change is an ask. */
-  const atStudio = studioEnabled && /^\/studio\/?$/.test(pathname);
   // Home or Studio, remembered on this device. Home is one view across agents: "/" routes an ask,
   // and the sidebar lists every agent's chats. Studio is for shaping the agent picked in the menu:
   // with its page on, it lists no chats. Its page is always Studio, however the member got there.
@@ -370,6 +380,8 @@ function WorkspaceShell({
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  // The composer's "/" list; the workbench's Skills part keeps the agent's own up to date.
+  const [skills, setSkills] = useState(initialSkills);
   const [conversations, setConversations] = useState(initialConversations);
   const [threads, setThreads] = useState<Record<string, ThreadState>>(() =>
     initialThread
@@ -593,7 +605,7 @@ function WorkspaceShell({
   const upsertConversation = useCallback(
     (summary: ConversationSummary) => {
       setConversations((list) => [summary, ...list.filter((c) => c.id !== summary.id)].sort((a, b) => b.updatedAt - a.updatedAt));
-      upsertHome(summary);
+      if (!summary.isTry) upsertHome(summary);
     },
     [upsertHome],
   );
@@ -708,7 +720,8 @@ function WorkspaceShell({
   const activeProjectName = activeProject?.status === "ready" ? activeProject.project.name : undefined;
   const tasksTitle = activeTask === "list" ? "Tasks" : activeTask ? (taskTitle ?? undefined) : undefined;
   useEffect(() => {
-    const title = activeTitle ?? activeProjectName ?? tasksTitle ?? (libraryPath === "home" ? "Library" : libraryPath ? collectionName(libraryPath) : undefined);
+    // In Studio the chat in the Try pane is a try, not the page.
+    const title = (atStudio ? undefined : activeTitle) ?? activeProjectName ?? tasksTitle ?? (libraryPath === "home" ? "Library" : libraryPath ? collectionName(libraryPath) : undefined);
     document.title = title ? `${title} · Studio` : atHome || atStudio ? "Studio" : `${workspace.name} · Studio`;
   }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name, atHome, atStudio]);
 
@@ -980,13 +993,16 @@ function WorkspaceShell({
               id: conversationId,
               title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text),
               projectId,
+              ...(extras.isTry ? { isTry: true } : {}),
               createdAt: now,
               updatedAt: now,
             };
         return [summary, ...list.filter((c) => c.id !== conversationId)];
       });
-      upsertHome({ id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), projectId, createdAt: now, updatedAt: now }, true);
-      if (isNew) navigate(`/c/${conversationId}`);
+      if (!extras.isTry) upsertHome({ id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), projectId, createdAt: now, updatedAt: now }, true);
+      // A try opens in the Try pane, with the workbench still on screen.
+      if (isNew && extras.isTry) setTryId(conversationId);
+      else if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
       setNotice(null);
       sentExtras.current.set(assistant.id, extras);
@@ -1004,6 +1020,7 @@ function WorkspaceShell({
           ...(extras.screen ? { screen: extras.screen } : {}),
           // Only creates it there; the server ignores it for a conversation that already exists.
           ...(projectId ? { projectId } : {}),
+          ...(extras.isTry ? { isTry: true } : {}),
         },
         { user: user.id, assistant: assistant.id },
       );
@@ -1153,12 +1170,35 @@ function WorkspaceShell({
         setRouted((r) => (r?.conversationId === activeId ? null : r));
         sendTo(activeId, text, false, full, running.has(activeId) || awaitingHere);
       } else {
-        drafts.current.delete(activeProjectId ? `project:${activeProjectId}` : "new");
-        sendTo(crypto.randomUUID(), text, true, full, false, activeProjectId);
+        drafts.current.delete(atStudio ? "try" : activeProjectId ? `project:${activeProjectId}` : "new");
+        sendTo(crypto.randomUUID(), text, true, atStudio ? { ...full, isTry: true } : full, false, activeProjectId);
       }
     },
-    [activeId, activeProjectId, running, sendTo],
+    [activeId, activeProjectId, atStudio, running, sendTo],
   );
+
+  // The Try pane. The words of a change go into its message box, unsent, as an ask always has.
+  const describeInTry = useCallback((text: string | null, skill?: MessageSkill | null) => {
+    if (text !== null) composer.current?.setValue(text);
+    if (skill) composer.current?.attachSkill(skill);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  const focusTry = useCallback(() => composer.current?.focus(), []);
+  const newTry = useCallback(() => {
+    setTryId(null);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  /** The last thing asked in this try, to ask again in a fresh one: same words, with the agent as it is now. */
+  const lastAsk = useMemo(() => {
+    if (!atStudio || !activeThread || activeThread.status !== "ready") return null;
+    return [...activeThread.messages].reverse().find((m) => m.role === "user" && !m.origin && (m.content.trim() || m.skill)) ?? null;
+  }, [atStudio, activeThread]);
+  const askAgain = useCallback(() => {
+    if (!lastAsk) return;
+    sendTo(crypto.randomUUID(), lastAsk.content, true, { skill: lastAsk.skill ?? null, attachments: [], isTry: true });
+  }, [lastAsk, sendTo]);
+  // What a reply there may have changed (an applied proposal, a new skill): the workbench looks again.
+  const [studioFresh, setStudioFresh] = useState(0);
 
   /**
    * Answers the agent's pending request in `conversationId` (the open one, or a call's) and
@@ -1249,6 +1289,7 @@ function WorkspaceShell({
       // agent arrives, and a name or sound kept changes how it talks with them. (Choosing whether
       // to run the first task now, after, changes neither.)
       if (response.status !== "applied" || response.firstRun) return;
+      setStudioFresh((n) => n + 1);
       api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
       if (response.applied.name || response.applied.manner !== undefined) {
         api.getCompanion().then(({ companion: next }) => next && onCompanion(next), () => undefined);
@@ -1479,7 +1520,7 @@ function WorkspaceShell({
         return setup.conversationId;
       }
       // Only offered on the new-chat screen, so this starts a new conversation.
-      if (activeId) return null;
+      if (conversationIdFrom(window.location.pathname)) return null;
       // Just the skill, no words: the agent speaks first ("Hey!", or on a call the voice does)
       // and opens step 1.
       const conversationId = crypto.randomUUID();
@@ -1488,7 +1529,7 @@ function WorkspaceShell({
       setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0, goal: null, plan: s.plan.map(({ text }) => ({ text, status: "todo" as const })) } : s));
       return conversationId;
     },
-    [activeId, navigate, sendTo, setup],
+    [navigate, sendTo, setup],
   );
 
   /**
@@ -1683,10 +1724,10 @@ function WorkspaceShell({
   // suggests a name. Just the skill, no words: it speaks first. From the agent's page it
   // arrives as ?hello=1.
   const sayHello = useCallback(() => {
-    if (activeId) return;
+    if (conversationIdFrom(window.location.pathname)) return;
     drafts.current.delete("new");
     sendTo(crypto.randomUUID(), "", true, { skill: { id: INTRODUCE_SKILL_ID, name: INTRODUCE_SKILL_NAME }, attachments: [] });
-  }, [activeId, sendTo]);
+  }, [sendTo]);
   // Offered on the new-chat screen once it's ready, unless setup is under way (that comes first).
   const hello = companion?.stage === "ready" && setup?.status !== "in_progress";
   const helloRequested = useRef(false);
@@ -1816,7 +1857,8 @@ function WorkspaceShell({
       const snapshot = conversations;
       setConversations((list) => list.filter((c) => c.id !== id));
       setHomeData((data) => (data ? { ...data, conversations: data.conversations.filter((c) => c.id !== id) } : data));
-      if (id === activeId) navigate("/");
+      if (id === tryId) setTryId(null);
+      if (id === conversationIdFrom(window.location.pathname)) navigate("/");
       api
         .deleteConversation(id)
         .then(() =>
@@ -1827,7 +1869,7 @@ function WorkspaceShell({
         )
         .catch(() => setConversations(snapshot));
     },
-    [activeId, conversations, navigate],
+    [conversations, navigate, tryId],
   );
 
   const createProject = useCallback(
@@ -2180,7 +2222,7 @@ function WorkspaceShell({
   const callButton = (where: string | null) =>
     voice && !call ? { label: callName ? `Call ${callName}` : "Start a call", onCall: () => void startCall({ conversationId: where }), busy: calling } : undefined;
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
-  const draftKey = activeId ?? "new";
+  const draftKey = activeId ?? (atStudio ? "try" : "new");
   const projectDraftKey = `project:${activeProjectId}`;
 
   const footnote =
@@ -2192,273 +2234,9 @@ function WorkspaceShell({
       <p className="text-[12px] text-fg-3">This agent isn&apos;t enabled yet.</p>
     ) : null;
 
-  return (
-    <Tooltip.Provider delayDuration={500} skipDelayDuration={200}>
-      <ScreenButtonsContext.Provider value={setButtons}>
-      <div inert={call?.layout === "full" ? true : undefined} className="flex h-dvh overflow-hidden bg-bg" style={keyboardHeight ? { height: keyboardHeight } : undefined}>
-        {/* Mobile drawer backdrop */}
-        <div
-          aria-hidden="true"
-          onClick={() => setDrawerOpen(false)}
-          className={`fixed inset-0 z-30 bg-black/25 transition-opacity duration-300 md:hidden ${
-            drawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
-          }`}
-        />
-
-        <aside
-          aria-label="Sidebar"
-          inert={sidebarHidden || undefined}
-          className={`z-40 h-full shrink-0 overflow-hidden border-r border-line bg-sidebar transition-[margin,transform] duration-300 ease-out-soft max-md:fixed max-md:inset-y-0 max-md:left-0 ${
-            drawerOpen ? "max-md:translate-x-0 max-md:shadow-pop" : "max-md:-translate-x-full"
-          } ${collapsed ? "md:-ml-[265px]" : "md:ml-0"}`}
-        >
-          <Sidebar
-            ref={search}
-            conversations={conversations}
-            activeId={activeId}
-            moves={moves}
-            agent={agent}
-            workspace={workspaces.find((w) => w.id === workspace.id) ?? workspace}
-            workspaces={workspaces}
-            companions={companions}
-            email={email}
-            mod={mod}
-            atHome={atHome}
-            home={homeView}
-            homeEnabled={several}
-            mode={mode}
-            onMode={switchMode}
-            onHome={() => navigate("/")}
-            onSelect={(id) => navigate(`/c/${id}`)}
-            onNew={newChat}
-            onCollapse={toggleSidebar}
-            onRename={rename}
-            onDelete={remove}
-            projects={projects}
-            activeProjectId={activeProjectId}
-            onSelectProject={(id) => navigate(`/p/${id}`)}
-            onCreateProject={createProject}
-            onRenameProject={renameProject}
-            onDeleteProject={removeProject}
-            onMove={moveConversation}
-            tasksActive={activeTask !== null}
-            onSelectTasks={() => navigate("/tasks")}
-            libraryActive={libraryActive}
-            onSelectLibrary={() => navigate("/library")}
-            studioEnabled={studioEnabled}
-            studioActive={atStudio}
-            onSelectStudio={() => navigate("/studio")}
-          />
-        </aside>
-
-        <main
-          className="relative flex min-w-0 flex-1 flex-col"
-          onDragEnter={(e) => {
-            if (!acceptsDrop(e)) return;
-            dragDepth.current += 1;
-            setDropping(true);
-          }}
-          onDragOver={(e) => {
-            if (!acceptsDrop(e)) return;
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "copy";
-          }}
-          onDragLeave={() => {
-            dragDepth.current = Math.max(0, dragDepth.current - 1);
-            if (dragDepth.current === 0) setDropping(false);
-          }}
-          onDrop={(e) => {
-            dragDepth.current = 0;
-            setDropping(false);
-            if (!acceptsDrop(e) || e.dataTransfer.files.length === 0) return;
-            e.preventDefault();
-            composer.current?.addFiles(e.dataTransfer.files);
-          }}
-        >
-          {dropping ? (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-2 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-bg/85 animate-fade-in"
-            >
-              <Paperclip size={22} strokeWidth={1.75} className="text-accent" />
-              <p className="text-[15px] font-medium text-fg">Drop files to attach</p>
-              <p className="text-[13px] text-fg-3">PDF, Word, CSV, text, or images up to 10 MB</p>
-            </div>
-          ) : null}
-          <header className="flex h-14 shrink-0 items-center gap-1 px-3 md:px-4">
-            <IconButton label="Open sidebar" className="md:hidden" onClick={() => setDrawerOpen(true)}>
-              <Menu size={18} strokeWidth={1.75} />
-            </IconButton>
-            {collapsed ? (
-              <div className="hidden items-center gap-0.5 md:flex">
-                <IconButton label="Open sidebar" shortcut={`${mod}B`} onClick={toggleSidebar}>
-                  <PanelLeftOpen size={17} strokeWidth={1.75} />
-                </IconButton>
-                <IconButton label="New chat" shortcut={`${mod}⇧O`} onClick={newChat}>
-                  <SquarePen size={16} strokeWidth={1.75} />
-                </IconButton>
-              </div>
-            ) : null}
-            <h1 className="flex min-w-0 flex-1 items-center gap-1 px-1.5 text-[14px] font-medium text-fg-2 max-md:justify-center">
-              {/* With several agents, every chat says which one it's with. */}
-              {several && activeId ? (
-                <>
-                  <span className="flex min-w-0 shrink-0 items-center gap-1.5 text-fg">
-                    {companion ? <CompanionMark stage={companion.stage} look={companion.look} size={16} /> : null}
-                    <span className="max-w-[10rem] truncate">{agentLabel(workspace, companions)}</span>
-                  </span>
-                  <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
-                </>
-              ) : null}
-              {conversationProject ? (
-                <>
-                  <a
-                    href={`/p/${conversationProject.id}`}
-                    onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                      e.preventDefault();
-                      navigate(`/p/${conversationProject.id}`);
-                    }}
-                    className="max-w-[40%] shrink-0 truncate rounded-md text-fg-3 transition-colors hover:text-fg"
-                  >
-                    {conversationProject.name}
-                  </a>
-                  <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
-                </>
-              ) : null}
-              <span className="min-w-0 truncate">{activeTitle ?? (activeTask && activeTask !== "list" ? taskTitle : null) ?? ""}</span>
-            </h1>
-            {agent.mode === "mock" ? (
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                  <span
-                    tabIndex={0}
-                    className="hidden h-6 items-center gap-1.5 rounded-full border border-line px-2.5 text-[12px] text-fg-2 md:inline-flex"
-                  >
-                    <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />
-                    Mock agent
-                  </span>
-                </Tooltip.Trigger>
-                <TooltipContent label="The agent API isn't connected. Responses are simulated." />
-              </Tooltip.Root>
-            ) : null}
-            <IconButton label="New chat" className="md:hidden" onClick={newChat}>
-              <SquarePen size={17} strokeWidth={1.75} />
-            </IconButton>
-          </header>
-          {/* A call docks here, under the header, while the member keeps using the app. */}
-          <div ref={setDock} className="contents" />
-
-          {atStudio ? (
-            <StudioView
-              key={workspace.id}
-              workspace={workspaces.find((w) => w.id === workspace.id) ?? workspace}
-              several={several}
-              companion={companion}
-              setup={setup}
-              skills={skills}
-              conversations={conversations}
-              onGo={navigate}
-              onSetup={() => {
-                navigate("/new");
-                startSetup();
-              }}
-              onSayHello={() => {
-                navigate("/new");
-                sayHello();
-              }}
-              onNewChat={newChat}
-              onOnHome={setOnHome}
-            />
-          ) : libraryPath === "home" ? (
-            <LibraryView onOpenConversation={(id) => navigate(`/c/${id}`)} onOpenTracker={(collection) => navigate(`/library/${collection}`)} />
-          ) : libraryPath ? (
-            <TrackerPage key={libraryPath} collection={libraryPath} onBack={() => navigate("/library")} />
-          ) : activeTask === "list" ? (
-            <TasksView skills={skills} onOpen={(id) => navigate(`/tasks/${id}`)} />
-          ) : activeTask ? (
-            <TaskDetail
-              key={activeTask}
-              taskId={activeTask}
-              skills={skills}
-              onBack={() => navigate("/tasks")}
-              onOpenConversation={openTaskConversation}
-              onTitle={setTaskTitle}
-            />
-          ) : activeProjectId ? (
-            activeProject?.status === "ready" ? (
-              <ProjectView
-                key={activeProjectId}
-                ref={composer}
-                project={activeProject.project}
-                conversations={conversations.filter((c) => c.projectId === activeProjectId)}
-                running={running}
-                draft={drafts.current.get(projectDraftKey) ?? ""}
-                onDraftChange={(v) => drafts.current.set(projectDraftKey, v)}
-                onSubmit={send}
-                onOpen={(id) => navigate(`/c/${id}`)}
-                onChange={projectSaved}
-                skills={skills}
-                allowFiles={agent.attachments}
-                footnote={footnote}
-                voice={voice}
-              />
-            ) : activeProject?.status === "missing" || activeProject?.status === "error" ? (
-              <Unavailable what="project" missing={activeProject.status === "missing"} onNew={newChat} />
-            ) : (
-              <div className="flex flex-1 items-center justify-center" aria-busy="true">
-                <span className="spinner animate-fade-in [animation-delay:200ms]" aria-label="Loading project" />
-              </div>
-            )
-          ) : atHome ? (
-            <HomeView
-              key="home"
-              ref={composer}
-              data={homeView}
-              workspaces={workspaces}
-              companions={companions}
-              current={workspace.id}
-              draft={drafts.current.get("home") ?? ""}
-              onDraftChange={(v) => drafts.current.set("home", v)}
-              onSubmit={(text, pick) => void sendFromHome(text, pick)}
-              routing={routing}
-              ask={homeAsk}
-              onCancelAsk={() => setHomeAsk(null)}
-              onOpen={openFromHome}
-              voice={voice}
-              footnote={footnote}
-              notice={homeNotice}
-              showRecent={sidebarHidden}
-            />
-          ) : !activeId ? (
-            <EmptyState
-              key="new"
-              ref={composer}
-              draft={drafts.current.get("new") ?? ""}
-              onDraftChange={(v) => drafts.current.set("new", v)}
-              onSubmit={send}
-              offHome={several && workspaces.some((w) => w.id === workspace.id && !w.onHome)}
-              onPutOnHome={workspace.role === "owner" ? putOnHome : undefined}
-              skills={skills}
-              initialSkillId={initialSkillId}
-              canManageSkills={workspace.role === "owner"}
-              allowFiles={agent.attachments}
-              footnote={footnote}
-              setup={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? setup : null}
-              onSayHello={hello ? sayHello : undefined}
-              agentName={workspace.name}
-              member={member}
-              greeter={greeter}
-              onSetup={() => startSetup()}
-              onSkipSetup={skipSetup}
-              onTalk={voice && setup ? () => void startCall({ setup: true }) : undefined}
-              talking={calling}
-              talkNotice={callNotice}
-              micInstead={micInstead}
-              voice={voice}
-              call={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? undefined : callButton(null)}
-            />
-          ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
+  const conversationPane = (
+    <>
+      {activeThread?.status === "missing" || activeThread?.status === "error" ? (
             <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
           ) : activeThread?.status === "ready" ? (
             <Thread
@@ -2554,7 +2332,7 @@ function WorkspaceShell({
                     skills={skills}
                     running={isRunning}
                     placeholder={isRunning ? "Redirect the agent…" : several ? `Reply to ${agentLabel(workspace, companions)}…` : "Reply…"}
-                    autoFocus={desktop}
+                    autoFocus={desktop && !atStudio}
                     allowFiles={agent.attachments}
                     hint={composerHint(lastMove)}
                     voice={voice}
@@ -2570,6 +2348,319 @@ function WorkspaceShell({
             <div className="flex flex-1 items-center justify-center" aria-busy="true">
               <span className="spinner animate-fade-in [animation-delay:200ms]" aria-label="Loading conversation" />
             </div>
+          )
+      }
+    </>
+  );
+
+  return (
+    <Tooltip.Provider delayDuration={500} skipDelayDuration={200}>
+      <ScreenButtonsContext.Provider value={setButtons}>
+      <div inert={call?.layout === "full" ? true : undefined} className="flex h-dvh overflow-hidden bg-bg" style={keyboardHeight ? { height: keyboardHeight } : undefined}>
+        {/* Mobile drawer backdrop */}
+        <div
+          aria-hidden="true"
+          onClick={() => setDrawerOpen(false)}
+          className={`fixed inset-0 z-30 bg-black/25 transition-opacity duration-300 md:hidden ${
+            drawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+        />
+
+        <aside
+          aria-label="Sidebar"
+          inert={sidebarHidden || undefined}
+          className={`z-40 h-full shrink-0 overflow-hidden border-r border-line bg-sidebar transition-[margin,transform] duration-300 ease-out-soft max-md:fixed max-md:inset-y-0 max-md:left-0 ${
+            drawerOpen ? "max-md:translate-x-0 max-md:shadow-pop" : "max-md:-translate-x-full"
+          } ${collapsed ? "md:-ml-[265px]" : "md:ml-0"}`}
+        >
+          <Sidebar
+            ref={search}
+            conversations={conversations}
+            activeId={activeId}
+            moves={moves}
+            agent={agent}
+            workspace={workspaces.find((w) => w.id === workspace.id) ?? workspace}
+            workspaces={workspaces}
+            companions={companions}
+            email={email}
+            mod={mod}
+            atHome={atHome}
+            home={homeView}
+            homeEnabled={several}
+            mode={mode}
+            onMode={switchMode}
+            onHome={() => navigate("/")}
+            onSelect={(id) => {
+              // On the workbench, a try opens in the Try pane.
+              if (atStudio && conversations.some((c) => c.id === id && c.isTry)) {
+                setTryId(id);
+                setDrawerOpen(false);
+              } else navigate(`/c/${id}`);
+            }}
+            onNew={newChat}
+            onCollapse={toggleSidebar}
+            onRename={rename}
+            onDelete={remove}
+            projects={projects}
+            activeProjectId={activeProjectId}
+            onSelectProject={(id) => navigate(`/p/${id}`)}
+            onCreateProject={createProject}
+            onRenameProject={renameProject}
+            onDeleteProject={removeProject}
+            onMove={moveConversation}
+            tasksActive={activeTask !== null}
+            onSelectTasks={() => navigate("/tasks")}
+            libraryActive={libraryActive}
+            onSelectLibrary={() => navigate("/library")}
+            studioEnabled={studioEnabled}
+            studioActive={atStudio}
+            onSelectStudio={() => navigate("/studio")}
+          />
+        </aside>
+
+        <main
+          className="relative flex min-w-0 flex-1 flex-col"
+          onDragEnter={(e) => {
+            if (!acceptsDrop(e)) return;
+            dragDepth.current += 1;
+            setDropping(true);
+          }}
+          onDragOver={(e) => {
+            if (!acceptsDrop(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+          }}
+          onDragLeave={() => {
+            dragDepth.current = Math.max(0, dragDepth.current - 1);
+            if (dragDepth.current === 0) setDropping(false);
+          }}
+          onDrop={(e) => {
+            dragDepth.current = 0;
+            setDropping(false);
+            if (!acceptsDrop(e) || e.dataTransfer.files.length === 0) return;
+            e.preventDefault();
+            composer.current?.addFiles(e.dataTransfer.files);
+          }}
+        >
+          {dropping ? (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-2 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-bg/85 animate-fade-in"
+            >
+              <Paperclip size={22} strokeWidth={1.75} className="text-accent" />
+              <p className="text-[15px] font-medium text-fg">Drop files to attach</p>
+              <p className="text-[13px] text-fg-3">PDF, Word, CSV, text, or images up to 10 MB</p>
+            </div>
+          ) : null}
+          <header className="flex h-14 shrink-0 items-center gap-1 px-3 md:px-4">
+            <IconButton label="Open sidebar" className="md:hidden" onClick={() => setDrawerOpen(true)}>
+              <Menu size={18} strokeWidth={1.75} />
+            </IconButton>
+            {collapsed ? (
+              <div className="hidden items-center gap-0.5 md:flex">
+                <IconButton label="Open sidebar" shortcut={`${mod}B`} onClick={toggleSidebar}>
+                  <PanelLeftOpen size={17} strokeWidth={1.75} />
+                </IconButton>
+                <IconButton label="New chat" shortcut={`${mod}⇧O`} onClick={newChat}>
+                  <SquarePen size={16} strokeWidth={1.75} />
+                </IconButton>
+              </div>
+            ) : null}
+            <h1 className="flex min-w-0 flex-1 items-center gap-1 px-1.5 text-[14px] font-medium text-fg-2 max-md:justify-center">
+              {/* With several agents, every chat says which one it's with. */}
+              {atStudio ? (
+                <span className="flex min-w-0 items-center gap-2 text-fg">
+                  {companion ? <CompanionMark stage={companion.stage} look={companion.look} size={18} /> : null}
+                  <span className="min-w-0 truncate font-display text-[18px] tracking-[-0.01em]">{agentLabel(workspace, companions)}</span>
+                </span>
+              ) : several && activeId ? (
+                <>
+                  <span className="flex min-w-0 shrink-0 items-center gap-1.5 text-fg">
+                    {companion ? <CompanionMark stage={companion.stage} look={companion.look} size={16} /> : null}
+                    <span className="max-w-[10rem] truncate">{agentLabel(workspace, companions)}</span>
+                  </span>
+                  <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
+                </>
+              ) : null}
+              {conversationProject && !atStudio ? (
+                <>
+                  <a
+                    href={`/p/${conversationProject.id}`}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                      e.preventDefault();
+                      navigate(`/p/${conversationProject.id}`);
+                    }}
+                    className="max-w-[40%] shrink-0 truncate rounded-md text-fg-3 transition-colors hover:text-fg"
+                  >
+                    {conversationProject.name}
+                  </a>
+                  <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
+                </>
+              ) : null}
+              <span className="min-w-0 truncate">{atStudio ? "" : activeTitle ?? (activeTask && activeTask !== "list" ? taskTitle : null) ?? ""}</span>
+            </h1>
+            {agent.mode === "mock" ? (
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                  <span
+                    tabIndex={0}
+                    className="hidden h-6 items-center gap-1.5 rounded-full border border-line px-2.5 text-[12px] text-fg-2 md:inline-flex"
+                  >
+                    <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />
+                    Mock agent
+                  </span>
+                </Tooltip.Trigger>
+                <TooltipContent label="The agent API isn't connected. Responses are simulated." />
+              </Tooltip.Root>
+            ) : null}
+            <IconButton label="New chat" className="md:hidden" onClick={newChat}>
+              <SquarePen size={17} strokeWidth={1.75} />
+            </IconButton>
+          </header>
+          {/* A call docks here, under the header, while the member keeps using the app. */}
+          <div ref={setDock} className="contents" />
+
+          {atStudio ? (
+            <Workbench
+              key={workspace.id}
+              workspace={workspaces.find((w) => w.id === workspace.id) ?? workspace}
+              several={several}
+              companion={companion}
+              setup={setup}
+              skills={skills}
+              hasChats={conversations.length > 0}
+              part={studioPartFrom(pathname) ?? "brief"}
+              mod={mod}
+              fresh={studioFresh}
+              onGo={navigate}
+              onDescribe={describeInTry}
+              onFocusTry={focusTry}
+              onNewTry={activeId ? newTry : null}
+              onAskAgain={lastAsk && !isRunning ? askAgain : null}
+              onSkills={(own) => setSkills((all) => [...all.filter((s) => s.id.startsWith("builtin:")), ...own])}
+              tryPane={
+                activeId ? (
+                  conversationPane
+                ) : (
+                  <div className="mt-auto w-full px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+                    <Composer
+                      key="try"
+                      ref={composer}
+                      initialValue={drafts.current.get("try") ?? ""}
+                      onDraftChange={(v) => drafts.current.set("try", v)}
+                      onSubmit={send}
+                      onStop={stopHere}
+                      skills={skills}
+                      running={false}
+                      placeholder="Ask it something real…"
+                      allowFiles={agent.attachments}
+                      voice={voice}
+                    />
+                    {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
+                  </div>
+                )
+              }
+              onSetup={() => {
+                navigate("/new");
+                startSetup();
+              }}
+              onSayHello={() => {
+                navigate("/new");
+                sayHello();
+              }}
+              onOnHome={setOnHome}
+            />
+          ) : libraryPath === "home" ? (
+            <LibraryView onOpenConversation={(id) => navigate(`/c/${id}`)} onOpenTracker={(collection) => navigate(`/library/${collection}`)} />
+          ) : libraryPath ? (
+            <TrackerPage key={libraryPath} collection={libraryPath} onBack={() => navigate("/library")} />
+          ) : activeTask === "list" ? (
+            <TasksView skills={skills} onOpen={(id) => navigate(`/tasks/${id}`)} />
+          ) : activeTask ? (
+            <TaskDetail
+              key={activeTask}
+              taskId={activeTask}
+              skills={skills}
+              onBack={() => navigate("/tasks")}
+              onOpenConversation={openTaskConversation}
+              onTitle={setTaskTitle}
+            />
+          ) : activeProjectId ? (
+            activeProject?.status === "ready" ? (
+              <ProjectView
+                key={activeProjectId}
+                ref={composer}
+                project={activeProject.project}
+                conversations={conversations.filter((c) => c.projectId === activeProjectId)}
+                running={running}
+                draft={drafts.current.get(projectDraftKey) ?? ""}
+                onDraftChange={(v) => drafts.current.set(projectDraftKey, v)}
+                onSubmit={send}
+                onOpen={(id) => navigate(`/c/${id}`)}
+                onChange={projectSaved}
+                skills={skills}
+                allowFiles={agent.attachments}
+                footnote={footnote}
+                voice={voice}
+              />
+            ) : activeProject?.status === "missing" || activeProject?.status === "error" ? (
+              <Unavailable what="project" missing={activeProject.status === "missing"} onNew={newChat} />
+            ) : (
+              <div className="flex flex-1 items-center justify-center" aria-busy="true">
+                <span className="spinner animate-fade-in [animation-delay:200ms]" aria-label="Loading project" />
+              </div>
+            )
+          ) : atHome ? (
+            <HomeView
+              key="home"
+              ref={composer}
+              data={homeView}
+              workspaces={workspaces}
+              companions={companions}
+              current={workspace.id}
+              draft={drafts.current.get("home") ?? ""}
+              onDraftChange={(v) => drafts.current.set("home", v)}
+              onSubmit={(text, pick) => void sendFromHome(text, pick)}
+              routing={routing}
+              ask={homeAsk}
+              onCancelAsk={() => setHomeAsk(null)}
+              onOpen={openFromHome}
+              voice={voice}
+              footnote={footnote}
+              notice={homeNotice}
+              showRecent={sidebarHidden}
+            />
+          ) : !activeId ? (
+            <EmptyState
+              key="new"
+              ref={composer}
+              draft={drafts.current.get("new") ?? ""}
+              onDraftChange={(v) => drafts.current.set("new", v)}
+              onSubmit={send}
+              offHome={several && workspaces.some((w) => w.id === workspace.id && !w.onHome)}
+              onPutOnHome={workspace.role === "owner" ? putOnHome : undefined}
+              skills={skills}
+              initialSkillId={initialSkillId}
+              canManageSkills={workspace.role === "owner"}
+              allowFiles={agent.attachments}
+              footnote={footnote}
+              setup={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? setup : null}
+              onSayHello={hello ? sayHello : undefined}
+              agentName={workspace.name}
+              member={member}
+              greeter={greeter}
+              onSetup={() => startSetup()}
+              onSkipSetup={skipSetup}
+              onTalk={voice && setup ? () => void startCall({ setup: true }) : undefined}
+              talking={calling}
+              talkNotice={callNotice}
+              micInstead={micInstead}
+              voice={voice}
+              call={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? undefined : callButton(null)}
+            />
+          ) : (
+            conversationPane
           )}
         </main>
 

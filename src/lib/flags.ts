@@ -6,8 +6,8 @@ import type { Session } from "@/lib/tenant-core";
 
 /**
  * "home": Home across agents, the router, and the "On Home" flag's UI (src/lib/home.ts).
- * "studio": the agent's own page in Studio mode, "/studio" (src/components/studio), where the agent
- * describes what it reads, knows, and does, and every change is an ask in a new chat.
+ * "studio": the agent's workbench in Studio mode, "/studio" (src/components/studio), where its parts
+ * are edited beside a live Try pane, with their history.
  */
 export type PreviewFeature = "brain" | "why" | "voice" | "companion" | "watches" | "home" | "studio";
 

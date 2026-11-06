@@ -1,6 +1,7 @@
 import type { StandingKind } from "@/lib/approvals/standing";
+import type { AgentRevision } from "@/lib/revisions";
 import type { MarkedMove } from "@/lib/chat/move";
-import type { Attachment, CallSummary, ChatMessage, Companion, ConnectionsState, ConversationSummary, HomeData, Journey, LibraryItem, Memory, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, RouteResult, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSettings, WorkspaceSkill, WorkspaceSummary } from "@/lib/types";
+import type { Attachment, CallSummary, ChatMessage, Companion, ConnectionsState, ConversationSummary, HomeData, Journey, LibraryItem, Memory, MemoryPromotion, MemoryProposal, MessageFeedback, Modality, Project, ProjectSummary, ProposalPicks, RouteResult, ScreenRef, SetupSummary, ShownStep, StreamEvent, UiResponse, WorkspaceSettings, WorkspaceSkill, WorkspaceSummary } from "@/lib/types";
 import type { VoiceGrant } from "@/lib/voice/types";
 import type { VoiceKey } from "@/lib/voice/voices";
 import type { TaskSchedule } from "@/lib/tasks/schedule";
@@ -194,6 +195,17 @@ export const api = {
   getWatch: (taskId: string, signal?: AbortSignal) => request<{ watch: TaskWatch | null }>(`/api/tasks/${taskId}/watch`, { signal }),
   /** Whether this agent takes asks from Home (the owner's call). */
   setOnHome: (onHome: boolean) => request<{ settings: WorkspaceSettings }>("/api/workspace/settings", { method: "PATCH", body: JSON.stringify({ onHome }) }),
+  /** The agent's brief, as its owner edits it. */
+  updateSettings: (patch: Partial<Pick<WorkspaceSettings, "profile" | "agentInstructions">>) =>
+    request<{ settings: WorkspaceSettings }>("/api/workspace/settings", { method: "PATCH", body: JSON.stringify(patch) }),
+  createSkill: (fields: SkillFields) => request<{ skill: WorkspaceSkill }>("/api/workspace/skills", { method: "POST", body: JSON.stringify(fields) }),
+  updateSkill: (id: string, fields: SkillFields) => request<{ skill: WorkspaceSkill }>(`/api/workspace/skills/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
+  deleteSkill: (id: string) => request<void>(`/api/workspace/skills/${id}`, { method: "DELETE" }),
+  /** Pending shares of facts, for the Brain ("brain" preview). */
+  listPromotions: (signal?: AbortSignal) => request<{ promotions: MemoryPromotion[] }>("/api/workspace/promotions", { signal }),
+  /** What the brief and skills were before each change (the "studio" preview, the owner's). */
+  listRevisions: (signal?: AbortSignal) => request<{ revisions: AgentRevision[] }>("/api/workspace/revisions", { signal }),
+  restoreRevision: (id: string) => request<{ restored: boolean }>(`/api/workspace/revisions/${id}`, { method: "POST" }),
   forgetBrowserSignIns: () => request<{ saved: boolean | null }>("/api/account/browser", { method: "DELETE" }),
   answerUi: (
     conversationId: string,
@@ -286,8 +298,10 @@ export async function uploadAgentFile(file: File): Promise<Attachment> {
   return (await upload<{ file: Attachment }>("/api/agent/files", file)).file;
 }
 
+type SkillFields = { name: string; description: string; instructions: string };
+
 export type TurnBody =
-  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
+  | { kind: "send"; text: string; skillId?: string; attachmentIds?: string[]; steer?: boolean; projectId?: string; isTry?: boolean; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef }
   | { kind: "retry" }
   | { kind: "continue" }
   | { kind: "edit"; messageId: string; text: string }

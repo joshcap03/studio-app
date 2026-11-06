@@ -24,6 +24,7 @@ export async function listRecentAcrossAgents(tenant: Tenant, limit = HOME_RECENT
     .select("id, title, project_id, workspace_id, created_at, updated_at")
     .eq("user_id", tenant.userId)
     .in("workspace_id", ids)
+    .eq("is_try", false)
     .order("updated_at", { ascending: false })
     .limit(limit)
     .returns<{ id: string; title: string; project_id: string | null; workspace_id: string; created_at: string; updated_at: string }[]>();
