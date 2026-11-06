@@ -63,13 +63,24 @@ export async function taskContextFor(
 
 const str = (value: unknown, max: number) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "");
 
+/** Cut to `max` at a word, so a long goal never ends partway through one. */
+function cutAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const room = text.slice(0, max - 1);
+  const space = room.lastIndexOf(" ");
+  return `${(space > 0 ? room.slice(0, space) : room).replace(/[\s,;:\u2013\u2014-]+$/, "")}\u2026`;
+}
+
 /**
  * What done looks like, as the agent gave it with its plan (update_plan's goal), or null when it
  * gave none. Taken only from that argument, never from the reply's text.
  */
 export function goalFromAgent(value: unknown): string | null {
-  // It's shown after "Done means", so a goal that says it again doesn't say it twice.
-  return str(typeof value === "string" ? value.replace(/^\s*done means\b[\s:,-]*/i, "") : value, MAX_GOAL_LENGTH) || null;
+  if (typeof value !== "string") return null;
+  // It's shown after "Done means", so a goal that says it again doesn't say it twice, and one
+  // written as its own sentence doesn't open on a capital there.
+  const goal = str(value.replace(/^\s*done means\b[\s:,-]*/i, ""), Infinity).replace(/^(A|An|The)(?= )/, (word) => word.toLowerCase());
+  return cutAtWord(goal, MAX_GOAL_LENGTH) || null;
 }
 
 /**

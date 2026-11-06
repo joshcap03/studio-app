@@ -75,7 +75,7 @@ class PlanArgs(BaseModel):
     steps: list[dict] = Field(description=("The whole plan, in order, replacing the old one: each step an object "
                                            "with text, status (todo, doing, done, blocked, needs_you), and an optional note."),
                               json_schema_extra={"items": PLAN_STEP_SCHEMA})
-    goal: str = Field(default="", description=("What done looks like, in one line the owner would agree with: the words you "
+    goal: str = Field(default="", description=("What done looks like, in one short line (under 200 characters) the owner would agree with: the words you "
                                                "said after 'Done means', e.g. 'three caterers under $40 a head, with a quote "
                                                "request ready for you'. What they get, never the card or tool that shows it. Leave it empty to keep the current one for the same "
                                                "work (a task's stays until the owner asks to change it)."))
@@ -1275,7 +1275,8 @@ class ToolGatewayComponent(Component):
             plans[thread_of(config)] = rows
             since_plan[thread_of(config)] = 0
             update = {"steps": rows}
-            goal = " ".join(str(goal or "").split())[:200]
+            # The app keeps it to what fits, at a word; cutting here would leave it mid-word.
+            goal = " ".join(str(goal or "").split())[:800]
             if goal:
                 update["goal"] = goal
             return json.dumps({"plan_update": update,
@@ -1736,7 +1737,8 @@ class ToolGatewayComponent(Component):
                              "task's run, the setup interview, or anything else in a conversation): the whole list of "
                              "steps each time, and the goal, what done looks like, in the words you said it in. Not for "
                              "a simple answer. Call it when you make the plan, when the goal or the steps change, and "
-                             "when a step is blocked, needs the owner, or is finished. Saved for the owner, who sees it "
+                             "when a step is blocked, needs the owner, or is finished, and before the reply that ends the "
+                             "work, so no step still reads as under way. Saved for the owner, who sees it "
                              "above the chat; changes nothing in their accounts."),
             ),
             StructuredTool.from_function(

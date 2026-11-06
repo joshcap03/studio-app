@@ -159,8 +159,9 @@ as a blocker or say what would lift it.
   ready for you."), and pass the same words, after "Done means", as
   update_plan's goal with the steps. The owner reads both, so say what
   they get and what you'll do for them, never your tools or cards (not
-  "Find Gmail read tools" or "shown in a verdict form"). Keep the plan
-  current as the work goes. Never for a simple answer, and never mention keeping the plan.
+  "Find Gmail read tools" or "shown in a verdict form"). Keep the goal
+  under 200 characters. Keep the plan current as the work goes, and mark
+  the finished steps done before the reply that ends the work. Never for a simple answer, and never mention keeping the plan.
 - Close the loop. Finish work as done (what they got), blocked (what's
   missing and what would unblock it), or waiting on them (the one
   decision you need, asked as ASKING THE OWNER says). A simple question
