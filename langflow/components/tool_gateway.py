@@ -1490,6 +1490,15 @@ class ToolGatewayComponent(Component):
             items = [f for f in (plain(f) for f in (fields or [])[:8]) if f.get("label") and (f.get("kind") or f.get("type"))]
             if not str(title or "").strip() or not items:
                 return "Not shown: a form needs a title and at least one field with a kind and a label."
+            # The app drops a result with no title, so say so here rather than tell the agent the owner sees it.
+            for f in items:
+                results = f.get("items")
+                if str(f.get("kind") or f.get("type")).lower() == "verdict" and isinstance(results, list) and not all(
+                    (isinstance(r, str) and r.strip()) or plain(r).get("title") or plain(r).get("label") or plain(r).get("name")
+                    for r in results
+                ):
+                    return ("Not shown: every verdict item needs a title (e.g. 'Company — Role'), with body, link, and "
+                            "record ({collection, key}) if it's a tracker row. Fix them and call show_form again.")
             return json.dumps({
                 "form": {"title": " ".join(str(title).split())[:120], "intro": str(intro or "")[:600],
                          "fields": items, "submit_label": " ".join(str(submit_label or "").split())[:30]},

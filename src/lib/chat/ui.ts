@@ -157,7 +157,8 @@ function verdictItems(raw: unknown): UiVerdictItem[] {
   const out: UiVerdictItem[] = [];
   for (const i of list(raw)) {
     const r = isRecord(i) ? i : { title: i };
-    const title = line(r.title ?? r.label ?? r.name, 160);
+    // Models sometimes put the result's name in `record`, meant for its tracker row.
+    const title = line(r.title ?? r.label ?? r.name ?? (typeof r.record === "string" ? r.record : undefined), 160);
     if (!title) continue;
     // A drafted post or email is the result itself, so a body holds a short draft whole.
     const body = para(r.body ?? r.description ?? r.summary ?? r.why ?? r.reason ?? r.text ?? r.content ?? r.draft, 1500);
