@@ -81,6 +81,13 @@ describe("goals", () => {
     expect(goalFromAgent("Done means: three caterers")).toBe("three caterers");
     expect(goalFromAgent("done means three caterers")).toBe("three caterers");
     expect(goalFromAgent("x".repeat(300))).toHaveLength(200);
+    expect(goalFromAgent("A prep doc")).toBe("a prep doc");
+    expect(goalFromAgent("The Robinhood doc")).toBe("the Robinhood doc");
+    expect(goalFromAgent("Apples and An orange")).toBe("Apples and An orange");
+    // Long goals end at a word, not partway through one.
+    const cut = goalFromAgent(`${"word ".repeat(39)}and 5 questions to ask`)!;
+    expect(cut.length).toBeLessThanOrEqual(200);
+    expect(cut).toMatch(/ and\u2026$/);
     for (const none of ["", "   ", undefined, null, 3, { goal: "x" }]) expect(goalFromAgent(none)).toBeNull();
   });
 

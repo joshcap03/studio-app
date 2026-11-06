@@ -30,6 +30,7 @@ import { ScreenButtonsContext, type ScreenButtons } from "@/components/voice/scr
 import { followAnchor, followEvents, joinedEvents, keepEarlier, mergeSince } from "@/lib/chat/follow";
 import { callOf, originFor } from "@/lib/chat/modality";
 import { markOf, moveOf, type MarkedMove, type WhoseMove } from "@/lib/chat/move";
+import { shownJourney } from "@/lib/chat/shown-journey";
 import { ApiError, api, streamTurn, type SpokenDecision, type TurnBody } from "@/lib/client/api";
 import { openRequest, reopening } from "@/lib/client/open";
 import { stashPendingSend, takePendingSend } from "@/lib/client/pending-send";
@@ -109,21 +110,6 @@ function composerHint(move: WhoseMove | null): string | undefined {
     default:
       return undefined;
   }
-}
-
-/**
- * The journey to show over a thread: the plan of the work in it while it's the work in front of
- * the member. Once they've written since it last changed, a conversation's own finished plan is
- * done with, and any other goes when the reply leaves it as it was (it no longer says what's
- * happening, however its steps read); while that reply runs it may carry the plan on, and a plan
- * it changes shows again. The setup interview's is shown from the setup's own summary instead.
- */
-function shownJourney(thread: ThreadState | undefined, running: boolean): JourneyInfo | null {
-  const journey = thread?.status === "ready" ? (thread.journey ?? null) : null;
-  if (!journey || journey.kind === "setup") return null;
-  if (!thread!.messages.some((m) => m.role === "user" && m.createdAt > journey.updatedAt)) return journey;
-  const finished = journey.steps.every((s) => s.status === "done");
-  return running && !(journey.kind === "conversation" && finished) ? journey : null;
 }
 
 /** The setup summary as a journey, for a call about it. */
