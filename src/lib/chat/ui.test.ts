@@ -527,6 +527,31 @@ describe("react-first fields", () => {
     });
   });
 
+  it("keeps results whose name a model wrote as their record", () => {
+    const block = buildUiBlock(
+      {
+        form: {
+          title: "New roles",
+          fields: [
+            {
+              type: "verdict",
+              label: "Roles",
+              items: [{ record: "Acme — Senior PM", link: "https://example.com/1", why: "Fits." }],
+              reasons_to_pass: ["Too junior"],
+            },
+          ],
+        },
+      },
+      "v",
+    ) as UiForm;
+    expect(block.fields[0]).toMatchObject({
+      kind: "verdict",
+      items: [{ title: "Acme — Senior PM", body: "Fits.", link: "https://example.com/1" }],
+      reasons: ["Too junior"],
+    });
+    expect(block.fields[0].kind === "verdict" && block.fields[0].items[0].record).toBeUndefined();
+  });
+
   it("wants a call on every item of a required verdict", () => {
     const base = { the_job: ["Find roles"] };
     expect(missingAnswer(form, base)).toBe("Would you go for these?");

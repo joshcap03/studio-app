@@ -1,6 +1,7 @@
-import { STUDIO_PARTS } from "@/lib/studio";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { STUDIO_PARTS } from "@/lib/studio";
 import { TabAgent } from "@/components/tab-agent";
 import { Workspace, type InitialProject, type InitialThread } from "@/components/workspace/workspace";
 import { getAgentStatus } from "@/lib/agent";
@@ -16,6 +17,7 @@ import { getProject, listProjects } from "@/lib/projects";
 import { listSkills } from "@/lib/skills";
 import { builtinSkills } from "@/lib/skills/builtin";
 import { summarizeSetup } from "@/lib/setup-state";
+import { MODE_COOKIE, parseShellMode } from "@/lib/shell-mode";
 import { requirePageTenant, resolveTenant } from "@/lib/tenant";
 import { firstName } from "@/lib/setup-words";
 import { dictationStatus, voiceStatus } from "@/lib/voice";
@@ -85,6 +87,7 @@ export default async function WorkspacePage({
   // Home, with several agents: "/" is where an ask goes to whichever agent fits, and in Home mode the
   // sidebar lists chats across agents on every page. With one agent, "/" is its own new-chat screen.
   const home = homeEnabled && tenant.workspaces.length > 1;
+  const initialMode = parseShellMode((await cookies()).get(MODE_COOKIE)?.value);
 
   const store = storeFor(tenant);
   // Who each agent is to this member (a preview); without it, everything looks as before.
@@ -160,6 +163,7 @@ export default async function WorkspacePage({
         home={homeData}
         homeEnabled={homeEnabled}
         studioEnabled={studioEnabled}
+        initialMode={initialMode}
         initialThread={initialThread}
         initialProjects={projects}
         initialProject={initialProject}

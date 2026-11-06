@@ -883,6 +883,7 @@ export async function startTurn(deps: TurnDeps, request: TurnRequest): Promise<R
                   : null;
               // An offer to call shows only where the member could take it, and the browser
               // only where they could take it over; ways to sound only for a member with voice.
+              if (!built) console.error("[turn] dropped a card the agent showed", Object.keys(event.block as object));
               const block = built && !deps.voice ? withoutSound(built) : built;
               if (block && (block.kind !== "offer" || deps.offerCalls) && (block.kind !== "browser" || deps.handoffs)) {
                 ui = capUi([...(ui ?? []), block]);
