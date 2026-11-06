@@ -92,12 +92,12 @@ raw/technical text.
 - `src/lib/home.ts` + `src/lib/route.ts`: Home, one place to ask across a member's agents (the
   "home" preview, `previewEnabled`; off, everything looks as before and `/api/route` and `/api/home`
   are only ever reached by that member's own pages). With several agents the shell has two modes,
-  switched at the top of the sidebar and remembered on the device (`ShellMode`,
-  `src/components/sidebar/sidebar.tsx`): **Home**, one view, where "/" is Home
+  switched at the top of the sidebar and remembered on the device in a cookie the server reads, so a
+  load never swaps modes (`src/lib/shell-mode.ts`): **Home**, one view, where "/" is Home
   (`src/components/home/home.tsx`), the ask goes to whichever agent fits or to the one they pick, and
-  the sidebar lists every agent's chats (drafts' too) on every page; and **Studio**, agent-first, the
-  agent picked in the menu with its own chats, projects, and setup, where an agent is shaped before
-  it's put on Home. `/new` is an agent's own new-chat screen in either mode. `routeAsk` builds a card per
+  the sidebar lists every agent's chats (drafts' too) on every page; and **Studio**, for shaping the
+  agent picked in the menu before it's put on Home: switching to it opens the agent's page, and with
+  that page on (the "studio" preview) its sidebar lists no chats. Without the preview it lists the agent's own. `/new` is an agent's own new-chat screen in either mode. `routeAsk` builds a card per
   agent that is **on Home** (`workspace_settings.on_home`, `WorkspaceSummary.onHome`; a second agent
   starts as a draft until its owner puts it on Home, from its page, its new-chat screen, or
   Settings → Agents) and asks Studio's small model (`src/lib/llm.ts`, `LLM_*`, an OpenAI-compatible

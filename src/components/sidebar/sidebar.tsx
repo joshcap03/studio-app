@@ -27,6 +27,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { rememberShellMode, type ShellMode } from "@/lib/shell-mode";
 import { forwardRef, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { agentLabel } from "@/components/home/home";
 import { BrandMark } from "@/components/ui/brand-mark";
@@ -48,10 +49,9 @@ import {
 
 /**
  * The shell's two modes with several agents. Home: one view, where an ask goes to whichever agent
- * fits and the list holds every agent's chats. Studio: agent-first, the agent picked in the menu with
- * its own chats, projects, and setup, where an agent is shaped before it's put on Home.
+ * fits and the list holds every agent's chats. Studio: for shaping the agent picked in the menu before
+ * it's put on Home; with the agent's page on, no chats are listed here.
  */
-export type ShellMode = "home" | "studio";
 
 interface Props {
   conversations: ConversationSummary[];
@@ -182,6 +182,29 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   const hydrated = useSyncExternalStore(noop, () => true, () => false);
   /** One view across agents: Home mode, with the preview and several agents. */
   const unified = homeEnabled && mode === "home";
+  /** Studio with the agent's page: for shaping the agent, so its chats and search stay in Home. */
+  const building = homeEnabled && studioEnabled && mode === "studio";
+  // The agent itself: its own page, where it says what it reads, knows, and does. Named for the
+  // agent, with its mark, since "Studio" is the mode above.
+  const agentPage = (
+          <a
+            href="/studio"
+            aria-current={studioActive ? "page" : undefined}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              onSelectStudio();
+            }}
+            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press aria-[current=page]:bg-press"
+          >
+            {companions?.[workspace.id] ? (
+              <Companion stage={companions[workspace.id].stage} look={companions[workspace.id].look} size={16} className="shrink-0" />
+            ) : (
+              <SlidersHorizontal size={16} strokeWidth={1.75} className="text-fg-2" />
+            )}
+            <span className="min-w-0 truncate">{companions?.[workspace.id]?.name ?? workspace.name}</span>
+          </a>
+  );
   const modeButton = (on: boolean) =>
     `inline-flex h-7 items-center justify-center gap-1.5 rounded-lg text-[13px] font-medium transition-[background-color,color] ${on ? "bg-surface text-fg shadow-[0_1px_2px_rgb(0_0_0_/_0.06)]" : "text-fg-2 hover:text-fg"}`;
 
@@ -221,6 +244,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
       ) : null}
 
       <div className="space-y-0.5 px-2">
+        {building ? agentPage : null}
+        {building ? null : (
         <button
           type="button"
           onClick={onNew}
@@ -233,6 +258,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
             {mod}⇧O
           </kbd>
         </button>
+        )}
         <a
           href="/tasks"
           aria-current={tasksActive ? "page" : undefined}
@@ -259,27 +285,8 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           <Archive size={16} strokeWidth={1.75} className="text-fg-2" />
           Library
         </a>
-        {studioEnabled && !unified ? (
-          // The agent itself: its own page, where it says what it reads, knows, and does. Named for the
-          // agent, with its mark, since "Studio" is the mode above.
-          <a
-            href="/studio"
-            aria-current={studioActive ? "page" : undefined}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-              e.preventDefault();
-              onSelectStudio();
-            }}
-            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-fg transition-colors hover:bg-hover active:bg-press aria-[current=page]:bg-press"
-          >
-            {companions?.[workspace.id] ? (
-              <Companion stage={companions[workspace.id].stage} look={companions[workspace.id].look} size={16} className="shrink-0" />
-            ) : (
-              <SlidersHorizontal size={16} strokeWidth={1.75} className="text-fg-2" />
-            )}
-            <span className="min-w-0 truncate">{companions?.[workspace.id]?.name ?? workspace.name}</span>
-          </a>
-        ) : null}
+        {studioEnabled && !unified && !building ? agentPage : null}
+        {building ? null : (
         <div className="relative">
           <Search size={15} strokeWidth={1.75} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-fg-3" />
           <input
@@ -308,8 +315,10 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
             </button>
           ) : null}
         </div>
+        )}
       </div>
 
+      {building ? <div className="min-h-0 flex-1" /> : (
       <nav aria-label="Conversations" className="scroll-quiet mt-4 min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         {unified && home ? (
           hydrated ? (
@@ -433,6 +442,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
           </>
         )}
       </nav>
+      )}
 
       <div className="flex shrink-0 items-center gap-2 border-t border-line py-2 pr-2 pl-4">
         {/* A working agent needs no status line; only a mock or disabled one is worth flagging. */}
@@ -962,10 +972,9 @@ function AgentMenu({
   const several = homeEnabled;
   // Picking an agent is Studio: that agent's own new-chat screen, its chats and setup.
   async function switchTo(id: string) {
-    if (several) onMode("studio");
     if (id === workspace.id) {
-      if (!unified) return;
       // Already this tab's agent: Studio shows it without a load.
+      if (several) onMode("studio");
       return;
     }
     try {
@@ -973,7 +982,8 @@ function AgentMenu({
     } catch {
       return;
     }
-    window.location.assign("/");
+    if (several) rememberShellMode("studio");
+    window.location.assign(several && onStudio ? "/studio" : "/");
   }
 
   return (

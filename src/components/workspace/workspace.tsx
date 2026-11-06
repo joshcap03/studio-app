@@ -12,7 +12,8 @@ import { DictationContext } from "@/components/chat/mic";
 import { Thread } from "@/components/chat/thread";
 import { collectFindings, WorkPanel } from "@/components/chat/work-panel";
 import { ProjectView } from "@/components/project/project-view";
-import { Sidebar, type ShellMode } from "@/components/sidebar/sidebar";
+import { Sidebar } from "@/components/sidebar/sidebar";
+import { rememberShellMode, type ShellMode } from "@/lib/shell-mode";
 import { LibraryView } from "@/components/library/library-view";
 import { TrackerPage } from "@/components/library/tracker-page";
 import { TaskDetail } from "@/components/tasks/task-detail";
@@ -248,11 +249,11 @@ interface Props {
   homeEnabled: boolean;
   /** The agent's own page at "/studio" (a preview): off, agent setup is the full page at "/agent". */
   studioEnabled: boolean;
+  /** Home or Studio, as the member left it (the cookie, read by the server so a load never swaps modes). */
+  initialMode: ShellMode;
 }
 
 const SIDEBAR_KEY = "lj.sidebar-collapsed";
-/** Home or Studio, the shell's two modes with several agents (src/components/sidebar/sidebar.tsx). */
-const MODE_KEY = "lj.mode";
 /** Conversations whose moves the sidebar asks about: the most recent ones (the server caps it too). */
 const MAX_MOVE_IDS = 100;
 /** How often to ask again while a run is going out of view. */
@@ -334,6 +335,7 @@ function WorkspaceShell({
   home: initialHome,
   homeEnabled,
   studioEnabled,
+  initialMode,
   onCompanion,
   onCallChange,
 }: Props & { onCompanion: (companion: Companion) => void; onCallChange: (live: boolean) => void }) {
@@ -353,26 +355,20 @@ function WorkspaceShell({
   const [workspaces, setWorkspaces] = useState(initialWorkspaces);
   /** Several agents, with the Home preview on: the Home / Studio switch shows, and every chat names its agent. */
   const several = homeEnabled && workspaces.length > 1;
+  /** The agent's own page in Studio (src/components/studio), where it describes itself and every change is an ask. */
+  const atStudio = studioEnabled && /^\/studio\/?$/.test(pathname);
   // Home or Studio, remembered on this device. Home is one view across agents: "/" routes an ask,
-  // and the sidebar lists every agent's chats. Studio is agent-first: the agent picked in the menu,
-  // its own chats, projects, and setup. Read after hydration, so the server's Home never mismatches.
-  const [mode, setModeState] = useState<ShellMode>("home");
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(MODE_KEY);
-      if (saved === "studio" || saved === "home") setModeState(saved);
-    } catch {
-      // Without storage, Home.
-    }
-  }, []);
+  // and the sidebar lists every agent's chats. Studio is for shaping the agent picked in the menu:
+  // with its page on, it lists no chats. Its page is always Studio, however the member got there.
+  const [savedMode, setSavedMode] = useState<ShellMode>(initialMode);
+  const mode: ShellMode = atStudio ? "studio" : savedMode;
   const setMode = useCallback((next: ShellMode) => {
-    setModeState(next);
-    try {
-      window.localStorage.setItem(MODE_KEY, next);
-    } catch {
-      // Remembered for this page only.
-    }
+    setSavedMode(next);
+    rememberShellMode(next);
   }, []);
+  useEffect(() => {
+    if (several && atStudio && savedMode !== "studio") setMode("studio");
+  }, [several, atStudio, savedMode, setMode]);
   /** One view across agents: several agents, the preview on, and Home mode. */
   const unified = several && mode === "home";
   /** Home across agents: "/" in the one view. Otherwise "/" is the agent's own new-chat screen. */
@@ -381,8 +377,6 @@ function WorkspaceShell({
   const [homeData, setHomeData] = useState<HomeData | null>(initialHome);
   /** The agent's own new-chat screen: "/new", or "/" with one agent. */
   const atNew = !atHome && /^\/(new\/?)?$/.test(pathname);
-  /** The agent's own page in Studio (src/components/studio), where it describes itself and every change is an ask. */
-  const atStudio = studioEnabled && /^\/studio\/?$/.test(pathname);
 
   useEffect(() => {
     const onPop = () => setPathname(window.location.pathname);
@@ -565,6 +559,17 @@ function WorkspaceShell({
     setPathname(pathOnly);
     setDrawerOpen(false);
   }, []);
+
+  // The switch takes the member somewhere: Studio to the agent's page, Home off the screens that
+  // are one agent's. A chat stays open going Home, where it's listed.
+  const switchMode = useCallback(
+    (next: ShellMode) => {
+      setMode(next);
+      if (next === "studio" && studioEnabled) navigate("/studio");
+      else if (next === "home" && (atStudio || atNew)) navigate("/");
+    },
+    [setMode, studioEnabled, navigate, atStudio, atNew],
+  );
 
   // ---------------------------------------------------------------------------------------
   // State helpers
@@ -2236,7 +2241,7 @@ function WorkspaceShell({
             home={homeView}
             homeEnabled={several}
             mode={mode}
-            onMode={setMode}
+            onMode={switchMode}
             onHome={() => navigate("/")}
             onSelect={(id) => navigate(`/c/${id}`)}
             onNew={newChat}
