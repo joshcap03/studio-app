@@ -102,7 +102,7 @@ export interface Store {
   /** Titles of the caller's conversations active since `since` (ms), newest first, leaving out `except`. */
   recentTitles(since: number, limit: number, except?: string): Promise<string[]>;
   getConversation(id: string): Promise<Conversation | null>;
-  createConversation(input: { id: string; title: string; projectId?: string | null }): Promise<Conversation>;
+  createConversation(input: { id: string; title: string; projectId?: string | null; isTry?: boolean }): Promise<Conversation>;
   renameConversation(id: string, title: string): Promise<ConversationSummary | null>;
   /** Moves a conversation into a project of the caller's, or out of any (null). */
   moveConversation(id: string, projectId: string | null): Promise<ConversationSummary | null>;
@@ -194,6 +194,7 @@ interface ConversationRow {
   id: string;
   title: string;
   project_id: string | null;
+  is_try: boolean;
   agent_provider: string | null;
   agent_thread_id: string | null;
   created_at: string;
@@ -279,7 +280,7 @@ export const MAX_MOVES = 100;
 
 // The plan columns stay out of the conversation list and summaries, which go to the browser
 // for every conversation; only the plan's own reads and writes touch them.
-const CONVERSATION_COLUMNS = "id, title, project_id, agent_provider, agent_thread_id, created_at, updated_at";
+const CONVERSATION_COLUMNS = "id, title, project_id, is_try, agent_provider, agent_thread_id, created_at, updated_at";
 const PLAN_COLUMNS = "plan, goal, plan_updated_at";
 // Embedded approvals and attachments leave out provider state and storage paths: these rows
 // go to the browser.
@@ -323,6 +324,7 @@ const toSummary = (r: ConversationRow): ConversationSummary => ({
   id: r.id,
   title: r.title,
   projectId: r.project_id,
+  ...(r.is_try ? { isTry: true } : {}),
   createdAt: Date.parse(r.created_at),
   updatedAt: Date.parse(r.updated_at),
 });
@@ -495,10 +497,10 @@ export function createStore(db: Db, scope: Scope): Store {
       return row ? toConversation(row) : null;
     },
 
-    async createConversation({ id, title, projectId = null }) {
+    async createConversation({ id, title, projectId = null, isTry = false }) {
       const row = check(
         await conversations()
-          .insert({ id, title, project_id: projectId, workspace_id: workspaceId, user_id: userId })
+          .insert({ id, title, project_id: projectId, is_try: isTry, workspace_id: workspaceId, user_id: userId })
           .select(CONVERSATION_COLUMNS)
           .single(),
       ) as ConversationRow;

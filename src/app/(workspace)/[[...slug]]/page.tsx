@@ -1,3 +1,4 @@
+import { STUDIO_PARTS } from "@/lib/studio";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { TabAgent } from "@/components/tab-agent";
@@ -54,8 +55,8 @@ export default async function WorkspacePage({
   } else if (slug[0] === "new") {
     if (slug.length !== 1) notFound();
   } else if (slug[0] === "studio") {
-    // The agent's own page (a preview): what it reads, knows, and does, in its words.
-    if (slug.length !== 1 || !previewEnabled(tenant, "studio")) notFound();
+    // The agent's workbench (a preview), at "/studio" or one of its parts.
+    if (slug.length > 2 || (slug.length === 2 && !STUDIO_PARTS.some((p) => p === slug[1])) || !previewEnabled(tenant, "studio")) notFound();
   } else if (slug.length > 0) {
     const id = z.uuid().safeParse(slug[1]);
     if (slug.length !== 2 || (slug[0] !== "c" && slug[0] !== "p") || !id.success) notFound();

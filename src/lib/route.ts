@@ -47,6 +47,7 @@ export async function agentCards(tenant: Tenant): Promise<AgentCard[]> {
       .select("workspace_id, title")
       .eq("user_id", tenant.userId)
       .in("workspace_id", ids)
+      .eq("is_try", false)
       .order("updated_at", { ascending: false })
       .limit(RECENT_ROWS) as unknown as Promise<Rows<{ workspace_id: string; title: string }>>,
     tenant.db

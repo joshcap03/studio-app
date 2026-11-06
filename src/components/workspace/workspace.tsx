@@ -17,7 +17,8 @@ import { LibraryView } from "@/components/library/library-view";
 import { TrackerPage } from "@/components/library/tracker-page";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { collectionName } from "@/components/tasks/tracker";
-import { StudioView } from "@/components/studio/studio-view";
+import { Workbench } from "@/components/studio/workbench";
+import { STUDIO_PARTS, type StudioPart } from "@/lib/studio";
 import { TasksView } from "@/components/tasks/tasks-view";
 import { Companion as CompanionMark, CompanionContext } from "@/components/ui/companion";
 import { IconButton, TooltipContent } from "@/components/ui/icon-button";
@@ -134,7 +135,7 @@ function setupAsJourney(setup: SetupSummary): JourneyInfo {
  * What a message is sent with besides its text, and how (on a call or held to the mic, the member
  * spoke it); on a call, which call (for its recap, once the server has checked it's theirs).
  */
-type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef };
+type SendExtras = { skill: MessageSkill | null; attachments: Attachment[]; modality?: Modality; voiceSessionId?: string; screen?: ScreenRef; isTry?: boolean };
 const NO_EXTRAS: SendExtras = { skill: null, attachments: [] };
 
 interface ThreadState {
@@ -265,6 +266,13 @@ function conversationIdFrom(pathname: string): string | null {
   return match && UUID.test(match[1]) ? match[1] : null;
 }
 
+/** The part of the workbench at "/studio" or "/studio/<part>"; null anywhere else. */
+function studioPartFrom(pathname: string): StudioPart | null {
+  if (/^\/studio\/?$/.test(pathname)) return "brief";
+  const part = /^\/studio\/([a-z]+)\/?$/.exec(pathname)?.[1];
+  return STUDIO_PARTS.find((p) => p === part) ?? null;
+}
+
 function projectIdFrom(pathname: string): string | null {
   const match = /^\/p\/([^/]+)\/?$/.exec(pathname);
   return match && UUID.test(match[1]) ? match[1] : null;
@@ -324,7 +332,7 @@ function WorkspaceShell({
   workspace,
   workspaces: initialWorkspaces,
   email,
-  skills,
+  skills: initialSkills,
   initialSkillId,
   setup: initialSetup,
   voice,
@@ -340,7 +348,11 @@ function WorkspaceShell({
   // Navigation is client-side history only. The path lives in local state so a switch
   // renders immediately (Next applies pushState-driven pathname updates as a transition).
   const [pathname, setPathname] = useState(usePathname());
-  const activeId = conversationIdFrom(pathname);
+  /** The agent's workbench in Studio (src/components/studio): its parts beside a live Try pane. */
+  const atStudio = studioEnabled && studioPartFrom(pathname) !== null;
+  /** The chat in the Try pane. It's on screen without being in the address, so the workbench stays put. */
+  const [tryId, setTryId] = useState<string | null>(null);
+  const activeId = conversationIdFrom(pathname) ?? (atStudio ? tryId : null);
   /** The project page on screen (not the project of an open conversation). */
   const activeProjectId = activeId ? null : projectIdFrom(pathname);
   /** The Tasks page on screen: "list", or the id of the open task. */
@@ -381,8 +393,6 @@ function WorkspaceShell({
   const [homeData, setHomeData] = useState<HomeData | null>(initialHome);
   /** The agent's own new-chat screen: "/new", or "/" with one agent. */
   const atNew = !atHome && /^\/(new\/?)?$/.test(pathname);
-  /** The agent's own page in Studio (src/components/studio), where it describes itself and every change is an ask. */
-  const atStudio = studioEnabled && /^\/studio\/?$/.test(pathname);
 
   useEffect(() => {
     const onPop = () => setPathname(window.location.pathname);
@@ -390,6 +400,8 @@ function WorkspaceShell({
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  // The composer's "/" list; the workbench's Skills part keeps the agent's own up to date.
+  const [skills, setSkills] = useState(initialSkills);
   const [conversations, setConversations] = useState(initialConversations);
   const [threads, setThreads] = useState<Record<string, ThreadState>>(() =>
     initialThread
@@ -602,7 +614,7 @@ function WorkspaceShell({
   const upsertConversation = useCallback(
     (summary: ConversationSummary) => {
       setConversations((list) => [summary, ...list.filter((c) => c.id !== summary.id)].sort((a, b) => b.updatedAt - a.updatedAt));
-      upsertHome(summary);
+      if (!summary.isTry) upsertHome(summary);
     },
     [upsertHome],
   );
@@ -717,7 +729,8 @@ function WorkspaceShell({
   const activeProjectName = activeProject?.status === "ready" ? activeProject.project.name : undefined;
   const tasksTitle = activeTask === "list" ? "Tasks" : activeTask ? (taskTitle ?? undefined) : undefined;
   useEffect(() => {
-    const title = activeTitle ?? activeProjectName ?? tasksTitle ?? (libraryPath === "home" ? "Library" : libraryPath ? collectionName(libraryPath) : undefined);
+    // In Studio the chat in the Try pane is a try, not the page.
+    const title = (atStudio ? undefined : activeTitle) ?? activeProjectName ?? tasksTitle ?? (libraryPath === "home" ? "Library" : libraryPath ? collectionName(libraryPath) : undefined);
     document.title = title ? `${title} · Studio` : atHome || atStudio ? "Studio" : `${workspace.name} · Studio`;
   }, [activeTitle, activeProjectName, tasksTitle, libraryPath, workspace.name, atHome, atStudio]);
 
@@ -989,13 +1002,16 @@ function WorkspaceShell({
               id: conversationId,
               title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text),
               projectId,
+              ...(extras.isTry ? { isTry: true } : {}),
               createdAt: now,
               updatedAt: now,
             };
         return [summary, ...list.filter((c) => c.id !== conversationId)];
       });
-      upsertHome({ id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), projectId, createdAt: now, updatedAt: now }, true);
-      if (isNew) navigate(`/c/${conversationId}`);
+      if (!extras.isTry) upsertHome({ id: conversationId, title: provisionalTitle(skill ? [skill.name, text].filter(Boolean).join(" — ") : text), projectId, createdAt: now, updatedAt: now }, true);
+      // A try opens in the Try pane, with the workbench still on screen.
+      if (isNew && extras.isTry) setTryId(conversationId);
+      else if (isNew) navigate(`/c/${conversationId}`);
       setSendCount((n) => n + 1);
       setNotice(null);
       sentExtras.current.set(assistant.id, extras);
@@ -1013,6 +1029,7 @@ function WorkspaceShell({
           ...(extras.screen ? { screen: extras.screen } : {}),
           // Only creates it there; the server ignores it for a conversation that already exists.
           ...(projectId ? { projectId } : {}),
+          ...(extras.isTry ? { isTry: true } : {}),
         },
         { user: user.id, assistant: assistant.id },
       );
@@ -1162,12 +1179,35 @@ function WorkspaceShell({
         setRouted((r) => (r?.conversationId === activeId ? null : r));
         sendTo(activeId, text, false, full, running.has(activeId) || awaitingHere);
       } else {
-        drafts.current.delete(activeProjectId ? `project:${activeProjectId}` : "new");
-        sendTo(crypto.randomUUID(), text, true, full, false, activeProjectId);
+        drafts.current.delete(atStudio ? "try" : activeProjectId ? `project:${activeProjectId}` : "new");
+        sendTo(crypto.randomUUID(), text, true, atStudio ? { ...full, isTry: true } : full, false, activeProjectId);
       }
     },
-    [activeId, activeProjectId, running, sendTo],
+    [activeId, activeProjectId, atStudio, running, sendTo],
   );
+
+  // The Try pane. The words of a change go into its message box, unsent, as an ask always has.
+  const describeInTry = useCallback((text: string | null, skill?: MessageSkill | null) => {
+    if (text !== null) composer.current?.setValue(text);
+    if (skill) composer.current?.attachSkill(skill);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  const focusTry = useCallback(() => composer.current?.focus(), []);
+  const newTry = useCallback(() => {
+    setTryId(null);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  /** The last thing asked in this try, to ask again in a fresh one: same words, with the agent as it is now. */
+  const lastAsk = useMemo(() => {
+    if (!atStudio || !activeThread || activeThread.status !== "ready") return null;
+    return [...activeThread.messages].reverse().find((m) => m.role === "user" && !m.origin && (m.content.trim() || m.skill)) ?? null;
+  }, [atStudio, activeThread]);
+  const askAgain = useCallback(() => {
+    if (!lastAsk) return;
+    sendTo(crypto.randomUUID(), lastAsk.content, true, { skill: lastAsk.skill ?? null, attachments: [], isTry: true });
+  }, [lastAsk, sendTo]);
+  // What a reply there may have changed (an applied proposal, a new skill): the workbench looks again.
+  const [studioFresh, setStudioFresh] = useState(0);
 
   /**
    * Answers the agent's pending request in `conversationId` (the open one, or a call's) and
@@ -1258,6 +1298,7 @@ function WorkspaceShell({
       // agent arrives, and a name or sound kept changes how it talks with them. (Choosing whether
       // to run the first task now, after, changes neither.)
       if (response.status !== "applied" || response.firstRun) return;
+      setStudioFresh((n) => n + 1);
       api.getSetup().then(({ setup }) => setSetup(setup), () => undefined);
       if (response.applied.name || response.applied.manner !== undefined) {
         api.getCompanion().then(({ companion: next }) => next && onCompanion(next), () => undefined);
@@ -1488,7 +1529,7 @@ function WorkspaceShell({
         return setup.conversationId;
       }
       // Only offered on the new-chat screen, so this starts a new conversation.
-      if (activeId) return null;
+      if (conversationIdFrom(window.location.pathname)) return null;
       // Just the skill, no words: the agent speaks first ("Hey!", or on a call the voice does)
       // and opens step 1.
       const conversationId = crypto.randomUUID();
@@ -1497,7 +1538,7 @@ function WorkspaceShell({
       setSetup((s) => (s ? { ...s, status: "in_progress", conversationId: null, done: 0, goal: null, plan: s.plan.map(({ text }) => ({ text, status: "todo" as const })) } : s));
       return conversationId;
     },
-    [activeId, navigate, sendTo, setup],
+    [navigate, sendTo, setup],
   );
 
   /**
@@ -1692,10 +1733,10 @@ function WorkspaceShell({
   // suggests a name. Just the skill, no words: it speaks first. From the agent's page it
   // arrives as ?hello=1.
   const sayHello = useCallback(() => {
-    if (activeId) return;
+    if (conversationIdFrom(window.location.pathname)) return;
     drafts.current.delete("new");
     sendTo(crypto.randomUUID(), "", true, { skill: { id: INTRODUCE_SKILL_ID, name: INTRODUCE_SKILL_NAME }, attachments: [] });
-  }, [activeId, sendTo]);
+  }, [sendTo]);
   // Offered on the new-chat screen once it's ready, unless setup is under way (that comes first).
   const hello = companion?.stage === "ready" && setup?.status !== "in_progress";
   const helloRequested = useRef(false);
@@ -1825,7 +1866,8 @@ function WorkspaceShell({
       const snapshot = conversations;
       setConversations((list) => list.filter((c) => c.id !== id));
       setHomeData((data) => (data ? { ...data, conversations: data.conversations.filter((c) => c.id !== id) } : data));
-      if (id === activeId) navigate("/");
+      if (id === tryId) setTryId(null);
+      if (id === conversationIdFrom(window.location.pathname)) navigate("/");
       api
         .deleteConversation(id)
         .then(() =>
@@ -1836,7 +1878,7 @@ function WorkspaceShell({
         )
         .catch(() => setConversations(snapshot));
     },
-    [activeId, conversations, navigate],
+    [conversations, navigate, tryId],
   );
 
   const createProject = useCallback(
@@ -2189,7 +2231,7 @@ function WorkspaceShell({
   const callButton = (where: string | null) =>
     voice && !call ? { label: callName ? `Call ${callName}` : "Start a call", onCall: () => void startCall({ conversationId: where }), busy: calling } : undefined;
   const sidebarHidden = desktop ? collapsed : !drawerOpen;
-  const draftKey = activeId ?? "new";
+  const draftKey = activeId ?? (atStudio ? "try" : "new");
   const projectDraftKey = `project:${activeProjectId}`;
 
   const footnote =
@@ -2200,6 +2242,125 @@ function WorkspaceShell({
     ) : agent.mode === "unavailable" ? (
       <p className="text-[12px] text-fg-3">This agent isn&apos;t enabled yet.</p>
     ) : null;
+
+  const conversationPane = (
+    <>
+      {activeThread?.status === "missing" || activeThread?.status === "error" ? (
+            <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
+          ) : activeThread?.status === "ready" ? (
+            <Thread
+              key={activeId}
+              messages={activeThread.messages}
+              earlier={Boolean(activeThread.earlier)}
+              onLoadEarlier={loadEarlier}
+              running={isRunning}
+              onRetry={retryHere}
+              onEdit={edit}
+              onDecide={decideHere}
+              onProposal={answerProposal}
+              onAnswer={send}
+              onUiResponse={recordHere}
+              onRunTask={runTaskHere}
+              onFeedback={rateMessage}
+              onOpenPanel={openPanel}
+              sendCount={sendCount}
+              noteFocus={noteFocus?.conversationId === activeId ? noteFocus.messageId : null}
+              onCall={voice && !call ? callFromOffer : undefined}
+              calls={activeCalls}
+              footer={
+                <div className="mx-auto w-full max-w-[46rem] px-3 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
+                  {/* Home sent this ask here. A chat never moves, so another agent gets it as a new chat. */}
+                  {routed?.conversationId === activeId && several ? (
+                    <p className="mb-2 flex flex-wrap items-center justify-center gap-x-1.5 px-1 text-center text-[12.5px] text-fg-3 animate-fade-up">
+                      <span>Sent to {agentLabel(workspace, companions)}</span>
+                      {workspaces.some((w) => w.id !== workspace.id && w.onHome) ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger className="rounded text-fg-2 underline underline-offset-2 hover:text-fg">Ask another agent instead</DropdownMenu.Trigger>
+                            <DropdownMenu.Portal>
+                              <DropdownMenu.Content align="center" side="top" sideOffset={6} className="z-50 w-[248px] rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in">
+                                <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Start this as a new chat with</DropdownMenu.Label>
+                                {workspaces
+                                  .filter((w) => w.id !== workspace.id && w.onHome)
+                                  .map((w) => (
+                                    <DropdownMenu.Item
+                                      key={w.id}
+                                      onSelect={() => askAnother(w.id)}
+                                      className="flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover"
+                                    >
+                                      {companions?.[w.id] ? <CompanionMark stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}
+                                      <span className="min-w-0 truncate">{agentLabel(w, companions)}</span>
+                                    </DropdownMenu.Item>
+                                  ))}
+                              </DropdownMenu.Content>
+                            </DropdownMenu.Portal>
+                          </DropdownMenu.Root>
+                        </>
+                      ) : null}
+                    </p>
+                  ) : null}
+                  {notice ? (
+                    <p role="status" className="mb-2 px-1 text-center text-[13px] text-danger">
+                      {notice}
+                    </p>
+                  ) : null}
+                  {setup && setupHere ? (
+                    <div className="mb-2 flex items-stretch gap-2 animate-fade-up">
+                      <Journey steps={setup.plan} title={SETUP_JOURNEY_TITLE} goal={setup.goal} growing move={lastMove?.move} className="min-w-0 flex-1" />
+                      {voice && setup.status === "in_progress" ? (
+                        <button
+                          type="button"
+                          onClick={() => void startCall({ conversationId: setup.conversationId, setup: true })}
+                          disabled={calling}
+                          aria-label="Talk it through on a call"
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-[13px] font-medium text-fg-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.97] disabled:opacity-60"
+                        >
+                          {calling ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={15} className="text-accent" />}
+                          <span className="max-sm:hidden">Talk it through</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : journey ? (
+                    <Journey
+                      steps={journey.steps}
+                      goal={journey.goal}
+                      move={lastMove?.move}
+                      // A conversation's own plan is the member's to clear; a task's is edited on the task.
+                      onClear={journey.kind === "conversation" && activeId && !isRunning ? () => clearPlan(activeId) : undefined}
+                      className="mb-2 animate-fade-up"
+                    />
+                  ) : null}
+                  <Composer
+                    key={draftKey}
+                    ref={composer}
+                    initialValue={drafts.current.get(draftKey) ?? ""}
+                    onDraftChange={(v) => drafts.current.set(draftKey, v)}
+                    onSubmit={send}
+                    onStop={stopHere}
+                    skills={skills}
+                    running={isRunning}
+                    placeholder={isRunning ? "Redirect the agent…" : several ? `Reply to ${agentLabel(workspace, companions)}…` : "Reply…"}
+                    autoFocus={desktop && !atStudio}
+                    allowFiles={agent.attachments}
+                    hint={composerHint(lastMove)}
+                    voice={voice}
+                    redirects={isRunning || awaiting}
+                    // In the setup conversation while it's under way, "Talk it through" is the call.
+                    call={setup && setupHere && setup.status === "in_progress" ? undefined : callButton(activeId)}
+                  />
+                  {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
+                </div>
+              }
+            />
+          ) : (
+            <div className="flex flex-1 items-center justify-center" aria-busy="true">
+              <span className="spinner animate-fade-in [animation-delay:200ms]" aria-label="Loading conversation" />
+            </div>
+          )
+      }
+    </>
+  );
 
   return (
     <Tooltip.Provider delayDuration={500} skipDelayDuration={200}>
@@ -2310,7 +2471,12 @@ function WorkspaceShell({
             ) : null}
             <h1 className="flex min-w-0 flex-1 items-center gap-1 px-1.5 text-[14px] font-medium text-fg-2 max-md:justify-center">
               {/* With several agents, every chat says which one it's with. */}
-              {several && activeId ? (
+              {atStudio ? (
+                <span className="flex min-w-0 items-center gap-2 text-fg">
+                  {companion ? <CompanionMark stage={companion.stage} look={companion.look} size={18} /> : null}
+                  <span className="min-w-0 truncate font-display text-[18px] tracking-[-0.01em]">{agentLabel(workspace, companions)}</span>
+                </span>
+              ) : several && activeId ? (
                 <>
                   <span className="flex min-w-0 shrink-0 items-center gap-1.5 text-fg">
                     {companion ? <CompanionMark stage={companion.stage} look={companion.look} size={16} /> : null}
@@ -2319,7 +2485,7 @@ function WorkspaceShell({
                   <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
                 </>
               ) : null}
-              {conversationProject ? (
+              {conversationProject && !atStudio ? (
                 <>
                   <a
                     href={`/p/${conversationProject.id}`}
@@ -2335,7 +2501,7 @@ function WorkspaceShell({
                   <ChevronRight size={14} className="shrink-0 text-fg-4" aria-hidden="true" />
                 </>
               ) : null}
-              <span className="min-w-0 truncate">{activeTitle ?? (activeTask && activeTask !== "list" ? taskTitle : null) ?? ""}</span>
+              <span className="min-w-0 truncate">{atStudio ? "" : activeTitle ?? (activeTask && activeTask !== "list" ? taskTitle : null) ?? ""}</span>
             </h1>
             {agent.mode === "mock" ? (
               <Tooltip.Root>
@@ -2359,15 +2525,45 @@ function WorkspaceShell({
           <div ref={setDock} className="contents" />
 
           {atStudio ? (
-            <StudioView
+            <Workbench
               key={workspace.id}
               workspace={workspaces.find((w) => w.id === workspace.id) ?? workspace}
               several={several}
               companion={companion}
               setup={setup}
               skills={skills}
-              conversations={conversations}
+              hasChats={conversations.length > 0}
+              part={studioPartFrom(pathname) ?? "brief"}
+              mod={mod}
+              fresh={studioFresh}
               onGo={navigate}
+              onDescribe={describeInTry}
+              onFocusTry={focusTry}
+              onNewTry={activeId ? newTry : null}
+              onAskAgain={lastAsk && !isRunning ? askAgain : null}
+              onSkills={(own) => setSkills((all) => [...all.filter((s) => s.id.startsWith("builtin:")), ...own])}
+              tryPane={
+                activeId ? (
+                  conversationPane
+                ) : (
+                  <div className="mt-auto w-full px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+                    <Composer
+                      key="try"
+                      ref={composer}
+                      initialValue={drafts.current.get("try") ?? ""}
+                      onDraftChange={(v) => drafts.current.set("try", v)}
+                      onSubmit={send}
+                      onStop={stopHere}
+                      skills={skills}
+                      running={false}
+                      placeholder="Ask it something real…"
+                      allowFiles={agent.attachments}
+                      voice={voice}
+                    />
+                    {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
+                  </div>
+                )
+              }
               onSetup={() => {
                 navigate("/new");
                 startSetup();
@@ -2376,7 +2572,6 @@ function WorkspaceShell({
                 navigate("/new");
                 sayHello();
               }}
-              onNewChat={newChat}
               onOnHome={setOnHome}
             />
           ) : libraryPath === "home" ? (
@@ -2467,118 +2662,8 @@ function WorkspaceShell({
               voice={voice}
               call={!hello && setup && (setup.status === "not_started" || setup.status === "in_progress") ? undefined : callButton(null)}
             />
-          ) : activeThread?.status === "missing" || activeThread?.status === "error" ? (
-            <Unavailable what="conversation" missing={activeThread.status === "missing"} onNew={newChat} />
-          ) : activeThread?.status === "ready" ? (
-            <Thread
-              key={activeId}
-              messages={activeThread.messages}
-              earlier={Boolean(activeThread.earlier)}
-              onLoadEarlier={loadEarlier}
-              running={isRunning}
-              onRetry={retryHere}
-              onEdit={edit}
-              onDecide={decideHere}
-              onProposal={answerProposal}
-              onAnswer={send}
-              onUiResponse={recordHere}
-              onRunTask={runTaskHere}
-              onFeedback={rateMessage}
-              onOpenPanel={openPanel}
-              sendCount={sendCount}
-              noteFocus={noteFocus?.conversationId === activeId ? noteFocus.messageId : null}
-              onCall={voice && !call ? callFromOffer : undefined}
-              calls={activeCalls}
-              footer={
-                <div className="mx-auto w-full max-w-[46rem] px-3 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
-                  {/* Home sent this ask here. A chat never moves, so another agent gets it as a new chat. */}
-                  {routed?.conversationId === activeId && several ? (
-                    <p className="mb-2 flex flex-wrap items-center justify-center gap-x-1.5 px-1 text-center text-[12.5px] text-fg-3 animate-fade-up">
-                      <span>Sent to {agentLabel(workspace, companions)}</span>
-                      {workspaces.some((w) => w.id !== workspace.id && w.onHome) ? (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <DropdownMenu.Root>
-                            <DropdownMenu.Trigger className="rounded text-fg-2 underline underline-offset-2 hover:text-fg">Ask another agent instead</DropdownMenu.Trigger>
-                            <DropdownMenu.Portal>
-                              <DropdownMenu.Content align="center" side="top" sideOffset={6} className="z-50 w-[248px] rounded-xl border border-line bg-surface p-1 shadow-pop animate-fade-in">
-                                <DropdownMenu.Label className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">Start this as a new chat with</DropdownMenu.Label>
-                                {workspaces
-                                  .filter((w) => w.id !== workspace.id && w.onHome)
-                                  .map((w) => (
-                                    <DropdownMenu.Item
-                                      key={w.id}
-                                      onSelect={() => askAnother(w.id)}
-                                      className="flex h-8 cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] text-fg outline-none data-[highlighted]:bg-hover"
-                                    >
-                                      {companions?.[w.id] ? <CompanionMark stage={companions[w.id].stage} look={companions[w.id].look} size={16} /> : null}
-                                      <span className="min-w-0 truncate">{agentLabel(w, companions)}</span>
-                                    </DropdownMenu.Item>
-                                  ))}
-                              </DropdownMenu.Content>
-                            </DropdownMenu.Portal>
-                          </DropdownMenu.Root>
-                        </>
-                      ) : null}
-                    </p>
-                  ) : null}
-                  {notice ? (
-                    <p role="status" className="mb-2 px-1 text-center text-[13px] text-danger">
-                      {notice}
-                    </p>
-                  ) : null}
-                  {setup && setupHere ? (
-                    <div className="mb-2 flex items-stretch gap-2 animate-fade-up">
-                      <Journey steps={setup.plan} title={SETUP_JOURNEY_TITLE} goal={setup.goal} growing move={lastMove?.move} className="min-w-0 flex-1" />
-                      {voice && setup.status === "in_progress" ? (
-                        <button
-                          type="button"
-                          onClick={() => void startCall({ conversationId: setup.conversationId, setup: true })}
-                          disabled={calling}
-                          aria-label="Talk it through on a call"
-                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-[13px] font-medium text-fg-2 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.97] disabled:opacity-60"
-                        >
-                          {calling ? <span className="spinner size-3.5" aria-hidden="true" /> : <AudioLines size={15} className="text-accent" />}
-                          <span className="max-sm:hidden">Talk it through</span>
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : journey ? (
-                    <Journey
-                      steps={journey.steps}
-                      goal={journey.goal}
-                      move={lastMove?.move}
-                      // A conversation's own plan is the member's to clear; a task's is edited on the task.
-                      onClear={journey.kind === "conversation" && activeId && !isRunning ? () => clearPlan(activeId) : undefined}
-                      className="mb-2 animate-fade-up"
-                    />
-                  ) : null}
-                  <Composer
-                    key={draftKey}
-                    ref={composer}
-                    initialValue={drafts.current.get(draftKey) ?? ""}
-                    onDraftChange={(v) => drafts.current.set(draftKey, v)}
-                    onSubmit={send}
-                    onStop={stopHere}
-                    skills={skills}
-                    running={isRunning}
-                    placeholder={isRunning ? "Redirect the agent…" : several ? `Reply to ${agentLabel(workspace, companions)}…` : "Reply…"}
-                    autoFocus={desktop}
-                    allowFiles={agent.attachments}
-                    hint={composerHint(lastMove)}
-                    voice={voice}
-                    redirects={isRunning || awaiting}
-                    // In the setup conversation while it's under way, "Talk it through" is the call.
-                    call={setup && setupHere && setup.status === "in_progress" ? undefined : callButton(activeId)}
-                  />
-                  {footnote ? <div className="mt-2 text-center max-md:hidden">{footnote}</div> : null}
-                </div>
-              }
-            />
           ) : (
-            <div className="flex flex-1 items-center justify-center" aria-busy="true">
-              <span className="spinner animate-fade-in [animation-delay:200ms]" aria-label="Loading conversation" />
-            </div>
+            conversationPane
           )}
         </main>
 

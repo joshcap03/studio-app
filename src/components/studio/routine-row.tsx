@@ -6,10 +6,10 @@ import type { StudioTask } from "@/lib/client/studio";
 import { api } from "@/lib/client/api";
 import { ASKS, routineChain } from "@/lib/studio";
 import type { WorkspaceSkill } from "@/lib/types";
-import { Ask, quietLink } from "./ask-link";
+import { quietLink } from "./ask-link";
 
 // One thing the agent does on its own (a task, with its watch if it has one), read left to right:
-// When → I do → I keep → You hear. Four labeled cells, so it reads the same stacked on a phone. A view
+// When → Does → Keeps → You hear. Four labeled cells, so it reads the same stacked on a phone. A view
 // of what's stored, never a second way to configure it: "Start it" turns a template's task on, and
 // changing it is an ask.
 
@@ -18,7 +18,7 @@ export function RoutineRow({
   skills,
   collections,
   owner,
-  onGo,
+  onDescribe,
   onOpen,
   onChanged,
 }: {
@@ -26,7 +26,7 @@ export function RoutineRow({
   skills: WorkspaceSkill[];
   collections: string[];
   owner: boolean;
-  onGo: (path: string) => void;
+  onDescribe: (text: string) => void;
   /** Opens the task's own page. */
   onOpen: (id: string) => void;
   onChanged: (task: StudioTask) => void;
@@ -66,7 +66,7 @@ export function RoutineRow({
           <span className={cellText}>{chain.when}</span>
         </span>
         <span className={cell}>
-          <span className={cellLabel}>I do</span>
+          <span className={cellLabel}>Does</span>
           <a
             href={`/tasks/${task.id}`}
             onClick={(e) => {
@@ -80,7 +80,7 @@ export function RoutineRow({
           </a>
         </span>
         <span className={cell}>
-          <span className={cellLabel}>I keep</span>
+          <span className={cellLabel}>Keeps</span>
           <span className={cellText}>{chain.keeps ? `Your ${chain.keeps.replace(/[_-]+/g, " ")} list` : "Nothing listed, just the chat"}</span>
         </span>
         <span className={cell}>
@@ -94,9 +94,9 @@ export function RoutineRow({
             {busy ? "Starting…" : "Start it"}
           </button>
         ) : null}
-        <Ask text={ASKS.routineChange(task.title)} onGo={onGo} tone="quiet">
-          {chain.notStarted ? "Tell me how you'd like it done" : "Change this"}
-        </Ask>
+        <button type="button" onClick={() => onDescribe(ASKS.routineChange(task.title))} className={quietLink}>
+          {chain.notStarted ? "Say how you'd like it done" : "Change this"}
+        </button>
         {error ? <span className="text-[12.5px] text-danger">{error}</span> : null}
       </div>
     </li>

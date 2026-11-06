@@ -168,7 +168,7 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     // A project's chats live in the project; searching covers every chat.
-    if (!q) return conversations.filter((c) => !c.projectId);
+    if (!q) return conversations.filter((c) => !c.projectId && !c.isTry);
     const byTitle = conversations.filter((c) => c.title.toLowerCase().includes(q));
     if (!results) return byTitle;
     const ids = new Set(byTitle.map((c) => c.id));
@@ -178,6 +178,9 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
   }, [conversations, query, results]);
 
   const groups = useMemo(() => groupByRecency(visible), [visible]);
+  // Tries from the workbench stay out of the way, folded under their own heading.
+  const tries = useMemo(() => (query.trim() ? [] : conversations.filter((c) => c.isTry)), [conversations, query]);
+  const [triesOpen, setTriesOpen] = useState(false);
   // Recency groups depend on the viewer's time zone, so the list renders after hydration.
   const hydrated = useSyncExternalStore(noop, () => true, () => false);
   /** One view across agents: Home mode, with the preview and several agents. */
@@ -430,6 +433,37 @@ export const Sidebar = forwardRef<HTMLInputElement, Props>(function Sidebar(
             </section>
           ))
         )}
+        {hydrated && tries.length > 0 ? (
+          <section className="mt-4">
+            <button
+              type="button"
+              aria-expanded={triesOpen}
+              onClick={() => setTriesOpen((v) => !v)}
+              className="flex w-full items-center gap-1 px-2.5 pb-1 text-left text-[11.5px] font-medium text-fg-4 transition-colors hover:text-fg-3"
+            >
+              <ChevronRight size={12} className={`shrink-0 transition-transform ${triesOpen ? "rotate-90" : ""}`} aria-hidden="true" />
+              Tries · {tries.length}
+            </button>
+            {triesOpen ? (
+              <ul>
+                {tries.map((c) => (
+                  <ConversationItem
+                    key={c.id}
+                    conversation={c}
+                    active={c.id === activeId}
+                    move={moves[c.id]}
+                    onSelect={onSelect}
+                    onRename={onRename}
+                    onDelete={() => setPendingDelete(c)}
+                    canSaveSkill={workspace.role === "owner"}
+                    projects={projects}
+                    onMove={onMove}
+                  />
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        ) : null}
           </>
         )}
       </nav>

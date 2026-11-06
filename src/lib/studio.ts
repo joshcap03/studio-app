@@ -4,9 +4,28 @@ import type { AgentTask, TaskRun, TaskWatch } from "@/lib/tasks/types";
 import type { CompanionStage, JourneyStep, Memory, MemoryCategory, ToolkitConnection } from "@/lib/types";
 import { MEMORY_CATEGORY_LABELS } from "@/lib/types";
 
-// The agent's own page in Studio ("/studio", src/components/studio): the words it says about
-// itself, from real state only. The copy is the product, so it lives here, pure and tested, and
-// the components only lay it out. First person throughout: it's the agent talking, never a form.
+// The agent's workbench in Studio ("/studio", src/components/studio): the words on it, from real
+// state only. The copy is the product, so it lives here, pure and tested, and the components only
+// lay it out. Plain nouns for the parts; the agent speaks in the first person only where it's
+// inviting the member to do something (the next-step line).
+
+/** The workbench's parts, in the rack's order; each has its own address, "/studio/<part>". */
+export const STUDIO_PARTS = ["brief", "skills", "knowledge", "apps", "routines", "history"] as const;
+export type StudioPart = (typeof STUDIO_PARTS)[number];
+
+export const PART_LABELS: Record<StudioPart, string> = {
+  brief: "Brief",
+  skills: "Skills",
+  knowledge: "Knowledge",
+  apps: "Apps",
+  routines: "Routines",
+  history: "History",
+};
+
+/** The address of a part; the brief is the workbench's own. */
+export function partPath(part: StudioPart): string {
+  return part === "brief" ? "/studio" : `/studio/${part}`;
+}
 
 /** What the page knows about where this agent stands with its member. */
 export interface StudioSignals {
@@ -61,19 +80,12 @@ export function nextStep(s: StudioSignals): NextStep {
   return { text: "I'm set. Change anything below whenever you like.", action: null };
 }
 
-/**
- * The quiet rail under the name: the same signals as `nextStep`, as steps that fill in as the agent
- * becomes the member's. No score, just how far along it is. "On Home" only where Home exists.
- */
-export function readiness(s: StudioSignals): JourneyStep[] {
-  const steps: JourneyStep[] = [
-    { text: "Set up", status: s.setup === null || s.setup === "done" || s.setup === "skipped" ? "done" : s.setup === "in_progress" ? "doing" : "todo" },
-    { text: "Knows you", status: s.companion === null || s.companion === "ready" || s.companion === "arrived" ? "done" : s.companion === "drawn" ? "doing" : "todo" },
-    { text: "Has the apps it needs", status: s.missingApps.length === 0 ? "done" : "todo" },
-    { text: "Has chatted with you", status: s.hasChats ? "done" : "todo" },
-  ];
-  if (s.several) steps.push({ text: "On Home", status: s.onHome ? "done" : "todo" });
-  return steps;
+/** The parts a quiet dot marks in the rack: the same signals as `nextStep`, on the part that can help. */
+export function partsNeeding(s: StudioSignals): StudioPart[] {
+  const parts: StudioPart[] = [];
+  if (s.owner && (s.setup === "not_started" || s.setup === "in_progress")) parts.push("brief");
+  if (s.missingApps.length > 0) parts.push("apps");
+  return parts;
 }
 
 /**
@@ -101,29 +113,29 @@ export function knowledge(memories: Memory[]): Knowledge {
   return { total: memories.length, pinned: memories.filter((m) => m.pinned).length, topics };
 }
 
-/** "I know 42 things about your work, 6 of them pinned." */
+/** "It knows 42 things about your work, 6 of them pinned." */
 export function knowledgeLine(k: Knowledge): string {
-  if (k.total === 0) return "I haven't written anything down yet. Tell me something and I'll keep it.";
+  if (k.total === 0) return "Nothing written down yet. Tell it something and it'll keep it.";
   const things = k.total === 1 ? "one thing" : `${k.total} things`;
   const pinned = k.pinned === 0 ? "" : k.pinned === 1 ? ", one of them pinned" : `, ${k.pinned} of them pinned`;
-  return `I know ${things} about your work${pinned}.`;
+  return `It knows ${things} about your work${pinned}.`;
 }
 
 /** The one line about what the agent does on its own with money and deletions, from the member's standing OKs. */
 export function approvalsLine(allowed: StandingKind[]): string {
   const sites = allowed.filter((k) => k.startsWith("site:")).map((k) => k.slice(5));
-  if (sites.length === 0) return "I never pay for anything or delete for good without asking you first.";
+  if (sites.length === 0) return "It never pays for anything or deletes for good without asking you first.";
   const list = sites.length === 1 ? sites[0] : sites.length === 2 ? `${sites[0]} and ${sites[1]}` : `${sites.slice(0, -1).join(", ")}, and ${sites[sites.length - 1]}`;
-  return `I can pay and order on ${list} without asking; anything else that costs money or deletes for good waits for you.`;
+  return `It can pay and order on ${list} without asking; anything else that costs money or deletes for good waits for you.`;
 }
 
 /** Where a skill came from, in the member's terms. */
 export function skillOrigin(skill: { catalogId: string | null; description: string }): string {
   if (skill.catalogId) return "from the library";
-  return /\b(showed|watched|taught)\b/i.test(skill.description) ? "you showed me" : "we worked it out";
+  return /\b(showed|watched|taught)\b/i.test(skill.description) ? "you showed it" : "worked out together";
 }
 
-/** One routine (a task, with its watch if it has one), read left to right: When → I do → I keep → You hear. */
+/** One routine (a task, with its watch if it has one), read left to right: When → Does → Keeps → You hear. */
 export interface RoutineChain {
   when: string;
   does: string;
@@ -147,29 +159,20 @@ export function routineChain(
   let hear: string;
   if (notStarted) hear = "Not started yet";
   else if (task.status === "paused") hear = "Paused";
-  else if (opts.watch && opts.watch.status === "broken") hear = "I've lost sight of it";
+  else if (opts.watch && opts.watch.status === "broken") hear = "It's lost sight of it";
   else if (opts.lastRun?.status === "running") hear = "Working now";
   else if (opts.lastRun?.status === "failed") hear = "Last time went wrong";
   else hear = "You hear when it's done";
   return { when, does, keeps, hear, notStarted };
 }
 
-/** The first line of the agent's instructions, for the fold's heading. */
-export function firstLine(text: string): string {
-  const line = text
-    .split("\n")
-    .map((l) => l.replace(/^[#*\-\s>]+/, "").trim())
-    .find(Boolean);
-  return line ?? "";
-}
-
 /** "Change what I'm for", and the rest of the asks, as the member would say them to the agent. */
 export const ASKS = {
-  profile: "I'd like to change what you're for. Here's what's different now: ",
-  instructions: "I'd like to change how you work. Here's what I want done differently: ",
+  brief: "I'd like to change how you work. Here's what I want done differently: ",
   remember: "Here's something to remember: ",
   skill: "I want to teach you something new. Here's the job: ",
   routine: "While I'm away, I'd like you to ",
   routineChange: (title: string) => `About "${title}": I'd like it done differently. `,
+  teach: "Show me once: watch me do this job, then write it up as a skill. ",
   app: "I'd like you to use another app for me: ",
 } as const;

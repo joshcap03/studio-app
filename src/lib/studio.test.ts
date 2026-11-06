@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASKS, approvalsLine, firstLine, knowledge, knowledgeLine, missingApps, nextStep, readiness, routineChain, skillOrigin, type StudioSignals } from "@/lib/studio";
+import { ASKS, approvalsLine, knowledge, knowledgeLine, missingApps, nextStep, partPath, partsNeeding, routineChain, skillOrigin, type StudioSignals } from "@/lib/studio";
 import type { Memory } from "@/lib/types";
 
 const set: StudioSignals = { setup: "done", companion: "arrived", missingApps: [], hasChats: true, onHome: true, several: true, owner: true };
@@ -34,15 +34,25 @@ describe("nextStep", () => {
   });
 });
 
-describe("readiness", () => {
-  it("fills in with the same signals, and shows On Home only where Home exists", () => {
-    expect(readiness(set).map((s) => s.status)).toEqual(["done", "done", "done", "done", "done"]);
-    const early = readiness({ ...set, setup: "in_progress", companion: "drawn", missingApps: [gmail], hasChats: false, onHome: false, several: false });
-    expect(early.map((s) => `${s.text}:${s.status}`)).toEqual(["Set up:doing", "Knows you:doing", "Has the apps it needs:todo", "Has chatted with you:todo"]);
+describe("partsNeeding", () => {
+  it("marks nothing on an agent that's set", () => {
+    expect(partsNeeding(set)).toEqual([]);
   });
 
-  it("treats a skipped setup and no companion as settled", () => {
-    expect(readiness({ ...set, setup: "skipped", companion: null }).slice(0, 2).map((s) => s.status)).toEqual(["done", "done"]);
+  it("marks the part that can help: setup on the brief, a missing app on apps", () => {
+    expect(partsNeeding({ ...set, setup: "in_progress", missingApps: [gmail] })).toEqual(["brief", "apps"]);
+    expect(partsNeeding({ ...set, setup: "not_started" })).toEqual(["brief"]);
+  });
+
+  it("doesn't ask a member who isn't the owner to set it up", () => {
+    expect(partsNeeding({ ...set, owner: false, setup: "not_started" })).toEqual([]);
+  });
+});
+
+describe("partPath", () => {
+  it("gives each part its own address, the brief the workbench's", () => {
+    expect(partPath("brief")).toBe("/studio");
+    expect(partPath("skills")).toBe("/studio/skills");
   });
 });
 
@@ -70,17 +80,17 @@ describe("knowledge", () => {
   });
 
   it("says it in one line", () => {
-    expect(knowledgeLine(knowledge([]))).toMatch(/haven't written anything down yet/);
-    expect(knowledgeLine(knowledge([memory("customers")]))).toBe("I know one thing about your work.");
-    expect(knowledgeLine(knowledge([memory("customers"), memory("products", true)]))).toBe("I know 2 things about your work, one of them pinned.");
+    expect(knowledgeLine(knowledge([]))).toMatch(/Nothing written down yet/);
+    expect(knowledgeLine(knowledge([memory("customers")]))).toBe("It knows one thing about your work.");
+    expect(knowledgeLine(knowledge([memory("customers"), memory("products", true)]))).toBe("It knows 2 things about your work, one of them pinned.");
   });
 });
 
 describe("approvalsLine", () => {
   it("promises to ask with no standing OKs, and names the sites it may pay on", () => {
-    expect(approvalsLine([])).toMatch(/never pay .* without asking/);
+    expect(approvalsLine([])).toMatch(/never pays .* without asking/);
     expect(approvalsLine(["gmail_labels", "tool:GMAIL_SEND_EMAIL"])).toMatch(/never pay/);
-    expect(approvalsLine(["site:amazon.com"])).toMatch(/^I can pay and order on amazon.com without asking/);
+    expect(approvalsLine(["site:amazon.com"])).toMatch(/^It can pay and order on amazon.com without asking/);
     expect(approvalsLine(["site:amazon.com", "site:uline.com"])).toMatch(/amazon.com and uline.com/);
   });
 });
@@ -88,8 +98,8 @@ describe("approvalsLine", () => {
 describe("skillOrigin", () => {
   it("tells the library's, the shown, and the worked-out apart", () => {
     expect(skillOrigin({ catalogId: "weekly-review", description: "Weekly review." })).toBe("from the library");
-    expect(skillOrigin({ catalogId: null, description: "Reorder supplies the way you showed me." })).toBe("you showed me");
-    expect(skillOrigin({ catalogId: null, description: "Follow up with a lead." })).toBe("we worked it out");
+    expect(skillOrigin({ catalogId: null, description: "Reorder supplies the way you showed me." })).toBe("you showed it");
+    expect(skillOrigin({ catalogId: null, description: "Follow up with a lead." })).toBe("worked out together");
   });
 });
 
@@ -108,7 +118,7 @@ describe("routineChain", () => {
   it("starts with the app a watch listens to, and says when it's broken", () => {
     const watched = routineChain({ ...task, schedule: null }, { ...opts, watch: { toolkit: "gmail", status: "watching" } });
     expect(watched.when).toBe("When something happens in Gmail");
-    expect(routineChain({ ...task, schedule: null }, { ...opts, watch: { toolkit: "gmail", status: "broken" } }).hear).toBe("I've lost sight of it");
+    expect(routineChain({ ...task, schedule: null }, { ...opts, watch: { toolkit: "gmail", status: "broken" } }).hear).toBe("It's lost sight of it");
   });
 
   it("marks a template's task that was never turned on, and a paused one", () => {
@@ -125,13 +135,8 @@ describe("routineChain", () => {
   });
 });
 
-describe("firstLine and asks", () => {
-  it("takes the first real line, without markdown", () => {
-    expect(firstLine("\n## How I work\n- step")).toBe("How I work");
-    expect(firstLine("")).toBe("");
-  });
-
-  it("asks are sentences the member finishes", () => {
-    for (const ask of [ASKS.profile, ASKS.instructions, ASKS.remember, ASKS.skill, ASKS.routine, ASKS.app, ASKS.routineChange("Weekly")]) expect(ask).toMatch(/\S $/);
+describe("asks", () => {
+  it("are sentences the member finishes", () => {
+    for (const ask of [ASKS.brief, ASKS.remember, ASKS.skill, ASKS.routine, ASKS.app, ASKS.teach, ASKS.routineChange("Weekly")]) expect(ask).toMatch(/\S $/);
   });
 });

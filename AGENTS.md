@@ -111,16 +111,22 @@ raw/technical text.
   agents (`loadHome`, `GET /api/home`, their own rows only), and every thread's header names its agent.
   A chat, project, or task opened by its link under another of the member's agents renders for the
   agent that owns it (`src/lib/owner.ts`, their own rows only) and that agent becomes the tab's.
-- `src/components/studio/`: the agent's own page in Studio mode, `/studio` (the "studio" preview):
-  the agent describing itself from stored state, in first person and plain words, never a form:
-  what it reads before every reply (the profile, and its template's instructions folded under it,
-  read-only), what it knows (the Brain by topic, files, Library, lists), what it can do (connected
-  apps, the one line on money and deletions), the skills it has, what it does on its own (each task
-  as `When → I do → I keep → You hear`, with its watch), and lately. One readiness line and a quiet
-  rail say what would help most (`src/lib/studio.ts`, pure and tested: the copy is the product).
-  Every primary action is a sentence the member finishes: it opens `/new?ask=<text>` (`&skill=<id>`
-  attaches one) with the words in the message box, unsent, and the agent answers with
-  `propose_agent`. Raw editing stays on `/agent`, `/skills`, `/tasks`, and Settings.
+- `src/components/studio/`: the agent's workbench in Studio mode, `/studio` and `/studio/<part>` (the
+  "studio" preview), where a creator shapes an agent and tries it in one view. The rack lists its
+  parts (Brief, Skills, Knowledge, Apps, Routines, History), the bench edits the one picked (`parts/`,
+  saved as they type, `use-autosave.ts`), and the Try pane is the shell's own thread and composer,
+  the real agent with real apps. What's saved is live on the next reply. A try is an ordinary
+  conversation marked `conversations.is_try`, open by `tryId` in `Workspace` with no change of address,
+  folded under "Tries" in the sidebar, and left off Home and routing. "Ask again" sends the last ask into
+  a fresh try. Each part can also be described in words (`DescribeBar`), which go to the Try composer,
+  unsent; the agent answers with `propose_agent`, whose card shows what it would change, and applying
+  it refreshes the bench. Copy, part addresses, and what's marked as needing something are in
+  `src/lib/studio.ts`, pure and tested. Below `xl` a Build / Try switch shows one pane at a time.
+- `src/lib/revisions.ts`: what an agent's brief and skills were before each change (`agent_revisions`,
+  owners read, nobody writes). Database triggers record it, whichever path made the change, one step
+  per ten minutes of edits; `restore_agent_revision` puts a part back, or a deleted skill, and always
+  records what it replaced, so a restore can be undone. Shown in the workbench's History, with
+  `src/lib/line-diff.ts`.
 - `src/lib/skills/`: skills, named instructions a user attaches to one message ("/" in the
   composer). The built-in library `catalog.ts`, workspace copies `index.ts`, and the message
   sent to the agent `render.ts`. Skills never ride along on runs they aren't attached to, with one
